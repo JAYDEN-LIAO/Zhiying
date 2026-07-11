@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Runtime data
+data/
+models/
+
+# ModelScope cache lock
+.lock
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug scraps
+_check_encoding.py
+/tmp/
+
+# Test videos (too large for git)
+*.mp4
+*.mov
+*.avi
+
+# Test notes
+待测试.md
+
+# Secrets (API keys, credentials)
+config/secrets.yaml
+.env
+*.log

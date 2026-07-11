@@ -1,0 +1,326 @@
+"""
+core/interfaces.py
+═══════════════════════════════════════════════════════════
+所有 AI 算法模块的抽象接口层。
+
+⚠️  异步 / 同步边界 — 硬性约定
+────────────────────────────────────────────────────────
+本文件所有接口均为 async def，但具体插件实现（YOLO / PaddleOCR /
+faster-whisper 等）的内部模型推理是同步 CPU/GPU 密集型计算。
+如果直接在 async 方法中调用同步推理，会阻塞整个 asyncio 事件循环。
+
+实现规范：
+
+  ✅ 正确写法（YOLO 检测器示例）:
+      async def detect(self, frame, start_sec, end_sec):
+          results = await asyncio.to_thread(self._sync_predict, frame)
+          return self._parse_results(results, start_sec, end_sec)
+
+      def _sync_predict(self, frame):
+          return self.model(frame, conf=0.35, device="cuda", verbose=False)
+
+  ❌ 反例（禁止 — 会卡死事件循环）:
+      async def detect(self, frame, start_sec, end_sec):
+          return self.model(frame, conf=0.35, device="cuda")   # ← 阻塞!
+
+  例外：VLLMSummarizer（走 AsyncOpenAI HTTP）和 BasicQC（走
+  asyncio.create_subprocess_exec）不需要 to_thread。
+
+  受影响插件清单见 docs/03-core-code-skeleton-and-directory-tree.md → §3.1。
+"""
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from collections.abc import Callable, Awaitable
+
+import numpy as np
+
+
+# ═══════════════════════════════════════════════════════════
+# 数据传递对象
+# ═══════════════════════════════════════════════════════════
+
+@dataclass
+class Scene:
+    """单个场景的完整信息载体。在 Pipeline 各阶段逐步填充。"""
+    scene_id: int
+    scene_index: int
+    start_sec: float
+    end_sec: float
+    keyframe: np.ndarray | None = None            # (H, W, C) uint8
+    keyframe_path: str | None = None
+    ocr_text: str | None = None
+    aligned_transcript: str | None = None
+    caption: str | None = None
+    prev_caption: str | None = None
+    embedding: list[float] | None = None           # Vector(768)
+    entities: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class VideoContext:
+    """Pipeline 全流程数据载体。各阶段读写此对象传递信息。"""
+    video_id: str
+    file_path: str
+    duration: float | None = None
+    scenes: list[Scene] = field(default_factory=list)
+    transcript_full: str | None = None
+    transcript_words: list[dict] = field(default_factory=list)
+    qc_result: dict = field(default_factory=dict)
+    summary: dict | None = None
+
+    # 异步进度回调: async def cb(progress: float, phase: str, desc: str)
+    progress_callback: Callable[[float, str, str], Awaitable[None]] | None = None
+
+
+# ═══════════════════════════════════════════════════════════
+# 抽象接口
+# ═══════════════════════════════════════════════════════════
+
+class BaseQC(ABC):
+    """视频质量检测 — 黑屏 / 静音 / 过曝片段检出。"""
+
+    @abstractmethod
+    async def check(self, ctx: VideoContext) -> dict:
+        """
+        对输入视频执行质量检测。
+
+        Args:
+            ctx: VideoContext，需含 file_path。
+
+        Returns:
+            {
+                "is_valid": bool,                          # 视频是否通过质检
+                "estimated_duration": float,                # 估算时长(秒)
+                "black_segments": [{"start_sec": float, "end_sec": float}],
+                "silent_segments": [{"start_sec": float, "end_sec": float}],
+                "overexposed_segments": [{"start_sec": float, "end_sec": float}],
+            }
+        """
+        ...
+
+
+class BaseTranscriber(ABC):
+    """语音转录 — 音频文件 → 带时间戳的全文。"""
+
+    @abstractmethod
+    async def transcribe(
+        self,
+        audio_path: str,
+        language: str | None = None,
+    ) -> dict:
+        """
+        对音频文件执行语音识别。
+
+        Args:
+            audio_path: 音频文件路径（WAV / MP3）。
+            language: 语言提示（None = 自动检测, "zh" / "en" 等）。
+
+        Returns:
+            {
+                "full_text": str,                           # 转录全文
+                "language": str,                             # 检测语言
+                "duration": float,                           # 转录覆盖音频时长(秒)
+                "words": [{"word": str, "start": float, "end": float, "confidence": float}],
+            }
+        """
+        ...
+
+
+class BaseSegmenter(ABC):
+    """镜头分割 — 视频 → 场景时间片段列表。"""
+
+    @abstractmethod
+    async def segment(
+        self,
+        video_path: str,
+        sample_fps: float = 1.0,
+    ) -> list[dict]:
+        """
+        将视频按镜头切换切分为场景片段。
+
+        Args:
+            video_path: 视频文件路径。
+            sample_fps: 抽帧频率（帧/秒），影响分割精度与速度的平衡。
+
+        Returns:
+            [
+                {
+                    "scene_index": int,                      # 场景序号，0-based
+                    "start_sec": float,                      # 开始秒数
+                    "end_sec": float,                        # 结束秒数
+                    "keyframe": np.ndarray | None,           # 代表帧 (H,W,C) uint8
+                },
+            ]
+        """
+        ...
+
+
+class BaseDetector(ABC):
+    """物体检测 — 单帧 → 检测物列表。"""
+
+    @abstractmethod
+    async def detect(
+        self,
+        frame: np.ndarray,
+        start_sec: float,
+        end_sec: float,
+    ) -> list[dict]:
+        """
+        对关键帧执行物体检测。
+
+        Args:
+            frame: 单帧图像 (H, W, C) uint8。
+            start_sec: 该帧所属场景的开始时间。
+            end_sec: 该帧所属场景的结束时间。
+
+        Returns:
+            [
+                {
+                    "label": str,                            # 物体标签
+                    "bbox": [x1, y1, x2, y2],                # 边界框坐标
+                    "confidence": float,                     # 置信度 (0~1)
+                    "start_sec": float,                      # 出现时间
+                    "end_sec": float,                        # 消失时间
+                    "track_id": int | None,                  # 跟踪 ID（跨帧关联）
+                },
+            ]
+        """
+        ...
+
+
+class BaseOCR(ABC):
+    """文字提取 — 单帧 → 可见文字。"""
+
+    @abstractmethod
+    async def extract(self, frame: np.ndarray) -> str:
+        """
+        对关键帧执行 OCR 文字提取。
+
+        Args:
+            frame: 单帧图像 (H, W, C) uint8。
+
+        Returns:
+            提取到的文字内容（多行文本用换行分隔）。
+        """
+        ...
+
+
+class BaseCaptioner(ABC):
+    """画面描述 (VLM) — 关键帧 + 文本 prompt → 自然语言描述。"""
+
+    @abstractmethod
+    async def caption(
+        self,
+        keyframe: np.ndarray,
+        prompt: str,
+        max_new_tokens: int = 256,
+    ) -> str:
+        """
+        对关键帧生成深度画面描述。
+
+        Args:
+            keyframe: 关键帧图像 (H, W, C) uint8。
+            prompt: 由 prompt_loader 渲染好的完整提示词。
+            max_new_tokens: 生成最大 token 数。
+
+        Returns:
+            自然语言描述文本。
+        """
+        ...
+
+
+class BaseEmbedder(ABC):
+    """向量编码 — 图像 / 文本 → 768 维嵌入向量。"""
+
+    @abstractmethod
+    async def encode_image(self, image: np.ndarray) -> list[float]:
+        """
+        将图像编码为嵌入向量。
+
+        Args:
+            image: 输入图像 (H, W, C) uint8。
+
+        Returns:
+            768 维 float 向量。
+        """
+        ...
+
+    @abstractmethod
+    async def encode_text(self, text: str) -> list[float]:
+        """
+        将文本编码为嵌入向量（用于文本查询的向量化）。
+
+        Args:
+            text: 输入文本。
+
+        Returns:
+            768 维 float 向量。
+        """
+        ...
+
+
+class BaseSummarizer(ABC):
+    """摘要生成 (LLM) — 视频剧本 → 结构化摘要。"""
+
+    @abstractmethod
+    async def summarize(
+        self,
+        script: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict:
+        """
+        根据视频剧本生成结构化摘要。
+
+        Args:
+            script: 按时间排列的完整视频剧本。
+            system_prompt: 系统角色提示词。
+            user_prompt: 用户提示词（已包含 script 占位符）。
+
+        Returns:
+            {
+                "one_liner": str,                            # 一句话概括
+                "scenes_summary": [                          # 场景摘要列表
+                    {
+                        "scene_index": int,
+                        "start_sec": float,
+                        "end_sec": float,
+                        "description": str,
+                        "keywords": [str],
+                    },
+                ],
+                "tags": [str],                               # 标签
+                "main_topics": [str],                        # 核心主题
+                "main_entities": [str],                      # 主要实体
+            }
+        """
+        ...
+
+
+class BaseGrounding(ABC):
+    """开放词汇目标定位 — 单帧 + 查询文本 → 边界框列表。"""
+
+    @abstractmethod
+    async def locate(
+        self,
+        frame: np.ndarray,
+        query: str,
+    ) -> list[dict]:
+        """
+        在帧画面中定位查询文本描述的物体。
+
+        Args:
+            frame: 单帧图像 (H, W, C) uint8。
+            query: 查询文本，如"猫"、"红色的车"。
+
+        Returns:
+            [
+                {
+                    "label": str,                            # 物体标签
+                    "bbox": [x1, y1, x2, y2],                # 边界框坐标
+                    "confidence": float,                     # 置信度 (0~1)
+                },
+            ]
+        """
+        ...

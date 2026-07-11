@@ -1,0 +1,483 @@
+一、 总体文件架构（项目目录树）
+请在你的开发根目录 cerno/ 下，完全按照以下结构创建文件夹和空文件（标有 ★ 的文件为本阶段需要直接填入内容的基础配置文件）：
+
+Plaintext
+cerno/
+├── main.py                          # FastAPI 入口，管理 lifespan 生命周期
+├── requirements.txt                 # ★ Python 依赖清单
+├── docker-compose.yaml              # ★ 数据库与基础设施编排
+├── Dockerfile                       # ★ 核心应用镜像（含 FFmpeg 基础设施）
+│
+├── config/
+│   ├── config.yaml                  # ★ 核心配置：模型名称、服务端口、路径
+│   ├── config_schema.py             # config.yaml 的 Pydantic 校验模型
+│   └── prompts.yaml                 # ★ 所有 VLM/LLM 提示词模板
+│
+├── core/
+│   ├── __init__.py
+│   ├── interfaces.py                # 抽象接口层 (9 个 Base 类)
+│   ├── models.py                    # SQLAlchemy ORM 模型 (Video, Scene, Transcript)
+│   ├── db.py                        # 数据库引擎 & session 工厂
+│   ├── schemas.py                   # Pydantic 校验与数据传递对象 (VideoContext 等)
+│   ├── config_loader.py             # YAML 配置加载器
+│   ├── prompt_loader.py             # Prompt 模板加载与渲染器
+│   ├── exceptions.py                # 自定义异常
+│   └── status_tracker.py            # 异步状态更新器
+│
+├── pipeline/
+│   ├── __init__.py
+│   ├── engine.py                    # PipelineEngine：五阶段串联核心
+│   ├── search_engine.py             # 双路召回与 RRF 融合搜索引擎
+│   ├── phase1_qc.py                 # 质检阶段
+│   ├── phase2_perception.py         # 抽帧与镜头分割、检测阶段
+│   ├── phase3_alignment.py          # 音频转录与对齐阶段
+│   ├── phase4_caption.py            # 画面描述阶段
+│   └── phase5_summary.py            # LLM 结构化摘要阶段
+│
+├── plugins/
+│   ├── __init__.py
+│   ├── factory.py                   # 策略工厂
+│   ├── qc/                          # 质检插件目录
+│   ├── transcriber/                 # 语音转录插件目录（如 faster-whisper）
+│   ├── segmenter/                   # 镜头分割插件目录
+│   ├── detector/                    # 物体检测插件目录（如 YOLOv8）
+│   ├── ocr/                         # OCR 插件目录
+│   ├── captioner/                   # 画面描述插件目录（如 qwen-vl）
+│   ├── embedder/                    # 向量编码插件目录（如 qwen3-vl-embedding）
+│   ├── summarizer/                  # 摘要生成插件目录
+│   └── grounding/                   # 开放词汇目标定位插件目录
+│
+├── api/
+│   ├── __init__.py
+│   ├── router.py                    # 路由总装总入口
+│   ├── video_routes.py              # 视频管理接口
+│   ├── search_routes.py             # 搜索与浏览接口
+│   ├── export_routes.py             # 视频剪辑与数据导出接口
+│   └── maintenance_routes.py        # 索引维护接口
+│
+├── services/
+│   ├── __init__.py
+│   ├── video_service.py             # 视频管理核心业务逻辑
+│   └── export_service.py            # 视频剪辑核心业务逻辑
+│
+├── utils/
+│   ├── __init__.py
+│   └── video_util.py                # 视频处理工具函数
+│
+└── tests/
+    ├── __init__.py
+    ├── conftest.py                  # Pytest 全局异步 DB 固件
+    └── ...                          # 各阶段单元测试脚本
+二、 Docker 基础配置代码
+根据《最终可行方案》与《数据字典》，系统强依赖 PostgreSQL 17 + pgvector 0.8 扩展，且运行环境中必须包含 FFmpeg 用于音频流抽取与 1fps 内存抽帧。以下是完美对齐规范的基础设施配置：
+
+1. docker-compose.yaml (基础设施编排)
+设计对齐说明：将 PostgreSQL 的 5432 端口直接映射至宿主机，确保你无论是直接在宿主机本地调试运行 FastAPI，还是将其打包进 Docker，都能通过 localhost:5432 严丝合缝地连接到数据库。
+
+YAML
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:17-pgvector  # 严格对齐规范：PostgreSQL 17 + pgvector 0.8
+    container_name: cerno_postgres
+    environment:
+      POSTGRES_USER: cerno
+      POSTGRES_PASSWORD: cerno
+      POSTGRES_DB: cerno
+    ports:
+      - "5432:5432"                       # 映射至宿主机，对齐 localhost:5432 契约
+    volumes:
+      - cerno_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cerno -d cerno"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cerno_network
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cerno_app
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_URI=postgresql+asyncpg://cerno:cerno@db:5432/cerno  # 容器间通信使用 db 服务名
+    volumes:
+      - .:/home/cerno/project
+      - /home/cerno/data:/home/cerno/data  # 挂载视频数据存放目录
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - cerno_network
+
+volumes:
+  cerno_db_data:
+
+networks:
+  cerno_network:
+    driver: bridge
+2. Dockerfile (应用镜像定义)
+设计对齐说明：由于 Pipeline 涉及 FFmpeg 的深度调用，基础镜像选用包含了完整编译工具链和 FFmpeg 环境的官方 Python 镜像。
+
+Dockerfile
+FROM python:3.12-slim
+
+# 设置工作目录
+WORKDIR /home/cerno/project
+
+# 安装系统级依赖：必须包含 ffmpeg 以及基础编译环境
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    gcc \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制依赖清单并安装
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 复制项目代码
+COPY . .
+
+# 暴露 FastAPI 默认服务的 8000 端口
+EXPOSE 8000
+
+# 启动命令
+CMD ["uvicorn", "main.py", "--host", "0.0.0.0", "--port", "8000"]
+3. requirements.txt (Python 依赖清单)
+Plaintext
+fastapi>=0.110.0
+uvicorn>=0.28.0
+sqlalchemy[asyncio]>=2.0.28
+asyncpg>=0.29.0
+pgvector>=0.2.5
+pydantic>=2.6.4
+pydantic-settings>=2.2.1
+pyyaml>=6.0.1
+numpy>=1.26.4
+httpx>=0.27.0
+pytest>=8.1.1
+pytest-asyncio>=0.23.5
+三、 核心初始化配置文件
+为了避免后续算法加载或 Prompt 渲染时抛出 FileNotFoundError，必须在 config/ 目录下放置这两个最基础的配置文件。
+
+1. config/config.yaml (基础应用配置)
+YAML
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+database:
+  uri: "postgresql+asyncpg://cerno:cerno@localhost:5432/cerno"
+
+storage:
+  video_dir: "/home/cerno/data/videos"
+  artifact_dir: "/home/cerno/data/artifacts"
+
+plugins:
+  qc:
+    backend: "native_qc"
+  transcriber:
+    backend: "faster_whisper"
+    model_path: "systran/faster-whisper-tiny"
+  segmenter:
+    backend: "transnetv2"
+  detector:
+    backend: "yolov8n"
+  ocr:
+    backend: "pp_lcnet"
+  captioner:
+    backend: "qwen_vl"
+  embedder:
+    backend: "qwen3_vl_embedding"
+  summarizer:
+    backend: "vllm"
+    base_url: "http://localhost:8010/v1"
+  grounding:
+    backend: "florence2"
+2. config/prompts.yaml (提示词模板库)
+YAML
+caption_default: |
+  你是一个专业的视频分镜描述助手。请对当前关键帧画面进行客观、详细的中文描述，包含场景、主体、动作及主要文字。
+
+caption_with_context: |
+  上一个镜头的画面描述为: {prev_caption}
+  请结合上述上下文，对当前关键帧画面进行连贯的中文描述。
+
+summary_system: |
+  你是一个专业的视频内容分析助手。你需要根据提供的内容，为视频生成一份结构化的摘要。
+
+summary_user: |
+  请根据以下提取到的视频场景描述与语音转录文本，生成一份包含一句话总结(one_liner)、核心主题(main_topics)、实体(main_entities)和标签(tags)的 JSON 摘要。
+  场景描述: {caption_timeline}
+  语音转录: {transcript_text}
+
+grounding_caption: |
+  请在当前画面中精准定位出以下物体的位置，并返回检测框: {query_text}
+
+Cerno 系统全套架构设计与自动化总装蓝图
+📌 阶段一：异步数据库配置、ORM 模型与原生触发器初始化
+💻 1.1 开发提示词（Coding Agent）
+Plaintext
+角色：资深 Python 后端架构师（精通 SQLAlchemy 2.0 异步模式与 PostgreSQL 17 高级特性）
+
+任务：请根据以下技术规范，编写 Cerno 系统的数据库基础配置定义文件 `core/db.py` 和 ORM 模型定义文件 `core/models.py`。代码必须严格遵循 SQLAlchemy 2.0 的 Mapped 语法，并且完全契合指定的字段名、数据类型和索引策略。
+
+技术要求：
+1. 【数据库连接】：
+   - 文件路径：`core/db.py`
+   - 使用异步引擎 `create_async_engine` 连接数据库：`postgresql+asyncpg://cerno:cerno@localhost:5432/cerno`
+   - 线程池配置：`pool_size=20`，`max_overflow=10`，`echo=False`
+   - 会话配置：使用 `async_sessionmaker` 创建 `AsyncSessionLocal`，设置 `expire_on_commit=False`
+   - 定义声明式基类 `class Base(DeclarativeBase): metadata = MetaData(schema="public")`
+
+2. 【扩展与触发器函数初始化】：
+   - 在 `core/db.py` 中实现异步初始化函数 `async def init_db()`。
+   - 使用原始 SQL 异步执行创建三个扩展：`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`, `CREATE EXTENSION IF NOT EXISTS "pg_trgm";`, `CREATE EXTENSION IF NOT EXISTS "vector";`
+   - 异步执行创建 `scenes_search_vector_update` 触发器函数，用于自动维护全文检索：
+     NEW.search_vector 必须组合自：caption (权重 'A') + ocr_text (权重 'B') + aligned_transcript (权重 'C')，均使用 'simple' 配置及 coalesce 处理空值。
+   - 在执行完毕 raw SQL 扩展和函数定义后，调用 `await conn.run_sync(Base.metadata.create_all)`。
+
+3. 【ORM 数据模型】：
+   - 文件路径：`core/models.py`
+   - 严格导入 `from pgvector.sqlalchemy import Vector`
+   - 定义原生的 Python 枚举类并绑定到 SQLAlchemy Enum：
+     - `VideoStatus`: pending, processing, completed, failed
+     - `PresetMode`: quick, standard, full, custom
+     - `ContentType`: general, meeting, surveillance, product
+   - 定义 `Video` 模型（表名 `videos`）：
+     - 包含主键 `id` (UUID, 默认 uuid.uuid4), `status` (VideoStatus, 默认 PENDING, 带索引), `progress` (Float, 默认 0.0), `error_message` (Text, 可空)。
+     - 文件信息：`file_path` (String(1024)), `file_name` (String(512)), `file_size` (Integer), `duration` (Float, 可空)。
+     - 配置字段：`preset` (PresetMode), `content_type` (ContentType), `language` (String(16), 默认 "auto")。
+     - 6个感知开关（全部为 Boolean, 默认值按规范）：`audio_enabled`(True), `vision_enabled`(True), `ocr_enabled`(True), `grounding_enabled`(False), `caption_enabled`(True), `summary_enabled`(True)。
+     - JSONB 字段：`qc_result` (JSONB, 可空), `summary` (JSONB, 可空)。
+     - 时间戳：`created_at` (DateTime(timezone=True), 默认 utcnow), `updated_at` (DateTime(timezone=True), 默认 utcnow, onupdate=utcnow)。
+     - 关联关系：`scenes` (一对多关系, 级联删除 `cascade="all, delete-orphan"`), `transcript` (一对一关系, `uselist=False`, 级联删除)。
+   - 定义 `Scene` 模型（表名 `scenes`）：
+     - 主键 `id` (Integer, 自增), 外键 `video_id` (UUID, 关联 `videos.id`, 级联删除 `ondelete="CASCADE"`, 带索引)。
+     - `scene_index` (Integer), `start_sec` (Float), `end_sec` (Float), `keyframe_path` (String(1024), 可空)。
+     - 向量字段：`embedding` (Mapped[list[float] | None]), 使用 `Vector(768)` 类型。
+     - 文本字段：`ocr_text` (Text, 可空), `aligned_transcript` (Text, 可空), `caption` (Text, 可空), `prev_caption` (Text, 可空)。
+     - 实体字段：`entities` (JSONB, 可空)。
+     - 全文检索字段：`search_vector` 映射为名为 `"tsvector"` 的列，可空。
+     - 时间戳：`created_at` (DateTime(timezone=True), 默认 utcnow)。
+     - 索引配置（必须在 `__table_args__` 中完整定义）：
+       * `Index("idx_scenes_video_scene", "video_id", "scene_index")`
+       * `Index("idx_scenes_start_sec", "video_id", "start_sec")`
+       * HNSW 向量索引：`Index("idx_scenes_embedding_hnsw", "embedding", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 200}, postgresql_ops={"embedding": "vector_cosine_ops"})`
+       * GIN 全文检索索引：`Index("idx_scenes_search_vector_gin", "search_vector", postgresql_using="gin")`
+   - 定义 `Transcript` 模型（表名 `transcripts`）：
+     - 主键 `id` (Integer, 自增), 外键 `video_id` (UUID, 关联 `videos.id`, 级联删除, 唯一约束 `unique=True`)。
+     - `full_text` (Text, 必填), `words` (JSONB, 可空), `language` (String(16), 可空), `duration_transcribed` (Float, 可空)。
+     - 时间戳：`created_at` (DateTime(timezone=True), 默认 utcnow)。
+     - 索引配置：`Index("idx_transcripts_full_text_gin", "full_text", postgresql_using="gin", postgresql_ops={"full_text": "gin_trgm_ops"})`
+
+请直接输出完整、无缺失行的代码，严禁包含任何 `// TODO` 或省略。
+🧪 1.2 验收提示词（Testing Agent）
+Plaintext
+角色：QA 自动化测试专家（精通 Pytest、pytest-asyncio 与 PostgreSQL 容器化集成测试）
+
+任务：为刚才生成的 `core/db.py` 和 `core/models.py` 编写全套自动化集成测试。测试需要运行在真实的或测试用的 PostgreSQL 数据库上，确保所有表、扩展、索引和触发器全部创建成功并正常工作。
+
+测试用例要求：
+1. 【测试环境准备】：使用 `pytest_asyncio` 编写异步的 `db_session` 固件（fixture）。在测试开始前调用 `await init_db()`，并额外通过 raw SQL 在 `scenes` 表上创建前置触发器 `CREATE TRIGGER trg_scenes_search_vector BEFORE INSERT OR UPDATE ON scenes FOR EACH ROW EXECUTE FUNCTION scenes_search_vector_update();`，测试结束后清理数据。
+2. 【基础生命周期测试】：
+   - 插入一条 `Video` 记录，验证默认值（如 `status` 为 pending，6个开关的默认布尔值）。
+   - 验证 `updated_at` 会在 `Video` 字段更新时由 SQLAlchemy 自动变更。
+3. 【级联删除测试】：
+   - 为该 `Video` 插入 3 条 `Scene` 数据和 1 条 `Transcript` 数据。
+   - 删除该 `Video` 记录，断言 `scenes` 和 `transcripts` 表中对应的关联记录被数据库底层彻底级联删除（CASCADE）。
+4. 【触发器功能测试】：
+   - 插入一条 `Scene` 记录，为其赋值：`caption="A beautiful deep vision descriptor"`, `ocr_text="PPT Text Content"`, `aligned_transcript="Whisper audio text sequence"`。
+   - 保存提交后，通过 raw SQL 查询该行 `search_vector` 列，断言其不为 NULL。
+   - 通过原生 SQL 全文检索验证权重，确保能够通过 `to_tsquery('simple', 'beautiful')` 或 `to_tsquery('simple', 'PPT')` 检索到该条 scene 记录。
+5. 【向量字段类型断言】：
+   - 插入一个包含 768 维浮点数的列表作为 `embedding`，验证可以正常保存且不会引发类型错误。
+
+请提供完整的 `tests/test_database_layer.py` 代码，包含必要的 import 和断言。
+📌 阶段二：核心数据类型、Pydantic DTO 与深度验证层
+💻 2.1 开发提示词（Coding Agent）
+Plaintext
+角色：资深后端架构师（精通 Pydantic v2 高级数据校验与 JSON Schema 定义）
+
+任务：根据规范中定义的复杂 JSONB 字段结构，编写核心数据结构的 Pydantic v2 校验模型文件 `core/schemas.py`。这些模型将用于应用层的数据绑定、API 输入输出校验，并确保入库前的 JSONB 数据完全符合格式要求。
+
+数据结构规范要求：
+1. 【QCResult 结构 (videos.qc_result)】：
+   - 包含：`is_valid` (bool), `estimated_duration` (float)
+   - `black_segments`: 由包含 `start_sec` (float) 和 `end_sec` (float) 的字典组成的列表。
+   - `silent_segments`: 由包含 `start_sec` (float) 和 `end_sec` (float) 的字典组成的列表。
+   - `overexposed_segments`: 结构同上。
+2. 【VideoSummary 结构 (videos.summary)】：
+   - `one_liner`: 字符串（视频一句话总结）。
+   - `scenes_summary`: 列表，内部元素包含 `scene_index` (int), `start_sec` (float), `end_sec` (float), `description` (str), `keywords` (list[str])。
+   - `tags`: 字符串列表。
+   - `main_topics`: 字符串列表。
+   - `main_entities`: 字符串列表。
+3. 【SceneEntity 结构 (scenes.entities)】：
+   - 列表结构，内部元素包含：`label` (str), `bbox` (由 4 个浮点数组成的列表 `[x1, y1, x2, y2]`), `confidence` (float, 0.0 到 1.0 之间), `start_sec` (float), `end_sec` (float), `track_id` (int, 可空)。
+4. 【WordTimestamp 结构 (transcripts.words)】：
+   - 列表结构，内部元素包含：`word` (str), `start` (float), `end` (float), `confidence` (float, 可空)。
+
+5. 【模型请求与响应 DTO】：
+   - `VideoCreate`: 包含 `file_path`, `file_name`, `file_size`（必须 > 0），以及可选的 `preset`, `content_type`, `language`，和 6 个独立控制开关。
+   - `VideoResponse`: 完整映射 `Video` 模型的所有字段，其中 `qc_result` 自动转换为 `QCResult | None`，`summary` 自动转换为 `VideoSummary | None`。
+   - `SceneResponse`: 映射 `Scene` 字段，其中 `entities` 自动转换为 `list[SceneEntity] | None`，并包含 `embedding`（展示时转换为 `list[float] | None`）。
+
+请输出完整的 `core/schemas.py` 文件，充分使用 Pydantic v2 的 `Field` 进行边界条件约束（例如进度必须在 0.0 到 1.0 之间，置信度必须在 0.0 到 1.0 之间，时间戳不可为负数）。
+🧪 2.2 验收提示词（Testing Agent）
+Plaintext
+角色：测试工程师（精通 Pydantic 数据鲁棒性测试与异常边界用例设计）
+
+任务：为 `core/schemas.py` 编写详尽的单元测试，覆盖边界值、非法类型输入、空值处理以及正确的序列化与反序列化流程。
+
+测试用例要求：
+1. 【合法数据解析测试】：给出规范中定义的 4 个标准 JSON 示例（`videos.qc_result`, `videos.summary`, `scenes.entities`, `transcripts.words`），使用对应的 Pydantic 模型进行 `model_validate()`，断言解析后的属性与原数据完全一致。
+2. 【非法边界校验测试】：
+   - 尝试将 `VideoStatus` 的进度 `progress` 设置为 `1.5` 或 `-0.1`，断言触发 `ValidationError`。
+   - 尝试将检测框的置信度 `confidence` 设置为 `1.05`，断言触发 `ValidationError`。
+   - 传入负数的 `start_sec` 或 `end_sec`，断言触发校验失败。
+3. 【文件大小校验】：
+   - 传入 `file_size=0` 或 `-100` 给 `VideoCreate`，断言引发异常。
+4. 【数据导出序列化】：
+   - 实例化一个复杂的 `VideoResponse`（包含完整的 `summary` 嵌套模型），调用 `model_dump_json()`，验证输出的 JSON 字符串中各嵌套键名完全符合原始字典要求。
+
+请输出完整的 `tests/test_schemas.py` 脚本代码。
+📌 阶段三：高性能数据访问层（Repository / CRUD）
+💻 3.1 开发提示词（Coding Agent）
+Plaintext
+角色：高性能后端开发专家（精通 SQLAlchemy 异步批量处理与高级检索优化）
+
+任务：请基于 SQLAlchemy 2.0 异步 API 编写核心数据访问层文件 `core/repository.py`。该文件需要封装所有高频的数据库读写逻辑，特别是针对视频分镜切片的高性能批量插入。
+
+需要实现的方法：
+1. `async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video`:
+   - 在数据库中创建并保存一条初始状态为 `pending` 的视频元数据记录。
+2. `async def get_video_with_relations(session: AsyncSession, video_id: uuid.UUID) -> Video | None`:
+   - 一次性高效查询视频记录，并使用 `selectinload` 预加载其关联的 `scenes` 和 `transcript`，避免 N+1 问题。
+3. `async def update_video_progress(session: AsyncSession, video_id: uuid.UUID, status: VideoStatus, progress: float, error_message: str | None = None) -> Video | None`:
+   - 原子化更新视频的处理状态、系统进度及潜在错误信息。
+4. `async def bulk_insert_scenes(session: AsyncSession, video_id: uuid.UUID, scenes_list: list[dict]) -> None`:
+   - 考虑到一个视频会切出 30-100 个场景，必须使用 SQLAlchemy 2.0 的高效批量插入方法（如 `session.execute(insert(Scene), scenes_list)` 或 `add_all` 优化模式），并在插入前确保每条记录都正确绑定了 `video_id`。
+5. `async def save_video_artifacts(session: AsyncSession, video_id: uuid.UUID, qc_result: dict | None, summary: dict | None) -> None`:
+   - 将算法 Pipeline 输出的最终 QC 结果和摘要（JSONB 格式）更新到指定视频行中。
+
+请提供包含完整类型提示（Type Hints）、正确事务处理（`session.commit()`）及错误回滚（`session.rollback()`）的 `core/repository.py` 完整实现。
+🧪 3.2 验收提示词（Testing Agent）
+Plaintext
+角色：数据层测试专家（精通异步事务隔离测试与并发批量写入性能断言）
+
+任务：编写 `tests/test_repository.py` 对刚才的数据访问层方法进行完备的集成测试。
+
+测试用例要求：
+1. 【创建与状态变更测试】：
+   - 调用 `create_video` 插入一条记录，获取其 UUID。
+   - 随后调用 `update_video_progress` 将状态变更为 `processing`，进度改为 `0.45`。
+   - 重新从数据库读取，断言其状态与进度严格符合预期。
+2. 【高并发/批量场景插入测试】：
+   - 构造一个包含 50 个分镜字典的列表（包含 `scene_index`, `start_sec`, `end_sec`，无向量和实体）。
+   - 调用 `bulk_insert_scenes` 进行批量插入。
+   - 查询 `scenes` 表，断言该 `video_id` 下的记录总数严格等于 50，且 `scene_index` 从 0 到 49 连续。
+3. 【关联对象预加载验证】：
+   - 调用 `get_video_with_relations` 查询该视频，断言可以直接访问 `.scenes` 属性且不会触发 `MissingGreenlet` 异步未加载异常。
+4. 【异常事务回滚测试】：
+   - 故意向 `bulk_insert_scenes` 传入一条破坏数据库约束的数据（例如缺失必填项 `start_sec`）。
+   - 断言整个批量插入操作抛出异常，且事务回滚后数据库中未留下任何属于本次插入的脏数据。
+
+请输出可直接运行的 `tests/test_repository.py` 全量测试代码。
+📌 阶段四：混合文本、全分镜级向量检索服务层
+💻 4.1 开发提示词（Coding Agent）
+Plaintext
+角色：搜索算法与工程专家（精通 PostgreSQL pgvector HNSW 检索、文本相关性召回与混合检索策略）
+
+任务：请根据规范中为 `scenes` 表配置的 `embedding`（HNSW 索引，余弦距离）以及 `search_vector`（GIN 全文检索索引），编写核心搜索服务组件 `core/search.py`。
+
+需要实现的高级检索函数：
+1. `async def vector_similarity_search(session: AsyncSession, query_vector: list[float], limit: int = 10) -> list[Scene]`:
+   - 使用 pgvector 的官方方法对 `Scene.embedding` 计算余弦相似度（`cosine_distance`）。
+   - 注意：余弦距离越小相似度越高，检索结果必须按距离升序排列，并过滤掉 `embedding` 为 NULL 的行。
+2. `async def full_text_search(session: AsyncSession, query_text: str, limit: int = 10) -> list[Scene]`:
+   - 使用 PostgreSQL 原生的全文检索能力。通过 `search_vector.op('@@')(func.to_tsquery('simple', query_text))` 过滤数据。
+   - 检索结果必须利用 `func.ts_rank(Scene.search_vector, func.to_tsquery('simple', query_text))` 计算文本相关性得分，并按照得分降序排列。
+3. `async def hybrid_search(session: AsyncSession, query_vector: list[float], query_text: str, vector_weight: float = 0.7, limit: int = 10) -> list[tuple[Scene, float]]`:
+   - 实现一个混合检索服务：同时发起向量检索与全文检索，或者通过在底层合并排序（如倒数排名融合 RRF 或自定义加权得分）。
+   - 提示：可以在一条查询中同时选出向量距离与文本 rank，通过给定的权重 `vector_weight` 计算最终融合得分，降序输出。
+4. `async def fuzzy_transcript_search(session: AsyncSession, keyword: str, limit: int = 5) -> list[Transcript]`:
+   - 利用 `transcripts` 表上的三元组 GIN 索引（`idx_transcripts_full_text_gin`），使用 `full_text.ilike(f"%{keyword}%")` 或原生 `trgm` 相似度操作符对全视频转录文本进行模糊关键字匹配。
+
+请输出具有极高查询性能、完美配合 pgvector 语法的 `core/search.py` 完整实现。
+🧪 4.2 验收提示词（Testing Agent）
+Plaintext
+角色：搜索检索评估测试专家（精通多模态检索准确率测试与特征匹配校验）
+
+任务：为 `core/search.py` 编写精准的集成测试，验证向量检索的距离计算、触发器生成的全文权重及模糊查询。
+
+测试用例要求：
+1. 【向量余弦距离测试】：
+   - 在测试数据库中手工插入两组确定夹角的 768 维向量。例如：Scene A 的 embedding 与查询向量完全一致（距离应为 0），Scene B 的 embedding 与查询向量正交。
+   - 调用 `vector_similarity_search`，断言 Scene A 必须排在第一位，且检索出的记录数量与 limit 限制相符。
+2. 【全文检索权重与排序测试】：
+   - 插入 Scene 1（`caption='target keyword'`）和 Scene 2（`aligned_transcript='target keyword'`）。
+   - 根据触发器函数的定义，`caption` 拥有最高权重 'A'，`aligned_transcript` 权重为 'C'。
+   - 调用 `full_text_search` 查询 `'target keyword'`，断言 Scene 1 的 `ts_rank` 得分必须严格高于 Scene 2，且 Scene 1 排在结果首位。
+3. 【混合检索融合测试】：
+   - 验证调用 `hybrid_search` 能够同时处理文本和向量输入，且返回的数据结构中正确包含了融合后的浮点数得分。
+4. 【模糊转录内容检索】：
+   - 向 `transcripts` 插入包含 `'Cerno Q3 earnings report detail statement'` 的文本。
+   - 调用 `fuzzy_transcript_search` 搜索 `'earnings'`，断言能成功召回对应的转录单行记录。
+
+请输出完整的测试用例脚本 `tests/test_search_engine.py`。
+📌 阶段五：FastAPI 展示层与自动化集成总装
+💻 5.1 开发提示词（Coding Agent）
+Plaintext
+角色：高级后端系统架构师（精通 FastAPI 异步框架、依赖注入与工业级中间件控制）
+
+任务：请将之前开发的所有数据层、模型层及检索层代码整合，编写 FastAPI 应用的路由定义文件 `api/routes.py` 和服务主入口文件 `main.py`。API 的设计必须符合典型的流媒体与智能视频分析系统规范，提供标准的输入输出格式。
+
+技术规范与路由要求：
+1. 【主入口与中间件】（`main.py`）：
+   - 创建 `app = FastAPI(title="Cerno Video Analytics Core Engine", version="0.1")`。
+   - 挂载全局异常处理句柄，捕获数据库连接超时或 Pydantic 校验错误，统一返回结构化 JSON（`{"detail": "错误信息"}`）。
+   - 编写数据库 Session 依赖项：`async def get_db() -> AsyncGenerator[AsyncSession, None]: async with AsyncSessionLocal() as session: yield session`。
+2. 【视频任务注册接口】：
+   - `POST /api/v1/videos`
+   - 输入 Payload：`VideoCreate` 模型。
+   - 业务逻辑：调用 repository 的 `create_video` 将任务持久化入库，状态设为 `pending`。
+   - 返回状态码：`201 Created`，返回内容：`VideoResponse`。
+3. 【任务进度与制品查询接口】：
+   - `GET /api/v1/videos/{video_id}`
+   - 业务逻辑：调用 `get_video_with_relations`。若不存在返回 404；存在则返回视频的全套处理状态、进度以及可能已经生成的 `qc_result` 与 `summary`。
+4. 【文本模态全文检索接口】：
+   - `GET /api/v1/search/text`
+   - 查询参数：`q: str`（搜索关键字），`limit: int = 10`
+   - 业务逻辑：直接调用搜索服务层的 `full_text_search` 召回对应的切片分镜。
+5. 【多模态混合检索接口】：
+   - `POST /api/v1/search/hybrid`
+   - 输入 Payload：`{"query_text": "...", "query_vector": [... 768维浮点数 ...], "limit": 10}`
+   - 业务逻辑：调用 `hybrid_search` 并返回场景切片及其匹配得分。
+
+请提供无代码缺失的、纯异步非阻塞编写的 `main.py` 与 `api/routes.py` 完整实现。
+🧪 5.2 验收提示词（Testing Agent）
+Plaintext
+角色：全栈测试专家（精通 FastAPI 端到端 E2E 测试、HTTPX 异步请求模拟与 Mock 机制）
+
+任务：编写 Cerno 系统的全链路端到端自动化测试文件 `tests/test_main_pipeline.py`，通过模拟完整的 HTTP 请求，彻底跑通“视频创建 -> 进度轮询 -> 多模态混合检索”的黄金链路。
+
+测试用例要求：
+1. 【应用测试客户端配置】：
+   - 使用 `httpx.AsyncClient` 包装 FastAPI 实例 `app`，实现全异步的 HTTP 请求测试。
+   - 覆盖 `get_db` 依赖项，使其在测试期间指向隔离的干净测试数据库。
+2. 【全链路业务流测试】：
+   - **Step 1**：向 `/api/v1/videos` 发送 `POST` 请求，提交一个合法的视频文件路径信息。断言返回状态码为 201，且返回的 JSON 报文中包含合法的 UUID 字符串，状态为 `pending`。
+   - **Step 2**：使用上一步拿到的 UUID，向 `/api/v1/videos/{video_id}` 发送 `GET` 请求。断言能够成功获取数据，且 `progress` 初始为 0.0。
+   - **Step 3**：为了模拟算法 Pipeline 的处理产物，直接通过测试固件（fixture）向数据库插入 5 条属于该视频的、带有文本内容和 768 维特征向量的 `Scene` 记录。
+   - **Step 4**：向 `/api/v1/search/text?q=some_keyword` 发送 `GET` 检索请求。断言状态码为 200，且返回的 List 列表中包含被召回的场景。
+   - **Step 5**：向 `/api/v1/search/hybrid` 发送包含伪造 768 维向量和文本的 `POST` 混合检索请求。断言接口可以正常响应并按综合相似度吐出分镜切片结果。
+
+请输出这套极具价值的全链路端到端集成测试脚本 `tests/test_main_pipeline.py`。

@@ -1,0 +1,17 @@
+caption_default: |
+  你是一个专业的视频分镜描述助手。请对当前关键帧画面进行客观、详细的中文描述，包含场景、主体、动作及主要文字。
+
+caption_with_context: |
+  上一个镜头的画面描述为: {prev_caption}
+  请结合上述上下文，对当前关键帧画面进行连贯的中文描述。
+
+summary_system: |
+  你是一个专业的视频内容分析助手。你需要根据提供的内容，为视频生成一份结构化的摘要。
+
+summary_user: |
+  请根据以下提取到的视频场景描述与语音转录文本，生成一份包含一句话总结(one_liner)、核心主题(main_topics)、实体(main_entities)和标签(tags)的 JSON 摘要。
+  场景描述: {caption_timeline}
+  语音转录: {transcript_text}
+
+grounding_caption: |
+  请在当前画面中精准定位出以下物体的位置，并返回检测框: {query_text}
