@@ -189,29 +189,33 @@ function LeftSidebar({
   onUpload: () => void;
 }) {
   return (
-    <aside className="w-20 bg-white rounded-t-[40px] rounded-b-[40px] shadow-[2px_0_12px_rgba(0,0,0,0.04)] flex flex-col items-center py-6 z-10 flex-shrink-0 my-4 ml-4">
-      <div className="mb-12">
+    <aside className="w-20 bg-white rounded-t-[40px] rounded-b-[40px] shadow-[2px_0_12px_rgba(0,0,0,0.04)] flex flex-col items-center pt-8 pb-6 z-10 flex-shrink-0 my-4 ml-4">
+      <div className="mb-14">
         <div className="w-8 h-8 bg-blue-500 rounded flex items-center justify-center text-white">
           <IconEye />
         </div>
       </div>
       <nav className="flex-1 flex flex-col gap-6 w-full px-4">
-        <a className="w-full aspect-square rounded-xl bg-blue-100/50 flex items-center justify-center text-blue-600 transition-colors" href="#">
-          <IconDashboard />
-        </a>
+        <button className="w-full aspect-square rounded-xl flex items-center justify-center transition-colors">
+          <div className="w-9 h-9 bg-blue-100/50 rounded-lg flex items-center justify-center text-blue-600">
+            <IconDashboard />
+          </div>
+        </button>
         <button
           onClick={onToggleHistory}
-          className={`w-full aspect-square rounded-xl flex items-center justify-center transition-colors ${
-            showHistory ? "bg-blue-100/50 text-blue-600" : "text-gray-400 hover:bg-white/40 hover:text-gray-700"
-          }`}
+          className="w-full aspect-square rounded-xl flex items-center justify-center transition-colors text-gray-400 hover:bg-white/40 hover:text-gray-700"
         >
-          <IconHistory />
+          <div className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${showHistory ? "bg-blue-100/50 text-blue-600" : ""}`}>
+            <IconHistory />
+          </div>
         </button>
         <button
           onClick={onUpload}
-          className="w-full aspect-square rounded-xl flex items-center justify-center text-blue-500 bg-blue-50/60 hover:bg-blue-100/80 transition-colors"
+          className="w-full aspect-square rounded-xl flex items-center justify-center transition-colors"
         >
-          <IconPlus />
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center text-blue-500 bg-blue-50/60 hover:bg-blue-100/80 transition-colors">
+            <IconPlus />
+          </div>
         </button>
       </nav>
       <div className="mt-auto flex flex-col items-center">
@@ -238,9 +242,9 @@ const stageColors: Record<PipelineStage["id"], string> = {
 
 function PipelineBar({ progress }: { progress: number }) {
   return (
-    <div className="w-full flex flex-col">
+    <div className="glass-panel rounded-2xl px-5 py-4 border border-gray-200/60 w-full">
       {/* 分段填充条 */}
-      <div className="flex gap-1 h-2.5 w-full">
+      <div className="flex gap-1 h-2 w-full">
         {PIPELINE_STAGES.map((stage) => {
           const isDone = progress >= stage.progressEnd;
           const isActive = !isDone && progress >= stage.progressStart;
@@ -280,14 +284,18 @@ function PipelineBar({ progress }: { progress: number }) {
         })}
       </div>
 
-      {/* 阶段标签 */}
+      {/* 阶段标签 + 微连接点 */}
       <div className="flex justify-between px-0.5 mt-1.5">
         {PIPELINE_STAGES.map((stage) => {
           const isDone = progress >= stage.progressEnd;
           const isActive = !isDone && progress >= stage.progressStart;
+          const isPending = progress < stage.progressStart;
 
           return (
-            <div key={stage.id} className="flex-1 flex flex-col items-center">
+            <div key={stage.id} className="flex-1 flex flex-col items-center gap-1">
+              {isPending && <div className="w-1 h-1 rounded-full bg-gray-300/50" />}
+              {isDone && <div className="w-1 h-1 rounded-full bg-green-400/60" />}
+              {isActive && <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: stageColors[stage.id], boxShadow: `0 0 4px ${stageColors[stage.id]}` }} />}
               <span className={`text-[11px] font-medium whitespace-nowrap transition-colors duration-500 ${
                 isDone ? "text-gray-700" : isActive ? "font-semibold" : "text-gray-400"
               }`}
@@ -308,13 +316,19 @@ function PipelineBar({ progress }: { progress: number }) {
    ════════════════════════════════════════════════════════════ */
 
 function VideoSummaryCard({ video }: { video: VideoResponse | null }) {
-  const containerClass = "bg-white rounded-[2rem] p-4 shadow-md border border-gray-100 min-h-[200px] flex flex-col h-full";
+  const containerClass = "card-surface rounded-2xl p-4 border border-gray-200/60 min-h-[200px] flex flex-col h-full";
 
   if (!video) {
     return (
       <div className={containerClass}>
         <h3 className="font-bold text-gray-900 text-lg mb-2">视频摘要</h3>
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex flex-col items-center justify-center gap-2">
+          <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" y1="13" x2="8" y2="13" />
+            <line x1="16" y1="17" x2="8" y2="17" />
+          </svg>
           <span className="text-gray-400 text-sm">选择视频后查看摘要</span>
         </div>
       </div>
@@ -459,12 +473,11 @@ function VideoSearchCard({
   const resultCount = results.length;
 
   return (
-    <div className="bg-white rounded-[2rem] p-4 shadow-md border border-gray-100 flex flex-col h-full min-h-0">
+    <div className="card-surface rounded-2xl p-4 border border-gray-200/60 flex flex-col h-full min-h-0">
       {/* Header */}
       <div className="flex items-center justify-between mb-3 shrink-0">
         <div>
           <h3 className="font-bold text-gray-900 text-base">视频搜索</h3>
-          <p className="text-[11px] text-gray-400 mt-0.5">自然语言描述，定位视频画面</p>
         </div>
         {resultCount > 0 && (
           <span className="text-[11px] text-gray-400 font-mono bg-gray-50 px-2 py-0.5 rounded-full">
@@ -826,11 +839,13 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard-container relative h-screen">
-      <div className="fluid-background" />
+      <div className="fluid-blob fluid-blob-blue" />
+      <div className="fluid-blob fluid-blob-green" />
+      <div className="fluid-blob fluid-blob-warm" />
 
       {/* Separator + search + bulb */}
       <div className="absolute left-[128px] right-0 top-[80px] z-20">
-        <div className="h-px bg-gray-300 w-full" />
+        <div className="h-px bg-gray-300/60 w-full" />
         <div className="absolute -top-[54px]" style={{ right: '156px' }}>
           <div className="relative">
             <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -838,17 +853,12 @@ export default function Dashboard() {
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
             <input
-              className="h-9 w-72 pl-10 pr-4 py-2 bg-gray-300/80 backdrop-blur-sm border-none rounded-full focus:ring-2 focus:ring-blue-100 text-sm placeholder-gray-500 outline-none"
+              className="h-8 w-72 pl-10 pr-4 bg-gray-200/70 backdrop-blur-sm border-none rounded-full focus:ring-2 focus:ring-blue-100 text-sm placeholder-gray-500 outline-none"
               placeholder="全局搜索..."
               type="text"
             />
           </div>
         </div>
-        <button className="absolute -top-[54px] right-4 w-9 h-9 bg-white rounded-full shadow-sm border border-gray-200 flex items-center justify-center text-gray-400 hover:text-yellow-500 hover:border-yellow-300 transition-colors flex-shrink-0">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 18h6M10 22h4M12 2C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17h8v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z" />
-          </svg>
-        </button>
       </div>
 
       <LeftSidebar
@@ -862,19 +872,25 @@ export default function Dashboard() {
         <div className="flex-1 pt-[23px] pl-8 pr-4 flex flex-col">
           {/* Title + Stat Cards */}
           <div className="flex items-start">
-            <h1 className="text-4xl font-bold text-gray-900 leading-tight tracking-tight whitespace-nowrap shrink-0">工作台</h1>
+            <h1 className="text-4xl font-bold text-gray-900 leading-tight tracking-tighter whitespace-nowrap shrink-0">工作台</h1>
             {currentVideo ? (
               <div className="flex mt-2 ml-auto">
-                <div className="border-l-2 border-gray-300 pl-4">
-                  <p className="text-sm font-medium text-gray-800">{statLabel}</p>
-                  <p className="text-gray-500 text-sm">{statValue}</p>
+                <div className="flex items-start gap-3">
+                  <div className="w-0.5 h-8 mt-0.5 bg-gray-300 rounded-full flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">{statLabel}</p>
+                    <p className="text-gray-500 text-sm font-mono">{statValue}</p>
+                  </div>
                 </div>
               </div>
             ) : (
               <div className="flex mt-2 ml-auto">
-                <div className="border-l-2 border-gray-300 pl-4">
-                  <p className="text-sm font-medium text-gray-800">等待选择</p>
-                  <p className="text-gray-500 text-sm">—</p>
+                <div className="flex items-start gap-3">
+                  <div className="w-0.5 h-8 mt-0.5 bg-gray-300 rounded-full flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">等待选择</p>
+                    <p className="text-gray-500 text-sm font-mono">—</p>
+                  </div>
                 </div>
               </div>
             )}
@@ -898,21 +914,11 @@ export default function Dashboard() {
                 您的浏览器不支持视频播放
               </video>
             ) : (
-              <>
-                <div className="w-20 h-20 rounded-full bg-black/40 flex items-center justify-center shadow-lg hover:bg-black/60 transition-colors cursor-pointer">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-16 h-16 rounded-full bg-black/40 flex items-center justify-center shadow-lg">
                   <IconPlay />
                 </div>
-              </>
-            )}
-            {/* Processing bridge — 进度桥接条 */}
-            {currentVideoId && (isProcessing || isCompleted || currentVideo?.status === "failed") && (
-              <div className="absolute bottom-0 left-0 right-0 h-1">
-                <div
-                  className={`h-full transition-all duration-700 ${
-                    currentVideo?.status === "failed" ? "bg-red-400" : isCompleted ? "bg-green-400" : "bg-blue-400"
-                  }`}
-                  style={{ width: `${Math.round((currentVideo?.progress ?? 0) * 100)}%` }}
-                />
+                <p className="text-sm text-gray-400">上传或选择视频开始</p>
               </div>
             )}
           </div>
@@ -925,7 +931,7 @@ export default function Dashboard() {
       </main>
 
       {/* Right Sidebar */}
-      <aside className="w-[460px] p-4 pt-[96px] pb-4 flex flex-col gap-4 z-10 flex-shrink-0 h-full">
+      <aside className="w-[460px] p-4 pt-[96px] pb-4 flex flex-col gap-3 z-10 flex-shrink-0 h-full">
         <div className="flex-1 min-h-0">
           <VideoSummaryCard video={currentVideo} />
         </div>
