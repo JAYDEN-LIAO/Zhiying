@@ -3,7 +3,7 @@
    保留原设计配色 / 布局 / 玻璃面板风格，连接真实后端 API
    ════════════════════════════════════════════════════════════ */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./services/api";
 import { PIPELINE_STAGES } from "./mockData";
 import type { PipelineStage } from "./mockData";
@@ -224,25 +224,23 @@ function LeftSidebar({
 }
 
 /* ════════════════════════════════════════════════════════════
-   PipelineBar — 分段式光谱进度条
+   PipelineBar — 蓝→青绿分段进度条
    ════════════════════════════════════════════════════════════ */
 
-const stageColors: Record<PipelineStage["id"], { start: string; end: string }> = {
-  qc:      { start: "#3b82f6", end: "#6366f1" },
-  segment: { start: "#6366f1", end: "#8b5cf6" },
-  align:   { start: "#8b5cf6", end: "#06b6d4" },
-  caption: { start: "#06b6d4", end: "#f59e0b" },
-  embed:   { start: "#f59e0b", end: "#10b981" },
-  summary: { start: "#10b981", end: "#ef4444" },
+const stageColors: Record<PipelineStage["id"], string> = {
+  qc:      "#4785f0",   // 蓝
+  segment: "#4f93ed",
+  align:   "#5ca8e8",   // 蓝青
+  caption: "#67c4c0",   // 青色
+  embed:   "#60c9a8",   // 青绿
+  summary: "#55c890",   // 绿色
 };
 
 function PipelineBar({ progress }: { progress: number }) {
-  const pct = Math.round(progress * 100);
-
   return (
     <div className="w-full flex flex-col">
       {/* 分段填充条 */}
-      <div className="flex gap-1 h-3 w-full">
+      <div className="flex gap-1 h-2.5 w-full">
         {PIPELINE_STAGES.map((stage) => {
           const isDone = progress >= stage.progressEnd;
           const isActive = !isDone && progress >= stage.progressStart;
@@ -255,27 +253,25 @@ function PipelineBar({ progress }: { progress: number }) {
             <div
               key={stage.id}
               className="flex-1 rounded-full overflow-hidden relative"
-              style={{ backgroundColor: 'rgba(255,255,255,0.3)' }}
+              style={{ backgroundColor: 'rgba(182,210,235,0.3)' }}
             >
-              {/* 已完成 / 进行中 填充 */}
               <div
                 className="absolute inset-0 rounded-full transition-all duration-700 ease-out"
                 style={{
                   width: `${internalPct}%`,
                   background: internalPct > 0
-                    ? `linear-gradient(90deg, ${c.start}88, ${c.end})`
+                    ? `linear-gradient(90deg, ${c}cc, ${c})`
                     : 'transparent',
                 }}
               />
-              {/* 进行中：前端荧光 */}
               {isActive && internalPct > 0 && (
                 <div
                   className="absolute top-0 bottom-0 w-2 rounded-full transition-all duration-700 z-10"
                   style={{
                     left: `${internalPct}%`,
                     transform: 'translateX(-50%)',
-                    background: `${c.end}`,
-                    boxShadow: `0 0 8px ${c.end}, 0 0 16px ${c.end}44`,
+                    background: c,
+                    boxShadow: `0 0 6px ${c}`,
                   }}
                 />
               )}
@@ -284,8 +280,8 @@ function PipelineBar({ progress }: { progress: number }) {
         })}
       </div>
 
-      {/* 阶段标签 + 数值 */}
-      <div className="flex justify-between px-0.5 mt-2">
+      {/* 阶段标签 */}
+      <div className="flex justify-between px-0.5 mt-1.5">
         {PIPELINE_STAGES.map((stage) => {
           const isDone = progress >= stage.progressEnd;
           const isActive = !isDone && progress >= stage.progressStart;
@@ -293,35 +289,15 @@ function PipelineBar({ progress }: { progress: number }) {
           return (
             <div key={stage.id} className="flex-1 flex flex-col items-center">
               <span className={`text-[11px] font-medium whitespace-nowrap transition-colors duration-500 ${
-                isDone ? "text-gray-800" : isActive ? `font-semibold` : "text-gray-400"
+                isDone ? "text-gray-700" : isActive ? "font-semibold" : "text-gray-400"
               }`}
-                style={isActive ? { color: stageColors[stage.id].end } : {}}
+                style={isActive ? { color: stageColors[stage.id] } : {}}
               >
                 {stage.label}
               </span>
             </div>
           );
         })}
-      </div>
-
-      {/* 彩色渐变光谱完成线 */}
-      {progress > 0 && (
-        <div className="w-full h-px mt-2 rounded-full relative overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.3)' }}>
-          <div
-            className="absolute inset-0 rounded-full transition-all duration-700"
-            style={{
-              width: `${pct}%`,
-              background: `linear-gradient(90deg, ${PIPELINE_STAGES.map(s => stageColors[s.id].end).join(', ')})`,
-            }}
-          />
-        </div>
-      )}
-
-      {/* 右下角总百分比 */}
-      <div className="flex justify-end mt-2">
-        <span className="text-[11px] font-mono font-semibold text-gray-500">
-          {pct}%
-        </span>
       </div>
     </div>
   );
@@ -449,7 +425,13 @@ function VideoSummaryCard({ video }: { video: VideoResponse | null }) {
    VideoSearchCard — 连接后端 API
    ════════════════════════════════════════════════════════════ */
 
-function VideoSearchCard({ currentVideoId }: { currentVideoId: string | null }) {
+function VideoSearchCard({
+  currentVideoId,
+  onSeekTo,
+}: {
+  currentVideoId: string | null;
+  onSeekTo?: (start: number, end: number | null) => void;
+}) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [searching, setSearching] = useState(false);
@@ -458,6 +440,7 @@ function VideoSearchCard({ currentVideoId }: { currentVideoId: string | null }) 
 
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return;
+    setResults([]);
     setSearching(true);
     setError(null);
     try {
@@ -541,7 +524,14 @@ function VideoSearchCard({ currentVideoId }: { currentVideoId: string | null }) 
 
         {/* Results list */}
         {results.map((item, idx) => (
-          <div key={item.scene_id || idx} className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+          <div
+            key={item.scene_id || idx}
+            className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
+            onClick={() => {
+              const ts = item.precise_start ?? item.scene_range_start;
+              if (onSeekTo && ts > 0) onSeekTo(ts, item.precise_end ?? item.scene_range_end);
+            }}
+          >
             <div className="flex items-start gap-3">
               {/* Thumbnail */}
               <div className="shrink-0 w-[68px] h-[51px] rounded-lg overflow-hidden bg-gray-50 border border-gray-200">
@@ -741,6 +731,8 @@ export default function Dashboard() {
   const [showHistory, setShowHistory] = useState(false);
   const [listLoading, setListLoading] = useState(false);
   const [listKey, setListKey] = useState(0);
+  const [seekTarget, setSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const isProcessing = currentVideo?.status === "processing" || currentVideo?.status === "pending";
   const isCompleted = currentVideo?.status === "completed";
@@ -786,6 +778,13 @@ export default function Dashboard() {
       if (timer) clearInterval(timer);
     };
   }, [currentVideoId]);
+
+  /* ── Seek to time ── */
+  useEffect(() => {
+    if (!seekTarget || !videoRef.current) return;
+    videoRef.current.currentTime = seekTarget.start;
+    videoRef.current.play().catch(() => {});
+  }, [seekTarget]);
 
   /* ── Handlers ── */
   const handleSelect = useCallback((id: string) => {
@@ -887,6 +886,7 @@ export default function Dashboard() {
           <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-black/5 shadow-inner flex items-center justify-center">
             {currentVideoId && currentVideo ? (
               <video
+                ref={videoRef}
                 key={currentVideoId}
                 className="w-full h-full object-contain bg-black"
                 src={api.getVideoStreamUrl(currentVideoId)}
@@ -930,7 +930,7 @@ export default function Dashboard() {
           <VideoSummaryCard video={currentVideo} />
         </div>
         <div className="flex-1 min-h-0">
-          <VideoSearchCard currentVideoId={currentVideoId} />
+          <VideoSearchCard currentVideoId={currentVideoId} onSeekTo={(start, end) => setSeekTarget({ start, end })} />
         </div>
       </aside>
 

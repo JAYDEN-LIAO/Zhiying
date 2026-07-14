@@ -279,14 +279,13 @@ class PipelineEngine:
                     temp_dir, f"chunk_{chunk_idx}.mp4",
                 )
 
-                # ffmpeg 截取片段（-c copy 会导致关键帧边界偏移 → 元数据缺失 fps，
-                #               改用 libx264 重新编码确保 torchvision 可读）
+                # ffmpeg 截取片段（-ss 在 -i 之后 → 精确定位，避免关键帧边界花屏）
                 proc = await asyncio.create_subprocess_exec(
                     "ffmpeg", "-y",
-                    "-ss", str(start),
                     "-i", self.ctx.file_path,
+                    "-ss", str(start),
                     "-t", str(clip_dur),
-                    "-vf", "scale=-2:360,fps=1",  # 降分辨率 + 降帧率 → 减少 patch + 文件小
+                    "-vf", "scale=-2:480,fps=2",  # 480p 2fps — chunk 向量质量和效率平衡
                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
                     "-an",
                     clip_path,
@@ -300,7 +299,7 @@ class PipelineEngine:
 
                 try:
                     emb = await embedder.encode_video(
-                        clip_path, fps=1.0, max_frames=8,
+                        clip_path, fps=1.0, max_frames=20,
                     )
                 except Exception as e:
                     logger.warning(

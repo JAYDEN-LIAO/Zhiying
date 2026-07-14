@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Cerno Video Analytics Core Engine",
-    version="0.1",
+    version="0.5",
     lifespan=lifespan,
 )
 

@@ -38,12 +38,12 @@ body {
 .fluid-background {
   position: absolute;
   bottom: 0;
-  left: 5%;
-  width: 70%;
+  left: 40%;
+  width: 60%;
   height: 45%;
   background:
-    radial-gradient(circle at 30% 50%, rgba(135, 178, 245, 0.6) 0%, rgba(135, 178, 245, 0) 50%),
-    radial-gradient(circle at 70% 60%, rgba(144, 212, 194, 0.5) 0%, rgba(144, 212, 194, 0) 50%);
+    radial-gradient(circle at 40% 50%, rgba(135, 178, 245, 0.6) 0%, rgba(135, 178, 245, 0) 50%),
+    radial-gradient(circle at 75% 55%, rgba(144, 212, 194, 0.5) 0%, rgba(144, 212, 194, 0) 50%);
   filter: blur(60px);
   z-index: 0;
   pointer-events: none;
