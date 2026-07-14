@@ -1,13 +1,13 @@
 """
 pipeline/search_engine.py
 ═══════════════════════════════════════════════════════════
-多路召回 + RRF 融合搜索编排器。
+统一搜索引擎 — 四路并行召回 + 按 scene 合并 + 精度升级。
 
-三路并行召回:
-  1. vector  — pgvector <=> cosine distance  (core.search.vector_similarity_search)
-  2. fulltext — ts_rank + tsquery 全文检索     (core.search.full_text_search)
-  3. label   — JSONB @> 精确匹配 entities.label
-融合策略: Reciprocal Rank Fusion (RRF, k=60)
+召回路径:
+  1. frame   — 1fps 帧级向量，精确定位到秒
+  2. chunk   — 多帧原生编码，过程语义匹配
+  3. text    — caption 文本语义向量
+  4. label   — entities JSONB 精确匹配（未来 YOLO 激活）
 """
 
 import asyncio
@@ -16,16 +16,20 @@ import logging
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core.models import Scene
-from core.search import vector_similarity_search, full_text_search
+from core.models import Scene, FrameEmbedding, Chunk
+from core.search import (
+    frame_vector_search, chunk_vector_search,
+    text_vector_search,
+)
 
 logger = logging.getLogger(__name__)
 
+_PRECISION_ORDER = {"frame": 0, "chunk": 1, "text": 2, "label": 3}
+_CLUSTER_GAP = 4.0  # 帧聚类最大间隔（秒）
+
 
 class SearchEngine:
-    """多路召回 + Reciprocal Rank Fusion 融合搜索引擎。"""
-
-    RRF_K: int = 60
+    """四路并行召回 + 按 scene 合并 + 精度升级搜索。"""
 
     def __init__(
         self,
@@ -44,35 +48,36 @@ class SearchEngine:
         top_k: int = 20,
         min_similarity: float = 0.3,
     ) -> list[dict]:
-        """多路召回 + RRF 融合。
+        """四路并行召回 + 按 scene 合并 + 精度升级。
 
         Args:
             query:        文本查询（与 image_vec 二选一）。
             image_vec:    图像查询向量（与 query 二选一）。
             video_ids:    限定视频范围，None=全库。
-            search_types: 启用哪些检索路 ["vector","fulltext","label"]，默认全开。
+            search_types: 启用哪些路径 ["frame","chunk","text","label"]。
             top_k:        最终返回条数。
             min_similarity: 最低相似度阈值。
 
         Returns:
-            [{"scene_id", "video_id", "scene_index", "start_sec", "end_sec",
-              "caption", "ocr_text", "aligned_transcript", "entities",
-              "similarity", "source"}, ...]
+            统一格式的搜索结果列表，按 similarity 降序。
         """
         if search_types is None:
-            search_types = ["vector", "fulltext", "label"]
+            search_types = ["frame", "chunk", "text", "label"]
 
-        # 文本查询 → 向量编码
+        # 文本查询 → 向量编码（仅一次，三条路共享）
         vec = image_vec
-        if query and "vector" in search_types and self.embedder:
+        needs_vec = ("frame" in search_types or "chunk" in search_types or "text" in search_types)
+        if query and needs_vec and self.embedder:
             vec = await self.embedder.encode_text(query)
 
-        # ── 三路并行召回 ──
+        # ── 多路并行召回 ──
         tasks = []
-        if "vector" in search_types and vec is not None:
-            tasks.append(self._vector_search(vec, video_ids, top_k * 2))
-        if "fulltext" in search_types and query:
-            tasks.append(self._fulltext_search(query, video_ids, top_k * 2))
+        if "frame" in search_types and vec is not None:
+            tasks.append(self._frame_search(vec, video_ids, top_k * 2))
+        if "chunk" in search_types and vec is not None:
+            tasks.append(self._chunk_search(vec, video_ids, top_k * 2))
+        if "text" in search_types and vec is not None:
+            tasks.append(self._text_search(vec, video_ids, top_k * 2))
         if "label" in search_types and query:
             tasks.append(self._label_search(query, video_ids, top_k * 2))
 
@@ -84,56 +89,58 @@ class SearchEngine:
         if not ranked_lists:
             return []
 
-        # ── 融合 ──
-        if len(ranked_lists) == 1:
-            # 单路召回：排名位置计算相似度，避免 RRF 单路时分数过低被过滤
-            total = max(len(ranked_lists[0]), 2)
-            for rank, item in enumerate(ranked_lists[0]):
-                item["similarity"] = round(1.0 - (rank / total), 4)
-            fused = ranked_lists[0]
-        else:
-            # 多路召回：RRF 融合
-            fused = self._rrf_fuse(ranked_lists, k=self.RRF_K)
+        # ── 按 scene 合并（帧路在内部用 min_similarity 过滤低分帧）──
+        merged = self._merge_results(ranked_lists, min_similarity)
 
-        # ── 过滤低分 + Top-K ──
-        filtered = [item for item in fused if item["similarity"] >= min_similarity]
+        # ── 补全 scene 信息 ──
+        merged = await self._enrich_merged(merged)
+
+        # ── 过滤 + Top-K ──
+        filtered = [item for item in merged if item["similarity"] >= min_similarity]
         return filtered[:top_k]
 
     # ──────────────────────────────────────────────────────
     # 各路召回
     # ──────────────────────────────────────────────────────
 
-    async def _vector_search(
+    async def _frame_search(
         self,
         vec: list[float],
         video_ids: list[str] | None,
         limit: int,
     ) -> list[dict]:
-        """向量余弦相似度召回。"""
+        """帧级向量召回 — 逐帧编码，精确定位到秒。"""
         async with self.db_session_factory() as session:
-            scenes = await vector_similarity_search(
-                session, vec, limit=limit,
+            results = await frame_vector_search(
+                session, vec, limit=limit, video_ids=video_ids,
             )
-        return [
-            self._scene_to_dict(s, 1.0, "vector")
-            for s in scenes
-        ]
+        return [self._frame_to_dict(f, sim) for f, sim in results]
 
-    async def _fulltext_search(
+    async def _chunk_search(
         self,
-        query: str,
+        vec: list[float],
         video_ids: list[str] | None,
         limit: int,
     ) -> list[dict]:
-        """GIN tsvector 全文检索召回。"""
+        """chunk 窗口召回 — 多帧原生编码，过程语义匹配。"""
         async with self.db_session_factory() as session:
-            scenes = await full_text_search(
-                session, query, limit=limit,
+            results = await chunk_vector_search(
+                session, vec, limit=limit, video_ids=video_ids,
             )
-        return [
-            self._scene_to_dict(s, 1.0, "fulltext")
-            for s in scenes
-        ]
+        return [self._chunk_to_dict(c, sim) for c, sim in results]
+
+    async def _text_search(
+        self,
+        vec: list[float],
+        video_ids: list[str] | None,
+        limit: int,
+    ) -> list[dict]:
+        """文本语义召回 — 文本 vs caption 向量的语义匹配。"""
+        async with self.db_session_factory() as session:
+            results = await text_vector_search(
+                session, vec, limit=limit, video_ids=video_ids,
+            )
+        return [self._scene_to_dict(s, sim, "text") for s, sim in results]
 
     async def _label_search(
         self,
@@ -141,13 +148,11 @@ class SearchEngine:
         video_ids: list[str] | None,
         limit: int,
     ) -> list[dict]:
-        """JSONB 精确匹配 entities.label 召回。"""
+        """JSONB 精确匹配 entities.label（未来 YOLO 激活）。"""
         async with self.db_session_factory() as session:
             stmt = (
                 select(Scene)
-                .where(Scene.entities.op("@>")(
-                    f'[{{"label": "{query}"}}]'
-                ))
+                .where(Scene.entities.op("@>")(f'[{{"label": "{query}"}}]'))
                 .limit(limit)
             )
             if video_ids:
@@ -155,61 +160,163 @@ class SearchEngine:
             result = await session.execute(stmt)
             scenes = list(result.scalars().all())
 
-        return [
-            self._scene_to_dict(s, 1.0, "label")
-            for s in scenes
-        ]
+        return [self._scene_to_dict(s, 1.0, "label") for s in scenes]
 
     # ──────────────────────────────────────────────────────
-    # RRF 融合
+    # 结果融合：帧聚类 + 多路去重
     # ──────────────────────────────────────────────────────
 
     @staticmethod
-    def _rrf_fuse(
+    def _merge_results(
         ranked_lists: list[list[dict]],
-        k: int = 60,
+        min_similarity: float = 0.3,
     ) -> list[dict]:
-        """Reciprocal Rank Fusion: 合并多路召回的排名。"""
-        scores: dict[int, tuple[dict, float]] = {}
+        """帧结果按时间聚类 + chunk/text 结果去重叠。
 
+        规则：
+          1. 帧先筛低分（< min_similarity），再按时间聚类（间隔 ≤ CLUSTER_GAP）
+          2. chunk/text 结果若与任一帧簇时间重叠，丢弃
+          3. 非重叠的 chunk/text 保留
+        """
+        frames: list[dict] = []
+        others: list[dict] = []
         for ranked in ranked_lists:
-            for rank, item in enumerate(ranked, start=1):
-                sid = item["scene_id"]
-                rrf_score = 1.0 / (k + rank)
-                if sid in scores:
-                    existing, prev = scores[sid]
-                    scores[sid] = (existing, prev + rrf_score)
+            for item in ranked:
+                if item.get("source") == "frame":
+                    frames.append(item)
                 else:
-                    scores[sid] = (item, rrf_score)
+                    others.append(item)
 
-        fused = [
-            {"scene_id": sid, **item, "similarity": round(score, 4)}
-            for sid, (item, score) in scores.items()
-        ]
-        fused.sort(key=lambda x: x["similarity"], reverse=True)
-        return fused
+        # ── 帧：先过滤低分，再按时间聚类 ──
+        clusters: list[dict] = []
+        frames = [f for f in frames if f.get("similarity", 0) >= min_similarity]
+        if frames:
+            frames.sort(key=lambda x: x.get("precise_start", 0))
+            cur: dict | None = None
+            for fr in frames:
+                ts = fr.get("precise_start", 0)
+                if cur is None:
+                    cur = dict(fr)
+                    cur["precise_end"] = ts
+                    cur["match_paths"] = ["frame"]
+                elif ts - cur["precise_end"] <= _CLUSTER_GAP:
+                    cur["precise_end"] = ts
+                    if fr.get("similarity", 0) > cur.get("similarity", 0):
+                        cur["similarity"] = fr["similarity"]
+                else:
+                    clusters.append(cur)
+                    cur = dict(fr)
+                    cur["precise_end"] = ts
+                    cur["match_paths"] = ["frame"]
+            if cur is not None:
+                clusters.append(cur)
+
+        # ── 辅助：判断时间区间是否与某帧簇重叠 ──
+        def _overlaps(start: float | None, end: float | None) -> bool:
+            if start is None:
+                return False
+            e = end if end is not None else start
+            for c in clusters:
+                cs = c.get("precise_start", 0)
+                ce = c.get("precise_end", cs)
+                if not (e < cs or start > ce):
+                    return True
+            return False
+
+        # ── 非帧结果：去重叠 + 按 scene 合并 ──
+        other_map: dict[tuple[str, int], dict] = {}
+        for item in others:
+            if _overlaps(item.get("precise_start"), item.get("precise_end")):
+                continue
+            key = (item["video_id"], item["scene_index"])
+            if key not in other_map:
+                other_map[key] = dict(item)
+                other_map[key]["match_paths"] = [item.get("source", "unknown")]
+            else:
+                ex = other_map[key]
+                if item.get("similarity", 0) > ex.get("similarity", 0):
+                    ex["similarity"] = item["similarity"]
+                src = item.get("source", "unknown")
+                if src not in ex.get("match_paths", []):
+                    ex.setdefault("match_paths", []).append(src)
+
+        merged = clusters + list(other_map.values())
+        merged.sort(key=lambda x: x.get("similarity", 0), reverse=True)
+        return merged
+
+    async def _enrich_merged(self, merged: list[dict]) -> list[dict]:
+        """为合并后的结果补全 scene 级别信息。"""
+        if not merged:
+            return merged
+
+        video_ids = list(set(m["video_id"] for m in merged))
+        async with self.db_session_factory() as session:
+            stmt = select(Scene).where(Scene.video_id.in_(video_ids))
+            result = await session.execute(stmt)
+            scenes_map = {
+                (str(s.video_id), s.scene_index): s
+                for s in result.scalars().all()
+            }
+
+        for item in merged:
+            key = (item["video_id"], item["scene_index"])
+            s = scenes_map.get(key)
+            if s:
+                item["scene_id"] = s.id
+                item["scene_range_start"] = s.start_sec
+                item["scene_range_end"] = s.end_sec
+                item["caption"] = s.caption
+                item["ocr_text"] = s.ocr_text
+                item["aligned_transcript"] = s.aligned_transcript
+
+        return merged
 
     # ──────────────────────────────────────────────────────
-    # 辅助
+    # 格式化
     # ──────────────────────────────────────────────────────
 
     @staticmethod
-    def _scene_to_dict(
-        scene: Scene,
-        similarity: float,
-        source: str,
-    ) -> dict:
+    def _frame_to_dict(frame: FrameEmbedding, sim: float) -> dict:
+        return {
+            "video_id": str(frame.video_id),
+            "scene_index": frame.scene_index,
+            "precise_start": frame.timestamp_sec,
+            "precise_end": None,
+            "precision_level": "frame",
+            "similarity": float(sim),
+            "source": "frame",
+            "thumbnail_url": f"/api/v1/videos/{frame.video_id}/thumbnail/{frame.scene_index}",
+        }
+
+    @staticmethod
+    def _chunk_to_dict(chunk: Chunk, sim: float) -> dict:
+        return {
+            "video_id": str(chunk.video_id),
+            "scene_index": chunk.scene_index,
+            "precise_start": chunk.start_sec,
+            "precise_end": chunk.end_sec,
+            "precision_level": "chunk",
+            "similarity": float(sim),
+            "source": "chunk",
+            "thumbnail_url": f"/api/v1/videos/{chunk.video_id}/thumbnail/{chunk.scene_index}",
+        }
+
+    @staticmethod
+    def _scene_to_dict(scene: Scene, similarity: float, source: str) -> dict:
         return {
             "scene_id": scene.id,
             "video_id": str(scene.video_id),
-            "video_name": getattr(scene, "video_name", None),
             "scene_index": scene.scene_index,
-            "start_sec": scene.start_sec,
-            "end_sec": scene.end_sec,
+            "scene_range_start": scene.start_sec,
+            "scene_range_end": scene.end_sec,
+            "precise_start": None,
+            "precise_end": None,
+            "precision_level": source,
             "caption": scene.caption,
             "ocr_text": scene.ocr_text,
             "aligned_transcript": scene.aligned_transcript,
             "entities": scene.entities or [],
             "similarity": similarity,
             "source": source,
+            "thumbnail_url": f"/api/v1/videos/{scene.video_id}/thumbnail/{scene.scene_index}",
         }

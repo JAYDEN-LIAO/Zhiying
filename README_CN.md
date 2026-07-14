@@ -12,16 +12,19 @@ docker-compose up -d db
 set DASHSCOPE_API_KEY=sk-xxx   # Qwen-VL 画面描述
 set DEEPSEEK_API_KEY=sk-xxx    # 摘要生成
 
-# 3. 启动服务
+# 3. 启动后端服务
 uvicorn main:app --reload
 
-# 4. 上传视频
+# 4. (新窗口) 启动前端开发服务器
+cd frontend && npm install && npm run dev
+
+# 5. 上传视频
 curl -X POST -F "file=@demo.mp4" http://localhost:8000/api/v1/videos/upload
 
-# 5. 查看摘要
+# 6. 查看摘要
 curl http://localhost:8000/api/v1/videos/{video_id}
 
-# 6. 语义搜索
+# 7. 语义搜索
 curl -X POST -H "Content-Type: application/json" \
   -d '{"query":"一个男人从黑色轿车里走出来"}' \
   http://localhost:8000/api/v1/search/semantic
@@ -37,14 +40,18 @@ curl -X POST -H "Content-Type: application/json" \
 | 视频上传与处理 | `POST /api/v1/videos/upload` | ✅ |
 | 视频详情与摘要 | `GET /api/v1/videos/{id}` | ✅ |
 | 处理进度查询 | `GET /api/v1/videos/{id}/status` | ✅ |
+| 视频流式播放 | `GET /api/v1/videos/{id}/stream` | ✅ |
+| 视频列表 | `GET /api/v1/videos/` | ✅ |
+| 删除视频 | `DELETE /api/v1/videos/{id}` | ✅ |
 | 语义搜索 | `POST /api/v1/search/semantic` | ✅ |
 | 全文检索 | `GET /api/v1/search/text?q=...` | ✅ |
 | 混合检索（向量+文本） | `POST /api/v1/search/hybrid` | ✅ |
+| 前端工作台 | React 19 + Vite + Tailwind CSS | ✅ |
 
 ## 架构概览
 
 ```
-上传 → Pipeline → 数据库 → 搜索
+上传 → Pipeline → 数据库 → 搜索 → 前端
        ├─ 质检 + 镜头分割
        ├─ VLM 画面描述（API）
        ├─ 向量编码（本地 GPU，2048 维）
@@ -55,17 +62,21 @@ curl -X POST -H "Content-Type: application/json" \
 - **9 个抽象插件接口**，工厂模式动态加载
 - **PostgreSQL + pgvector** 向量存储与相似度搜索
 - **配置驱动**：切换模型或 API 提供商只需改 `config.yaml`
+- **React 前端**：视频播放器、Pipeline 进度可视化、语义搜索面板
 
 ## 技术栈
 
 | 组件 | 技术选型 |
 |---|---|
-| 框架 | FastAPI (Python 3.12) |
+| 后端框架 | FastAPI (Python 3.12) |
+| 前端框架 | React 19 + TypeScript |
+| 构建工具 | Vite 6 |
+| CSS | Tailwind CSS 4 |
 | 数据库 | PostgreSQL 17 + pgvector 0.8 |
 | 向量编码 | Qwen3-VL-Embedding-2B（本地 GPU） |
 | 画面描述 | Qwen-VL-Max（DashScope API） |
 | 摘要生成 | DeepSeek Chat（API） |
-| 镜头分割 | 固定间隔（基于时长） |
+| 镜头分割 | 固定间隔（基于时长）/ TransNetV2 |
 | 视频处理 | FFmpeg（asyncio 子进程） |
 
 ## 项目结构
@@ -74,17 +85,45 @@ curl -X POST -H "Content-Type: application/json" \
 cerno/
 ├── main.py               # FastAPI 入口
 ├── api/                  # 路由定义
+│   ├── router.py         # 路由总装
+│   ├── routes.py         # 所有 API 端点
+│   └── deps.py           # FastAPI 依赖注入（DB session）
 ├── core/                 # 数据库模型、数据校验、搜索、配置
+│   ├── db.py             # 异步引擎、init_db()、触发器
+│   ├── models.py         # ORM: Video, Scene, Transcript
+│   ├── schemas.py        # Pydantic DTO + JSONB 校验
+│   ├── repository.py     # 数据访问层
+│   ├── search.py         # pgvector + GIN 检索 SQL
+│   └── config_schema.py  # Pydantic 配置校验
 ├── pipeline/             # Pipeline 编排器 + 各阶段
+│   ├── engine.py         # 五阶段 PipelineEngine
+│   ├── phase1_qc.py      # 质检 + 分割
+│   ├── phase3_alignment.py
+│   ├── phase4_caption.py # 画面描述 + 向量编码
+│   ├── phase5_summary.py # LLM 摘要生成
+│   └── search_engine.py  # 多路召回 + RRF 融合
 ├── plugins/              # 插件实现 + 工厂
+│   ├── factory.py        # 动态插件加载器
+│   ├── captioner/        # Qwen API 画面描述
+│   ├── embedder/         # Qwen3-VL-Embedding（本地 GPU）
+│   ├── summarizer/       # DeepSeek API
+│   ├── segmenter/        # 固定间隔 / TransNetV2
+│   └── qc/               # FFmpeg 质检
 ├── services/             # 业务逻辑层
 ├── utils/                # FFmpeg 工具
-├── config/               # YAML 配置、提示词模板
+├── frontend/             # React + Vite + Tailwind 工作台
+│   ├── src/
+│   │   ├── Dashboard.tsx # 主工作台
+│   │   ├── services/api.ts
+│   │   └── types/
+│   ├── package.json
+│   └── vite.config.ts
+├── config/               # YAML 配置、提示词模板、schema
 └── docs/                 # 设计文档
 ```
 
 ## 开发状态
 
 - **Demo 就绪**：视频摘要与语义搜索已在 4060 8GB 上验证通过
-- **P0 完成**：Pipeline 核心、搜索引擎、API 路由
+- **P0 完成**：Pipeline 核心、搜索引擎、API 路由、前端工作台
 - **规划中**：物体检测（YOLO）、OCR、动态 Grounding、音频转录、导出 API

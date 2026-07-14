@@ -36,3 +36,8 @@ _check_encoding.py
 config/secrets.yaml
 .env
 *.log
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/

@@ -30,9 +30,11 @@ class VideoService:
         self,
         config: dict,
         db_session_factory: async_sessionmaker[AsyncSession],
+        embedder=None,
     ):
         self.config = config
         self.db_session_factory = db_session_factory
+        self.embedder = embedder
 
     async def create_and_process(
         self,
@@ -70,6 +72,7 @@ class VideoService:
                 config=self.config,
                 db_session_factory=self.db_session_factory,
                 video=video,
+                shared_embedder=self.embedder,
             )
             await engine.run()
         except Exception as e:

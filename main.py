@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from core.db import engine, AsyncSessionLocal, init_db
 from core.config_loader import load_config
+from plugins.factory import load_plugin
 from api.router import router
 
 logging.basicConfig(
@@ -41,6 +42,16 @@ async def lifespan(app: FastAPI):
     app.state.config = config
     app.state.db_session_factory = AsyncSessionLocal
     await init_db()
+
+    # 启动时加载共享 embedder（4GB 模型进显存），
+    # Pipeline 和 Search 复用此实例，避免每视频重复加载
+    embedder = await load_plugin(config, "embedder")
+    app.state.embedder = embedder
+    if embedder is not None:
+        logger.info("Shared embedder loaded → cached in app.state")
+    else:
+        logger.info("Embedder disabled, semantic search will skip vector recall")
+
     yield
     await engine.dispose()
     logger.info("Cerno engine shut down.")

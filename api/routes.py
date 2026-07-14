@@ -15,17 +15,18 @@ import shutil
 from typing import Generic, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from api.deps import get_db
 from core.schemas import (
-    VideoCreate, VideoResponse, SceneResponse,
+    VideoCreate, VideoResponse, VideoListItem, SceneResponse,
     PresetMode, ContentType,
 )
 from core.models import Scene, Video
-from core.repository import create_video, get_video_with_relations
+from core.repository import create_video, get_video_with_relations, list_videos, delete_video
 from core.search import full_text_search, hybrid_search
 from core.config_loader import load_config
 from services.video_service import VideoService
@@ -55,13 +56,17 @@ class APIResponse(BaseModel, Generic[T]):
 
 class HybridSearchRequest(BaseModel):
     query_text: str = Field(..., description="文本查询")
-    query_vector: list[float] = Field(..., description="768 维查询向量")
+    query_vector: list[float] = Field(..., description="2048 维查询向量")
     limit: int = Field(default=10, ge=1, le=100)
 
 
 class SemanticSearchRequest(BaseModel):
     """语义搜索请求 — 用户只需传入文本，向量编码由服务端自动完成。"""
     query: str = Field(..., min_length=1, description="自然语言搜索文本")
+    video_ids: list[str] | None = Field(
+        default=None,
+        description="限定搜索的视频范围，为空则全库搜索",
+    )
     search_types: list[str] | None = Field(
         default=None,
         description="检索路: vector / fulltext / label，默认全部启用",
@@ -71,15 +76,20 @@ class SemanticSearchRequest(BaseModel):
 
 
 class SearchResultItem(BaseModel):
-    scene_id: int
+    scene_id: int = 0
     video_id: str
     scene_index: int
-    start_sec: float
-    end_sec: float
+    scene_range_start: float = 0.0
+    scene_range_end: float = 0.0
+    precise_start: float | None = None
+    precise_end: float | None = None
+    precision_level: str = "scene"
+    match_paths: list[str] = Field(default_factory=list)
     caption: str | None = None
     ocr_text: str | None = None
     aligned_transcript: str | None = None
     similarity: float | None = None
+    thumbnail_url: str | None = None
 
 
 class SearchResults(BaseModel):
@@ -172,7 +182,11 @@ async def upload_video(
 
     # 后台触发 Pipeline
     db_session_factory = request.app.state.db_session_factory
-    service = VideoService(config=config, db_session_factory=db_session_factory)
+    service = VideoService(
+        config=config,
+        db_session_factory=db_session_factory,
+        embedder=getattr(request.app.state, "embedder", None),
+    )
     background_tasks.add_task(service.process_video, video.id)
 
     logger.info("[Upload] video=%s file=%s size=%d", video.id, file.filename, file_size)
@@ -189,6 +203,29 @@ async def get_video(
     if video is None:
         raise HTTPException(status_code=404, detail="Video not found")
     return APIResponse(data=VideoResponse.model_validate(video))
+
+
+@router.get("/videos/")
+async def list_all_videos(
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[list[VideoListItem]]:
+    """查询所有视频，按创建时间降序返回简洁列表。"""
+    videos = await list_videos(db)
+    items = [VideoListItem.model_validate(v) for v in videos]
+    return APIResponse(data=items)
+
+
+@router.delete("/videos/{video_id}")
+async def delete_video_endpoint(
+    video_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[None]:
+    """删除视频及其关联数据（scenes, transcript 通过外键 CASCADE 自动清除）。"""
+    deleted = await delete_video(db, video_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Video not found")
+    logger.info("[API] Video deleted: %s", video_id)
+    return APIResponse(data=None)
 
 
 @router.get("/videos/{video_id}/status")
@@ -218,6 +255,66 @@ async def get_video_status(
     ))
 
 
+@router.get("/videos/{video_id}/stream")
+async def stream_video(
+    video_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """流式传输原始视频文件，支持 HTTP Range 请求（视频拖动跳转）。
+
+    使用 FastAPI FileResponse 自动处理:
+      - Range header → 206 Partial Content
+      - If-Modified-Since / If-None-Match → 304 Not Modified
+      - Content-Type / Content-Length 自动检测
+    """
+    result = await db.execute(
+        select(Video.file_path, Video.file_name)
+        .where(Video.id == video_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    file_path = row.file_path
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Video file not found on disk")
+
+    return FileResponse(
+        path=file_path,
+        media_type="video/mp4",
+        filename=row.file_name,
+        content_disposition_type="inline",
+    )
+
+
+@router.get("/videos/{video_id}/thumbnail/{scene_index}")
+async def get_thumbnail(
+    video_id: uuid.UUID,
+    scene_index: int,
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """返回场景关键帧缩略图（搜索结果展示用）。"""
+    from core.models import Scene as SceneModel
+    result = await db.execute(
+        select(SceneModel.keyframe_path)
+        .where(
+            SceneModel.video_id == video_id,
+            SceneModel.scene_index == scene_index,
+        )
+    )
+    row = result.one_or_none()
+    if row is None or not row.keyframe_path:
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+    if not os.path.exists(row.keyframe_path):
+        raise HTTPException(status_code=404, detail="Thumbnail file not found on disk")
+
+    return FileResponse(
+        path=row.keyframe_path,
+        media_type="image/jpeg",
+    )
+
+
 # ═══════════════════════════════════════════════════════════
 # 搜索
 # ═══════════════════════════════════════════════════════════
@@ -230,7 +327,7 @@ async def search_text(
 ) -> APIResponse[SearchResults]:
     """文本模态全文检索（GIN tsvector）。"""
     t0 = time.monotonic()
-    scenes: list[Scene] = await full_text_search(db, q, limit=limit)
+    results_tuples: list[tuple[Scene, float]] = await full_text_search(db, q, limit=limit)
     elapsed = (time.monotonic() - t0) * 1000
 
     results = [
@@ -243,8 +340,10 @@ async def search_text(
             caption=s.caption,
             ocr_text=s.ocr_text,
             aligned_transcript=s.aligned_transcript,
+            similarity=round(sim, 4),
+            thumbnail_url=f"/api/v1/videos/{s.video_id}/thumbnail/{s.scene_index}",
         )
-        for s in scenes
+        for s, sim in results_tuples
     ]
     return APIResponse(data=SearchResults(results=results, total=len(results), query_time_ms=elapsed))
 
@@ -275,6 +374,7 @@ async def search_hybrid(
             ocr_text=s.ocr_text,
             aligned_transcript=s.aligned_transcript,
             similarity=round(score, 4),
+            thumbnail_url=f"/api/v1/videos/{s.video_id}/thumbnail/{s.scene_index}",
         )
         for s, score in scored
     ]
@@ -297,17 +397,17 @@ async def search_semantic(
     """
     t0 = time.monotonic()
 
-    # ── 延后初始化 SearchEngine（Embedder 首次加载约 10s，之后复用）──
+    # ── 延后初始化 SearchEngine（复用 app.state 中的共享 embedder）──
     se: SearchEngine | None = getattr(request.app.state, "_searcher", None)
     if se is None:
         from pipeline.search_engine import SearchEngine
-        from plugins.factory import load_plugin
-        embedder = await load_plugin(request.app.state.config, "embedder")
+        embedder = getattr(request.app.state, "embedder", None)
         se = SearchEngine(request.app.state.db_session_factory, embedder)
         request.app.state._searcher = se
 
     results = await se.search(
         query=payload.query,
+        video_ids=payload.video_ids,
         search_types=payload.search_types,
         top_k=payload.top_k,
         min_similarity=payload.min_similarity,
@@ -317,15 +417,20 @@ async def search_semantic(
 
     items = [
         SearchResultItem(
-            scene_id=r["scene_id"],
+            scene_id=r.get("scene_id", 0),
             video_id=r["video_id"],
             scene_index=r["scene_index"],
-            start_sec=r["start_sec"],
-            end_sec=r["end_sec"],
+            scene_range_start=r.get("scene_range_start", r.get("start_sec", 0)),
+            scene_range_end=r.get("scene_range_end", r.get("end_sec", 0)),
+            precise_start=r.get("precise_start"),
+            precise_end=r.get("precise_end"),
+            precision_level=r.get("precision_level", "scene"),
+            match_paths=r.get("match_paths", []),
             caption=r.get("caption"),
             ocr_text=r.get("ocr_text"),
             aligned_transcript=r.get("aligned_transcript"),
             similarity=r.get("similarity"),
+            thumbnail_url=f"/api/v1/videos/{r['video_id']}/thumbnail/{r['scene_index']}",
         )
         for r in results
     ]

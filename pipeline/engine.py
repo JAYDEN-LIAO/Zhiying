@@ -7,14 +7,17 @@ pipeline/engine.py
 通过 PipelineEngine.run() 入口执行全流程。
 """
 
+import asyncio
 import logging
 import os
+
+import numpy as np
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.interfaces import VideoContext
-from core.models import Video, VideoStatus
+from core.models import Video, Scene, VideoStatus
 from core.status_tracker import StatusTracker
 from core.prompt_loader import get_prompt_loader
 from core.repository import bulk_insert_scenes, save_video_artifacts
@@ -37,10 +40,12 @@ class PipelineEngine:
         config: dict,
         db_session_factory: async_sessionmaker[AsyncSession],
         video: Video,
+        shared_embedder=None,
     ):
         self.config = config
         self.db_session_factory = db_session_factory
         self.video = video
+        self.shared_embedder = shared_embedder
 
         self.tracker = StatusTracker(
             video_id=str(video.id),
@@ -58,12 +63,19 @@ class PipelineEngine:
     # ──────────────────────────────────────────────────────
 
     async def initialize(self) -> None:
-        """加载所有 9 类算法插件（可能为 None=被禁用）。"""
+        """加载所有 9 类算法插件（可能为 None=被禁用）。
+
+        若提供了共享 embedder（由 app.state 统一管理），
+        则跳过 load_plugin 直接复用，避免每视频重新加载 4GB 模型。
+        """
         categories = [
             "qc", "transcriber", "segmenter", "detector",
             "ocr", "captioner", "embedder", "summarizer", "grounding",
         ]
         for cat in categories:
+            if cat == "embedder" and self.shared_embedder is not None:
+                self.plugins["embedder"] = self.shared_embedder
+                continue
             self.plugins[cat] = await load_plugin(self.config, cat)
 
     # ──────────────────────────────────────────────────────
@@ -89,6 +101,12 @@ class PipelineEngine:
 
             await self.tracker.mark_completed()
             logger.info("[Pipeline] video %s completed", self.video.id)
+
+            # 帧和 chunk 编码（纯搜索用，不影响摘要，完成后执行）
+            try:
+                await self._encode_frames()
+            except Exception as e:
+                logger.warning("[Pipeline] Frame/chunk encoding failed: %s", e)
 
         except Exception as e:
             logger.exception("[Pipeline] video %s failed: %s", self.video.id, e)
@@ -123,8 +141,11 @@ class PipelineEngine:
     async def _extract_keyframes(self) -> None:
         """关键帧抽取 — Phase 1 后、Phase 4 前执行。
 
-        对每个场景的中点时间戳用 FFmpeg pipe 抽一帧到内存，
-        赋值 scene.keyframe 供后续 caption / embedding 使用。
+        按 1fps 逐帧抽取，全部存入 scene 帧池。
+        三条消费链路复用同一批帧：
+          ① 帧级路 → encode_image → frame_embeddings 表
+          ② chunk路 → encode_video → chunks 表
+          ③ VLM 路 → 选 3-7 帧 → caption
         """
         from utils.video_util import extract_keyframe_to_memory
 
@@ -133,22 +154,227 @@ class PipelineEngine:
             logger.info("[Pipeline] No scenes to extract keyframes from")
             return
 
-        logger.info("[Pipeline] Extracting %d keyframes ...", len(scenes))
+        logger.info("[Pipeline] Extracting frame pool @ 1fps ...")
         for i, scene in enumerate(scenes):
-            midpoint = (scene.start_sec + scene.end_sec) / 2.0
+            duration = scene.end_sec - scene.start_sec
+
+            # ── 1fps 逐帧抽取 ──
+            timestamps = list(range(
+                int(scene.start_sec), int(scene.end_sec),
+            ))
+            if not timestamps:
+                timestamps = [scene.start_sec + 0.1]
+
+            frames: list[np.ndarray] = []
+            frame_times: list[float] = []
+            for t in timestamps:
+                try:
+                    frame = await extract_keyframe_to_memory(
+                        self.ctx.file_path, t,
+                    )
+                    if frame is not None:
+                        frames.append(frame)
+                        frame_times.append(t)
+                except Exception as e:
+                    logger.warning(
+                        "[Pipeline] Frame extraction failed @ %.1f: %s", t, e,
+                    )
+
+            if not frames:
+                continue
+
+            scene.keyframes = frames
+            scene.frame_timestamps = frame_times
+            scene.keyframe = frames[len(frames) // 2]  # 中点帧
+
+            # ── VLM caption 代表帧（均匀选 3-7 帧） ──
+            num_cf = min(len(frames), 7)
+            step = max(1, len(frames) // num_cf)
+            scene._caption_frames = [frames[k * step] for k in range(num_cf)]
+
+            # ── 保存 scene 缩略图 ──
             try:
-                scene.keyframe = await extract_keyframe_to_memory(
-                    self.ctx.file_path, midpoint,
+                from PIL import Image
+                thumb_dir = os.path.join(
+                    self.config.get("storage", {}).get(
+                        "artifact_dir", "data/artifacts",
+                    ),
+                    "thumbnails", str(self.video.id),
                 )
+                os.makedirs(thumb_dir, exist_ok=True)
+                thumb_path = os.path.join(
+                    thumb_dir, f"scene_{scene.scene_index:04d}.jpg",
+                )
+                Image.fromarray(scene.keyframe).save(thumb_path, "JPEG", quality=80)
+                scene.keyframe_path = thumb_path
             except Exception as e:
                 logger.warning(
-                    "[Pipeline] Keyframe extraction failed for scene %d @ %.1fs: %s",
-                    i, midpoint, e,
+                    "[Pipeline] Thumbnail save failed for scene %d: %s", i, e,
                 )
-                scene.keyframe = None
 
-        extracted = sum(1 for s in scenes if s.keyframe is not None)
-        logger.info("[Pipeline] Keyframes extracted: %d/%d", extracted, len(scenes))
+        total_frames = sum(len(s.keyframes) for s in scenes if s.keyframes)
+        logger.info("[Pipeline] Frame pool: %d frames @ 1fps", total_frames)
+
+    async def _encode_frames(self) -> None:
+        """帧池编码 — 帧级路 + chunk 路。
+
+        在 Phase 4（VLM caption）之后执行，
+        复用了 _extract_keyframes 的帧池。
+        """
+        from core.repository import bulk_insert_frames, bulk_insert_chunks
+
+        embedder = self.plugins.get("embedder")
+        if embedder is None:
+            return
+
+        scenes = self.ctx.scenes
+        if not scenes:
+            return
+
+        logger.info("[Pipeline] Encoding frame embeddings & chunks ...")
+
+        for scene in scenes:
+            if not scene.keyframes or not scene.frame_timestamps:
+                continue
+
+            # ── a. 帧级路：逐帧 encode_image ──
+            frame_rows: list[dict] = []
+            for t, frame in zip(scene.frame_timestamps, scene.keyframes):
+                emb = await embedder.encode_image(frame)
+                if not emb:
+                    continue
+                frame_rows.append({
+                    "video_id": self.video.id,
+                    "scene_index": scene.scene_index,
+                    "timestamp_sec": t,
+                    "embedding": emb,
+                    "is_keyframe": any(
+                        frame is cf for cf in (scene._caption_frames or [])
+                    ),
+                })
+            if frame_rows:
+                async with self.db_session_factory() as session:
+                    await bulk_insert_frames(session, frame_rows)
+
+            # ── b. chunk 路：原生视频编码（通过 temp clip + process_vision_info）──
+            duration = scene.end_sec - scene.start_sec
+            chunk_rows: list[dict] = []
+
+            async def _encode_chunk_clip(
+                start: float, end: float, chunk_idx: int,
+            ) -> dict | None:
+                """创建 temp clip → encode_video → 清理 → 返回 chunk row。"""
+                clip_dur = end - start
+                if clip_dur < 5:
+                    return None
+
+                temp_dir = os.path.join(
+                    self.config.get("storage", {}).get(
+                        "artifact_dir", "data/artifacts",
+                    ),
+                    "temp_chunks", str(self.video.id),
+                )
+                os.makedirs(temp_dir, exist_ok=True)
+                clip_path = os.path.join(
+                    temp_dir, f"chunk_{chunk_idx}.mp4",
+                )
+
+                # ffmpeg 截取片段（-c copy 会导致关键帧边界偏移 → 元数据缺失 fps，
+                #               改用 libx264 重新编码确保 torchvision 可读）
+                proc = await asyncio.create_subprocess_exec(
+                    "ffmpeg", "-y",
+                    "-ss", str(start),
+                    "-i", self.ctx.file_path,
+                    "-t", str(clip_dur),
+                    "-vf", "scale=-2:360,fps=1",  # 降分辨率 + 降帧率 → 减少 patch + 文件小
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                    "-an",
+                    clip_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await proc.communicate()
+
+                if proc.returncode != 0 or not os.path.exists(clip_path):
+                    return None
+
+                try:
+                    emb = await embedder.encode_video(
+                        clip_path, fps=1.0, max_frames=8,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[Pipeline] Chunk encoding failed @ %.1f-%.1f: %s",
+                        start, end, e,
+                    )
+                    return None
+                finally:
+                    try:
+                        os.remove(clip_path)
+                    except OSError:
+                        pass
+
+                if not emb:
+                    return None
+                return {
+                    "video_id": self.video.id,
+                    "scene_index": scene.scene_index,
+                    "chunk_index": chunk_idx,
+                    "start_sec": start,
+                    "end_sec": end,
+                    "embedding": emb,
+                }
+
+            # ── b. chunk 路：自适应窗口 ──
+            # ≤5s: 不切；>5s~≤60s: 窗口=时长/2, 步长=窗口/2; >60s: 窗口=30s, 步长=15s
+            if duration > 5:
+                if duration <= 60:
+                    window_sec = duration / 2.0
+                    step_sec = window_sec / 2.0
+                else:
+                    window_sec = 30.0
+                    step_sec = 15.0
+
+                if window_sec >= duration:
+                    # 仅 1 个窗口
+                    row = await _encode_chunk_clip(
+                        scene.start_sec, scene.end_sec, 0,
+                    )
+                    if row:
+                        chunk_rows.append(row)
+                else:
+                    idx = 0
+                    pos = scene.start_sec
+                    while pos + window_sec <= scene.end_sec:
+                        row = await _encode_chunk_clip(
+                            pos, min(pos + window_sec, scene.end_sec), idx,
+                        )
+                        if row:
+                            chunk_rows.append(row)
+                            idx += 1
+                        pos += step_sec
+
+            if chunk_rows:
+                async with self.db_session_factory() as session:
+                    await bulk_insert_chunks(session, chunk_rows)
+
+            # ── c. 文本语义路：encode_text(caption) → text_embedding → 持久化 ──
+            if scene.caption:
+                text_emb = await embedder.encode_text(scene.caption)
+                if text_emb:
+                    scene.text_embedding = text_emb
+                    async with self.db_session_factory() as session:
+                        await session.execute(
+                            update(Scene)
+                            .where(
+                                Scene.video_id == self.video.id,
+                                Scene.scene_index == scene.scene_index,
+                            )
+                            .values(text_embedding=text_emb)
+                        )
+                        await session.commit()
+
+        logger.info("[Pipeline] Frame encoding done")
 
     async def _phase3(self) -> None:
         """Phase 3: 模态交叉对齐（转录 → 场景）。"""
@@ -221,6 +447,7 @@ class PipelineEngine:
                     "end_sec": s.end_sec,
                     "keyframe_path": s.keyframe_path,
                     "embedding": s.embedding,
+                    "text_embedding": s.text_embedding,
                     "ocr_text": s.ocr_text,
                     "aligned_transcript": s.aligned_transcript,
                     "caption": s.caption,

@@ -14,7 +14,7 @@ from sqlalchemy import select, update, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from core.models import Video, Scene, VideoStatus
+from core.models import Video, Scene, VideoStatus, FrameEmbedding, Chunk
 from core.schemas import VideoCreate
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,22 @@ async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video:
 # ──────────────────────────────────────────────────────────
 # 查询
 # ──────────────────────────────────────────────────────────
+
+async def list_videos(
+    session: AsyncSession,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Video]:
+    """查询视频列表，按创建时间降序排列。"""
+    stmt = (
+        select(Video)
+        .order_by(Video.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
 
 async def get_video_with_relations(
     session: AsyncSession,
@@ -143,6 +159,29 @@ async def save_video_artifacts(
 
 
 # ──────────────────────────────────────────────────────────
+# 删除
+# ──────────────────────────────────────────────────────────
+
+async def delete_video(session: AsyncSession, video_id: uuid.UUID) -> bool:
+    """删除视频记录（scenes 和 transcript 通过 CASCADE 自动清除）。"""
+    result = await session.execute(
+        select(Video).where(Video.id == video_id)
+    )
+    video = result.scalar_one_or_none()
+    if video is None:
+        return False
+    await session.delete(video)
+    try:
+        await session.commit()
+        logger.info("[Repo] Video deleted: %s", video_id)
+        return True
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to delete video %s", video_id)
+        raise
+
+
+# ──────────────────────────────────────────────────────────
 # 批量写入
 # ──────────────────────────────────────────────────────────
 
@@ -190,4 +229,44 @@ async def bulk_insert_scenes(
         logger.exception(
             "[Repo] Failed to bulk insert scenes for video %s", video_id
         )
+        raise
+
+
+# ═══════════════════════════════════════════════════════════
+# 逐帧向量 & chunk 向量写入
+# ═══════════════════════════════════════════════════════════
+
+async def bulk_insert_frames(
+    session: AsyncSession,
+    rows: list[dict],
+) -> None:
+    """批量写入 frame_embeddings。"""
+    if not rows:
+        return
+    try:
+        stmt = insert(FrameEmbedding.__table__)
+        await session.execute(stmt, rows)
+        await session.commit()
+        logger.info("[Repo] Bulk inserted %d frame embeddings", len(rows))
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to bulk insert frame embeddings")
+        raise
+
+
+async def bulk_insert_chunks(
+    session: AsyncSession,
+    rows: list[dict],
+) -> None:
+    """批量写入 chunks。"""
+    if not rows:
+        return
+    try:
+        stmt = insert(Chunk.__table__)
+        await session.execute(stmt, rows)
+        await session.commit()
+        logger.info("[Repo] Bulk inserted %d chunk embeddings", len(rows))
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to bulk insert chunk embeddings")
         raise

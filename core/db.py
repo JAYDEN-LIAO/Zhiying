@@ -63,6 +63,12 @@ async def init_db():
         # ── 创建所有表 ──
         await conn.run_sync(Base.metadata.create_all)
 
+        # ── 增量迁移：为已有表补充新列（create_all 对已有表无效） ──
+        await conn.execute(text("""
+            ALTER TABLE scenes
+            ADD COLUMN IF NOT EXISTS text_embedding vector(2048)
+        """))
+
         # ── 行级触发器（在表创建后附着） ──
         await conn.execute(text("""
             DROP TRIGGER IF EXISTS trg_scenes_search_vector ON scenes

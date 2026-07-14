@@ -47,13 +47,17 @@ class Scene:
     scene_index: int
     start_sec: float
     end_sec: float
-    keyframe: np.ndarray | None = None            # (H, W, C) uint8
+    keyframe: np.ndarray | None = None            # (H, W, C) uint8 — 代表帧（缩略图用）
     keyframe_path: str | None = None
+    keyframes: list[np.ndarray] = field(default_factory=list)  # 1fps 帧池
+    frame_timestamps: list[float] = field(default_factory=list)  # 帧池对应的时间戳
+    _caption_frames: list[np.ndarray] | None = None  # VLM caption 选中的代表帧子集
     ocr_text: str | None = None
     aligned_transcript: str | None = None
     caption: str | None = None
     prev_caption: str | None = None
-    embedding: list[float] | None = None           # Vector(768)
+    embedding: list[float] | None = None           # Vector(2048) — 保留兼容，不再写入
+    text_embedding: list[float] | None = None      # Vector(2048) — encode_text(caption)，文本语义搜索用
     entities: list[dict] = field(default_factory=list)
 
 
@@ -207,20 +211,20 @@ class BaseOCR(ABC):
 
 
 class BaseCaptioner(ABC):
-    """画面描述 (VLM) — 关键帧 + 文本 prompt → 自然语言描述。"""
+    """画面描述 (VLM) — 多帧序列 + 文本 prompt → 自然语言描述。"""
 
     @abstractmethod
     async def caption(
         self,
-        keyframe: np.ndarray,
+        keyframes: list[np.ndarray],
         prompt: str,
         max_new_tokens: int = 256,
     ) -> str:
         """
-        对关键帧生成深度画面描述。
+        对一组关键帧生成深度画面描述（多帧时序输入）。
 
         Args:
-            keyframe: 关键帧图像 (H, W, C) uint8。
+            keyframes: 关键帧序列，每帧 (H, W, C) uint8。
             prompt: 由 prompt_loader 渲染好的完整提示词。
             max_new_tokens: 生成最大 token 数。
 
@@ -231,7 +235,7 @@ class BaseCaptioner(ABC):
 
 
 class BaseEmbedder(ABC):
-    """向量编码 — 图像 / 文本 → 768 维嵌入向量。"""
+    """向量编码 — 图像 / 文本 → 2048 维嵌入向量。"""
 
     @abstractmethod
     async def encode_image(self, image: np.ndarray) -> list[float]:
@@ -242,7 +246,7 @@ class BaseEmbedder(ABC):
             image: 输入图像 (H, W, C) uint8。
 
         Returns:
-            768 维 float 向量。
+            2048 维 float 向量（Qwen3-VL-Embedding-2B 输出维度）。
         """
         ...
 
@@ -255,7 +259,26 @@ class BaseEmbedder(ABC):
             text: 输入文本。
 
         Returns:
-            768 维 float 向量。
+            2048 维 float 向量（Qwen3-VL-Embedding-2B 输出维度）。
+        """
+        ...
+
+    @abstractmethod
+    async def encode_video(
+        self, video_path: str, fps: float = 1.0, max_frames: int = 32,
+    ) -> list[float]:
+        """原生视频编码 — 接受视频文件路径，模型内部处理帧提取与时序融合。
+
+        通过 qwen_vl_utils.process_vision_info 处理视频，
+        将视频帧与文本映射到同一语义空间。
+
+        Args:
+            video_path: 视频文件路径。
+            fps: 提取帧率（帧/秒）。
+            max_frames: 最大帧数。
+
+        Returns:
+            2048 维归一化 float 向量。
         """
         ...
 

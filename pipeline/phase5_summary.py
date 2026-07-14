@@ -53,20 +53,21 @@ class Phase5Summary:
         # ── 构建剧本字符串 ──
         script_lines: list[str] = []
         for scene in self.ctx.scenes:
-            caption = scene.caption or ""
-            ocr = scene.ocr_text or ""
-            transcript = scene.aligned_transcript or ""
+            caption = (scene.caption or "").strip()
+            ocr = (scene.ocr_text or "").strip()
+            transcript = (scene.aligned_transcript or "").strip()
 
             if not caption and not ocr and not transcript:
                 continue
 
-            line = (
-                f"[{scene.start_sec:.1f}-{scene.end_sec:.1f}] "
-                f"画面:{caption} "
-                f"文字:{ocr} "
-                f"台词:{transcript}"
-            )
-            script_lines.append(line)
+            parts = [f"[{scene.start_sec:.1f}-{scene.end_sec:.1f}]"]
+            if caption:
+                parts.append(f"画面:{caption}")
+            if ocr:
+                parts.append(f"文字:{ocr}")
+            if transcript:
+                parts.append(f"台词:{transcript}")
+            script_lines.append(" ".join(parts))
 
         script = "\n".join(script_lines)
         if not script.strip():
@@ -96,7 +97,7 @@ class Phase5Summary:
             self.ctx.summary = validated.model_dump()
         except Exception as e:
             logger.warning("[Phase5] Summary validation failed: %s", e)
-            self.ctx.summary = raw_summary
+            self.ctx.summary = None
 
         await self.tracker.update("phase_5_summary", progress=0.90)
         one_liner = (self.ctx.summary or {}).get("one_liner", "")[:80]

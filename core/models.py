@@ -164,6 +164,12 @@ class Video(Base):
         "Transcript", back_populates="video", uselist=False,
         cascade="all, delete-orphan",
     )
+    frame_embeddings: Mapped[list["FrameEmbedding"]] = relationship(
+        "FrameEmbedding", back_populates="video", cascade="all, delete-orphan",
+    )
+    chunks: Mapped[list["Chunk"]] = relationship(
+        "Chunk", back_populates="video", cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         {"comment": "视频主表 — 元数据 / 状态 / QC / 摘要"},
@@ -208,6 +214,11 @@ class Scene(Base):
         Vector(2048),
         nullable=True,
         comment="关键帧图像编码向量(Qwen3-VL-Embedding-2B输出2048维), HNSW 索引用于向量检索",
+    )
+    text_embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(2048),
+        nullable=True,
+        comment="caption 文本语义向量, encode_text(caption) 输出, 用于文本语义搜索",
     )
 
     # ── 文本模态字段 ──
@@ -322,4 +333,98 @@ class Transcript(Base):
             postgresql_ops={"full_text": "gin_trgm_ops"},
         ),
         {"comment": "转录表 — 每视频一行, 包含字词级时间戳"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# FrameEmbedding — 逐帧向量，1fps 采样
+# ═══════════════════════════════════════════════════════════
+
+class FrameEmbedding(Base):
+    """逐帧向量表 — 1fps 采样，用于帧级精确搜索定位。"""
+
+    __tablename__ = "frame_embeddings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    scene_index: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="所属场景序号",
+    )
+    timestamp_sec: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="精确时间戳(秒)",
+    )
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(2048), nullable=True,
+        comment="encode_image(单帧) 编码, 2048 维",
+    )
+    thumbnail_path: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, comment="帧缩略图路径, 仅 keyframe 有值",
+    )
+    is_keyframe: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False,
+        comment="是否被 VLM caption 选为代表帧",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+    )
+
+    video: Mapped["Video"] = relationship("Video", back_populates="frame_embeddings")
+
+    __table_args__ = (
+        Index("idx_frame_emb_video_scene", "video_id", "scene_index"),
+        Index("idx_frame_emb_video_time", "video_id", "timestamp_sec"),
+        {"comment": "逐帧向量表 — 1fps 采样，用于帧级精确搜索定位"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# Chunk — 场景内滑动窗口，多帧原生编码
+# ═══════════════════════════════════════════════════════════
+
+class Chunk(Base):
+    """视频窗口向量表 — 场景内滑动窗口，多帧原生编码。"""
+
+    __tablename__ = "chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    scene_index: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="所属场景序号",
+    )
+    chunk_index: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="场景内窗口序号",
+    )
+    start_sec: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="窗口开始时间(秒)",
+    )
+    end_sec: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="窗口结束时间(秒)",
+    )
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(2048), nullable=True,
+        comment="encode_video(窗口内全部帧) 原生编码, 2048 维",
+    )
+    thumbnail_path: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, comment="窗口中间帧缩略图路径",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+    )
+
+    video: Mapped["Video"] = relationship("Video", back_populates="chunks")
+
+    __table_args__ = (
+        Index("idx_chunks_video_scene", "video_id", "scene_index"),
+        Index("idx_chunks_time_range", "video_id", "start_sec", "end_sec"),
+        {"comment": "视频窗口向量表 — 场景内滑动窗口，用于过程语义搜索"},
     )

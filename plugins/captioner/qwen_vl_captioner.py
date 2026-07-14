@@ -68,30 +68,38 @@ class QwenVLCaptioner(BaseCaptioner):
 
     async def caption(
         self,
-        keyframe: np.ndarray,
+        keyframes: list[np.ndarray],
         prompt: str,
         max_new_tokens: int = 256,
     ) -> str:
-        """对关键帧生成深度画面描述。
+        """对一组关键帧生成深度画面描述。
+
+        当前使用首个关键帧进行单帧描述，
+        后续可扩展为多帧时序输入。
 
         Args:
-            keyframe: (H, W, C) uint8。
+            keyframes: 关键帧序列，每帧 (H, W, C) uint8。
             prompt: 由 prompt_loader 渲染好的完整提示词。
-            max_new_tokens: 生成最大 token 数（覆盖构造函数默认值）。
+            max_new_tokens: 生成最大 token 数。
 
         Returns:
             中文描述字符串。
         """
-        if keyframe.ndim == 2:
-            keyframe = np.stack([keyframe] * 3, axis=-1)
-        elif keyframe.shape[2] == 4:
-            keyframe = keyframe[:, :, :3]
+        if not keyframes:
+            logger.warning("[QwenVLCaptioner] No keyframes provided")
+            return ""
+
+        frame = keyframes[0]
+        if frame.ndim == 2:
+            frame = np.stack([frame] * 3, axis=-1)
+        elif frame.shape[2] == 4:
+            frame = frame[:, :, :3]
 
         token_limit = max_new_tokens or self.default_max_new_tokens
 
         try:
             output = await asyncio.to_thread(
-                self._sync_generate, keyframe, prompt, token_limit
+                self._sync_generate, frame, prompt, token_limit
             )
             return output.strip()
         except Exception as e:

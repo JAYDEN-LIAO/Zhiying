@@ -14,7 +14,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.models import Scene, Transcript
+from core.models import Scene, Transcript, FrameEmbedding, Chunk
 
 logger = logging.getLogger(__name__)
 
@@ -43,20 +43,24 @@ async def vector_similarity_search(
     session: AsyncSession,
     query_vector: list[float],
     limit: int = 10,
-) -> list[Scene]:
+    video_ids: list[str] | None = None,
+) -> list[tuple[Scene, float]]:
     """pgvector 余弦相似度检索。
 
-    使用 HNSW 索引加速的 cosine_distance 排序，
-    距离越小越相似 → 按距离升序排列。
+    返回 (Scene, similarity) 元组列表，
+    similarity = 1 - cosine_distance，范围 (0, 1]，越大越相似。
     """
+    similarity = (1.0 - Scene.embedding.cosine_distance(query_vector)).label("similarity")
     stmt = (
-        select(Scene)
+        select(Scene, similarity)
         .where(Scene.embedding.isnot(None))
-        .order_by(Scene.embedding.cosine_distance(query_vector))
+        .order_by(similarity.desc())
         .limit(limit)
     )
+    if video_ids:
+        stmt = stmt.where(Scene.video_id.in_(video_ids))
     result = await session.execute(stmt)
-    return list(result.scalars().all())
+    return [(row.Scene, row.similarity) for row in result]
 
 
 # ═══════════════════════════════════════════════════════════
@@ -67,19 +71,18 @@ async def full_text_search(
     session: AsyncSession,
     query_text: str,
     limit: int = 10,
-) -> list[Scene]:
+    video_ids: list[str] | None = None,
+) -> list[tuple[Scene, float]]:
     """PostgreSQL 原生全文检索。
 
-    流程：
-      1. query_text → to_tsquery（词位表达式）
-      2. search_vector @@ tsquery 过滤
-      3. ts_rank 计算相关性得分 → 降序排列
+    返回 (Scene, relevance) 元组列表，
+    relevance 为 ts_rank 得分，越大越相关。
     """
     tsq = func.to_tsquery("simple", _to_tsquery(query_text))
-    rank = func.ts_rank(Scene.search_vector, tsq).label("rank")
+    rank = func.ts_rank(Scene.search_vector, tsq).label("relevance")
 
     stmt = (
-        select(Scene)
+        select(Scene, rank)
         .where(
             Scene.search_vector.isnot(None),
             Scene.search_vector.op("@@")(tsq),
@@ -87,8 +90,10 @@ async def full_text_search(
         .order_by(rank.desc())
         .limit(limit)
     )
+    if video_ids:
+        stmt = stmt.where(Scene.video_id.in_(video_ids))
     result = await session.execute(stmt)
-    return list(result.scalars().all())
+    return [(row.Scene, row.relevance) for row in result]
 
 
 # ═══════════════════════════════════════════════════════════
@@ -109,7 +114,7 @@ async def hybrid_search(
                    + (1 - vector_weight) × COALESCE(ts_rank, 0)
 
     Args:
-        query_vector: 查询向量（768 维）。
+        query_vector: 查询向量（2048 维）。
         query_text:   全文检索查询文本。
         vector_weight: 向量相似度权重（0~1），全文权重 = 1 - vector_weight。
         limit:        返回条数。
@@ -166,3 +171,84 @@ async def fuzzy_transcript_search(
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+# ═══════════════════════════════════════════════════════════
+# 5. 帧级向量搜索（帧级精确时间定位）
+# ═══════════════════════════════════════════════════════════
+
+async def frame_vector_search(
+    session: AsyncSession,
+    query_vector: list[float],
+    limit: int = 20,
+    video_ids: list[str] | None = None,
+) -> list[tuple[FrameEmbedding, float]]:
+    """1fps 帧级搜索 — 每帧独立编码，返回精确时间戳。
+
+    similarity = 1 - cosine_distance，范围 (0, 1]。
+    """
+    similarity = (1.0 - FrameEmbedding.embedding.cosine_distance(query_vector)).label("sim")
+    stmt = (
+        select(FrameEmbedding, similarity)
+        .where(FrameEmbedding.embedding.isnot(None))
+        .order_by(similarity.desc())
+        .limit(limit)
+    )
+    if video_ids:
+        stmt = stmt.where(FrameEmbedding.video_id.in_(video_ids))
+    result = await session.execute(stmt)
+    return [(row.FrameEmbedding, row.sim) for row in result]
+
+
+# ═══════════════════════════════════════════════════════════
+# 6. chunk 窗口向量搜索（过程语义搜索）
+# ═══════════════════════════════════════════════════════════
+
+async def chunk_vector_search(
+    session: AsyncSession,
+    query_vector: list[float],
+    limit: int = 20,
+    video_ids: list[str] | None = None,
+) -> list[tuple[Chunk, float]]:
+    """chunk 窗口搜索 — 多帧原生编码，捕获过程语义。
+
+    similarity = 1 - cosine_distance，范围 (0, 1]。
+    """
+    similarity = (1.0 - Chunk.embedding.cosine_distance(query_vector)).label("sim")
+    stmt = (
+        select(Chunk, similarity)
+        .where(Chunk.embedding.isnot(None))
+        .order_by(similarity.desc())
+        .limit(limit)
+    )
+    if video_ids:
+        stmt = stmt.where(Chunk.video_id.in_(video_ids))
+    result = await session.execute(stmt)
+    return [(row.Chunk, row.sim) for row in result]
+
+
+# ═══════════════════════════════════════════════════════════
+# 7. 文本语义向量搜索（caption + ocr + transcript 的文本嵌入）
+# ═══════════════════════════════════════════════════════════
+
+async def text_vector_search(
+    session: AsyncSession,
+    query_vector: list[float],
+    limit: int = 20,
+    video_ids: list[str] | None = None,
+) -> list[tuple[Scene, float]]:
+    """文本语义搜索 — encode_text(query) vs encode_text(caption)。
+
+    similarity = 1 - cosine_distance，范围 (0, 1]。
+    """
+    similarity = (1.0 - Scene.text_embedding.cosine_distance(query_vector)).label("sim")
+    stmt = (
+        select(Scene, similarity)
+        .where(Scene.text_embedding.isnot(None))
+        .order_by(similarity.desc())
+        .limit(limit)
+    )
+    if video_ids:
+        stmt = stmt.where(Scene.video_id.in_(video_ids))
+    result = await session.execute(stmt)
+    return [(row.Scene, row.sim) for row in result]

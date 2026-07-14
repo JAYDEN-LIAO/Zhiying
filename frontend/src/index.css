@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+}
+
+/* ── Dashboard container — full viewport ── */
+
+.dashboard-container {
+  width: 100vw;
+  height: 100vh;
+  background: linear-gradient(135deg, #e4eaf4 0%, #d8e5ef 20%, #e6f0ed 50%, #f4f5f7 100%);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+}
+
+/* ── Fluid shape background ── */
+
+.fluid-background {
+  position: absolute;
+  bottom: 0;
+  left: 5%;
+  width: 70%;
+  height: 45%;
+  background:
+    radial-gradient(circle at 30% 50%, rgba(135, 178, 245, 0.6) 0%, rgba(135, 178, 245, 0) 50%),
+    radial-gradient(circle at 70% 60%, rgba(144, 212, 194, 0.5) 0%, rgba(144, 212, 194, 0) 50%);
+  filter: blur(60px);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ── Glass panel ── */
+
+.glass-panel {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0.5) 100%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 4px 24px -6px rgba(0, 0, 0, 0.04);
+}
+
+/* ── Custom scrollbar ── */
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #d0d5dd;
+  border-radius: 2px;
+}
+
+/* ── Animations ── */
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 2s ease-in-out infinite;
+}

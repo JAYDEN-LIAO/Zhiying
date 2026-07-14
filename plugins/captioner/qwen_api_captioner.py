@@ -3,8 +3,7 @@ plugins/captioner/qwen_api_captioner.py
 ═══════════════════════════════════════════════════════════
 Qwen API 画面描述插件 — 通过 DashScope OpenAI 兼容接口调用 qwen-vl-max。
 
-使用裸 httpx 请求（而非 openai 库），精确控制 UTF-8 编解码，
-避免 openai 库内部 httpx 编码检测导致的中文乱码。
+支持多帧时序输入：传入一组关键帧序列，VLM 同时看到画面变化过程。
 """
 
 import base64
@@ -22,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 class QwenAPICaptioner(BaseCaptioner):
     """基于 DashScope qwen-vl-max API 的画面描述实现。
+
+    支持传入单帧或多帧关键帧序列。多帧时 VLM 同时看到所有帧，
+    能理解动作变化与过程描述。
 
     Args:
         base_url: DashScope OpenAI 兼容端点。
@@ -51,14 +53,16 @@ class QwenAPICaptioner(BaseCaptioner):
 
     async def caption(
         self,
-        keyframe: np.ndarray,
+        keyframes: list[np.ndarray],
         prompt: str,
         max_new_tokens: int = 256,
     ) -> str:
-        """对关键帧生成深度画面描述。
+        """对一组关键帧生成深度画面描述。
+
+        多帧时按时间顺序拼接，VLM 同时看到所有帧以理解动作变化。
 
         Args:
-            keyframe: (H, W, C) uint8。
+            keyframes: 关键帧序列，每帧 (H, W, C) uint8。单帧也传入 list。
             prompt: 由 prompt_loader 渲染好的完整提示词。
             max_new_tokens: 生成最大 token 数。
 
@@ -67,31 +71,29 @@ class QwenAPICaptioner(BaseCaptioner):
         """
         token_limit = max_new_tokens or self.default_max_tokens
 
-        # ── numpy → base64 JPEG ──
+        # ── numpy → base64 JPEG（逐帧编码）──
+        image_urls: list[dict] = []
         try:
             from PIL import Image as PILImage
-            pil_image = PILImage.fromarray(keyframe)
-            buffer = io.BytesIO()
-            pil_image.save(buffer, format="JPEG", quality=85)
-            base64_str = base64.b64encode(buffer.getvalue()).decode("ascii")
+            for frame in keyframes:
+                pil_image = PILImage.fromarray(frame)
+                buffer = io.BytesIO()
+                pil_image.save(buffer, format="JPEG", quality=85)
+                base64_str = base64.b64encode(buffer.getvalue()).decode("ascii")
+                image_urls.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{base64_str}"},
+                })
         except Exception as e:
             logger.exception("[QwenAPICaptioner] Image encoding failed")
             raise
 
-        data_url = f"data:image/jpeg;base64,{base64_str}"
+        # ── 构建 content 数组：文本在前，多图在后 ──
+        content: list[dict] = [{"type": "text", "text": prompt}, *image_urls]
 
-        # ── API 调用（裸 httpx，精确控制编码）──
         payload = {
             "model": self.model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                    ],
-                },
-            ],
+            "messages": [{"role": "user", "content": content}],
             "max_tokens": token_limit,
         }
 
@@ -106,7 +108,6 @@ class QwenAPICaptioner(BaseCaptioner):
                     content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                 )
 
-                # 手动以 UTF-8 解码响应体，确保中文不乱码
                 body = response.content.decode("utf-8")
                 data = json.loads(body)
 
@@ -114,11 +115,6 @@ class QwenAPICaptioner(BaseCaptioner):
             if not content:
                 logger.warning("[QwenAPICaptioner] Empty response")
                 return ""
-            # 调试：检查编码
-            logger.debug(
-                "[QwenAPICaptioner] content repr=%s first_50=%s",
-                repr(content[:80]), content[:50],
-            )
             return content.strip()
 
         except Exception as e:

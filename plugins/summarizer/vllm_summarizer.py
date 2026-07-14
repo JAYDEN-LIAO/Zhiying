@@ -56,10 +56,13 @@ class VLLMSummarizer(BaseSummarizer):
     ) -> dict:
         """生成结构化 JSON 摘要。
 
+        user_prompt 已在调用侧渲染完成（含剧本与时序信息），
+                       本层直接使用不再做 format。
+
         Args:
-            script: 按时间排列的完整视频剧本。
+            script: 按时间排列的完整视频剧本（兼容接口，不再嵌入 prompt）。
             system_prompt: 系统角色提示词。
-            user_prompt: 用户提示词（含 {script} 占位符）。
+            user_prompt: 用户提示词（已渲染完毕）。
 
         Returns:
             {
@@ -75,7 +78,7 @@ class VLLMSummarizer(BaseSummarizer):
         """
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt.format(script=script)},
+            {"role": "user", "content": user_prompt},
         ]
 
         try:

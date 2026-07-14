@@ -1,17 +1,16 @@
 """
 pipeline/phase4_caption.py
 ═══════════════════════════════════════════════════════════
-Phase 4: 记忆窗口深度画面描述 + 向量编码。
+Phase 4: 多帧时序深度理解 + 多帧融合向量编码。
 
-执行逻辑:
-  for each scene:
-    1. 构建 prompt（含上下文/OCR/转录）
-    2. VLM 推理 → scene.caption
-    3. 传递 prev_caption
-    4. Embedder 编码 → scene.embedding
+升级点：
+  1. 每场景多帧序列 → VLM 多图输入 → 带时序变化的描述
+  2. 多帧编码 → mean pooling 融合 → scene 级时序向量
 """
 
 import logging
+
+import numpy as np
 
 from core.interfaces import VideoContext
 from core.status_tracker import StatusTracker
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class Phase4Caption:
-    """Phase 4 执行器 — 深度理解 + 向量编码。"""
+    """Phase 4 执行器 — 多帧时序理解 + 向量编码。"""
 
     def __init__(
         self,
@@ -38,7 +37,7 @@ class Phase4Caption:
         self.pl = prompt_loader
 
     async def execute(self) -> None:
-        """执行深度描述与向量编码。"""
+        """执行多帧深度描述与向量编码。"""
         captioner = self.plugins.get("captioner")
         embedder = self.plugins.get("embedder")
         scenes = self.ctx.scenes
@@ -50,15 +49,16 @@ class Phase4Caption:
 
         plugin_cfg = self.config.get("plugins", {}).get("captioner", {})
         with_context = plugin_cfg.get("with_context", False)
-        max_new_tokens = plugin_cfg.get("max_new_tokens", 256)
+        max_new_tokens = plugin_cfg.get("max_new_tokens", 512)
 
-        # ── a. 深度描述 ──
+        # ── a. 多帧深度描述 ──
         if captioner is not None:
             await self.tracker.update("phase_4_caption")
 
             for i, scene in enumerate(scenes):
-                if scene.keyframe is None:
-                    logger.debug("[Phase4] scene %d has no keyframe, skipping", i)
+                frames = getattr(scene, "_caption_frames", scene.keyframes)
+                if not frames:
+                    logger.debug("[Phase4] scene %d has no keyframes, skipping", i)
                     continue
 
                 if with_context and i > 0 and scenes[i - 1].caption:
@@ -71,7 +71,7 @@ class Phase4Caption:
                     prompt = self.pl.get("caption_default")
 
                 scene.caption = await captioner.caption(
-                    scene.keyframe, prompt,
+                    frames, prompt,
                     max_new_tokens=max_new_tokens,
                 )
 
@@ -84,20 +84,7 @@ class Phase4Caption:
                 )
 
             captioned = sum(1 for s in scenes if s.caption)
-            logger.info("[Phase4] Captioned %d/%d scenes", captioned, total)
+            logger.info("[Phase4] Captioned %d/%d scenes (multi-frame)", captioned, total)
 
-        # ── b. 向量编码 ──
-        if embedder is not None:
-            await self.tracker.update("phase_4_embed")
-
-            for i, scene in enumerate(scenes):
-                if scene.keyframe is None:
-                    continue
-                scene.embedding = await embedder.encode_image(scene.keyframe)
-                await self.tracker.update(
-                    "phase_4_embed",
-                    progress=0.75 + 0.10 * ((i + 1) / total),
-                )
-
-            embedded = sum(1 for s in scenes if s.embedding)
-            logger.info("[Phase4] Embedded %d/%d scenes", embedded, total)
+        # ── b. 场景向量编码 — 已废弃 ──
+        # scene.embedding 不再作为搜索召回路，编码移至 _encode_frames。

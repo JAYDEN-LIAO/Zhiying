@@ -18,11 +18,12 @@ plugins:
   transcriber:
     backend: null
 
-  # ── 镜头分割（固定间隔，无深度学习依赖）──
+  # ── 镜头分割（TransNetV2 神经网络，真实镜头边界检测）──
   segmenter:
-    backend: "time_based"
+    backend: "transnetv2"
     params:
-      segment_duration: 10.0        # 10秒一段，20秒视频 ≈ 2 个场景
+      threshold: 0.5
+      scene_min_duration: 1.0
 
   # ── 物体检测（Demo 跳过）──
   detector:
@@ -39,10 +40,13 @@ plugins:
       base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       api_key: "placeholder"  # 实际值在 config/secrets.yaml
       model_name: "qwen-vl-max"
+      with_context: true
 
   # ── 向量编码（本地 GPU，唯一必须本地的模型）──
   embedder:
     backend: "qwen3_vl_embedding"
+    params:
+      model_name: "models/models/Qwen--Qwen3-VL-Embedding-2B/snapshots/master"
 
   # ── 摘要生成 via DeepSeek API ──
   summarizer:
