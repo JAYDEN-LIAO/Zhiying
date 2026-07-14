@@ -155,7 +155,13 @@ class PipelineEngine:
             return
 
         logger.info("[Pipeline] Extracting frame pool @ 1fps ...")
+        total_scenes = len(scenes)
         for i, scene in enumerate(scenes):
+            await self.tracker.update(
+                None,
+                progress=0.15 + 0.05 * (i / total_scenes),
+                description=f"正在抽取第 {i + 1}/{total_scenes} 个场景的关键帧",
+            )
             duration = scene.end_sec - scene.start_sec
 
             # ── 1fps 逐帧抽取 ──
@@ -233,9 +239,17 @@ class PipelineEngine:
 
         logger.info("[Pipeline] Encoding frame embeddings & chunks ...")
 
+        total_enc = sum(1 for s in scenes if s.keyframes and s.frame_timestamps)
+        enc_idx = 0
         for scene in scenes:
             if not scene.keyframes or not scene.frame_timestamps:
                 continue
+
+            enc_idx += 1
+            await self.tracker.update(
+                "completed",
+                description=f"正在编码第 {enc_idx}/{total_enc} 个场景的帧向量",
+            )
 
             # ── a. 帧级路：逐帧 encode_image ──
             frame_rows: list[dict] = []

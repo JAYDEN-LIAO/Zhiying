@@ -87,6 +87,7 @@ class Phase5Summary:
             "[Phase5] Summarizing %d scenes (%d chars)...",
             len(script_lines), len(script),
         )
+        await self.tracker.update("phase_5_summary", description=f"正在生成摘要（{len(script_lines)} 个场景）...")
         raw_summary = await summarizer.summarize(
             script, system_prompt, user_prompt,
         )

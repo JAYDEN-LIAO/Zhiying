@@ -23,7 +23,7 @@ core/repository.py         — Data access layer + bulk_insert_frames/chunks
 core/db.py                 — Async engine, init_db(), triggers, incremental migration (text_embedding)
 core/config_loader.py      — Loads config.yaml, merges .env secrets via _ENV_OVERRIDES
 core/prompt_loader.py      — Prompt template loader (config/prompts.yaml)
-core/status_tracker.py     — Pipeline progress persistence (PHASE_WEIGHTS mapping)
+core/status_tracker.py     — Pipeline progress + status_detail persistence (PHASE_WEIGHTS mapping)
 core/exceptions.py         — Custom exceptions
 pipeline/engine.py         — PipelineEngine orchestrator (5-stage + 3-path encode_frames)
 pipeline/phase1_qc.py      — QC + audio extraction + scene segmentation
@@ -52,12 +52,18 @@ POST /videos/upload (multipart file)
 PipelineEngine.run():
   initialize()    → Load 9 plugins (embedder reuses app.state shared instance)
   _phase1()       → QC (FFmpeg) + audio extraction + scene segmentation (TransNetV2)
+                   → writes status_detail: "质检完成", "正在转录音频", "镜头分割完成: N 个场景"
   _extract_keyframes() → FFmpeg pipe → memory @1fps, 3-7 caption frames, thumbnails
+                   → writes status_detail: "正在抽取第 X/Y 个场景的关键帧"
   _phase3()       → Transcript-to-scene alignment
+                   → writes status_detail: "对齐完成: X/Y 个场景已分配转录文本"
   _phase4()       → Caption (API, with memory window) + Embed (local GPU)
+                   → writes status_detail: "正在描述第 X/Y 个场景"
   _phase5()       → LLM summary (API)
+                   → writes status_detail: "正在生成摘要（N 个场景）..."
   _persist()      → Write scenes (bulk) + transcript + artifacts to DB
   _encode_frames() → 3 encoding paths (after persist, search-only):
+                   → writes status_detail: "正在编码第 X/Y 个场景的帧向量"
     a. Frame path:  encode_image(1fps) → frame_embeddings table
     b. Chunk path:  create temp clip → encode_video(clip) → chunks table
        Adaptive window: ≤5s skip, 5-60s window=duration/2, >60s window=30s
@@ -82,7 +88,7 @@ Search (4-path parallel):
 - **Vector dim**: 2048 (Qwen3-VL-Embedding-2B output). No pgvector HNSW index (exceeds 2000-dim limit; exact scan <1ms at demo scale).
 - **Trigger**: `scenes.search_vector` is auto-populated by a `BEFORE INSERT OR UPDATE` trigger in PostgreSQL (created during `init_db()`).
 - **Shared embedder**: Embedder is loaded once in `app.state.embedder` during lifespan startup. Pipeline and SearchEngine both reuse this instance — never call `load_plugin("embedder")` directly in business logic.
-- **Incremental migration**: `init_db()` uses `ALTER TABLE ADD COLUMN IF NOT EXISTS` for schema evolution (e.g., `text_embedding` column).
+- **Incremental migration**: `init_db()` uses `ALTER TABLE ADD COLUMN IF NOT EXISTS` for schema evolution (e.g., `text_embedding`, `status_detail` columns).
 - **Three encoding paths exist**: Frame (1fps per-frame), Chunk (sliding window clips), Text (caption semantics). All three are encoded in `_encode_frames()` after `_persist()`.
 - **Perception switches**: Video model has `audio/vision/ocr/grounding/caption/summary_enabled` booleans. Pipeline phases check these before executing.
 
@@ -90,7 +96,7 @@ Search (4-path parallel):
 
 | Table | Key Columns | Purpose |
 |---|---|---|
-| `videos` | id, status, progress, qc_result(JSONB), summary(JSONB), 6x perception switches | Video master |
+| `videos` | id, status, progress, status_detail, qc_result(JSONB), summary(JSONB), 6x perception switches | Video master |
 | `scenes` | id, video_id(FK), scene_index, embedding(Vector2048), text_embedding(Vector2048), caption, search_vector(TSVECTOR) | Core search grain |
 | `transcripts` | id, video_id(FK, UNIQUE), full_text, words(JSONB) | Speech transcripts |
 | `frame_embeddings` | id, video_id(FK), timestamp_sec, embedding(Vector2048), is_keyframe | 1fps frame vectors |
@@ -114,7 +120,8 @@ Search (4-path parallel):
 | Transcriber (faster-whisper) | ✅ Plugin ready | plugins/transcriber/faster_whisper.py |
 | DB + migrations | ✅ Done | db.py, models.py, init_db() |
 | Prompt templates | ✅ Done | config/prompts.yaml |
-| Frontend dashboard | ✅ Done | Dashboard.tsx (React 19 + Tailwind 4) |
+| Pipeline real-time status | ✅ Done | status_tracker.py writes status_detail; phases 1/3/4/5 + keyframe + encoding report progress |
+| Frontend dashboard | ✅ Done | Dashboard.tsx (React 19 + Tailwind 4) — 深蓝导航栏, 参数面板, 系统设置页, 紧凑 PipelineBar + 实时状态详情 |
 | Object Detection (YOLO) | ⬜ Shell only | plugins/detector/ + pipeline/phase2_perception.py |
 | OCR | ⬜ Shell only | plugins/ocr/ |
 | Grounding | ⬜ Shell only | plugins/grounding/ |

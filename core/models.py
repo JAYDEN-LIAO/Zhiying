@@ -147,6 +147,12 @@ class Video(Base):
         comment="BaseSummarizer 输出: {one_liner, scenes_summary, tags, main_topics, ...}",
     )
 
+    # ── 管道实时状态 ──
+    status_detail: Mapped[str | None] = mapped_column(
+        Text, nullable=True,
+        comment="管道实时操作描述, 如'正在对齐第 12/23 个场景'",
+    )
+
     # ── 时间戳 ──
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False,

@@ -59,11 +59,15 @@ class Phase1QC:
         result = await qc.check(self.ctx)
         self.ctx.qc_result = result
         self.ctx.duration = result.get("estimated_duration")
+
+        black_count = len(result.get("black_segments", []))
+        silent_count = len(result.get("silent_segments", []))
+        await self.tracker.update("phase_1_qc", description=f"质检完成: 检测到 {black_count} 段黑屏、{silent_count} 段静音")
+
         logger.info(
             "[Phase1] QC done: duration=%.1fs black=%d silent=%d valid=%s",
             self.ctx.duration or 0,
-            len(result.get("black_segments", [])),
-            len(result.get("silent_segments", [])),
+            black_count, silent_count,
             result.get("is_valid"),
         )
 
@@ -97,6 +101,7 @@ class Phase1QC:
 
         # 转录
         language = None if self.video.language == "auto" else self.video.language
+        await self.tracker.update("phase_1_audio", description=f"正在转录音频（目标语言: {self.video.language}）...")
         result = await transcriber.transcribe(audio_path, language=language)
 
         self.ctx.transcript_full = result.get("full_text", "").strip()
@@ -139,4 +144,5 @@ class Phase1QC:
             scenes.append(scene)
 
         self.ctx.scenes = scenes
+        await self.tracker.update("phase_1_segment", description=f"镜头分割完成: 共 {len(scenes)} 个场景")
         logger.info("[Phase1] Segmentation done: %d scenes", len(scenes))

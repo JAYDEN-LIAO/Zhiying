@@ -87,6 +87,7 @@ class Phase3Alignment:
         total_aligned = sum(
             1 for s in scenes if s.aligned_transcript
         )
+        await self.tracker.update("phase_3_align", description=f"对齐完成: {total_aligned}/{total_scenes} 个场景已分配转录文本")
         logger.info(
             "[Phase3] Alignment done: %d/%d scenes have transcript",
             total_aligned, total_scenes,

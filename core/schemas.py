@@ -124,6 +124,8 @@ class VideoResponse(BaseModel):
     caption_enabled: bool
     summary_enabled: bool
 
+    status_detail: str | None      = None
+
     qc_result: QCResult | None     = None
     summary: VideoSummary | None   = None
 

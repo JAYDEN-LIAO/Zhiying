@@ -69,6 +69,12 @@ async def init_db():
             ADD COLUMN IF NOT EXISTS text_embedding vector(2048)
         """))
 
+        # ── 增量迁移：videos 表新增 status_detail 列 ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS status_detail text
+        """))
+
         # ── 行级触发器（在表创建后附着） ──
         await conn.execute(text("""
             DROP TRIGGER IF EXISTS trg_scenes_search_vector ON scenes

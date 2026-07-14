@@ -77,6 +77,7 @@ class StatusTracker:
                 .where(Video.id == self.video_id)
                 .values(
                     progress=progress,
+                    status_detail=description,
                     updated_at=datetime.now(timezone.utc),
                 )
             )

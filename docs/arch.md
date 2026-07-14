@@ -69,16 +69,20 @@
 Phase 1 (QC + Split)
   ├─ QC (FFmpeg blackdetect/silencedetect) → qc_result
   │   写入 ctx.qc_result, ctx.duration
+  │   状态: "质检完成: 检测到 X 段黑屏、Y 段静音"
   ├─ Audio Extraction (可选, FFmpeg) → audio_path
   ├─ Transcribe (faster-whisper, 可选) → words[]
+  │   状态: "正在转录音频..."
   └─ Segment (TransNetV2 / time-based) → scenes[]
       每个 scene: {scene_index, start_sec, end_sec, keyframe?}
+      状态: "镜头分割完成: 共 N 个场景"
 
   ↓
 
 Keyframe Extraction (Phase 1→4 间)
   ├─ FFmpeg pipe → memory (numpy ndarray, 无磁盘 I/O)
   │   按 1fps 逐帧抽取，全部存入 scene 帧池
+  │   状态: "正在抽取第 X/Y 个场景的关键帧"
   ├─ 中点帧 → scene.keyframe（缩略图用）
   ├─ 均匀选 3-7 帧 → scene._caption_frames（VLM caption 用）
   └─ 三条消费链路复用同一批帧：
@@ -91,12 +95,14 @@ Keyframe Extraction (Phase 1→4 间)
 Phase 3 (Alignment, 可选)
   └─ Align words[] 到 scenes 按时间戳
       → scene.aligned_transcript
+      状态: "对齐完成: X/Y 个场景已分配转录文本"
 
   ↓
 
 Phase 4 (Understanding)
   ├─ Caption (Qwen-VL API / 本地 Qwen-VL) → scene.caption
   │   记忆窗口: 传入 prev_caption 作为上下文
+  │   状态: "正在描述第 X/Y 个场景"
   └─ Embed (Qwen3-VL-Embedding, 本地 GPU) → scene.embedding
       编码图像 → 2048-dim 向量
 
@@ -105,18 +111,20 @@ Phase 4 (Understanding)
 Phase 5 (Summarization)
   └─ LLM (DeepSeek API) → 结构化 JSON summary
       {one_liner, scenes_summary, tags, main_topics, main_entities}
+      状态: "正在生成摘要（N 个场景）..."
 
   ↓
 
 Persist
   ├─ bulk_insert_scenes → scenes 表
   ├─ insert transcript → transcripts 表
-  └─ update video → videos 表 (duration, qc_result, summary)
+  └─ update video → videos 表 (duration, qc_result, summary, status_detail)
 
   ↓
 
 Encode Frames (Persist 后, 纯搜索用)
   ├─ a. 帧级路: 逐帧 encode_image → bulk_insert_frames → frame_embeddings 表
+  │   状态: "正在编码第 X/Y 个场景的帧向量"
   ├─ b. Chunk 路: 滑动窗口创建 temp clip → encode_video → bulk_insert_chunks → chunks 表
   │     自适应窗口: ≤5s 不切, 5-60s 窗口=时长/2, >60s 窗口=30s/步长=15s
   └─ c. 文本语义路: encode_text(caption) → text_embedding → 更新 scenes 表
@@ -262,6 +270,7 @@ videos
   ├─ preset, content_type, language
   ├─ audio/vision/ocr/grounding/caption/summary_enabled (感知线路开关)
   ├─ qc_result (JSONB), summary (JSONB)
+  ├─ status_detail (管道实时操作描述, 如"正在编码第 5/23 个场景的帧向量")
   └─ created_at, updated_at
 
 scenes
@@ -314,19 +323,20 @@ chunks
 React 19 + Vite 6 + Tailwind CSS 4
   │
   ├── App.tsx          ← 根组件
-  ├── Dashboard.tsx    ← 主工作台 (三栏式布局, 所有组件内联)
-  │   ├── LeftSidebar    ← 功能导航 (Dashboard/History/Upload)
-  │   ├── Main Content   ← 视频播放器 + PipelineBar (6 段光谱进度条)
-  │   └── Right Sidebar  ← VideoSummaryCard + VideoSearchCard
+  ├── Dashboard.tsx    ← 主工作台 (多视图 + 面板布局, 所有主要组件内联)
+  │   ├── LeftSidebar    ← 深蓝导航栏: 页面切换 (工作台/系统设置) + 面板开关 (参数/历史)
+  │   ├── Main Content   ← Cerno 标志 + 视频播放器 + PipelineBar (两行紧凑卡片, 实时状态详情)
+  │   ├── Right Sidebar  ← VideoSummaryCard + VideoSearchCard
+  │   ├── ParameterPanel ← 侧滑参数面板: 处理预设/内容类型/语言/感知模块开关/高级参数
+  │   └── SettingsPage   ← 全页系统设置: 存储路径/默认处理参数/API 密钥状态
   ├── VideoSummaryCard ← 视频摘要展示 (one_liner + scenes + tags/topics)
   ├── VideoSearchCard  ← 语义搜索面板 (四路召回结果 + 缩略图 + 精度标识)
-  ├── HistoryPanel     ← 视频历史列表 (侧滑面板, 支持删除)
-  ├── PipelineBar      ← 6 段蓝→青绿渐变进度条 (qc/segment/align/caption/embed/summary)
-  └── components/      ← 子组件 (AnalysisPanel/HistoryList/Layout/VideoPlayer)
+  ├── PipelineBar      ← 紧凑两行布局: 渐变进度条 + 阶段圆形指示灯 + 实时状态文字
+  └── components/      ← 子组件外壳 (AnalysisPanel/HistoryList/Layout/VideoPlayer)
 
 数据流:
   Dashboard mount → GET /api/v1/videos/ 拉取列表
-  选择视频 → GET /api/v1/videos/{id} 每 3s 轮询 (处理中时)
+  选择视频 → GET /api/v1/videos/{id} 每 3s 轮询 (处理中时), 展示 status_detail 实时状态
   上传触发 → POST multipart → 自动选中新视频
   搜索 → POST /api/v1/search/semantic → 结果卡片 (点击跳转视频时间点)
 
@@ -347,7 +357,7 @@ Vite 开发代理:
 | **1fps frame pool + 3 encoding paths** | Frame-level precision + chunk-level process semantics + text semantics |
 | **Adaptive chunk windows** | ≤5s scene: skip; 5-60s: half-duration window; >60s: 30s fixed window |
 | **Enabled modules only** | pipeline checks each plugin; null = skip gracefully |
-| **React + Vite + Tailwind** | Fast dev experience, minimal config, glass-panel UI |
+| **React + Vite + Tailwind** | Fast dev experience, minimal config, fluid-blob background + card-surface panels |
 | **Unified API envelope** | All responses wrapped in `{code, message, data}` |
 | **Shared embedder in app.state** | Avoids reloading 4GB model per video |
 

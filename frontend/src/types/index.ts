@@ -82,6 +82,7 @@ export interface VideoResponse {
   grounding_enabled: boolean;
   caption_enabled: boolean;
   summary_enabled: boolean;
+  status_detail: string | null;
   qc_result: unknown | null;
   summary: VideoSummary | null;
   created_at: string;

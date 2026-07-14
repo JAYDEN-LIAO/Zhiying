@@ -68,7 +68,8 @@ Upload → Pipeline → DB → Search → Frontend
 - **PostgreSQL + pgvector** with 5 tables: videos, scenes, transcripts, frame_embeddings, chunks
 - **4-path parallel search**: frame (1fps precision) + chunk (process semantics) + text (caption semantics) + label (JSONB exact match)
 - **Config-driven**: switch models or API providers via `config.yaml`
-- **React frontend** with video player, 6-segment pipeline progress bar, and semantic search with thumbnail results
+- **Pipeline real-time status** — each phase writes human-readable progress descriptions (`status_detail`) to the database, displayed in the frontend in real time
+- **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, parameter panel, and settings page
 
 ## Tech Stack
 
@@ -137,12 +138,14 @@ cerno/
 │   └── export_service.py # (stub) export logic
 ├── utils/                # FFmpeg tools, video utilities
 ├── frontend/             # React + Vite + Tailwind dashboard
+│   ├── public/
+│   │   └── cerno.svg     # App logo
 │   ├── src/
-│   │   ├── Dashboard.tsx # Main workspace (all components inline)
+│   │   ├── Dashboard.tsx # Main workspace (all major components inline)
 │   │   ├── services/api.ts
 │   │   ├── types/index.ts
 │   │   ├── mockData.ts   # Pipeline stage definitions
-│   │   └── components/   # Sub-components (AnalysisPanel, HistoryList, etc.)
+│   │   └── components/   # Sub-component shells (AnalysisPanel, HistoryList, etc.)
 │   ├── package.json
 │   └── vite.config.ts
 ├── models/               # Local model weights (gitignored)

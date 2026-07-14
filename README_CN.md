@@ -68,7 +68,8 @@ curl -X POST -H "Content-Type: application/json" \
 - **PostgreSQL + pgvector**，5 张表：videos、scenes、transcripts、frame_embeddings、chunks
 - **四路并行搜索**：帧级（1fps 精确定位）+ 窗口级（过程语义）+ 文本级（caption 语义）+ 标签级（JSONB 精确匹配）
 - **配置驱动**：切换模型或 API 提供商只需改 `config.yaml`
-- **React 前端**：视频播放器、六段 Pipeline 进度条、语义搜索面板（缩略图 + 精度标识）
+- **Pipeline 实时状态**：各阶段向数据库写入中文进度描述（`status_detail`），前端实时展示
+- **React 前端**：视频播放器、实时状态 Pipeline 进度条、语义搜索面板（缩略图 + 精度标识）、参数设置面板、系统设置页
 
 ## 技术栈
 
@@ -137,12 +138,14 @@ cerno/
 │   └── export_service.py # （骨架）导出逻辑
 ├── utils/                # FFmpeg 工具、视频工具
 ├── frontend/             # React + Vite + Tailwind 工作台
+│   ├── public/
+│   │   └── cerno.svg     # 应用 Logo
 │   ├── src/
-│   │   ├── Dashboard.tsx # 主工作台（所有组件内联在同一文件）
+│   │   ├── Dashboard.tsx # 主工作台（所有主要组件内联在同一文件）
 │   │   ├── services/api.ts
 │   │   ├── types/index.ts
 │   │   ├── mockData.ts   # Pipeline 阶段定义
-│   │   └── components/   # 子组件（AnalysisPanel、HistoryList 等）
+│   │   └── components/   # 子组件外壳（AnalysisPanel、HistoryList 等）
 │   ├── package.json
 │   └── vite.config.ts
 ├── models/               # 本地模型权重（gitignored）

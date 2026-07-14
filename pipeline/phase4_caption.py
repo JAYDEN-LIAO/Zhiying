@@ -81,6 +81,7 @@ class Phase4Caption:
                 await self.tracker.update(
                     "phase_4_caption",
                     progress=0.50 + 0.25 * ((i + 1) / total),
+                    description=f"正在描述第 {i + 1}/{total} 个场景",
                 )
 
             captioned = sum(1 for s in scenes if s.caption)

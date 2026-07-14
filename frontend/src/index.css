@@ -68,6 +68,34 @@ body {
   filter: blur(50px);
 }
 
+/* ── 左侧蓝色晕染 (配合导航栏) ── */
+.fluid-blob-left {
+  top: 10%;
+  left: 0;
+  width: 18%;
+  height: 80%;
+  background: radial-gradient(circle at 30% 50%, rgba(26, 101, 225, 0.20) 0%, rgba(26, 101, 225, 0) 60%);
+  filter: blur(80px);
+}
+.fluid-blob-left-2 {
+  bottom: 5%;
+  left: 0;
+  width: 14%;
+  height: 40%;
+  background: radial-gradient(circle at 50% 60%, rgba(26, 101, 225, 0.15) 0%, rgba(26, 101, 225, 0) 55%);
+  filter: blur(60px);
+}
+
+/* ── 右侧绿色晕染 (配合视频卡片) ── */
+.fluid-blob-right {
+  bottom: 0;
+  right: 0;
+  width: 25%;
+  height: 45%;
+  background: radial-gradient(circle at 50% 40%, rgba(52, 211, 153, 0.25) 0%, rgba(52, 211, 153, 0) 55%);
+  filter: blur(60px);
+}
+
 /* ── Right sidebar cards: visible shadow + gradient surface ── */
 
 .card-surface {
@@ -96,6 +124,28 @@ body {
 .custom-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
+/* ── 蓝色拖动条 ── */
+input[type="range"].range-blue::-webkit-slider-runnable-track {
+  background: #e5e7eb;
+  border-radius: 9999px;
+  height: 6px;
+}
+input[type="range"].range-blue::-moz-range-track {
+  background: #e5e7eb;
+  border-radius: 9999px;
+  height: 6px;
+}
+input[type="range"].range-blue::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #1a65e1;
+  cursor: pointer;
+  margin-top: -5px;
+}
+
 .custom-scrollbar::-webkit-scrollbar-thumb {
   background: #d0d5dd;
   border-radius: 2px;
