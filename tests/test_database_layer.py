@@ -11,7 +11,7 @@ import asyncio
 import pytest
 from sqlalchemy import text, select
 
-from core.models import Video, Scene, Transcript, VideoStatus, PresetMode, ContentType
+from core.models import Video, Scene, Transcript, VideoStatus, ContentType
 from core.db import engine
 
 
@@ -32,18 +32,24 @@ class TestVideoDefaultsAndTimestamps:
 
         # ── 枚举默认值 ──
         assert video.status == VideoStatus.PENDING
-        assert video.preset == PresetMode.STANDARD
         assert video.content_type == ContentType.GENERAL
         assert video.language == "auto"
         assert video.progress == 0.0
 
-        # ── 6 个感知开关默认值 ──
-        assert video.audio_enabled is True
+        # ── 感知开关默认值 ──
+        assert video.audio_enabled is False   # v0.6: 默认关闭
         assert video.vision_enabled is True
-        assert video.ocr_enabled is True
+        assert video.ocr_enabled is False     # v0.6: 默认关闭
         assert video.grounding_enabled is False
         assert video.caption_enabled is True
         assert video.summary_enabled is True
+
+        # ── v0.6 参数层新列默认值 ──
+        assert video.search_index_enabled is True
+        assert video.sample_fps == 1.0
+        assert video.segment_threshold == 0.5
+        assert video.caption_with_context is True
+        assert video.summary_detail == "standard"
 
         # ── UUID 主键自动生成 ──
         assert isinstance(video.id, uuid.UUID)

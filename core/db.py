@@ -39,6 +39,7 @@ async def init_db():
     - 创建 uuid-ossp / pg_trgm / vector 扩展
     - 创建 scenes_search_vector_update 触发器函数
     - 创建所有 ORM 表（通过 Base.metadata.create_all）
+    - 执行增量迁移（ALTER TABLE ADD COLUMN）
     """
     async with engine.begin() as conn:
         # ── 扩展 ──
@@ -73,6 +74,41 @@ async def init_db():
         await conn.execute(text("""
             ALTER TABLE videos
             ADD COLUMN IF NOT EXISTS status_detail text
+        """))
+
+        # ── 增量迁移 v0.6: 参数层新列 ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS search_index_enabled boolean
+                DEFAULT true NOT NULL
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS sample_fps double precision
+                DEFAULT 1.0 NOT NULL
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS segment_threshold double precision
+                DEFAULT 0.5 NOT NULL
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS caption_with_context boolean
+                DEFAULT true NOT NULL
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS summary_detail varchar(16)
+                DEFAULT 'standard' NOT NULL
+        """))
+
+        # ── 清理：删除废弃的 preset 列及枚举类型 ──
+        await conn.execute(text("""
+            ALTER TABLE videos DROP COLUMN IF EXISTS preset
+        """))
+        await conn.execute(text("""
+            DROP TYPE IF EXISTS preset_mode_enum
         """))
 
         # ── 行级触发器（在表创建后附着） ──

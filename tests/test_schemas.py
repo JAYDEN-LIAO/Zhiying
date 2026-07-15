@@ -23,7 +23,7 @@ from core.schemas import (
     SceneResponse,
     TranscriptResponse,
 )
-from core.models import VideoStatus, PresetMode, ContentType
+from core.models import VideoStatus, ContentType
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -157,11 +157,12 @@ class TestValidationBoundaries:
                 file_path="/x.mp4",
                 file_name="x.mp4",
                 file_size=100,
-                preset=PresetMode.STANDARD,
                 content_type=ContentType.GENERAL,
                 language="auto",
-                audio_enabled=True, vision_enabled=True, ocr_enabled=True,
+                audio_enabled=False, vision_enabled=True, ocr_enabled=False,
                 grounding_enabled=False, caption_enabled=True, summary_enabled=True,
+                search_index_enabled=True, sample_fps=1.0, segment_threshold=0.5,
+                caption_with_context=True, summary_detail="standard",
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
             )
@@ -176,11 +177,12 @@ class TestValidationBoundaries:
                 file_path="/x.mp4",
                 file_name="x.mp4",
                 file_size=100,
-                preset=PresetMode.STANDARD,
                 content_type=ContentType.GENERAL,
                 language="auto",
-                audio_enabled=True, vision_enabled=True, ocr_enabled=True,
+                audio_enabled=False, vision_enabled=True, ocr_enabled=False,
                 grounding_enabled=False, caption_enabled=True, summary_enabled=True,
+                search_index_enabled=True, sample_fps=1.0, segment_threshold=0.5,
+                caption_with_context=True, summary_detail="standard",
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
             )
@@ -289,7 +291,6 @@ class TestSerialization:
             file_name="test.mp4",
             file_size=2048,
             duration=120.0,
-            preset=PresetMode.STANDARD,
             content_type=ContentType.GENERAL,
             language="en",
             audio_enabled=True,
@@ -298,6 +299,12 @@ class TestSerialization:
             grounding_enabled=True,
             caption_enabled=True,
             summary_enabled=False,
+            search_index_enabled=True,
+            sample_fps=1.0,
+            segment_threshold=0.5,
+            caption_with_context=True,
+            summary_detail="standard",
+            status_detail=None,
             qc_result=None,
             summary=summary,
             created_at=now,
@@ -313,7 +320,6 @@ class TestSerialization:
         assert parsed["file_path"] == "/videos/test.mp4"
         assert parsed["file_size"] == 2048
         assert parsed["duration"] == 120.0
-        assert parsed["preset"] == "standard"
         assert parsed["content_type"] == "general"
         assert parsed["language"] == "en"
         assert parsed["audio_enabled"] is True

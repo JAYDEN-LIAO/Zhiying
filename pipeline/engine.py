@@ -83,34 +83,163 @@ class PipelineEngine:
     # ──────────────────────────────────────────────────────
 
     async def run(self) -> None:
-        """按阶段顺序执行全流程。
+        """按阶段顺序执行全流程，根据视频参数开关门控各阶段。
 
-        Phase 2（检测/OCR）当前跳过，Demo 阶段仅启用:
-          Phase 1 → 关键帧抽取 → Phase 3 → Phase 4 → Phase 5 → Persist
+        各阶段门控规则（来自 L2/L3 参数）:
+          vision_enabled=OFF  → 跳过关键帧、描述、编码
+          audio_enabled=OFF   → 跳过转录、对齐（在 phase1/3 内部检查）
+          caption_enabled=OFF → 跳过描述、摘要（摘要依赖描述）
+          summary_enabled=OFF → 跳过摘要
+          search_index_enabled=OFF → 跳过帧/块/文本编码
         """
+        v = self.video  # shorthand
+
         try:
             await self._set_processing()
             await self.initialize()
 
             await self._phase1()
-            await self._extract_keyframes()
+
+            if v.vision_enabled:
+                await self._extract_keyframes()
+            else:
+                logger.info("[Pipeline] vision_enabled=false, skipping keyframe extraction")
+
             await self._phase3()
-            await self._phase4()
-            await self._phase5()
+
+            if v.vision_enabled and v.caption_enabled:
+                await self._phase4()
+            else:
+                logger.info("[Pipeline] caption_enabled=false, skipping captioning")
+
+            if v.summary_enabled and v.caption_enabled:
+                await self._phase5()
+            else:
+                logger.info("[Pipeline] summary_enabled=false, skipping summarization")
+
             await self._persist()
+
+            # _encode_frames 在 persist 后单独执行（不影响摘要）
+            if v.search_index_enabled and v.vision_enabled:
+                try:
+                    await self._encode_frames()
+                except Exception as e:
+                    logger.warning("[Pipeline] Frame/chunk encoding failed: %s", e)
+            else:
+                logger.info("[Pipeline] search_index_enabled=false, skipping encoding")
 
             await self.tracker.mark_completed()
             logger.info("[Pipeline] video %s completed", self.video.id)
 
-            # 帧和 chunk 编码（纯搜索用，不影响摘要，完成后执行）
-            try:
-                await self._encode_frames()
-            except Exception as e:
-                logger.warning("[Pipeline] Frame/chunk encoding failed: %s", e)
-
         except Exception as e:
             logger.exception("[Pipeline] video %s failed: %s", self.video.id, e)
             await self.tracker.mark_failed(str(e))
+
+    async def _load_scenes_from_db(self) -> None:
+        """从 DB 加载已有场景数据到 ctx.scenes（增量用）。"""
+        from sqlalchemy import select
+        from core.models import Scene as SceneModel
+        from core.interfaces import Scene as SceneData
+
+        async with self.db_session_factory() as session:
+            result = await session.execute(
+                select(SceneModel)
+                .where(SceneModel.video_id == self.video.id)
+                .order_by(SceneModel.scene_index)
+            )
+            db_scenes = result.scalars().all()
+
+        for s in db_scenes:
+            scene = SceneData(
+                scene_id=s.scene_index,
+                scene_index=s.scene_index,
+                start_sec=s.start_sec,
+                end_sec=s.end_sec,
+                keyframe_path=s.keyframe_path,
+                caption=s.caption,
+                ocr_text=s.ocr_text,
+                aligned_transcript=s.aligned_transcript,
+            )
+            self.ctx.scenes.append(scene)
+
+        # 填充 prev_caption
+        for i in range(1, len(self.ctx.scenes)):
+            self.ctx.scenes[i].prev_caption = self.ctx.scenes[i - 1].caption
+
+        logger.info("[Pipeline] Loaded %d scenes from DB for incremental run", len(self.ctx.scenes))
+
+    async def run_incremental(self, added_modalities: set[str]) -> None:
+        """增量运行：对已处理完成的视频补跑指定阶段。
+
+        Args:
+            added_modalities: {'summary'} / {'search_index'} / {'summary', 'search_index'}
+        """
+        v = self.video
+        need_summary = 'summary' in added_modalities
+        need_search = 'search_index' in added_modalities
+
+        try:
+            await self._set_processing()
+            await self.initialize()
+            await self._load_scenes_from_db()
+
+            # ── 补跑摘要 ──
+            if need_summary and v.caption_enabled:
+                logger.info("[Incremental] Running summary for video %s", self.video.id)
+                await self._phase5()
+
+            # ── 补跑搜索索引 ──
+            if need_search and v.vision_enabled:
+                logger.info("[Incremental] Running search index for video %s", self.video.id)
+
+                # 清理旧编码数据（防重入）
+                from sqlalchemy import delete as sa_delete
+                from core.models import FrameEmbedding, Chunk
+                async with self.db_session_factory() as session:
+                    await session.execute(
+                        sa_delete(FrameEmbedding).where(FrameEmbedding.video_id == self.video.id)
+                    )
+                    await session.execute(
+                        sa_delete(Chunk).where(Chunk.video_id == self.video.id)
+                    )
+                    await session.execute(
+                        update(Scene)
+                        .where(Scene.video_id == self.video.id)
+                        .values(text_embedding=None)
+                    )
+                    await session.commit()
+
+                await self._extract_keyframes()
+                await self._encode_frames()
+
+            if need_summary:
+                await self._persist_summary_only()
+
+            await self.tracker.mark_completed()
+            logger.info("[Incremental] video %s completed", self.video.id)
+
+        except Exception as e:
+            logger.exception("[Incremental] video %s failed: %s (reverting to completed)", self.video.id, e)
+            # 增量失败不破坏原始数据，恢复为 completed
+            async with self.db_session_factory() as session:
+                await session.execute(
+                    update(Video)
+                    .where(Video.id == self.video.id)
+                    .values(status=VideoStatus.COMPLETED, error_message=f"Incremental failed: {e}")
+                )
+                await session.commit()
+
+    async def _persist_summary_only(self) -> None:
+        """仅写入摘要（增量用）。"""
+        if self.ctx.summary:
+            from core.repository import save_video_artifacts
+            async with self.db_session_factory() as session:
+                await save_video_artifacts(
+                    session,
+                    self.video.id,
+                    qc_result=None,
+                    summary=self.ctx.summary,
+                )
 
     async def _set_processing(self) -> None:
         """修改视频状态为 processing。"""

@@ -2,7 +2,7 @@
 
 ## One-Line Summary
 
-Cerno is a **video analytics engine** (v0.5) that ingests videos, runs a 5-stage async pipeline (QC → segmentation → captioning → embedding → summarization), generates **3-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics), enables **4-path parallel semantic search** over scene content, and exposes everything via **FastAPI + PostgreSQL/pgvector**.
+Cerno is a **video analytics engine** (v0.6) that ingests videos, runs a 5-stage async pipeline (QC → segmentation → captioning → embedding → summarization), generates **3-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics), enables **4-path parallel semantic search** over scene content, exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
 
 ## Quick File Map
 
@@ -35,10 +35,13 @@ plugins/factory.py         — Dynamic plugin loader (CATEGORY_MAP, _MODULE_OVER
 config/config.yaml         — Main config: server/db/storage/plugins/pipeline
 config/config_schema.py    — Pydantic config validation
 config/prompts.yaml        — Caption/Summarizer/Grounding prompt templates
-frontend/src/Dashboard.tsx — Main workspace: video player, PipelineBar, VideoSummaryCard, VideoSearchCard, HistoryPanel
+frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~380 lines)
+frontend/src/components/    — Split components: icons, LeftSidebar, ParameterPanel, PipelineBar,
+                              VideoSummaryCard, VideoSearchCard, HistoryPanelContent, SettingsPage
+frontend/src/utils/helpers.ts — Shared helpers (fmtDuration, fmtDate, formatSec)
 frontend/src/services/api.ts — API wrapper + polling helper
 frontend/src/types/index.ts — TypeScript types (mirrors backend schemas)
-frontend/src/mockData.ts   — Pipeline stage definitions (6 stages: qc/segment/align/caption/embed/summary)
+frontend/src/mockData.ts   — Pipeline stage definitions + computePipelineStages() dynamic function
 ```
 
 ## Data Flow
@@ -46,23 +49,29 @@ frontend/src/mockData.ts   — Pipeline stage definitions (6 stages: qc/segment/
 ```
 POST /videos/upload (multipart file)
   → save to disk
-  → create Video record (status=pending, with perception switches)
-  → background task: PipelineEngine.run()
+  → create Video record (status=pending, default params)
+  → parameter panel auto-opens in frontend
 
-PipelineEngine.run():
+PUT /videos/{id}/params (after user configures)
+  → validate via PipelineParams (core/schemas.py model_validator)
+  → update Video record with Scene Type / Perception Modules / Function Switches / Advanced Params
+  → background task: PipelineEngine.run()   (for pending videos)
+  → background task: PipelineEngine.run_incremental()   (for completed videos, only summary/search_index)
+
+PipelineEngine.run() (with gate control from L2/L3 params):
   initialize()    → Load 9 plugins (embedder reuses app.state shared instance)
   _phase1()       → QC (FFmpeg) + audio extraction + scene segmentation (TransNetV2)
                    → writes status_detail: "质检完成", "正在转录音频", "镜头分割完成: N 个场景"
-  _extract_keyframes() → FFmpeg pipe → memory @1fps, 3-7 caption frames, thumbnails
+  _extract_keyframes() ← gated by vision_enabled → FFmpeg pipe → memory @1fps, 3-7 caption frames, thumbnails
                    → writes status_detail: "正在抽取第 X/Y 个场景的关键帧"
-  _phase3()       → Transcript-to-scene alignment
+  _phase3()       ← gated by audio_enabled → Transcript-to-scene alignment
                    → writes status_detail: "对齐完成: X/Y 个场景已分配转录文本"
-  _phase4()       → Caption (API, with memory window) + Embed (local GPU)
+  _phase4()       ← gated by vision_enabled + caption_enabled → Caption (API, with memory window)
                    → writes status_detail: "正在描述第 X/Y 个场景"
-  _phase5()       → LLM summary (API)
+  _phase5()       ← gated by summary_enabled + caption_enabled → LLM summary (API)
                    → writes status_detail: "正在生成摘要（N 个场景）..."
   _persist()      → Write scenes (bulk) + transcript + artifacts to DB
-  _encode_frames() → 3 encoding paths (after persist, search-only):
+  _encode_frames() ← gated by search_index_enabled + vision_enabled → 3 encoding paths (after persist):
                    → writes status_detail: "正在编码第 X/Y 个场景的帧向量"
     a. Frame path:  encode_image(1fps) → frame_embeddings table
     b. Chunk path:  create temp clip → encode_video(clip) → chunks table
@@ -90,13 +99,14 @@ Search (4-path parallel):
 - **Shared embedder**: Embedder is loaded once in `app.state.embedder` during lifespan startup. Pipeline and SearchEngine both reuse this instance — never call `load_plugin("embedder")` directly in business logic.
 - **Incremental migration**: `init_db()` uses `ALTER TABLE ADD COLUMN IF NOT EXISTS` for schema evolution (e.g., `text_embedding`, `status_detail` columns).
 - **Three encoding paths exist**: Frame (1fps per-frame), Chunk (sliding window clips), Text (caption semantics). All three are encoded in `_encode_frames()` after `_persist()`.
-- **Perception switches**: Video model has `audio/vision/ocr/grounding/caption/summary_enabled` booleans. Pipeline phases check these before executing.
+- **Parameter system (v0.6)**: 4-level hierarchy — L1=Scene Type (general/meeting/surveillance/text_recognition/custom), L2=Perception Modules (vision/audio/ocr/caption, plus detection-grayed), L3=Function Switches (search_index/summary), L4=Advanced Params (language/sample_fps/segment_threshold/caption_with_context/summary_detail). Upper levels set defaults for lower levels. Pipeline uses `PipelineParams` Pydantic model with cross-field validation.
+- **Incremental processing**: Completed videos can re-run summary or search index independently via `run_incremental()`. Non-incremental param changes require creating a new video record (reuse file via `POST /videos/reuse`).
 
 ## Database Tables (5)
 
 | Table | Key Columns | Purpose |
 |---|---|---|
-| `videos` | id, status, progress, status_detail, qc_result(JSONB), summary(JSONB), 6x perception switches | Video master |
+| `videos` | id, status, progress, status_detail, qc_result(JSONB), summary(JSONB), content_type, perception switches (vision/audio/ocr/grounding/caption/summary_enabled), function switches (search_index_enabled), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail), language | Video master |
 | `scenes` | id, video_id(FK), scene_index, embedding(Vector2048), text_embedding(Vector2048), caption, search_vector(TSVECTOR) | Core search grain |
 | `transcripts` | id, video_id(FK, UNIQUE), full_text, words(JSONB) | Speech transcripts |
 | `frame_embeddings` | id, video_id(FK), timestamp_sec, embedding(Vector2048), is_keyframe | 1fps frame vectors |
@@ -121,7 +131,10 @@ Search (4-path parallel):
 | DB + migrations | ✅ Done | db.py, models.py, init_db() |
 | Prompt templates | ✅ Done | config/prompts.yaml |
 | Pipeline real-time status | ✅ Done | status_tracker.py writes status_detail; phases 1/3/4/5 + keyframe + encoding report progress |
-| Frontend dashboard | ✅ Done | Dashboard.tsx (React 19 + Tailwind 4) — 深蓝导航栏, 参数面板, 系统设置页, 紧凑 PipelineBar + 实时状态详情 |
+| Parameter system (4-level) | ✅ Done | core/schemas.py PipelineParams + model_validator; config/presets.yaml; frontend ParameterPanel with cascade |
+| Incremental processing | ✅ Done | pipeline/engine.py run_incremental(); services/video_service.py incremental_process() |
+| Settings API + API key mgmt | ✅ Done | core/settings_service.py; GET/PUT /api/v1/settings |
+| Frontend dashboard | ✅ Done | Dashboard.tsx + 8 extracted components in components/ (React 19 + Tailwind 4) — 参数面板四级联动, 动态 PipelineBar, 系统设置页, 历史记录自动刷新 |
 | Object Detection (YOLO) | ⬜ Shell only | plugins/detector/ + pipeline/phase2_perception.py |
 | OCR | ⬜ Shell only | plugins/ocr/ |
 | Grounding | ⬜ Shell only | plugins/grounding/ |
@@ -142,7 +155,7 @@ Search (4-path parallel):
 8. **Three encoding paths**: Frame (encode_image), Chunk (encode_video with temp clips), Text (encode_text). All three reuse the shared embedder. Chunk encoding creates temporary mp4 clips via ffmpeg, encodes them, then cleans up.
 9. **When adding new dependencies**: add to `requirements.txt` AND to `Dockerfile`.
 10. **Search result format**: All results include `precision_level` (frame/chunk/text/label), `precise_start/end`, `match_paths`, and `thumbnail_url`.
-11. **Frontend**: Dashboard.tsx contains all major components inline (LeftSidebar, PipelineBar, VideoSummaryCard, VideoSearchCard, HistoryPanel). The `components/` directory has older sub-component shells. TypeScript types in `types/index.ts` mirror backend Pydantic schemas.
+11. **Frontend**: Dashboard.tsx (~380 lines) orchestrates all state and renders imported components from `components/`. Component files: icons, LeftSidebar, ParameterPanel, PipelineBar, VideoSummaryCard, VideoSearchCard, HistoryPanelContent, SettingsPage. Utility functions in `utils/helpers.ts`. TypeScript types in `types/index.ts` mirror backend Pydantic schemas.
 
 ## Python Environment
 

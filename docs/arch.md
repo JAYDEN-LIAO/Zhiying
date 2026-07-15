@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.5 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.6 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -10,6 +10,7 @@
 │                     Client (CLI/Browser / React Frontend)                        │
 └──────────────────┬────────────────────────────┬──────────────────┬───────────────┘
                    │ POST /videos/upload        │ POST /search/semantic │ GET /videos/
+                   │ + PUT /videos/{id}/params  │                       │
                    ▼                            ▼                        ▼
 ┌─────────────────────────────┐  ┌─────────────────────────────┐  ┌──────────────────┐
 │     FastAPI (main.py)       │  │   SearchEngine              │  │  React Dashboard │
@@ -61,6 +62,44 @@
 │  frame_embeddings (1fps)    │
 │  chunks (滑动窗口)           │
 └─────────────────────────────┘
+```
+
+## Parameter System (v0.6)
+
+```
+4-level hierarchy controlling pipeline execution:
+
+L1: Scene Type (1 of 5)
+  ├─ general       → all modules balanced open
+  ├─ meeting       → audio+ocr forced ON, transcript core
+  ├─ surveillance  → audio OFF, summary OFF, detection ON
+  ├─ text_recognition → ocr ON, caption OFF, audio OFF
+  └─ custom        → user-modified preset, auto-saved to localStorage
+
+L2: Perception Modules (5 switches, 1 grayed)
+  ├─ vision_enabled   → frame processing master switch
+  ├─ audio_enabled    → transcription (grayed when plugin disabled)
+  ├─ ocr_enabled      → text from frames (grayed when plugin disabled)
+  ├─ caption_enabled  → VLM scene description
+  └─ detection_enabled → YOLO (always grayed, plugin not implemented)
+
+L3: Function Switches (2)
+  ├─ search_index_enabled → 3-path encoding for semantic search
+  └─ summary_enabled      → global structured summary
+
+L4: Advanced Params (5)
+  ├─ language, sample_fps, segment_threshold
+  └─ caption_with_context, summary_detail
+
+Validation: PipelineParams model_validator in core/schemas.py
+  ● vision OFF → ocr/caption forced OFF
+  ● caption OFF → summary forced OFF
+  ● vision+audio both OFF → reject
+  ● search+summary both OFF → reject
+
+Incremental: Only L3 switches can be toggled on completed videos
+  → runs run_incremental() → skips completed phases
+  → other param changes require POST /videos/reuse
 ```
 
 ## Pipeline Detail
@@ -267,8 +306,10 @@ core/search.py 提供的 7 种检索函数:
 videos
   ├─ id (UUID PK), status, progress, error_message
   ├─ file_path, file_name, file_size, duration
-  ├─ preset, content_type, language
-  ├─ audio/vision/ocr/grounding/caption/summary_enabled (感知线路开关)
+  ├─ content_type, language
+  ├─ perception: audio/vision/ocr/grounding/caption/summary_enabled
+  ├─ function: search_index_enabled
+  ├─ advanced: sample_fps, segment_threshold, caption_with_context, summary_detail
   ├─ qc_result (JSONB), summary (JSONB)
   ├─ status_detail (管道实时操作描述, 如"正在编码第 5/23 个场景的帧向量")
   └─ created_at, updated_at
@@ -306,7 +347,9 @@ chunks
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | /api/v1/videos | 注册视频任务 (JSON body) |
-| POST | /api/v1/videos/upload | 上传视频文件 (multipart) + 触发后台 Pipeline |
+| POST | /api/v1/videos/upload | 上传视频文件 (multipart, 不启动 Pipeline) |
+| PUT | /api/v1/videos/{id}/params | 设置参数 + 启动 Pipeline (pending/completed) |
+| POST | /api/v1/videos/reuse | 基于已有视频创建新记录 (复用文件) |
 | GET | /api/v1/videos/ | 视频列表 (按创建时间降序) |
 | GET | /api/v1/videos/{id} | 视频详情 + 关联 scenes + transcript |
 | GET | /api/v1/videos/{id}/status | 轻量进度查询 |
@@ -314,6 +357,8 @@ chunks
 | GET | /api/v1/videos/{id}/thumbnail/{scene_index} | 场景缩略图 |
 | DELETE | /api/v1/videos/{id} | 删除视频 (CASCADE scenes/transcript/frames/chunks) |
 | GET | /api/v1/search/text?q= | 全文检索 (GIN tsvector) |
+| GET | /api/v1/settings | 获取系统设置 (API key 状态) |
+| PUT | /api/v1/settings | 更新系统设置 (保存 API key) |
 | POST | /api/v1/search/semantic | 语义搜索 (四路并行召回 + 按 scene 合并) |
 | POST | /api/v1/search/hybrid | 混合检索 (vector + text 加权融合) |
 
@@ -322,23 +367,29 @@ chunks
 ```
 React 19 + Vite 6 + Tailwind CSS 4
   │
-  ├── App.tsx          ← 根组件
-  ├── Dashboard.tsx    ← 主工作台 (多视图 + 面板布局, 所有主要组件内联)
-  │   ├── LeftSidebar    ← 深蓝导航栏: 页面切换 (工作台/系统设置) + 面板开关 (参数/历史)
-  │   ├── Main Content   ← Cerno 标志 + 视频播放器 + PipelineBar (两行紧凑卡片, 实时状态详情)
-  │   ├── Right Sidebar  ← VideoSummaryCard + VideoSearchCard
-  │   ├── ParameterPanel ← 侧滑参数面板: 处理预设/内容类型/语言/感知模块开关/高级参数
-  │   └── SettingsPage   ← 全页系统设置: 存储路径/默认处理参数/API 密钥状态
-  ├── VideoSummaryCard ← 视频摘要展示 (one_liner + scenes + tags/topics)
-  ├── VideoSearchCard  ← 语义搜索面板 (四路召回结果 + 缩略图 + 精度标识)
-  ├── PipelineBar      ← 紧凑两行布局: 渐变进度条 + 阶段圆形指示灯 + 实时状态文字
-  └── components/      ← 子组件外壳 (AnalysisPanel/HistoryList/Layout/VideoPlayer)
+  ├── App.tsx                ← 根组件
+  ├── Dashboard.tsx          ← 主工作台 (~380 行, 状态编排 + render)
+  ├── components/
+  │   ├── LeftSidebar        ← 深蓝导航栏: 页面切换 + 面板开关
+  │   ├── ParameterPanel     ← 侧滑参数面板: 四级联动 (L1场景/L2感知/L3功能/L4高级)
+  │   ├── PipelineBar        ← 动态阶段进度条 (根据开关渲染对应节点)
+  │   ├── VideoSummaryCard   ← 视频摘要展示
+  │   ├── VideoSearchCard    ← 语义搜索面板 (索引未开启时置灰)
+  │   ├── HistoryPanelContent← 历史记录列表 (自动刷新 + 缩略图 + 参数摘要)
+  │   ├── SettingsPage       ← 系统设置: 存储路径 + API 密钥管理 (真实连接后端)
+  │   └── icons.tsx          ← 18 个 SVG 图标
+  ├── utils/helpers.ts       ← fmtDuration, fmtDate, formatSec
+  ├── services/api.ts        ← API 封装 + 轮询工具函数
+  ├── types/index.ts         ← TypeScript 类型定义
+  └── mockData.ts            ← Pipeline 阶段定义 + computePipelineStages()
 
 数据流:
   Dashboard mount → GET /api/v1/videos/ 拉取列表
-  选择视频 → GET /api/v1/videos/{id} 每 3s 轮询 (处理中时), 展示 status_detail 实时状态
-  上传触发 → POST multipart → 自动选中新视频
-  搜索 → POST /api/v1/search/semantic → 结果卡片 (点击跳转视频时间点)
+  上传 → POST multipart → 参数面板自动展开 (不可点击外部关闭)
+  配置参数 → PUT /videos/{id}/params → Pipeline 启动
+  选择视频 → GET /api/v1/videos/{id} 每 3s 轮询, 同步更新历史列表状态
+  增量修改 → PUT /videos/{id}/params (仅 summary/search_index) → run_incremental()
+  搜索 → POST /api/v1/search/semantic → 结果卡片 (切换视频时自动清空)
 
 Vite 开发代理:
   /api → http://localhost:8000 (dev)
@@ -360,19 +411,25 @@ Vite 开发代理:
 | **React + Vite + Tailwind** | Fast dev experience, minimal config, fluid-blob background + card-surface panels |
 | **Unified API envelope** | All responses wrapped in `{code, message, data}` |
 | **Shared embedder in app.state** | Avoids reloading 4GB model per video |
+| **4-level parameter hierarchy** | Scene type sets defaults for modules, which gate functions and advanced params |
+| **Incremental pipeline** | L3 switches (summary/search) can re-run independently on completed videos |
+| **Decoupled upload/params** | Upload creates pending video; pipeline starts only after user configures params |
 
 ## Current Status
 
 | Module | Status | Note |
 |---|---|---|
-| Pipeline Core | ✅ | Phase 1→Keyframe→3→4→5→Persist→Encode Frames verified E2E |
+| Pipeline Core | ✅ | Phase 1→Keyframe→3→4→5→Persist→Encode Frames verified E2E, with gate controls |
 | Semantic Search (4-path) | ✅ | frame + chunk + text + label parallel recall, scene-merge dedup |
 | Fulltext Search | ✅ | tsvector via DB trigger |
 | Frame-level Encoding | ✅ | 1fps 逐帧 encode_image → frame_embeddings 表 |
 | Chunk-level Encoding | ✅ | 自适应滑动窗口 encode_video → chunks 表 |
 | Text Semantic Encoding | ✅ | encode_text(caption) → scenes.text_embedding |
-| API Routes | ✅ | 11 endpoints: CRUD, stream, thumbnail, status, 3 search modes |
-| Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, video player, pipeline bar, search with thumbnails |
+| API Routes | ✅ | 15 endpoints: CRUD, stream, thumbnail, status, params, reuse, settings, 3 search modes |
+| Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
+| Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
+| Settings API + Keys | ✅ | core/settings_service.py, GET/PUT /api/v1/settings |
+| Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 8 extracted components, dynamic PipelineBar, auto-refresh history |
 | Config Schema | ✅ | Pydantic v2 validation for config.yaml |
 | Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |
 | DB Layer | ✅ | Async engine, pgvector, init_db(), triggers, incremental migration |

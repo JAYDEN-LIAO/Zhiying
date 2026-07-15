@@ -37,16 +37,20 @@ curl -X POST -H "Content-Type: application/json" \
 
 | 功能 | 端点 | 状态 |
 |---|---|---|
-| 视频上传与处理 | `POST /api/v1/videos/upload` | ✅ |
+| 视频上传与处理 | `POST /api/v1/videos/upload` + `PUT /api/v1/videos/{id}/params` | ✅ |
 | 视频详情与摘要 | `GET /api/v1/videos/{id}` | ✅ |
 | 处理进度查询 | `GET /api/v1/videos/{id}/status` | ✅ |
 | 视频流式播放 | `GET /api/v1/videos/{id}/stream` | ✅ |
 | 场景缩略图 | `GET /api/v1/videos/{id}/thumbnail/{scene_index}` | ✅ |
+| 参数配置 | `PUT /api/v1/videos/{id}/params` | ✅ |
+| 视频复用 | `POST /api/v1/videos/reuse` | ✅ |
 | 视频列表 | `GET /api/v1/videos/` | ✅ |
 | 删除视频 | `DELETE /api/v1/videos/{id}` | ✅ |
 | 语义搜索（四路召回） | `POST /api/v1/search/semantic` | ✅ |
 | 全文检索 | `GET /api/v1/search/text?q=...` | ✅ |
 | 混合检索（向量+文本） | `POST /api/v1/search/hybrid` | ✅ |
+| 系统设置（API 密钥） | `GET/PUT /api/v1/settings` | ✅ |
+| 增量处理 | 已完成视频可单独补跑摘要或索引 | ✅ |
 | 前端工作台 | React 19 + Vite + Tailwind CSS 4 | ✅ |
 
 ## 架构概览
@@ -136,16 +140,22 @@ cerno/
 ├── services/             # 业务逻辑层
 │   ├── video_service.py  # 视频处理编排
 │   └── export_service.py # （骨架）导出逻辑
+├── core/
+│   └── settings_service.py # API 密钥管理 (settings.json 持久化)
 ├── utils/                # FFmpeg 工具、视频工具
 ├── frontend/             # React + Vite + Tailwind 工作台
 │   ├── public/
 │   │   └── cerno.svg     # 应用 Logo
 │   ├── src/
-│   │   ├── Dashboard.tsx # 主工作台（所有主要组件内联在同一文件）
+│   │   ├── Dashboard.tsx # 主工作台 (~380 行，状态编排 + 渲染)
+│   │   ├── components/   # 拆分后的 UI 组件
+│   │   │   ├── icons.tsx, LeftSidebar.tsx, ParameterPanel.tsx
+│   │   │   ├── PipelineBar.tsx, VideoSummaryCard.tsx, VideoSearchCard.tsx
+│   │   │   ├── HistoryPanelContent.tsx, SettingsPage.tsx
+│   │   ├── utils/helpers.ts  # 共享工具函数
 │   │   ├── services/api.ts
 │   │   ├── types/index.ts
-│   │   ├── mockData.ts   # Pipeline 阶段定义
-│   │   └── components/   # 子组件外壳（AnalysisPanel、HistoryList 等）
+│   │   └── mockData.ts   # Pipeline 阶段定义 + computePipelineStages()
 │   ├── package.json
 │   └── vite.config.ts
 ├── models/               # 本地模型权重（gitignored）
@@ -156,6 +166,6 @@ cerno/
 
 ## 开发状态
 
-- **v0.5 — 功能完整**：视频摘要、四路语义搜索、帧/窗口/文本编码已在 4060 8GB 上验证通过
+- **v0.6 — 参数系统 + 增量处理**：四级参数体系（场景类型→感知模块→功能开关→高级参数），Pipeline 按参数门控执行，已完成视频可增量补跑摘要/索引，API 密钥管理界面，历史记录自动刷新
 - **P0 完成**：Pipeline 核心、搜索引擎（7 种检索函数）、11 个 API 端点、前端工作台
 - **规划中**：物体检测（YOLO）、OCR（PaddleOCR）、Grounding（Florence-2）、导出 API（clip/JSON/Markdown）

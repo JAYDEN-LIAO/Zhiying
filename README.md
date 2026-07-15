@@ -37,17 +37,21 @@ curl -X POST -H "Content-Type: application/json" \
 
 | Feature | Endpoint | Status |
 |---|---|---|
-| Video Upload & Pipeline | `POST /api/v1/videos/upload` | ✅ |
+| Video Upload & Pipeline | `POST /api/v1/videos/upload` + `PUT /videos/{id}/params` | ✅ |
 | Video Detail + Summary | `GET /api/v1/videos/{id}` | ✅ |
 | Processing Status | `GET /api/v1/videos/{id}/status` | ✅ |
 | Video Streaming (Range) | `GET /api/v1/videos/{id}/stream` | ✅ |
 | Scene Thumbnail | `GET /api/v1/videos/{id}/thumbnail/{scene_index}` | ✅ |
 | Video List | `GET /api/v1/videos/` | ✅ |
 | Video Delete | `DELETE /api/v1/videos/{id}` | ✅ |
+| Parameter Configuration | `PUT /api/v1/videos/{id}/params` | ✅ |
+| Video Reuse (same file) | `POST /api/v1/videos/reuse` | ✅ |
 | Semantic Search (4-path) | `POST /api/v1/search/semantic` | ✅ |
 | Fulltext Search | `GET /api/v1/search/text?q=...` | ✅ |
 | Hybrid Search (vector+text) | `POST /api/v1/search/hybrid` | ✅ |
+| System Settings (API keys) | `GET/PUT /api/v1/settings` | ✅ |
 | Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 | ✅ |
+| Incremental Processing | summary/search re-run on completed videos | ✅ |
 
 ## Architecture Overview
 
@@ -136,16 +140,22 @@ cerno/
 ├── services/             # Business logic layer
 │   ├── video_service.py  # Video processing orchestration
 │   └── export_service.py # (stub) export logic
+├── core/
+│   └── settings_service.py # API key management (settings.json backed)
 ├── utils/                # FFmpeg tools, video utilities
 ├── frontend/             # React + Vite + Tailwind dashboard
 │   ├── public/
 │   │   └── cerno.svg     # App logo
 │   ├── src/
-│   │   ├── Dashboard.tsx # Main workspace (all major components inline)
+│   │   ├── Dashboard.tsx # Main workspace (~380 lines, orchestrates state + render)
+│   │   ├── components/   # Extracted UI components
+│   │   │   ├── icons.tsx, LeftSidebar.tsx, ParameterPanel.tsx
+│   │   │   ├── PipelineBar.tsx, VideoSummaryCard.tsx, VideoSearchCard.tsx
+│   │   │   ├── HistoryPanelContent.tsx, SettingsPage.tsx
+│   │   ├── utils/helpers.ts  # Shared helpers
 │   │   ├── services/api.ts
 │   │   ├── types/index.ts
-│   │   ├── mockData.ts   # Pipeline stage definitions
-│   │   └── components/   # Sub-component shells (AnalysisPanel, HistoryList, etc.)
+│   │   └── mockData.ts   # Pipeline stage definitions + computePipelineStages()
 │   ├── package.json
 │   └── vite.config.ts
 ├── models/               # Local model weights (gitignored)
@@ -157,6 +167,6 @@ cerno/
 
 ## Development Status
 
-- **v0.5 — Feature complete**: Video summarization, 4-path semantic search, frame/chunk/text encoding verified on 4060 8GB
+- **v0.6 — Parameter system + incremental processing**: 4-level parameter hierarchy (scene type → perception → functions → advanced), configurable pipeline gates, incremental run for summary/search on completed videos, API key management UI, real-time history auto-refresh
 - **P0 complete**: Pipeline core, search engine (7 search functions), 11 API endpoints, frontend dashboard
 - **Planned**: Object detection (YOLO), OCR (PaddleOCR), Grounding (Florence-2), Export APIs (clip/JSON/Markdown)

@@ -9,10 +9,10 @@ Pydantic v2 校验模型 — JSONB 结构校验 / 请求 DTO / 响应 DTO
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Optional
 
-from core.models import VideoStatus, PresetMode, ContentType
+from core.models import VideoStatus, ContentType
 
 
 # ═══════════════════════════════════════════════════════════
@@ -78,21 +78,77 @@ class WordTimestamp(BaseModel):
 # ═══════════════════════════════════════════════════════════
 
 class VideoCreate(BaseModel):
-    """上传视频请求参数。"""
+    """上传视频请求参数（不启动 Pipeline，仅创建记录）。"""
     file_path: str          = Field(..., description="原始视频存储路径(绝对路径)")
     file_name: str          = Field(..., description="上传时原始文件名")
     file_size: int          = Field(..., gt=0, description="字节数")
-    preset: PresetMode      = Field(default=PresetMode.STANDARD)
     content_type: ContentType = Field(default=ContentType.GENERAL)
-    language: str           = Field(default="auto", pattern=r"^(auto|zh|en|ja)$")
+    language: str           = Field(default="auto", pattern=r"^(auto|zh|en|ja|ko)$")
 
     # ── 感知线路开关 ──
-    audio_enabled: bool     = Field(default=True)
+    audio_enabled: bool     = Field(default=False)
     vision_enabled: bool    = Field(default=True)
-    ocr_enabled: bool       = Field(default=True)
+    ocr_enabled: bool       = Field(default=False)
     grounding_enabled: bool = Field(default=False)
     caption_enabled: bool   = Field(default=True)
     summary_enabled: bool   = Field(default=True)
+
+    # ── 参数层新增 (v0.6) ──
+    search_index_enabled: bool  = Field(default=True)
+    sample_fps: float           = Field(default=1.0, ge=0.5, le=3.0)
+    segment_threshold: float    = Field(default=0.5, ge=0.2, le=0.8)
+    caption_with_context: bool  = Field(default=True)
+    summary_detail: str         = Field(default="standard", pattern=r"^(brief|standard|detailed)$")
+
+
+class PipelineParams(BaseModel):
+    """Pipeline 启动参数 — 四级参数统一校验模型。
+
+    前端 PUT /api/v1/videos/{id}/params 时传入，
+    model_validator 执行跨字段依赖校验。
+    """
+    content_type: ContentType = Field(default=ContentType.GENERAL)
+
+    # L2: 感知模块
+    vision_enabled: bool    = Field(default=True)
+    audio_enabled: bool     = Field(default=False)
+    ocr_enabled: bool       = Field(default=False)
+    caption_enabled: bool   = Field(default=True)
+
+    # L3: 功能开关
+    search_index_enabled: bool = Field(default=True)
+    summary_enabled: bool      = Field(default=True)
+
+    # L4: 高级参数
+    language: str               = Field(default="auto", pattern=r"^(auto|zh|en|ja|ko)$")
+    sample_fps: float           = Field(default=1.0, ge=0.5, le=3.0)
+    segment_threshold: float    = Field(default=0.5, ge=0.2, le=0.8)
+    caption_with_context: bool  = Field(default=True)
+    summary_detail: str         = Field(default="standard", pattern=r"^(brief|standard|detailed)$")
+
+    @model_validator(mode="after")
+    def validate_cross_dependencies(self):
+        """跨字段依赖校验 — 与前端连锁规则保持一致。"""
+        # vision 关闭 → ocr / caption 必须为 false
+        if not self.vision_enabled:
+            if self.ocr_enabled:
+                raise ValueError("视觉分析已关闭，文字识别必须同时关闭")
+            if self.caption_enabled:
+                raise ValueError("视觉分析已关闭，画面描述必须同时关闭")
+
+        # caption 关闭 → summary 必须为 false
+        if not self.caption_enabled and self.summary_enabled:
+            raise ValueError("画面描述已关闭，智能摘要必须同时关闭")
+
+        # 至少一个感知源
+        if not self.vision_enabled and not self.audio_enabled:
+            raise ValueError("视觉分析和音频转录至少开启一个")
+
+        # 至少一个功能
+        if not self.search_index_enabled and not self.summary_enabled:
+            raise ValueError("搜索索引和智能摘要至少开启一个")
+
+        return self
 
 
 # ═══════════════════════════════════════════════════════════
@@ -113,7 +169,6 @@ class VideoResponse(BaseModel):
     file_size: int             = Field(..., gt=0)
     duration: float | None     = None
 
-    preset: PresetMode
     content_type: ContentType
     language: str
 
@@ -123,6 +178,12 @@ class VideoResponse(BaseModel):
     grounding_enabled: bool
     caption_enabled: bool
     summary_enabled: bool
+
+    search_index_enabled: bool
+    sample_fps: float
+    segment_threshold: float
+    caption_with_context: bool
+    summary_detail: str
 
     status_detail: str | None      = None
 
@@ -142,10 +203,18 @@ class VideoListItem(BaseModel):
     progress: float                = Field(..., ge=0.0, le=1.0)
     file_name: str
     duration: float | None         = None
-    preset: PresetMode
     content_type: ContentType
     scene_count: int | None        = None
     summary_one_liner: str | None  = None
+
+    # 参数展示字段（来自 Video ORM）
+    audio_enabled: bool            = False
+    caption_enabled: bool          = True
+    summary_enabled: bool          = True
+    search_index_enabled: bool     = True
+    sample_fps: float              = 1.0
+    language: str                  = "auto"
+
     created_at: datetime
     updated_at: datetime
 

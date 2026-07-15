@@ -5,8 +5,7 @@
 /* ── Enums ── */
 
 export type VideoStatus = "pending" | "processing" | "completed" | "failed";
-export type PresetMode = "quick" | "standard" | "full" | "custom";
-export type ContentType = "general" | "meeting" | "surveillance" | "product";
+export type ContentType = "general" | "meeting" | "surveillance" | "text_recognition" | "custom";
 
 /* ── Generic API response envelope ── */
 
@@ -24,10 +23,15 @@ export interface VideoListItem {
   progress: number;
   file_name: string;
   duration: number | null;
-  preset: PresetMode;
   content_type: ContentType;
   scene_count: number | null;
   summary_one_liner: string | null;
+  audio_enabled: boolean;
+  caption_enabled: boolean;
+  summary_enabled: boolean;
+  search_index_enabled: boolean;
+  sample_fps: number;
+  language: string;
   created_at: string;
   updated_at: string;
 }
@@ -73,7 +77,6 @@ export interface VideoResponse {
   file_name: string;
   file_size: number;
   duration: number | null;
-  preset: PresetMode;
   content_type: ContentType;
   language: string;
   audio_enabled: boolean;
@@ -82,6 +85,11 @@ export interface VideoResponse {
   grounding_enabled: boolean;
   caption_enabled: boolean;
   summary_enabled: boolean;
+  search_index_enabled: boolean;
+  sample_fps: number;
+  segment_threshold: number;
+  caption_with_context: boolean;
+  summary_detail: string;
   status_detail: string | null;
   qc_result: unknown | null;
   summary: VideoSummary | null;
@@ -128,17 +136,30 @@ export interface SearchResults {
 
 /* ── Upload response ── */
 
-export interface UploadPayload {
-  file_path: string;
-  file_name: string;
-  file_size: number;
-  preset: PresetMode;
+export interface PipelineParams {
   content_type: ContentType;
-  language: string;
-  audio_enabled: boolean;
   vision_enabled: boolean;
+  audio_enabled: boolean;
   ocr_enabled: boolean;
-  grounding_enabled: boolean;
   caption_enabled: boolean;
+  search_index_enabled: boolean;
   summary_enabled: boolean;
+  language: string;
+  sample_fps: number;
+  segment_threshold: number;
+  caption_with_context: boolean;
+  summary_detail: string;
+}
+
+/* ── Settings ── */
+
+export interface ApiKeyInfo {
+  id: string;
+  label: string;
+  configured: boolean;
+  masked_value: string | null;
+}
+
+export interface SettingsData {
+  api_keys: Record<string, ApiKeyInfo>;
 }

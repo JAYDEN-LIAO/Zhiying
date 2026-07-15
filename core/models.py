@@ -37,18 +37,12 @@ class VideoStatus(str, enum.Enum):
     FAILED      = "failed"
 
 
-class PresetMode(str, enum.Enum):
-    QUICK    = "quick"
-    STANDARD = "standard"
-    FULL     = "full"
-    CUSTOM   = "custom"
-
-
 class ContentType(str, enum.Enum):
-    GENERAL      = "general"
-    MEETING      = "meeting"
-    SURVEILLANCE = "surveillance"
-    PRODUCT      = "product"
+    GENERAL          = "general"
+    MEETING          = "meeting"
+    SURVEILLANCE     = "surveillance"
+    TEXT_RECOGNITION = "text_recognition"
+    CUSTOM           = "custom"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -94,11 +88,6 @@ class Video(Base):
     )
 
     # ── 配置 ──
-    preset: Mapped[PresetMode] = mapped_column(
-        SAEnum(PresetMode, name="preset_mode_enum"),
-        default=PresetMode.STANDARD,
-        nullable=False,
-    )
     content_type: Mapped[ContentType] = mapped_column(
         SAEnum(ContentType, name="content_type_enum"),
         default=ContentType.GENERAL,
@@ -133,6 +122,28 @@ class Video(Base):
     summary_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False,
         comment="摘要生成开关",
+    )
+
+    # ── 参数层新增 (v0.6) ──
+    search_index_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False,
+        comment="搜索索引建立开关（3-path 编码）",
+    )
+    sample_fps: Mapped[float] = mapped_column(
+        Float, default=1.0, nullable=False,
+        comment="分割器采样帧率 0.5~3.0",
+    )
+    segment_threshold: Mapped[float] = mapped_column(
+        Float, default=0.5, nullable=False,
+        comment="TransNetV2 镜头切换敏感度 0.2~0.8",
+    )
+    caption_with_context: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False,
+        comment="Caption 是否带前一场景上下文",
+    )
+    summary_detail: Mapped[str] = mapped_column(
+        String(16), default="standard", nullable=False,
+        comment="摘要详细度: brief / standard / detailed",
     )
 
     # ── QC 结果 (JSONB) ──

@@ -18,12 +18,12 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, B
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from api.deps import get_db
 from core.schemas import (
-    VideoCreate, VideoResponse, VideoListItem, SceneResponse,
-    PresetMode, ContentType,
+    VideoCreate, VideoResponse, VideoListItem, SceneResponse, PipelineParams,
+    ContentType,
 )
 from core.models import Scene, Video
 from core.repository import create_video, get_video_with_relations, list_videos, delete_video
@@ -130,23 +130,25 @@ async def register_video(
 @router.post("/videos/upload", status_code=201)
 async def upload_video(
     request: Request,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    preset: str = Form("standard"),
     content_type: str = Form("general"),
     language: str = Form("auto"),
-    audio_enabled: bool = Form(True),
+    audio_enabled: bool = Form(False),
     vision_enabled: bool = Form(True),
-    ocr_enabled: bool = Form(True),
+    ocr_enabled: bool = Form(False),
     grounding_enabled: bool = Form(False),
     caption_enabled: bool = Form(True),
     summary_enabled: bool = Form(True),
+    search_index_enabled: bool = Form(True),
+    sample_fps: float = Form(1.0),
+    segment_threshold: float = Form(0.5),
+    caption_with_context: bool = Form(True),
+    summary_detail: str = Form("standard"),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[VideoResponse]:
-    """上传视频文件并触发后台处理。
+    """上传视频文件，创建 Video 记录（status=pending），不自动启动 Pipeline。
 
-    Content-Type: multipart/form-data
-    文件保存到 storage.video_dir 后创建记录并异步启动 Pipeline。
+    用户需在参数面板配置后调用 PUT /videos/{id}/params 启动处理。
     """
     config: dict = request.app.state.config
     video_dir = config.get("storage", {}).get("video_dir", "/home/cerno/data/videos")
@@ -162,12 +164,11 @@ async def upload_video(
 
     file_size = os.path.getsize(dest_path)
 
-    # 创建 Video 记录
+    # 创建 Video 记录（pending，不启动 Pipeline）
     dto = VideoCreate(
         file_path=dest_path,
         file_name=file.filename or f"video_{file_id}{ext}",
         file_size=file_size,
-        preset=PresetMode(preset),
         content_type=ContentType(content_type),
         language=language,
         audio_enabled=audio_enabled,
@@ -176,11 +177,79 @@ async def upload_video(
         grounding_enabled=grounding_enabled,
         caption_enabled=caption_enabled,
         summary_enabled=summary_enabled,
+        search_index_enabled=search_index_enabled,
+        sample_fps=sample_fps,
+        segment_threshold=segment_threshold,
+        caption_with_context=caption_with_context,
+        summary_detail=summary_detail,
     )
 
     video = await create_video(db, dto)
 
-    # 后台触发 Pipeline
+    logger.info("[Upload] video=%s file=%s size=%d (pending, await params)", video.id, file.filename, file_size)
+    return APIResponse(data=VideoResponse.model_validate(video))
+
+
+class ReuseRequest(BaseModel):
+    """基于已有视频新建记录。"""
+    source_video_id: uuid.UUID
+    content_type: ContentType = ContentType.GENERAL
+    language: str = "auto"
+    audio_enabled: bool = False
+    vision_enabled: bool = True
+    ocr_enabled: bool = False
+    caption_enabled: bool = True
+    summary_enabled: bool = True
+    search_index_enabled: bool = True
+    sample_fps: float = Field(default=1.0, ge=0.5, le=3.0)
+    segment_threshold: float = Field(default=0.5, ge=0.2, le=0.8)
+    caption_with_context: bool = True
+    summary_detail: str = "standard"
+
+
+@router.post("/videos/reuse", status_code=201)
+async def reuse_video(
+    payload: ReuseRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[VideoResponse]:
+    """基于已有视频的记录创建新处理任务，复用源视频文件。
+
+    当 PUT /params 对 completed 视频返回"需新建记录"时，
+    前端调用此接口，复用源文件的 file_path 创建新记录。
+    """
+    # 查找源视频
+    result = await db.execute(
+        select(Video).where(Video.id == payload.source_video_id)
+    )
+    source = result.scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status_code=404, detail="源视频不存在")
+
+    # 创建新记录
+    dto = VideoCreate(
+        file_path=source.file_path,
+        file_name=source.file_name,
+        file_size=source.file_size,
+        content_type=payload.content_type,
+        language=payload.language,
+        audio_enabled=payload.audio_enabled,
+        vision_enabled=payload.vision_enabled,
+        ocr_enabled=payload.ocr_enabled,
+        grounding_enabled=False,
+        caption_enabled=payload.caption_enabled,
+        summary_enabled=payload.summary_enabled,
+        search_index_enabled=payload.search_index_enabled,
+        sample_fps=payload.sample_fps,
+        segment_threshold=payload.segment_threshold,
+        caption_with_context=payload.caption_with_context,
+        summary_detail=payload.summary_detail,
+    )
+    video = await create_video(db, dto)
+
+    # 启动 Pipeline
+    config: dict = request.app.state.config
     db_session_factory = request.app.state.db_session_factory
     service = VideoService(
         config=config,
@@ -189,8 +258,145 @@ async def upload_video(
     )
     background_tasks.add_task(service.process_video, video.id)
 
-    logger.info("[Upload] video=%s file=%s size=%d", video.id, file.filename, file_size)
+    logger.info("[Reuse] video=%s sourced from %s", video.id, payload.source_video_id)
     return APIResponse(data=VideoResponse.model_validate(video))
+
+
+@router.put("/videos/{video_id}/params")
+async def update_video_params(
+    video_id: uuid.UUID,
+    payload: PipelineParams,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[VideoResponse]:
+    """设置视频处理参数并启动 Pipeline / 增量补跑。
+
+    状态为 pending → 全量启动
+    状态为 completed → 仅 L3 功能开关变更可增量，否则需新建
+    """
+    result = await db.execute(
+        select(Video).where(Video.id == video_id)
+    )
+    video = result.scalar_one_or_none()
+    if video is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    status_val = video.status.value if hasattr(video.status, "value") else video.status
+
+    if status_val == "pending":
+        # ── 全量启动 ──
+        await db.execute(
+            update(Video)
+            .where(Video.id == video_id)
+            .values(
+                content_type=payload.content_type,
+                vision_enabled=payload.vision_enabled,
+                audio_enabled=payload.audio_enabled,
+                ocr_enabled=payload.ocr_enabled,
+                caption_enabled=payload.caption_enabled,
+                summary_enabled=payload.summary_enabled,
+                search_index_enabled=payload.search_index_enabled,
+                language=payload.language,
+                sample_fps=payload.sample_fps,
+                segment_threshold=payload.segment_threshold,
+                caption_with_context=payload.caption_with_context,
+                summary_detail=payload.summary_detail,
+            )
+        )
+        await db.commit()
+        await db.refresh(video)
+
+        config: dict = request.app.state.config
+        db_session_factory = request.app.state.db_session_factory
+        service = VideoService(
+            config=config,
+            db_session_factory=db_session_factory,
+            embedder=getattr(request.app.state, "embedder", None),
+        )
+        background_tasks.add_task(service.process_video, video.id)
+        logger.info("[Params] video=%s full pipeline starting", video_id)
+        return APIResponse(data=VideoResponse.model_validate(video))
+
+    elif status_val in ("completed", "failed"):
+        # ── 增量检测 ──
+        old = {
+            "content_type": video.content_type.value if hasattr(video.content_type, "value") else video.content_type,
+            "vision_enabled": video.vision_enabled,
+            "audio_enabled": video.audio_enabled,
+            "ocr_enabled": video.ocr_enabled,
+            "caption_enabled": video.caption_enabled,
+            "language": video.language,
+            "sample_fps": video.sample_fps,
+            "segment_threshold": video.segment_threshold,
+            "caption_with_context": video.caption_with_context,
+            "summary_detail": video.summary_detail,
+            "summary_enabled": video.summary_enabled,
+            "search_index_enabled": video.search_index_enabled,
+        }
+
+        new = {
+            "content_type": payload.content_type.value if hasattr(payload.content_type, "value") else payload.content_type,
+            "vision_enabled": payload.vision_enabled,
+            "audio_enabled": payload.audio_enabled,
+            "ocr_enabled": payload.ocr_enabled,
+            "caption_enabled": payload.caption_enabled,
+            "language": payload.language,
+            "sample_fps": payload.sample_fps,
+            "segment_threshold": payload.segment_threshold,
+            "caption_with_context": payload.caption_with_context,
+            "summary_detail": payload.summary_detail,
+            "summary_enabled": payload.summary_enabled,
+            "search_index_enabled": payload.search_index_enabled,
+        }
+
+        # 检查只有 L3 功能开关变化
+        non_l3_keys = {"content_type", "vision_enabled", "audio_enabled", "ocr_enabled",
+                       "caption_enabled", "language", "sample_fps", "segment_threshold",
+                       "caption_with_context", "summary_detail"}
+        l3_keys = {"summary_enabled", "search_index_enabled"}
+
+        non_l3_changed = {k for k in non_l3_keys if old.get(k) != new.get(k)}
+        l3_changed = {k for k in l3_keys if old.get(k) != new.get(k)}
+        l3_turned_on = {k for k in l3_changed if new.get(k) is True and old.get(k) is False}
+
+        if non_l3_changed:
+            # L1/L2/L4 变了 → 需新建记录
+            raise HTTPException(
+                status_code=400,
+                detail=f"此修改需新建记录。已修改: {', '.join(non_l3_changed)}。仅功能开关（摘要/索引）可增量。",
+            )
+
+        if not l3_changed:
+            # 什么都没变
+            raise HTTPException(status_code=400, detail="参数未改变")
+
+        # ── 增量更新 L3 开关 ──
+        await db.execute(
+            update(Video)
+            .where(Video.id == video_id)
+            .values(
+                summary_enabled=payload.summary_enabled,
+                search_index_enabled=payload.search_index_enabled,
+            )
+        )
+        await db.commit()
+        await db.refresh(video)
+
+        config: dict = request.app.state.config
+        db_session_factory = request.app.state.db_session_factory
+        service = VideoService(
+            config=config,
+            db_session_factory=db_session_factory,
+            embedder=getattr(request.app.state, "embedder", None),
+        )
+        background_tasks.add_task(service.incremental_process, video.id, l3_turned_on)
+
+        logger.info("[Params] video=%s incremental: %s", video_id, l3_turned_on)
+        return APIResponse(data=VideoResponse.model_validate(video))
+
+    else:
+        raise HTTPException(status_code=400, detail=f"视频状态为 {status_val}，无法修改参数")
 
 
 @router.get("/videos/{video_id}")
@@ -436,3 +642,30 @@ async def search_semantic(
     ]
 
     return APIResponse(data=SearchResults(results=items, total=len(items), query_time_ms=elapsed))
+
+
+# ═══════════════════════════════════════════════════════════
+# 系统设置
+# ═══════════════════════════════════════════════════════════
+
+class SettingsKeysRequest(BaseModel):
+    api_keys: dict[str, str] = Field(default_factory=dict, description="API key 映射表: {id: value}")
+
+
+@router.get("/settings")
+async def get_settings() -> APIResponse[dict]:
+    """获取系统设置（API key 状态等）。"""
+    from core.settings_service import get_current_keys
+    keys = get_current_keys()
+    return APIResponse(data={"api_keys": keys})
+
+
+@router.put("/settings")
+async def update_settings(
+    payload: SettingsKeysRequest,
+) -> APIResponse[dict]:
+    """更新系统设置（API key 等）。"""
+    from core.settings_service import update_keys, get_current_keys
+    update_keys(payload.api_keys)
+    keys = get_current_keys()
+    return APIResponse(data={"api_keys": keys})

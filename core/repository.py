@@ -30,7 +30,6 @@ async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video:
         file_path=video_dto.file_path,
         file_name=video_dto.file_name,
         file_size=video_dto.file_size,
-        preset=video_dto.preset,
         content_type=video_dto.content_type,
         language=video_dto.language,
         audio_enabled=video_dto.audio_enabled,
@@ -39,6 +38,11 @@ async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video:
         grounding_enabled=video_dto.grounding_enabled,
         caption_enabled=video_dto.caption_enabled,
         summary_enabled=video_dto.summary_enabled,
+        search_index_enabled=video_dto.search_index_enabled,
+        sample_fps=video_dto.sample_fps,
+        segment_threshold=video_dto.segment_threshold,
+        caption_with_context=video_dto.caption_with_context,
+        summary_detail=video_dto.summary_detail,
     )
     session.add(video)
     try:
