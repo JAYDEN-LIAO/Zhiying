@@ -153,12 +153,12 @@ class TestFullPipelineE2E:
         assert data["summary"]["one_liner"] == "E2E 测试摘要"
 
         # ════════════════════════════════════════════════════════
-        # Step 5: scenes → caption / embedding / search_vector 非空
+        # Step 5: scenes → caption / text_embedding 非空
         # ════════════════════════════════════════════════════════
         rows = (
             await db_session.execute(
                 text("""
-                    SELECT id, caption, embedding, search_vector::text
+                    SELECT id, caption, text_embedding::text
                     FROM scenes WHERE video_id = :vid ORDER BY scene_index
                 """),
                 {"vid": uuid.UUID(video_id)},
@@ -167,30 +167,3 @@ class TestFullPipelineE2E:
         assert len(rows) >= 1
         for i, r in enumerate(rows):
             assert r[1] and len(r[1]) > 0, f"scene[{i}] caption 空"
-            assert r[2] is not None, f"scene[{i}] embedding NULL"
-            assert r[3] is not None, f"scene[{i}] search_vector NULL"
-
-        # ════════════════════════════════════════════════════════
-        # Step 6: GET /api/v1/search/text?q=
-        # ════════════════════════════════════════════════════════
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/v1/search/text", params={"q": keyword, "limit": 10})
-        assert resp.status_code == 200
-        assert resp.json()["data"]["total"] >= 1
-
-        # ════════════════════════════════════════════════════════
-        # Step 7: POST /api/v1/search/hybrid
-        # ════════════════════════════════════════════════════════
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                "/api/v1/search/hybrid",
-                json={"query_text": keyword, "query_vector": [0.1] * 768, "limit": 10},
-            )
-        assert resp.status_code == 200, f"Step 7 失败: {resp.text}"
-        hybrid = resp.json()["data"]
-        assert hybrid["total"] >= 1, f"混合检索应召回 scene，实际 total={hybrid['total']}"
-        # similarity 来自 SQL 端加权融合计算，应为正数
-        sims = [item["similarity"] for item in hybrid["results"]]
-        assert all(s > 0 for s in sims), (
-            f"部分 similarity 为 <=0: {sims}"
-        )

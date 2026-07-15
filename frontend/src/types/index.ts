@@ -119,7 +119,7 @@ export interface SearchResultItem {
   scene_range_end: number;
   precise_start: number | null;
   precise_end: number | null;
-  precision_level: "frame" | "chunk" | "fulltext" | "label" | "scene";
+  precision_level: "frame" | "chunk" | "text" | "label" | "scene";
   match_paths: string[];
   caption: string | null;
   ocr_text: string | null;

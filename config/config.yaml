@@ -64,3 +64,6 @@ plugins:
 pipeline:
   sample_fps: 1.0
   scene_min_duration: 1.0
+  # chunk 编码：默认关闭（8GB GPU 上帧+文本路已足够）
+  # 开启需要较好 GPU（≥12GB VRAM），并确认 encode_video 不 OOM
+  chunk_encoding: false

@@ -142,80 +142,8 @@ class TestCascadeDelete:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Test 3 — 全文检索触发器
+# Test 3 — pgvector 向量字段
 # ═══════════════════════════════════════════════════════════════
-class TestSearchVectorTrigger:
-    """验证 scenes 表上的 trg_scenes_search_vector 触发器正确组装 tsvector。"""
-
-    async def test_search_vector_is_populated(self, db_session):
-        # 前置 Video
-        video = Video(
-            file_path="/tmp/test_trigger.mp4",
-            file_name="test_trigger.mp4",
-            file_size=512,
-        )
-        db_session.add(video)
-        await db_session.flush()
-
-        scene = Scene(
-            video_id=video.id,
-            scene_index=0,
-            start_sec=0.0,
-            end_sec=10.0,
-            caption="A beautiful deep vision descriptor",
-            ocr_text="PPT Text Content",
-            aligned_transcript="Whisper audio text sequence",
-        )
-        db_session.add(scene)
-        await db_session.commit()
-
-        # ── 验证 search_vector 不为 NULL ──
-        result = await db_session.execute(
-            text("SELECT search_vector::text FROM scenes WHERE id = :sid"),
-            {"sid": scene.id},
-        )
-        row = result.fetchone()
-        assert row is not None, "应能查到刚插入的 scene"
-        tsvector_text = row[0]
-        assert tsvector_text is not None, "search_vector 不应为 NULL"
-        assert len(tsvector_text) > 0, "search_vector 不应为空字符串"
-
-        # ── 全文检索验证：caption 权重 A 应能被检索到 ──
-        result = await db_session.execute(
-            text(
-                "SELECT id FROM scenes "
-                "WHERE search_vector @@ to_tsquery('simple', 'beautiful')"
-            ),
-        )
-        assert result.fetchone() is not None, (
-            "应能通过 'beautiful' 检索到 scene (caption 权重 A)"
-        )
-
-        # ── 全文检索验证：ocr_text 权重 B ──
-        result = await db_session.execute(
-            text(
-                "SELECT id FROM scenes "
-                "WHERE search_vector @@ to_tsquery('simple', 'PPT')"
-            ),
-        )
-        assert result.fetchone() is not None, (
-            "应能通过 'PPT' 检索到 scene (ocr_text 权重 B)"
-        )
-
-        # ── 全文检索验证：aligned_transcript 权重 C ──
-        result = await db_session.execute(
-            text(
-                "SELECT id FROM scenes "
-                "WHERE search_vector @@ to_tsquery('simple', 'Whisper')"
-            ),
-        )
-        assert result.fetchone() is not None, (
-            "应能通过 'Whisper' 检索到 scene (aligned_transcript 权重 C)"
-        )
-
-
-# ═══════════════════════════════════════════════════════════════
-# Test 4 — pgvector 向量字段
 # ═══════════════════════════════════════════════════════════════
 class TestVectorEmbedding:
     """验证 Vector(768) 列可正常保存浮点列表。"""

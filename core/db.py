@@ -34,32 +34,17 @@ class Base(DeclarativeBase):
 
 
 async def init_db():
-    """初始化数据库扩展、触发器函数及所有表。
+    """初始化数据库扩展及所有表。
 
-    - 创建 uuid-ossp / pg_trgm / vector 扩展
-    - 创建 scenes_search_vector_update 触发器函数
+    - 创建 uuid-ossp / vector 扩展
     - 创建所有 ORM 表（通过 Base.metadata.create_all）
     - 执行增量迁移（ALTER TABLE ADD COLUMN）
+    - 清理：删除废弃列、枚举类型、tsvector 触发器
     """
     async with engine.begin() as conn:
         # ── 扩展 ──
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
-        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pg_trgm"'))
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "vector"'))
-
-        # ── 触发器函数（用于 scenes 表 tsvector 自动维护） ──
-        await conn.execute(text("""
-            CREATE OR REPLACE FUNCTION scenes_search_vector_update()
-            RETURNS trigger AS $$
-            BEGIN
-                NEW.search_vector :=
-                    setweight(to_tsvector('simple', coalesce(NEW.caption, '')), 'A') ||
-                    setweight(to_tsvector('simple', coalesce(NEW.ocr_text, '')), 'B') ||
-                    setweight(to_tsvector('simple', coalesce(NEW.aligned_transcript, '')), 'C');
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql;
-        """))
 
         # ── 创建所有表 ──
         await conn.run_sync(Base.metadata.create_all)
@@ -111,13 +96,10 @@ async def init_db():
             DROP TYPE IF EXISTS preset_mode_enum
         """))
 
-        # ── 行级触发器（在表创建后附着） ──
+        # ── 清理：删除废弃的 tsvector 触发器（search_vector 列已移除） ──
         await conn.execute(text("""
             DROP TRIGGER IF EXISTS trg_scenes_search_vector ON scenes
         """))
         await conn.execute(text("""
-            CREATE TRIGGER trg_scenes_search_vector
-            BEFORE INSERT OR UPDATE ON scenes
-            FOR EACH ROW
-            EXECUTE FUNCTION scenes_search_vector_update();
+            DROP FUNCTION IF EXISTS scenes_search_vector_update()
         """))

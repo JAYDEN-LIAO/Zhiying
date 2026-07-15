@@ -46,9 +46,7 @@ curl -X POST -H "Content-Type: application/json" \
 | Video Delete | `DELETE /api/v1/videos/{id}` | ✅ |
 | Parameter Configuration | `PUT /api/v1/videos/{id}/params` | ✅ |
 | Video Reuse (same file) | `POST /api/v1/videos/reuse` | ✅ |
-| Semantic Search (4-path) | `POST /api/v1/search/semantic` | ✅ |
-| Fulltext Search | `GET /api/v1/search/text?q=...` | ✅ |
-| Hybrid Search (vector+text) | `POST /api/v1/search/hybrid` | ✅ |
+| Semantic Search (3-path) | `POST /api/v1/search/semantic` | ✅ |
 | System Settings (API keys) | `GET/PUT /api/v1/settings` | ✅ |
 | Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 | ✅ |
 | Incremental Processing | summary/search re-run on completed videos | ✅ |
@@ -63,14 +61,14 @@ Upload → Pipeline → DB → Search → Frontend
          ├─ Embedding — 3 encoding paths:
          │    ├─ Frame-level: encode_image (1fps, per-frame)
          │    ├─ Chunk-level: encode_video (sliding window)
-         │    └─ Text-level: encode_text(caption)
+         │    └─ Text-level: encode_text(caption+ocr+transcript)
          └─ LLM Summarization (API)
 ```
 
 - **5-stage pipeline** orchestrated by `PipelineEngine`, with 3-path frame/chunk/text encoding
 - **9 abstract plugin interfaces** with dynamic factory loading
 - **PostgreSQL + pgvector** with 5 tables: videos, scenes, transcripts, frame_embeddings, chunks
-- **4-path parallel search**: frame (1fps precision) + chunk (process semantics) + text (caption semantics) + label (JSONB exact match)
+- **3-path parallel semantic search**: frame (1fps precision) + chunk (process semantics) + text (caption+ocr+transcript semantics). label (JSONB) 预留等待 YOLO 接入
 - **Config-driven**: switch models or API providers via `config.yaml`
 - **Pipeline real-time status** — each phase writes human-readable progress descriptions (`status_detail`) to the database, displayed in the frontend in real time
 - **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, parameter panel, and settings page
@@ -105,11 +103,11 @@ cerno/
 │   ├── export_routes.py  # (stub) planned export endpoints
 │   └── maintenance_routes.py  # (stub) planned health/reindex endpoints
 ├── core/                 # DB models, schemas, search, config
-│   ├── db.py             # Async engine, init_db(), triggers, incremental migration
+│   ├── db.py             # Async engine, init_db(), incremental migration
 │   ├── models.py         # ORM: Video, Scene, Transcript, FrameEmbedding, Chunk
 │   ├── schemas.py        # Pydantic DTOs + JSONB validation
 │   ├── repository.py     # Data access layer + bulk_insert_frames/chunks
-│   ├── search.py         # 7 search functions: vector/fulltext/hybrid/fuzzy/frame/chunk/text
+│   ├── search.py         # 3 search functions: frame/chunk/text
 │   ├── interfaces.py     # 9 abstract plugin base classes
 │   ├── config_loader.py  # YAML + .env loading with env var overrides
 │   ├── prompt_loader.py  # Prompt template loader
@@ -125,7 +123,7 @@ cerno/
 │   ├── phase3_alignment.py
 │   ├── phase4_caption.py # Caption + embed
 │   ├── phase5_summary.py # LLM summarization
-│   └── search_engine.py  # 4-path parallel recall + scene-merge dedup
+│   └── search_engine.py  # 3-path parallel recall (frame+chunk+text) + scene-merge dedup
 ├── plugins/              # Plugin implementations + factory
 │   ├── factory.py        # Dynamic plugin loader
 │   ├── captioner/        # Qwen API captioner + local VL captioner
@@ -167,6 +165,6 @@ cerno/
 
 ## Development Status
 
-- **v0.6 — Parameter system + incremental processing**: 4-level parameter hierarchy (scene type → perception → functions → advanced), configurable pipeline gates, incremental run for summary/search on completed videos, API key management UI, real-time history auto-refresh
-- **P0 complete**: Pipeline core, search engine (7 search functions), 11 API endpoints, frontend dashboard
+- **v0.7 — Search architecture consolidation**: 3-path semantic search (frame+text 主力, chunk 配置关闭), 废弃全文/混合/模糊检索, encode_text 扩大至 caption+ocr+transcript, 路径感知排序与跨路去重修复
+- **P0 complete**: Pipeline core, search engine (3 search functions: frame/chunk/text), 13 API endpoints, frontend dashboard
 - **Planned**: Object detection (YOLO), OCR (PaddleOCR), Grounding (Florence-2), Export APIs (clip/JSON/Markdown)

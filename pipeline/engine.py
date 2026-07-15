@@ -399,110 +399,31 @@ class PipelineEngine:
                 async with self.db_session_factory() as session:
                     await bulk_insert_frames(session, frame_rows)
 
-            # ── b. chunk 路：原生视频编码（通过 temp clip + process_vision_info）──
-            duration = scene.end_sec - scene.start_sec
-            chunk_rows: list[dict] = []
-
-            async def _encode_chunk_clip(
-                start: float, end: float, chunk_idx: int,
-            ) -> dict | None:
-                """创建 temp clip → encode_video → 清理 → 返回 chunk row。"""
-                clip_dur = end - start
-                if clip_dur < 5:
-                    return None
-
-                temp_dir = os.path.join(
-                    self.config.get("storage", {}).get(
-                        "artifact_dir", "data/artifacts",
-                    ),
-                    "temp_chunks", str(self.video.id),
-                )
-                os.makedirs(temp_dir, exist_ok=True)
-                clip_path = os.path.join(
-                    temp_dir, f"chunk_{chunk_idx}.mp4",
-                )
-
-                # ffmpeg 截取片段（-ss 在 -i 之后 → 精确定位，避免关键帧边界花屏）
-                proc = await asyncio.create_subprocess_exec(
-                    "ffmpeg", "-y",
-                    "-i", self.ctx.file_path,
-                    "-ss", str(start),
-                    "-t", str(clip_dur),
-                    "-vf", "scale=-2:480,fps=2",  # 480p 2fps — chunk 向量质量和效率平衡
-                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-                    "-an",
-                    clip_path,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await proc.communicate()
-
-                if proc.returncode != 0 or not os.path.exists(clip_path):
-                    return None
-
-                try:
-                    emb = await embedder.encode_video(
-                        clip_path, fps=1.0, max_frames=20,
+            # ── b. chunk 路（由 config pipeline.chunk_encoding 控制开关）──
+            chunk_enabled = self.config.get("pipeline", {}).get("chunk_encoding", False)
+            if chunk_enabled:
+                await self._encode_scene_chunks(scene, embedder)
+            else:
+                duration = scene.end_sec - scene.start_sec
+                if duration > 5:
+                    logger.debug(
+                        "[Pipeline] Chunk encoding disabled by config, "
+                        "skipping scene %d (%.1fs-%.1fs)",
+                        scene.scene_index, scene.start_sec, scene.end_sec,
                     )
-                except Exception as e:
-                    logger.warning(
-                        "[Pipeline] Chunk encoding failed @ %.1f-%.1f: %s",
-                        start, end, e,
-                    )
-                    return None
-                finally:
-                    try:
-                        os.remove(clip_path)
-                    except OSError:
-                        pass
 
-                if not emb:
-                    return None
-                return {
-                    "video_id": self.video.id,
-                    "scene_index": scene.scene_index,
-                    "chunk_index": chunk_idx,
-                    "start_sec": start,
-                    "end_sec": end,
-                    "embedding": emb,
-                }
-
-            # ── b. chunk 路：自适应窗口 ──
-            # ≤5s: 不切；>5s~≤60s: 窗口=时长/2, 步长=窗口/2; >60s: 窗口=30s, 步长=15s
-            if duration > 5:
-                if duration <= 60:
-                    window_sec = duration / 2.0
-                    step_sec = window_sec / 2.0
-                else:
-                    window_sec = 30.0
-                    step_sec = 15.0
-
-                if window_sec >= duration:
-                    # 仅 1 个窗口
-                    row = await _encode_chunk_clip(
-                        scene.start_sec, scene.end_sec, 0,
-                    )
-                    if row:
-                        chunk_rows.append(row)
-                else:
-                    idx = 0
-                    pos = scene.start_sec
-                    while pos + window_sec <= scene.end_sec:
-                        row = await _encode_chunk_clip(
-                            pos, min(pos + window_sec, scene.end_sec), idx,
-                        )
-                        if row:
-                            chunk_rows.append(row)
-                            idx += 1
-                        pos += step_sec
-
-            if chunk_rows:
-                async with self.db_session_factory() as session:
-                    await bulk_insert_chunks(session, chunk_rows)
-
-            # ── c. 文本语义路：encode_text(caption) → text_embedding → 持久化 ──
+            # ── c. 文本语义路：encode_text(caption + ocr + transcript) → text_embedding → 持久化 ──
+            text_parts = []
             if scene.caption:
-                text_emb = await embedder.encode_text(scene.caption)
+                text_parts.append(scene.caption)
+            if scene.ocr_text:
+                text_parts.append(f"OCR: {scene.ocr_text}")
+            if scene.aligned_transcript:
+                text_parts.append(f"音频: {scene.aligned_transcript}")
+
+            if text_parts:
+                combined_text = " | ".join(text_parts)
+                text_emb = await embedder.encode_text(combined_text)
                 if text_emb:
                     scene.text_embedding = text_emb
                     async with self.db_session_factory() as session:
@@ -621,3 +542,127 @@ class PipelineEngine:
                     qc_result=self.ctx.qc_result or None,
                     summary=self.ctx.summary,
                 )
+
+    async def _encode_scene_chunks(
+        self, scene, embedder,
+    ) -> None:
+        """对单个 scene 执行 chunk 编码（流复制 → 预处理 → encode_video）。
+
+        两步 ffmpeg:
+          1. -c copy 流复制截取原始质量片段
+          2. 预处理：480p 5fps CRF 23（控制模型输入量，保留足够画质）
+        """
+        duration = scene.end_sec - scene.start_sec
+        if duration <= 5:
+            return
+
+        from core.repository import bulk_insert_chunks
+
+        temp_dir = os.path.join(
+            self.config.get("storage", {}).get(
+                "artifact_dir", "data/artifacts",
+            ),
+            "temp_chunks", str(self.video.id),
+        )
+        os.makedirs(temp_dir, exist_ok=True)
+        chunk_rows: list[dict] = []
+
+        async def _encode_one(
+            start: float, end: float, chunk_idx: int,
+        ) -> dict | None:
+            clip_dur = end - start
+            # Step 1: -c copy 流复制，零质量损失
+            raw_path = os.path.join(temp_dir, f"chunk_{chunk_idx}_raw.mp4")
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y",
+                "-ss", str(start),
+                "-i", self.ctx.file_path,
+                "-t", str(clip_dur),
+                "-c", "copy",
+                raw_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+            if proc.returncode != 0 or not os.path.exists(raw_path):
+                return None
+
+            # Step 2: 预处理缩放到 480p 5fps（控制模型输入量）
+            pre_path = os.path.join(temp_dir, f"chunk_{chunk_idx}.mp4")
+            pp_proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y",
+                "-i", raw_path,
+                "-vf", "scale=-2:480,fps=5",
+                "-c:v", "libx264", "-crf", "23",
+                "-an",
+                pre_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await pp_proc.communicate()
+            try:
+                os.remove(raw_path)
+            except OSError:
+                pass
+            if pp_proc.returncode != 0 or not os.path.exists(pre_path):
+                return None
+
+            try:
+                emb = await embedder.encode_video(
+                    pre_path, fps=1.0, max_frames=32,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[Pipeline] Chunk encoding failed @ %.1f-%.1f: %s",
+                    start, end, e,
+                )
+                return None
+            finally:
+                try:
+                    os.remove(pre_path)
+                except OSError:
+                    pass
+
+            if not emb:
+                return None
+            return {
+                "video_id": self.video.id,
+                "scene_index": scene.scene_index,
+                "chunk_index": chunk_idx,
+                "start_sec": start,
+                "end_sec": end,
+                "embedding": emb,
+            }
+
+        # ── 自适应窗口 ──
+        # ≤5s: 不切；>5s~≤60s: 窗口=时长/2, 步长=窗口/2; >60s: 窗口=30s, 步长=15s
+        if duration <= 60:
+            window_sec = duration / 2.0
+            step_sec = window_sec / 2.0
+        else:
+            window_sec = 30.0
+            step_sec = 15.0
+
+        if window_sec >= duration:
+            row = await _encode_one(scene.start_sec, scene.end_sec, 0)
+            if row:
+                chunk_rows.append(row)
+        else:
+            idx = 0
+            pos = scene.start_sec
+            while pos + window_sec <= scene.end_sec:
+                row = await _encode_one(
+                    pos, min(pos + window_sec, scene.end_sec), idx,
+                )
+                if row:
+                    chunk_rows.append(row)
+                    idx += 1
+                pos += step_sec
+
+        if chunk_rows:
+            async with self.db_session_factory() as session:
+                await bulk_insert_chunks(session, chunk_rows)
+            logger.info(
+                "[Pipeline] Encoded %d chunks for scene %d",
+                len(chunk_rows), scene.scene_index,
+            )

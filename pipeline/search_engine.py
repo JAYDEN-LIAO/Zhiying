@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 _PRECISION_ORDER = {"frame": 0, "chunk": 1, "text": 2, "label": 3}
 _CLUSTER_GAP = 4.0  # 帧聚类最大间隔（秒）
+# 各路径相似度校准权重（相似度不可跨路直接比）
+# frame × 1.0（金标准） > text × 0.85（语义可靠但时间粗） > chunk × 0.7（编码质量退化）
+_PATH_WEIGHT = {"frame": 1.0, "chunk": 0.7, "text": 0.85, "label": 1.0}
 
 
 class SearchEngine:
@@ -241,7 +244,12 @@ class SearchEngine:
                     ex.setdefault("match_paths", []).append(src)
 
         merged = clusters + list(other_map.values())
-        merged.sort(key=lambda x: x.get("similarity", 0), reverse=True)
+        # 路径感知排序：校准后的分数 = 相似度 × 路径权重
+        # frame 1.0 > text 0.85 > chunk 0.7，确保高精度结果优先
+        merged.sort(
+            key=lambda x: x.get("similarity", 0) * _PATH_WEIGHT.get(x.get("source", ""), 1.0),
+            reverse=True,
+        )
         return merged
 
     async def _enrich_merged(self, merged: list[dict]) -> list[dict]:
@@ -309,8 +317,8 @@ class SearchEngine:
             "scene_index": scene.scene_index,
             "scene_range_start": scene.start_sec,
             "scene_range_end": scene.end_sec,
-            "precise_start": None,
-            "precise_end": None,
+            "precise_start": scene.start_sec,
+            "precise_end": scene.end_sec,
             "precision_level": source,
             "caption": scene.caption,
             "ocr_text": scene.ocr_text,

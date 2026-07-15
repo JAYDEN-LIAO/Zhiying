@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.6 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.7 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -24,9 +24,7 @@
 │  │ stream_video()         │ │  ┌──────────▼──────────────────┐
 │  │ get_thumbnail()        │ │  │   Embedder (local GPU)      │
 │  │ get_video_status()     │ │  │   encode_text("query")      │
-│  │ search_text()          │ │  │   encode_image(frame)       │
-│  │ search_hybrid()        │ │  │   encode_video(clip)        │
-│  │ search_semantic()      │ │  │        → 2048-dim vector    │
+│  │ search_semantic()      │ │  │   encode_image(frame)       │
 │  └───────────┬───────────┘ │  └──────────────────────────────┘
 └──────────────┬─────────────┘
                │
@@ -57,7 +55,7 @@
 │  PostgreSQL + pgvector      │
 │                             │
 │  videos (metadata, summary) │
-│  scenes (embedding, caption)│
+│  scenes (text_embedding, caption)│
 │  transcripts (full text)    │
 │  frame_embeddings (1fps)    │
 │  chunks (滑动窗口)           │
@@ -124,10 +122,11 @@ Keyframe Extraction (Phase 1→4 间)
   │   状态: "正在抽取第 X/Y 个场景的关键帧"
   ├─ 中点帧 → scene.keyframe（缩略图用）
   ├─ 均匀选 3-7 帧 → scene._caption_frames（VLM caption 用）
-  └─ 三条消费链路复用同一批帧：
+  └─ 三条消费链路复用同一批帧（chunk 路由 config pipeline.chunk_encoding 控制）：
       ① 帧级路 → encode_image → frame_embeddings 表
-      ② Chunk 路 → encode_video(clip) → chunks 表
-      ③ VLM 路 → caption 生成
+      ② Chunk 路 → encode_video(clip) → chunks 表（默认关闭）
+      ③ 文本路 → encode_text(caption+ocr+transcript) → scenes.text_embedding
+      ④ VLM 路 → caption 生成
 
   ↓
 
@@ -142,8 +141,8 @@ Phase 4 (Understanding)
   ├─ Caption (Qwen-VL API / 本地 Qwen-VL) → scene.caption
   │   记忆窗口: 传入 prev_caption 作为上下文
   │   状态: "正在描述第 X/Y 个场景"
-  └─ Embed (Qwen3-VL-Embedding, 本地 GPU) → scene.embedding
-      编码图像 → 2048-dim 向量
+  └─ Embed (Qwen3-VL-Embedding, 本地 GPU) → 编码在 Encode Frames 阶段完成
+      （scene.embedding 已废弃，帧级编码统一在 _encode_frames 中处理）
 
   ↓
 
@@ -164,9 +163,10 @@ Persist
 Encode Frames (Persist 后, 纯搜索用)
   ├─ a. 帧级路: 逐帧 encode_image → bulk_insert_frames → frame_embeddings 表
   │   状态: "正在编码第 X/Y 个场景的帧向量"
-  ├─ b. Chunk 路: 滑动窗口创建 temp clip → encode_video → bulk_insert_chunks → chunks 表
+  ├─ b. Chunk 路 (config pipeline.chunk_encoding 控制，默认关闭):
+  │     -c copy 流复制 → 480p 5fps 预处理 → encode_video → chunks 表
   │     自适应窗口: ≤5s 不切, 5-60s 窗口=时长/2, >60s 窗口=30s/步长=15s
-  └─ c. 文本语义路: encode_text(caption) → text_embedding → 更新 scenes 表
+  └─ c. 文本语义路: encode_text(caption+ocr+transcript) → text_embedding → 更新 scenes 表
 ```
 
 ## Module Dependency
@@ -181,7 +181,7 @@ main.py
               ├─ core/models.py      (ORM: Video, Scene, Transcript, FrameEmbedding, Chunk)
               ├─ core/schemas.py     (Pydantic DTOs)
               ├─ core/repository.py  (DB 数据访问层 + 批量写入)
-              ├─ core/search.py      (7 种检索函数: vector/fulltext/hybrid/fuzzy/frame/chunk/text)
+              ├─ core/search.py      (3 种检索函数: frame/chunk/text，混合/全文/模糊已移除)
               ├─ services/video_service.py
               │     └─ pipeline/engine.py
               │           ├─ pipeline/phase1_qc.py
@@ -208,7 +208,7 @@ core/
   ├─ models.py             ← ORM: Video, Scene, Transcript, FrameEmbedding, Chunk
   ├─ schemas.py            ← Pydantic v2 DTOs + JSONB 校验模型
   ├─ repository.py         ← DB 数据访问层 + bulk_insert_frames/chunks
-  ├─ search.py             ← 7 种检索: vector/fulltext/hybrid/fuzzy/frame/chunk/text
+  ├─ search.py             ← 3 种检索: frame/chunk/text（混合/全文/模糊已移除）
   ├─ db.py                 ← 异步引擎/Session 工厂/表初始化/触发器
   ├─ config_loader.py      ← YAML + .env 加载
   ├─ prompt_loader.py      ← Prompt 模板加载
@@ -229,7 +229,7 @@ frontend/
   │   ├─ mockData.ts       ← Pipeline 阶段定义 + 进度计算逻辑
   │   ├─ services/api.ts   ← API 调用封装 + 轮询工具函数
   │   ├─ types/index.ts    ← TypeScript 类型定义 (镜像 backend schemas)
-  │   └─ components/       ← 子组件目录 (AnalysisPanel/HistoryList/Layout/VideoPlayer)
+  │   └─ components/       ← 子组件目录 (LeftSidebar/ParameterPanel/PipelineBar/VideoSearchCard 等)
   ├─ package.json          ← React 19, Vite 6, Tailwind 4
   ├─ vite.config.ts        ← Vite 配置 + /api 代理到 localhost:8000
   └─ tsconfig.json
@@ -270,11 +270,11 @@ Semantic Search: POST /api/v1/search/semantic
     ↓
   SearchEngine (lazy init, cached in app.state._searcher)
     ├─ Embedder.encode_text() → 2048-dim vector (shared, 只编码一次)
-    ├─ 四路并行召回:
+    ├─ 三路并行召回:
     │   ├─ _frame_search()  → frame_embeddings 表, 1fps 帧级精确秒定位
     │   ├─ _chunk_search()  → chunks 表, 滑动窗口多帧原生编码
-    │   ├─ _text_search()   → scenes.text_embedding, caption 文本语义
-    │   └─ _label_search()  → JSONB @> entities.label (YOLO 激活后)
+    │   ├─ _text_search()   → scenes.text_embedding, caption+ocr+transcript 语义
+    │   └─ _label_search()  → JSONB @> entities.label (YOLO 激活后, 预留)
     └─ 按 scene 合并 + 去重:
         ├─ 帧结果按时间聚类 (间隔 ≤ 4s)
         ├─ chunk/text 结果与帧簇重叠 → 丢弃 (帧精度更高)
@@ -284,20 +284,10 @@ Semantic Search: POST /api/v1/search/semantic
              precision_level (frame|chunk|text|label),
              match_paths, caption, similarity, thumbnail_url}
 
-Text Search: GET /api/v1/search/text?q=...
-  └─ core.search.full_text_search() — 直接 GIN tsvector 检索
-
-Hybrid Search: POST /api/v1/search/hybrid
-  └─ core.search.hybrid_search() — SQL 内加权融合 vector_score + text_score
-
-core/search.py 提供的 7 种检索函数:
-  1. vector_similarity_search  — pgvector cosine (scenes.embedding)
-  2. full_text_search          — GIN tsvector (scenes.search_vector)
-  3. hybrid_search             — 向量 + 全文加权融合
-  4. fuzzy_transcript_search   — ILIKE 模糊匹配 (transcripts.full_text)
-  5. frame_vector_search       — 帧级精确搜索 (frame_embeddings)
-  6. chunk_vector_search       — 窗口过程语义搜索 (chunks)
-  7. text_vector_search        — 文本语义搜索 (scenes.text_embedding)
+core/search.py 提供的 3 种检索函数 (废弃的全文/混合/模糊检索已移除):
+  1. frame_vector_search      — 帧级精确搜索 (frame_embeddings)
+  2. chunk_vector_search      — 窗口过程语义搜索 (chunks)
+  3. text_vector_search       — 文本语义搜索 (scenes.text_embedding, 含 caption+ocr+transcript)
 ```
 
 ## Database Schema
@@ -317,10 +307,9 @@ videos
 scenes
   ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
   ├─ scene_index, start_sec, end_sec, keyframe_path
-  ├─ embedding (Vector 2048)         — 图像编码向量 (关键帧)
-  ├─ text_embedding (Vector 2048)    — caption 文本语义向量
+  ├─ text_embedding (Vector 2048)    — caption+ocr+transcript 语义向量
   ├─ ocr_text, aligned_transcript, caption, prev_caption
-  ├─ entities (JSONB), search_vector (TSVECTOR, GIN 索引)
+  ├─ entities (JSONB)
   └─ created_at
 
 transcripts
@@ -356,11 +345,9 @@ chunks
 | GET | /api/v1/videos/{id}/stream | 视频流式播放 (支持 Range) |
 | GET | /api/v1/videos/{id}/thumbnail/{scene_index} | 场景缩略图 |
 | DELETE | /api/v1/videos/{id} | 删除视频 (CASCADE scenes/transcript/frames/chunks) |
-| GET | /api/v1/search/text?q= | 全文检索 (GIN tsvector) |
 | GET | /api/v1/settings | 获取系统设置 (API key 状态) |
 | PUT | /api/v1/settings | 更新系统设置 (保存 API key) |
-| POST | /api/v1/search/semantic | 语义搜索 (四路并行召回 + 按 scene 合并) |
-| POST | /api/v1/search/hybrid | 混合检索 (vector + text 加权融合) |
+| POST | /api/v1/search/semantic | 语义搜索 (三路并行召回 + 按 scene 合并) |
 
 ## Frontend Architecture
 
@@ -405,8 +392,8 @@ Vite 开发代理:
 | **API for Captioner/Summarizer** | Better quality, zero GPU footprint on 4060 8GB |
 | **FFmpeg pipe → memory** | No frame files on disk, reduces I/O |
 | **TransNetV2 segmentation** | Neural scene boundary detection, superior to fixed-interval |
-| **1fps frame pool + 3 encoding paths** | Frame-level precision + chunk-level process semantics + text semantics |
-| **Adaptive chunk windows** | ≤5s scene: skip; 5-60s: half-duration window; >60s: 30s fixed window |
+| **1fps frame pool + 3 encoding paths** | Frame-level precision (主力) + text semantics + chunk (config-gated, 默认关闭) |
+| **Adaptive chunk windows** | ≤5s scene: skip; 5-60s: half-duration window; >60s: 30s fixed window; stream copy + preprocessing |
 | **Enabled modules only** | pipeline checks each plugin; null = skip gracefully |
 | **React + Vite + Tailwind** | Fast dev experience, minimal config, fluid-blob background + card-surface panels |
 | **Unified API envelope** | All responses wrapped in `{code, message, data}` |
@@ -420,19 +407,18 @@ Vite 开发代理:
 | Module | Status | Note |
 |---|---|---|
 | Pipeline Core | ✅ | Phase 1→Keyframe→3→4→5→Persist→Encode Frames verified E2E, with gate controls |
-| Semantic Search (4-path) | ✅ | frame + chunk + text + label parallel recall, scene-merge dedup |
-| Fulltext Search | ✅ | tsvector via DB trigger |
+| Semantic Search (3-path) | ✅ | frame + chunk + text 并行召回, scene-merge dedup, label 预留 |
 | Frame-level Encoding | ✅ | 1fps 逐帧 encode_image → frame_embeddings 表 |
-| Chunk-level Encoding | ✅ | 自适应滑动窗口 encode_video → chunks 表 |
-| Text Semantic Encoding | ✅ | encode_text(caption) → scenes.text_embedding |
-| API Routes | ✅ | 15 endpoints: CRUD, stream, thumbnail, status, params, reuse, settings, 3 search modes |
+| Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭（`-c copy` + 480p 5fps 预处理） |
+| Text Semantic Encoding | ✅ | encode_text(caption+ocr+transcript) → scenes.text_embedding |
+| API Routes | ✅ | 13 endpoints: CRUD, stream, thumbnail, status, params, reuse, settings, semantic search |
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
 | Settings API + Keys | ✅ | core/settings_service.py, GET/PUT /api/v1/settings |
 | Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 8 extracted components, dynamic PipelineBar, auto-refresh history |
 | Config Schema | ✅ | Pydantic v2 validation for config.yaml |
 | Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |
-| DB Layer | ✅ | Async engine, pgvector, init_db(), triggers, incremental migration |
+| DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration |
 | TransNetV2 Segmenter | ✅ | Neural scene boundary detection |
 | faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
 | Object Detection | 📋 | YOLO plugin shell only |

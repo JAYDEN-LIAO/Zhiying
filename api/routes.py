@@ -25,9 +25,8 @@ from core.schemas import (
     VideoCreate, VideoResponse, VideoListItem, SceneResponse, PipelineParams,
     ContentType,
 )
-from core.models import Scene, Video
+from core.models import Video
 from core.repository import create_video, get_video_with_relations, list_videos, delete_video
-from core.search import full_text_search, hybrid_search
 from core.config_loader import load_config
 from services.video_service import VideoService
 
@@ -54,12 +53,6 @@ class APIResponse(BaseModel, Generic[T]):
 # 搜索专用 DTO
 # ═══════════════════════════════════════════════════════════
 
-class HybridSearchRequest(BaseModel):
-    query_text: str = Field(..., description="文本查询")
-    query_vector: list[float] = Field(..., description="2048 维查询向量")
-    limit: int = Field(default=10, ge=1, le=100)
-
-
 class SemanticSearchRequest(BaseModel):
     """语义搜索请求 — 用户只需传入文本，向量编码由服务端自动完成。"""
     query: str = Field(..., min_length=1, description="自然语言搜索文本")
@@ -69,7 +62,7 @@ class SemanticSearchRequest(BaseModel):
     )
     search_types: list[str] | None = Field(
         default=None,
-        description="检索路: vector / fulltext / label，默认全部启用",
+        description="检索路: frame / chunk / text / label，默认全部启用",
     )
     top_k: int = Field(default=20, ge=1, le=100)
     min_similarity: float = Field(default=0.3, ge=0.0, le=1.0)
@@ -525,70 +518,8 @@ async def get_thumbnail(
 # 搜索
 # ═══════════════════════════════════════════════════════════
 
-@router.get("/search/text")
-async def search_text(
-    q: str,
-    limit: int = 10,
-    db: AsyncSession = Depends(get_db),
-) -> APIResponse[SearchResults]:
-    """文本模态全文检索（GIN tsvector）。"""
-    t0 = time.monotonic()
-    results_tuples: list[tuple[Scene, float]] = await full_text_search(db, q, limit=limit)
-    elapsed = (time.monotonic() - t0) * 1000
-
-    results = [
-        SearchResultItem(
-            scene_id=s.id,
-            video_id=str(s.video_id),
-            scene_index=s.scene_index,
-            start_sec=s.start_sec,
-            end_sec=s.end_sec,
-            caption=s.caption,
-            ocr_text=s.ocr_text,
-            aligned_transcript=s.aligned_transcript,
-            similarity=round(sim, 4),
-            thumbnail_url=f"/api/v1/videos/{s.video_id}/thumbnail/{s.scene_index}",
-        )
-        for s, sim in results_tuples
-    ]
-    return APIResponse(data=SearchResults(results=results, total=len(results), query_time_ms=elapsed))
-
-
-@router.post("/search/hybrid")
-async def search_hybrid(
-    payload: HybridSearchRequest,
-    db: AsyncSession = Depends(get_db),
-) -> APIResponse[SearchResults]:
-    """多模态混合检索：向量相似度 + 全文检索加权融合。"""
-    t0 = time.monotonic()
-    scored: list[tuple[Scene, float]] = await hybrid_search(
-        db,
-        query_vector=payload.query_vector,
-        query_text=payload.query_text,
-        limit=payload.limit,
-    )
-    elapsed = (time.monotonic() - t0) * 1000
-
-    results = [
-        SearchResultItem(
-            scene_id=s.id,
-            video_id=str(s.video_id),
-            scene_index=s.scene_index,
-            start_sec=s.start_sec,
-            end_sec=s.end_sec,
-            caption=s.caption,
-            ocr_text=s.ocr_text,
-            aligned_transcript=s.aligned_transcript,
-            similarity=round(score, 4),
-            thumbnail_url=f"/api/v1/videos/{s.video_id}/thumbnail/{s.scene_index}",
-        )
-        for s, score in scored
-    ]
-    return APIResponse(data=SearchResults(results=results, total=len(results), query_time_ms=elapsed))
-
-
 # ═══════════════════════════════════════════════════════════
-# 语义搜索（服务端自动完成文本→向量编码）
+# 语义搜索（服务端自动完成文本→向量编码，三路并行召回）
 # ═══════════════════════════════════════════════════════════
 
 @router.post("/search/semantic")
@@ -599,7 +530,7 @@ async def search_semantic(
     """语义搜索：传入自然语言文本，服务端自动编码为向量后检索。
 
     Embedder 按需加载（首次请求触发），后续请求复用缓存实例。
-    默认启用 vector（语义）+ fulltext（关键词）双路召回后 RRF 融合。
+    三路并行召回：frame（帧级 1fps）+ chunk（窗口过程语义）+ text（caption+ocr+transcript 语义）。
     """
     t0 = time.monotonic()
 

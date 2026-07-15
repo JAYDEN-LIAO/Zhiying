@@ -18,7 +18,7 @@ from sqlalchemy import (
     String, Integer, Float, Boolean, DateTime, Text,
     ForeignKey, Index, Enum as SAEnum,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID, TSVECTOR
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from pgvector.sqlalchemy import Vector
@@ -261,16 +261,6 @@ class Scene(Base):
         ),
     )
 
-    # ── 全文检索向量 (PostgreSQL tsvector) ──
-    search_vector: Mapped[str | None] = mapped_column(
-        TSVECTOR,
-        nullable=True,
-        comment=(
-            "组合 caption + ocr_text + aligned_transcript 的全文检索向量, "
-            "通过 PostgreSQL 触发器或应用层 GIN 索引维护"
-        ),
-    )
-
     # ── 时间戳 ──
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False,
@@ -283,14 +273,6 @@ class Scene(Base):
     __table_args__ = (
         Index("idx_scenes_video_scene", "video_id", "scene_index"),
         Index("idx_scenes_start_sec", "video_id", "start_sec"),
-        # pgvector 索引限制 ≤2000 维，Qwen3-VL-Embedding-2B 输出 2048 维
-        # Demo 阶段数据量小（<100 场景），全表扫描 <1ms，跳过索引
-        # Index("idx_scenes_embedding_ivfflat", ...)
-        Index(
-            "idx_scenes_search_vector_gin",
-            "search_vector",
-            postgresql_using="gin",
-        ),
         {"comment": "场景表 — 核心检索粒度, 每行代表一个镜头片段"},
     )
 

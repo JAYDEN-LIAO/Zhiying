@@ -40,6 +40,7 @@ class PluginConfig(BaseModel):
 class PipelineConfig(BaseModel):
     sample_fps: float = Field(default=1.0, gt=0.0)
     scene_min_duration: float = Field(default=1.0, ge=0.0)
+    chunk_encoding: bool = Field(default=False, description="chunk 编码开关（需较好 GPU）")
 
 
 # ═══════════════════════════════════════════════════════════
