@@ -40,10 +40,15 @@ class Phase1QC:
         self.video = video
 
     async def execute(self) -> None:
-        """执行 Phase 1 全流程。"""
+        """执行 Phase 1 全流程。
+
+        音频转录与镜头分割互不依赖，并行执行以节省总时间。
+        """
         await self._get_duration()
-        await self._run_audio_transcription()
-        await self._run_segmentation()
+        await asyncio.gather(
+            self._run_audio_transcription(),
+            self._run_segmentation(),
+        )
 
     async def _get_duration(self) -> None:
         """通过 ffprobe 获取视频时长。"""
