@@ -125,16 +125,13 @@ export default function Dashboard() {
   }, [currentVideoId]);
 
   const handleUpload = useCallback(() => {
-    setIsUploading(true);
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".mp4,.mov,.avi,.mkv,.webm";
     input.onchange = async () => {
       const file = input.files?.[0];
-      if (!file) {
-        setIsUploading(false);
-        return;
-      }
+      if (!file) return;
+      setIsUploading(true);
       try {
         const result = await api.upload(file);
         setCurrentVideoId(result.id);
@@ -147,8 +144,6 @@ export default function Dashboard() {
       }
       setIsUploading(false);
     };
-    const onBlur = () => setTimeout(() => setIsUploading(false), 500);
-    window.addEventListener("focus", onBlur, { once: true });
     input.click();
   }, []);
 

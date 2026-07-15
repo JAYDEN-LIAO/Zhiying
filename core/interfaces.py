@@ -23,8 +23,7 @@ faster-whisper 等）的内部模型推理是同步 CPU/GPU 密集型计算。
       async def detect(self, frame, start_sec, end_sec):
           return self.model(frame, conf=0.35, device="cuda")   # ← 阻塞!
 
-  例外：VLLMSummarizer（走 AsyncOpenAI HTTP）和 BasicQC（走
-  asyncio.create_subprocess_exec）不需要 to_thread。
+  例外：VLLMSummarizer（走 AsyncOpenAI HTTP）不需要 to_thread。
 
   受影响插件清单见 docs/03-core-code-skeleton-and-directory-tree.md → §3.1。
 """
@@ -70,7 +69,6 @@ class VideoContext:
     scenes: list[Scene] = field(default_factory=list)
     transcript_full: str | None = None
     transcript_words: list[dict] = field(default_factory=list)
-    qc_result: dict = field(default_factory=dict)
     summary: dict | None = None
 
     # 异步进度回调: async def cb(progress: float, phase: str, desc: str)
@@ -80,29 +78,6 @@ class VideoContext:
 # ═══════════════════════════════════════════════════════════
 # 抽象接口
 # ═══════════════════════════════════════════════════════════
-
-class BaseQC(ABC):
-    """视频质量检测 — 黑屏 / 静音 / 过曝片段检出。"""
-
-    @abstractmethod
-    async def check(self, ctx: VideoContext) -> dict:
-        """
-        对输入视频执行质量检测。
-
-        Args:
-            ctx: VideoContext，需含 file_path。
-
-        Returns:
-            {
-                "is_valid": bool,                          # 视频是否通过质检
-                "estimated_duration": float,                # 估算时长(秒)
-                "black_segments": [{"start_sec": float, "end_sec": float}],
-                "silent_segments": [{"start_sec": float, "end_sec": float}],
-                "overexposed_segments": [{"start_sec": float, "end_sec": float}],
-            }
-        """
-        ...
-
 
 class BaseTranscriber(ABC):
     """语音转录 — 音频文件 → 带时间戳的全文。"""

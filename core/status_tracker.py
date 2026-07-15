@@ -20,8 +20,7 @@ class StatusTracker:
 
     # 阶段名 → 全局进度值映射（0.0 ~ 1.0）
     PHASE_WEIGHTS: dict[str, float] = {
-        "phase_1_qc":       0.0,
-        "phase_1_audio":    0.10,
+        "phase_1_audio":    0.0,
         "phase_1_segment":  0.15,
         "phase_2_vision":   0.20,
         "phase_2_ocr":      0.30,
@@ -34,7 +33,6 @@ class StatusTracker:
 
     # 阶段名 → 前端友好描述
     PHASE_DESCRIPTIONS: dict[str, str] = {
-        "phase_1_qc":       "质量检测中...",
         "phase_1_audio":    "音频抽取与转录中...",
         "phase_1_segment":  "镜头分割中...",
         "phase_2_vision":   "物体检测中...",

@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 # 类别 → 插件包路径
 CATEGORY_MAP: dict[str, str] = {
-    "qc":           "plugins.qc",
     "transcriber":  "plugins.transcriber",
     "segmenter":    "plugins.segmenter",
     "detector":     "plugins.detector",
@@ -36,7 +35,6 @@ CATEGORY_MAP: dict[str, str] = {
 
 # 类别 → 预期实现类名
 IMPL_CLASS_MAP: dict[str, str] = {
-    "qc":           "BasicQC",
     "transcriber":  "FasterWhisperTranscriber",
     "segmenter":    "TransNetV2Segmenter",
     "detector":     "YoloDetector",
@@ -50,7 +48,6 @@ IMPL_CLASS_MAP: dict[str, str] = {
 # 后端标识 → 实际模块文件名覆盖
 # 当 config 中的 backend 值与 .py 文件名不一致时使用。
 _MODULE_OVERRIDES: dict[tuple[str, str], str] = {
-    ("qc", "native_qc"): "basic_qc",
     ("segmenter", "transnetv2"): "transnet_v2",
     ("captioner", "qwen_api"): "qwen_api_captioner",
     ("embedder", "qwen3_vl_embedding"): "qwen_vl_embedder",

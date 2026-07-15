@@ -10,10 +10,6 @@ storage:
   artifact_dir: "data/artifacts"
 
 plugins:
-  # ── 质量检测（本地 FFmpeg）──
-  qc:
-    backend: "native_qc"
-
   # ── 语音转录（Demo 跳过）──
   transcriber:
     backend: null

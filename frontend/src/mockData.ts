@@ -3,7 +3,7 @@
    阶段节点根据 L2/L3 参数动态计算，不再硬编码。
    ════════════════════════════════════════════════════════════ */
 
-export type StageIcon = "qc" | "segment" | "keyframe" | "audio" | "align" | "caption" | "embed" | "summary";
+export type StageIcon = "upload" | "segment" | "keyframe" | "audio" | "align" | "caption" | "embed" | "summary";
 
 export interface PipelineStage {
   id: StageIcon;
@@ -26,8 +26,8 @@ export interface PipelineSwitches {
 export function computePipelineStages(switches: PipelineSwitches): PipelineStage[] {
   const stages: PipelineStage[] = [];
 
-  // 1. 质检 (始终)
-  stages.push({ id: "qc", label: "质量检测", description: "视频完整性验证中", progressStart: 0.0, progressEnd: 0.10 });
+  // 1. 视频上传 (始终)
+  stages.push({ id: "upload", label: "视频上传", description: "视频文件上传中", progressStart: 0.0, progressEnd: 0.10 });
 
   // 2. 镜头分割 (始终)
   stages.push({ id: "segment", label: "场景分割", description: "镜头边界检测中", progressStart: 0.10, progressEnd: 0.15 });

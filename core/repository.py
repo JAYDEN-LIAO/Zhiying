@@ -136,13 +136,10 @@ async def update_video_progress(
 async def save_video_artifacts(
     session: AsyncSession,
     video_id: uuid.UUID,
-    qc_result: dict | None,
     summary: dict | None,
 ) -> None:
-    """将 Pipeline 输出的 QC 结果和摘要写入视频记录。"""
+    """将 Pipeline 输出的摘要写入视频记录。"""
     values: dict = {}
-    if qc_result is not None:
-        values["qc_result"] = qc_result
     if summary is not None:
         values["summary"] = summary
 

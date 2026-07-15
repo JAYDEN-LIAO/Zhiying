@@ -1,17 +1,18 @@
 """
 pipeline/phase1_qc.py
 ═══════════════════════════════════════════════════════════
-Phase 1: 前置质检与拆解。
+Phase 1: 前置拆解。
 
 执行顺序:
-  1. QC 检测（黑屏 / 静音 / 过曝）
-  2. 音频抽取 + 语音转录
-  3. 镜头分割 → 填充 Scene 列表
+  1. 音频抽取 + 语音转录
+  2. 镜头分割 → 填充 Scene 列表
 """
 
 import asyncio
+import json
 import logging
 import os
+import shutil
 
 from core.interfaces import VideoContext, Scene as SceneData
 from core.status_tracker import StatusTracker
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class Phase1QC:
-    """Phase 1 执行器 — 质检 / 音频 / 分割。"""
+    """Phase 1 执行器 — 音频抽取 / 镜头分割。"""
 
     def __init__(
         self,
@@ -40,39 +41,27 @@ class Phase1QC:
 
     async def execute(self) -> None:
         """执行 Phase 1 全流程。"""
-        await self._run_qc()
+        await self._get_duration()
         await self._run_audio_transcription()
         await self._run_segmentation()
 
-    # ──────────────────────────────────────────────────────
-    # a. 质量检测
-    # ──────────────────────────────────────────────────────
-
-    async def _run_qc(self) -> None:
-        """QC 检测：黑屏 / 静音 / 过曝。"""
-        await self.tracker.update("phase_1_qc")
-        qc = self.plugins.get("qc")
-        if qc is None:
-            logger.info("[Phase1] QC plugin disabled, skipping")
-            return
-
-        result = await qc.check(self.ctx)
-        self.ctx.qc_result = result
-        self.ctx.duration = result.get("estimated_duration")
-
-        black_count = len(result.get("black_segments", []))
-        silent_count = len(result.get("silent_segments", []))
-        await self.tracker.update("phase_1_qc", description=f"质检完成: 检测到 {black_count} 段黑屏、{silent_count} 段静音")
-
-        logger.info(
-            "[Phase1] QC done: duration=%.1fs black=%d silent=%d valid=%s",
-            self.ctx.duration or 0,
-            black_count, silent_count,
-            result.get("is_valid"),
-        )
+    async def _get_duration(self) -> None:
+        """通过 ffprobe 获取视频时长。"""
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe:
+            proc = await asyncio.create_subprocess_exec(
+                ffprobe, "-v", "quiet", "-print_format", "json",
+                "-show_format", self.ctx.file_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            if stdout:
+                info = json.loads(stdout)
+                self.ctx.duration = float(info["format"]["duration"])
 
     # ──────────────────────────────────────────────────────
-    # b. 音频抽取 + 转录
+    # a. 音频抽取 + 转录
     # ──────────────────────────────────────────────────────
 
     async def _run_audio_transcription(self) -> None:

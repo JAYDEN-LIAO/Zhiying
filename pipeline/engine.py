@@ -69,7 +69,7 @@ class PipelineEngine:
         则跳过 load_plugin 直接复用，避免每视频重新加载 4GB 模型。
         """
         categories = [
-            "qc", "transcriber", "segmenter", "detector",
+            "transcriber", "segmenter", "detector",
             "ocr", "captioner", "embedder", "summarizer", "grounding",
         ]
         for cat in categories:
@@ -237,7 +237,6 @@ class PipelineEngine:
                 await save_video_artifacts(
                     session,
                     self.video.id,
-                    qc_result=None,
                     summary=self.ctx.summary,
                 )
 
@@ -533,13 +532,12 @@ class PipelineEngine:
                 ))
                 await session.commit()
 
-        # ---- 4. 保存 QC 结果与摘要制品 ----
-        if self.ctx.qc_result or self.ctx.summary:
+        # ---- 4. 保存摘要制品 ----
+        if self.ctx.summary:
             async with self.db_session_factory() as session:
                 await save_video_artifacts(
                     session,
                     self.video.id,
-                    qc_result=self.ctx.qc_result or None,
                     summary=self.ctx.summary,
                 )
 

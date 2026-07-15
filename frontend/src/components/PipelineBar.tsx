@@ -8,7 +8,7 @@ import type { PipelineStage, PipelineSwitches } from "../mockData";
 
 
 const stageColorMap: Record<string, string> = {
-  qc:       "#4785f0",
+  upload:   "#34d399",
   segment:  "#4f93ed",
   keyframe: "#5799e9",
   audio:    "#5ca8e8",
@@ -49,7 +49,7 @@ export function PipelineBar({
           <div
             className="absolute inset-0 rounded-full transition-all duration-700 ease-out"
             style={{
-              background: "linear-gradient(90deg, #4785f0 0%, #4f93ed 20%, #5ca8e8 40%, #67c4c0 60%, #60c9a8 80%, #55c890 100%)",
+              background: "linear-gradient(90deg, #34d399 0%, #34d399 9%, #4f93ed 22%, #5ca8e8 48%, #60c9a8 70%, #55c890 85%, #55c890 100%)",
               clipPath: `inset(0 ${100 - Math.round(progress * 100)}% 0 0)`,
               transition: "clip-path 700ms ease-out",
             }}

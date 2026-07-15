@@ -88,15 +88,16 @@ async def init_db():
                 DEFAULT 'standard' NOT NULL
         """))
 
-        # ── 清理：删除废弃的 preset 列及枚举类型 ──
+        # ── 清理：删除废弃的列、枚举类型、触发器 ──
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS preset
         """))
         await conn.execute(text("""
+            ALTER TABLE videos DROP COLUMN IF EXISTS qc_result
+        """))
+        await conn.execute(text("""
             DROP TYPE IF EXISTS preset_mode_enum
         """))
-
-        # ── 清理：删除废弃的 tsvector 触发器（search_vector 列已移除） ──
         await conn.execute(text("""
             DROP TRIGGER IF EXISTS trg_scenes_search_vector ON scenes
         """))

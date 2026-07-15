@@ -49,8 +49,19 @@ async def lifespan(app: FastAPI):
     app.state.embedder = embedder
     if embedder is not None:
         logger.info("Shared embedder loaded → cached in app.state")
+        # 热身：首次推理会触发 CUDA kernel 编译，预先跑一次避免搜索请求等待
+        try:
+            await embedder.encode_text("warm-up")
+            logger.info("Embedder warmed up (CUDA kernels compiled)")
+        except Exception as e:
+            logger.warning("Embedder warm-up failed (will lazy-compile on first search): %s", e)
     else:
         logger.info("Embedder disabled, semantic search will skip vector recall")
+
+    # 预热 SearchEngine，触发模块导入 + 对象创建，避免首次搜索延迟
+    from pipeline.search_engine import SearchEngine
+    app.state._searcher = SearchEngine(AsyncSessionLocal, embedder)
+    logger.info("SearchEngine pre-initialized")
 
     yield
     await engine.dispose()

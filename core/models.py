@@ -146,12 +146,6 @@ class Video(Base):
         comment="摘要详细度: brief / standard / detailed",
     )
 
-    # ── QC 结果 (JSONB) ──
-    qc_result: Mapped[dict | None] = mapped_column(
-        JSONB, nullable=True,
-        comment="BaseQC 输出: {is_valid, black_segments, silent_segments, ...}",
-    )
-
     # ── 摘要 (JSONB) ──
     summary: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True,

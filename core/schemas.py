@@ -25,15 +25,6 @@ class TimeSegment(BaseModel):
     end_sec: float   = Field(..., ge=0.0, description="结束时间(秒)")
 
 
-class QCResult(BaseModel):
-    """videos.qc_result — 质量检测结果。"""
-    is_valid: bool                                = Field(..., description="视频是否通过质检")
-    estimated_duration: float                     = Field(..., ge=0.0, description="估算时长(秒)")
-    black_segments: list[TimeSegment]             = Field(default_factory=list, description="黑屏段列表")
-    silent_segments: list[TimeSegment]            = Field(default_factory=list, description="静音段列表")
-    overexposed_segments: list[TimeSegment]       = Field(default_factory=list, description="过曝段列表")
-
-
 class SceneSummaryItem(BaseModel):
     """videos.summary.scenes_summary 中的单个场景条目。"""
     scene_index: int   = Field(..., ge=0, description="场景序号")
@@ -187,7 +178,6 @@ class VideoResponse(BaseModel):
 
     status_detail: str | None      = None
 
-    qc_result: QCResult | None     = None
     summary: VideoSummary | None   = None
 
     created_at: datetime
