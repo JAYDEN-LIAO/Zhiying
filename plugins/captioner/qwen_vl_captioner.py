@@ -1,7 +1,11 @@
 """
 plugins/captioner/qwen_vl_captioner.py
 ═══════════════════════════════════════════════════════════
-Qwen2.5-VL 画面描述插件。
+Qwen2.5-VL 画面描述插件 — 单帧看图说话。
+
+DEPRECATED (v0.8): 已被 qwen25_vl_captioner.py 取代。
+后者支持原生视频理解（直接观看视频片段），功能更强。
+此文件保留作为参考/回退，新代码请使用 Qwen25VLCaptioner。
 
 模型推理（model.generate）是同步 GPU 密集型调用，
 必须使用 asyncio.to_thread() 包裹。

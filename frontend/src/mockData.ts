@@ -1,16 +1,40 @@
 /* ════════════════════════════════════════════════════════════
-   Pipeline stages & mock data — Cerno 视频分析工作台 (v0.6)
-   阶段节点根据 L2/L3 参数动态计算，不再硬编码。
+   Pipeline stages & mock data — Cerno 视频分析工作台 (v0.8)
+   阶段节点从后端 GET /api/v1/pipeline/operations 动态获取，
+   不再在前端重复 gate 逻辑。
    ════════════════════════════════════════════════════════════ */
 
 export type StageIcon = "upload" | "segment" | "keyframe" | "audio" | "align" | "caption" | "embed" | "summary";
 
 export interface PipelineStage {
-  id: StageIcon;
+  id: StageIcon | string;
   label: string;
   description: string;
   progressStart: number;
   progressEnd: number;
+}
+
+/* ── v0.8: 从后端 API 获取（推荐）── */
+
+export interface PipelineOperation {
+  name: string;
+  label: string;
+  description: string;
+  progress_start: number;
+  progress_end: number;
+}
+
+export async function fetchPipelineStages(videoId: string): Promise<PipelineStage[]> {
+  const res = await fetch(`/api/v1/pipeline/operations?video_id=${videoId}`);
+  const json = await res.json();
+  const ops: PipelineOperation[] = json.data ?? [];
+  return ops.map((op) => ({
+    id: op.name,
+    label: op.label,
+    description: op.description,
+    progressStart: op.progress_start,
+    progressEnd: op.progress_end,
+  }));
 }
 
 /* ── 根据参数动态计算阶段列表 + 进度区间 ── */

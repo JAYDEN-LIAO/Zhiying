@@ -1,12 +1,17 @@
 """
 api/router.py
 ═══════════════════════════════════════════════════════════
-路由总装入口 — 组合所有子路由模块并导出。
-
-当前阶段将所有路由集中在 api/routes.py 中，
-此文件作为总装入口供 main.py 导入。
+路由总装入口 — 组合所有子路由模块并挂载到 /api/v1 前缀。
 """
 
-from api.routes import router
+from fastapi import APIRouter
 
-__all__ = ["router"]
+from api.video_routes import router as video_router
+from api.search_routes import router as search_router
+from api.settings_routes import router as settings_router
+
+router = APIRouter(prefix="/api/v1")
+
+router.include_router(video_router)
+router.include_router(search_router)
+router.include_router(settings_router)

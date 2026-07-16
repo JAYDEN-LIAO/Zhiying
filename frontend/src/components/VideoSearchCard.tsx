@@ -1,23 +1,24 @@
 /* ════════════════════════════════════════════════════════════
-   VideoSearchCard — extracted from Dashboard.tsx
+   VideoSearchCard — 语义搜索面板
    ════════════════════════════════════════════════════════════ */
 
 import { IconSearch } from "./icons";
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../services/api";
-import type { SearchResultItem } from "../types";
+import type { SearchResultItem, VideoResponse } from "../types";
 import { formatSec } from "../utils/helpers";
 
 
 export function VideoSearchCard({
-  currentVideoId,
-  searchIndexEnabled,
+  video,
   onSeekTo,
 }: {
-  currentVideoId: string | null;
-  searchIndexEnabled: boolean;
+  video: VideoResponse | null;
   onSeekTo?: (start: number, end: number | null) => void;
 }) {
+  const currentVideoId = video?.id ?? null;
+  const searchIndexEnabled = video?.search_index_enabled ?? false;
+
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [searching, setSearching] = useState(false);
@@ -52,11 +53,49 @@ export function VideoSearchCard({
   }, [query, currentVideoId]);
 
   const resultCount = results.length;
+  const containerClass = "card-surface rounded-2xl p-4 border border-gray-200/60 flex flex-col h-full min-h-0";
 
-  /* ── 搜索未开启时显示置灰状态 ── */
+  /* ── 1. 未选择视频 ── */
+  if (!video) {
+    return (
+      <div className={containerClass}>
+        <div className="flex items-center justify-between mb-3 shrink-0">
+          <h3 className="font-bold text-gray-900 text-base">视频搜索</h3>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center gap-1 opacity-50">
+          <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <span className="text-sm text-gray-400">选择视频后使用搜索</span>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── 2. 视频处理中，索引尚未建立 ── */
+  if (video.status === "pending" || video.status === "processing") {
+    return (
+      <div className={containerClass}>
+        <div className="flex items-center justify-between mb-3 shrink-0">
+          <h3 className="font-bold text-gray-900 text-base">视频搜索</h3>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center">
+          <div className="animate-pulse space-y-3 w-full">
+            <div className="h-4 bg-gray-100 rounded w-1/2 mx-auto" />
+            <div className="h-3 bg-gray-100 rounded w-3/4 mx-auto" />
+            <div className="h-9 bg-gray-100 rounded-xl w-full" />
+          </div>
+          <p className="text-xs text-gray-400 mt-4">视频处理完成后自动建立搜索索引</p>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── 3. 已完成但搜索索引未开启 ── */
   if (!searchIndexEnabled) {
     return (
-      <div className="card-surface rounded-2xl p-4 border border-gray-200/60 flex flex-col h-full min-h-0">
+      <div className={containerClass}>
         <div className="flex items-center justify-between mb-3 shrink-0">
           <h3 className="font-bold text-gray-900 text-base">视频搜索</h3>
         </div>
@@ -65,15 +104,16 @@ export function VideoSearchCard({
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
-          <p className="text-sm text-gray-400">搜索索引未开启</p>
-          <p className="text-xs text-gray-300 mt-0.5">如需搜索，请在参数设置中启用「搜索索引」</p>
+          <span className="text-sm text-gray-400">搜索索引未开启</span>
+          <span className="text-xs text-gray-300">请在参数设置中启用「搜索索引」</span>
         </div>
       </div>
     );
   }
 
+  /* ── 4. 正常搜索 UI ── */
   return (
-    <div className="card-surface rounded-2xl p-4 border border-gray-200/60 flex flex-col h-full min-h-0">
+    <div className={containerClass}>
       {/* Header */}
       <div className="flex items-center justify-between mb-3 shrink-0">
         <div>
@@ -171,7 +211,6 @@ export function VideoSearchCard({
               <div className="min-w-0 flex-1">
                 {/* Time + Score row */}
                 <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                  {/* Precision time */}
                   {item.precise_start != null ? (
                     <span className="text-[11px] font-mono text-blue-500 font-medium">
                       @ {formatSec(item.precise_start)}
@@ -185,14 +224,12 @@ export function VideoSearchCard({
                     </span>
                   )}
 
-                  {/* Similarity */}
                   {item.similarity != null && (
                     <span className="text-[11px] font-mono text-blue-600 font-semibold">
                       {Math.round(item.similarity * 100)}%
                     </span>
                   )}
 
-                  {/* Precision badge */}
                   {item.precision_level && item.precision_level !== "scene" && (
                     <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-400 font-medium">
                       {item.precision_level === "frame" ? "帧定位"
@@ -202,7 +239,6 @@ export function VideoSearchCard({
                   )}
                 </div>
 
-                {/* Caption */}
                 {item.caption && (
                   <p className="text-xs text-gray-600 leading-relaxed line-clamp-2 mt-1">{item.caption}</p>
                 )}
@@ -211,7 +247,7 @@ export function VideoSearchCard({
           </div>
         ))}
 
-        {/* Initial state */}
+        {/* Initial state — no search performed yet */}
         {!hasSearched && !searching && !error && (
           <div className="flex flex-col items-center justify-center py-10 text-gray-400">
             <svg className="w-10 h-10 mb-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
@@ -226,8 +262,3 @@ export function VideoSearchCard({
     </div>
   );
 }
-
-/* ════════════════════════════════════════════════════════════
-   HistoryPanelContent — 历史记录列表（面板内嵌内容）
-   ════════════════════════════════════════════════════════════ */
-

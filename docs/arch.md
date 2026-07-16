@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.7 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.8 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -38,16 +38,16 @@
            ▼
 ┌─────────────────────────────┐
 │  PipelineEngine             │
-│  5-stage async workflow     │
+│  Operation DAG executor      │
 │                             │
-│  Phase 1: QC + Segmentation│
-│  Keyframe Extraction (1fps) │
-│  Phase 3: Transcript Align  │
-│  Phase 4: Caption + Embed   │
-│  Phase 5: Summarize         │
+│  Batch 0: [duration]        │
+│  Batch 1: [seg, transcribe]│
+│  Batch 2: [keyframes, align]│
+│  Batch 3: [caption, frame_e]│
+│  Batch 4: [summary, text_e] │
 │  Persist: Write to DB       │
-│  Encode Frames: 帧/chunk/文本│
-│       三条编码链路持久化      │
+│  3-path encoding runs in     │
+│  parallel with other ops     │
 └─────────────────────────────┘
            │
            ▼
@@ -62,7 +62,7 @@
 └─────────────────────────────┘
 ```
 
-## Parameter System (v0.6)
+## Parameter System (v0.8)
 
 ```
 4-level hierarchy controlling pipeline execution:
@@ -104,12 +104,10 @@ Incremental: Only L3 switches can be toggled on completed videos
 ## Pipeline Detail
 
 ```
-Phase 1 (QC + Split)
-  ├─ QC (FFmpeg blackdetect/silencedetect) → qc_result
-  │   写入 ctx.qc_result, ctx.duration
-  │   状态: "质检完成: 检测到 X 段黑屏、Y 段静音"
-  ├─ Audio Extraction (可选, FFmpeg) → audio_path
-  ├─ Transcribe (faster-whisper, 可选) → words[]
+Phase 1 (DAG: duration → segmentation, transcription)
+  ├─ duration (ffprobe) → ctx.duration
+  ├─ Audio Extraction (optional, FFmpeg) → audio_path
+  ├─ Transcribe (faster-whisper, optional) → words[]
   │   状态: "正在转录音频..."
   └─ Segment (TransNetV2 / time-based) → scenes[]
       每个 scene: {scene_index, start_sec, end_sec, keyframe?}
@@ -122,7 +120,7 @@ Keyframe Extraction (Phase 1→4 间)
   │   按 1fps 逐帧抽取，全部存入 scene 帧池
   │   状态: "正在抽取第 X/Y 个场景的关键帧"
   ├─ 中点帧 → scene.keyframe（缩略图用）
-  ├─ vlm_llm 模式: 均匀选 3-7 帧 → scene._caption_frames（API captioner 用）
+  ├─ vlm_llm 模式: 均匀选 3-7 帧 → scene.caption_frames（API captioner 用）
   │   native_video 模式: 跳过（模型直接读视频，不需要代表帧）
   └─ 三条消费链路复用同一批帧（chunk 路由 config pipeline.chunk_encoding 控制）：
       ① 帧级路 → encode_image → frame_embeddings 表
@@ -145,7 +143,7 @@ Phase 3 (Alignment, 可选)
   │    → scene.caption ← description (搜索用), scene.structured_caption ← 完整 JSON
   │    状态: "正在描述第 X/Y 个场景"
   ├─ vlm_llm (备选): Qwen-VL-Max API 看图说话
-  │    → 传入 3-7 帧 _caption_frames → 自然语言描述
+  │    → 传入 3-7 帧 caption_frames → 自然语言描述
   │    → scene.caption ← 纯文本, scene.structured_caption ← None
   │    状态: "正在描述第 X/Y 个场景"
   └─ Embed (Qwen3-VL-Embedding, 本地 GPU) → 编码在 Encode Frames 阶段完成
@@ -169,17 +167,18 @@ Phase 5: Summarization (双模式)
 Persist
   ├─ bulk_insert_scenes → scenes 表
   ├─ insert transcript → transcripts 表
-  └─ update video → videos 表 (duration, qc_result, summary, status_detail)
+  └─ update video → videos 表 (duration, summary, status_detail)
 
   ↓
 
-Encode Frames (Persist 后, 纯搜索用)
-  ├─ a. 帧级路: 逐帧 encode_image → bulk_insert_frames → frame_embeddings 表
-  │   状态: "正在编码第 X/Y 个场景的帧向量"
-  ├─ b. Chunk 路 (config pipeline.chunk_encoding 控制，默认关闭):
+Encode Frames（与 caption/summary 同批并行，Persist 前执行）
+  ├─ a. 帧级路 (runners/frame_encode.py): 逐帧 encode_image → bulk_insert_frames → frame_embeddings 表
+  │   状态: "逐帧向量编码中"
+  ├─ b. Chunk 路 (runners/chunk_encode.py, config pipeline.chunk_encoding 控制，默认关闭):
   │     -c copy 流复制 → 480p 5fps 预处理 → encode_video → chunks 表
   │     自适应窗口: ≤5s 不切, 5-60s 窗口=时长/2, >60s 窗口=30s/步长=15s
-  └─ c. 文本语义路: encode_text(caption+ocr+transcript) → text_embedding → 更新 scenes 表
+  └─ c. 文本语义路 (runners/text_encode.py): encode_text(caption+ocr+transcript) → ctx.text_embedding
+       → Persist 时由 bulk_insert_scenes 统一入库（不在 runner 内单写 DB）
 ```
 
 ## Module Dependency
@@ -189,35 +188,35 @@ main.py
   ├─ core/db.py              (engine, AsyncSessionLocal, init_db)
   ├─ core/config_loader.py   (YAML + .env 加载)
   └─ api/router.py
-        └─ api/routes.py     (所有 API 端点, 含视频管理/搜索/上传)
-              ├─ api/deps.py         (FastAPI 依赖: get_db)
+        ├─ api/video_routes.py  (视频管理: upload/register/params/stream/thumbnail)
+        ├─ api/search_routes.py (语义搜索 + pipeline/operations)
+        ├─ api/settings_routes.py (系统设置: API key 管理)
+        ├─ api/schemas.py       (共享 API DTO)
+        ├─ api/deps.py          (FastAPI 依赖: get_db)
               ├─ core/models.py      (ORM: Video, Scene, Transcript, FrameEmbedding, Chunk)
               ├─ core/schemas.py     (Pydantic DTOs)
               ├─ core/repository.py  (DB 数据访问层 + 批量写入)
               ├─ core/search.py      (3 种检索函数: frame/chunk/text，混合/全文/模糊已移除)
               ├─ services/video_service.py
-              │     └─ pipeline/engine.py
-              │           ├─ pipeline/phase1_qc.py
-              │           ├─ pipeline/phase3_alignment.py
-              │           ├─ pipeline/phase4_caption.py
-              │           ├─ pipeline/phase5_summary.py
+              │     └─ pipeline/engine.py (DAG executor)
+              │           ├─ pipeline/operations.py (ALL_OPERATIONS)
+              │           ├─ pipeline/runners/*.py (10 operation runners)
               │           ├─ utils/video_util.py          (keyframe extraction)
               │           └─ plugins/factory.py
               │                 ├─ plugins/captioner/qwen_api_captioner.py
-              │                 ├─ plugins/captioner/qwen_vl_captioner.py
+              │                 ├─ plugins/captioner/qwen25_vl_captioner.py
               │                 ├─ plugins/embedder/qwen_vl_embedder.py
               │                 ├─ plugins/summarizer/vllm_summarizer.py
               │                 ├─ plugins/segmenter/time_based.py
               │                 ├─ plugins/segmenter/transnet_v2.py
               │                 ├─ plugins/transcriber/faster_whisper.py
-              │                 ├─ plugins/qc/basic_qc.py
               │                 └─ plugins/*/ (detector, ocr, grounding — stubs)
               └─ pipeline/search_engine.py
                     ├─ core/search.py
                     └─ plugins/embedder/qwen_vl_embedder.py
 
 core/
-  ├─ interfaces.py         ← 9 个插件 ABC
+  ├─ interfaces.py         ← 8 个插件 ABC
   ├─ models.py             ← ORM: Video, Scene, Transcript, FrameEmbedding, Chunk
   ├─ schemas.py            ← Pydantic v2 DTOs + JSONB 校验模型
   ├─ repository.py         ← DB 数据访问层 + bulk_insert_frames/chunks
@@ -225,7 +224,7 @@ core/
   ├─ db.py                 ← 异步引擎/Session 工厂/表初始化/触发器
   ├─ config_loader.py      ← YAML + .env 加载
   ├─ prompt_loader.py      ← Prompt 模板加载
-  ├─ status_tracker.py     ← Pipeline 进度持久化
+  ├─ status_tracker.py     ← Pipeline 进度持久化 + 动态权重 + sub_progress 插值
   └─ exceptions.py         ← 自定义异常
 
 config/
@@ -239,7 +238,7 @@ frontend/
   │   ├─ Dashboard.tsx     ← 主工作台: 视频播放器/Pipeline 进度条/搜索面板/历史面板
   │   ├─ main.tsx          ← React DOM 挂载
   │   ├─ index.css         ← 全局样式 + Tailwind
-  │   ├─ mockData.ts       ← Pipeline 阶段定义 + 进度计算逻辑
+  │   ├─ mockData.ts       ← Pipeline 阶段定义 + fetchPipelineStages API
   │   ├─ services/api.ts   ← API 调用封装 + 轮询工具函数
   │   ├─ types/index.ts    ← TypeScript 类型定义 (镜像 backend schemas)
   │   └─ components/       ← 子组件目录 (LeftSidebar/ParameterPanel/PipelineBar/VideoSearchCard 等)
@@ -264,7 +263,6 @@ plugins/factory.py:
 
 config.yaml controls which backends to load:
 
-  qc:          native_qc     → FFmpeg-based (asyncio subprocess)
   segmenter:   transnetv2    → TransNetV2 neural network scene detection
   captioner:   qwen25_vl     → local Qwen2.5-VL-7B video understanding (default)
                qwen_api      → Qwen-VL-Max DashScope API (vlm_llm mode)
@@ -314,7 +312,7 @@ videos
   ├─ perception: audio/vision/ocr/grounding/caption/summary_enabled
   ├─ function: search_index_enabled
   ├─ advanced: sample_fps, segment_threshold, caption_with_context, summary_detail
-  ├─ qc_result (JSONB), summary (JSONB)
+  ├─ summary (JSONB)
   ├─ status_detail (管道实时操作描述, 如"正在编码第 5/23 个场景的帧向量")
   └─ created_at, updated_at
 
@@ -361,6 +359,7 @@ chunks
 | DELETE | /api/v1/videos/{id} | 删除视频 (CASCADE scenes/transcript/frames/chunks) |
 | GET | /api/v1/settings | 获取系统设置 (API key 状态) |
 | PUT | /api/v1/settings | 更新系统设置 (保存 API key) |
+| GET | /api/v1/pipeline/operations | 查询启用的操作列表 + 进度范围（前端 PipelineBar 用） |
 | POST | /api/v1/search/semantic | 语义搜索 (三路并行召回 + 按 scene 合并) |
 
 ## Frontend Architecture
@@ -421,12 +420,13 @@ Vite 开发代理:
 
 | Module | Status | Note |
 |---|---|---|
-| Pipeline Core | ✅ | Phase 1→Keyframe→3→4(dual-mode)→5(dual-path)→Persist→Encode Frames E2E verified, with gate controls |
+| Pipeline Core | ✅ | DAG-based: operations.py declares 10 ops with gates/deps → engine topo-sorts + parallel batches |
 | Semantic Search (3-path) | ✅ | frame + chunk + text 并行召回, scene-merge dedup, label 预留 |
-| Frame-level Encoding | ✅ | 1fps 逐帧 encode_image → frame_embeddings 表 |
-| Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭（`-c copy` + 480p 5fps 预处理） |
-| Text Semantic Encoding | ✅ | encode_text(caption+ocr+transcript) → scenes.text_embedding |
-| API Routes | ✅ | 13 endpoints: CRUD, stream, thumbnail, status, params, reuse, settings, semantic search |
+| Frame-level Encoding | ✅ | runners/frame_encode.py: batch encode 4 frames |
+| Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
+| Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
+| API Routes | ✅ | 14 endpoints: CRUD, stream, thumbnail, status, params, reuse, settings, semantic search, pipeline/operations |
+| Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值，丝滑推进 |
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
 | Settings API + Keys | ✅ | core/settings_service.py, GET/PUT /api/v1/settings |

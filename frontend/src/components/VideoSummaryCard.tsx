@@ -118,7 +118,20 @@ export function VideoSummaryCard({ video }: { video: VideoResponse | null }) {
     );
   }
 
-  // 处理完成但没有摘要（如摘要被禁用）
+  // 处理完成但摘要未开启
+  if (video.status === "completed" && !video.summary_enabled) {
+    return (
+      <div className={containerClass}>
+        <h3 className="font-bold text-gray-900 text-lg mb-2">视频摘要</h3>
+        <div className="flex-1 flex flex-col items-center justify-center gap-1 opacity-50">
+          <span className="text-gray-400 text-sm">摘要功能未开启</span>
+          <span className="text-xs text-gray-300">请在参数设置中启用「智能摘要」</span>
+        </div>
+      </div>
+    );
+  }
+
+  // 已完成但无摘要数据（异常兜底）
   return (
     <div className={containerClass}>
       <h3 className="font-bold text-gray-900 text-lg mb-2">视频摘要</h3>

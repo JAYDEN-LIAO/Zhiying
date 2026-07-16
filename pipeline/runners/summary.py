@@ -1,76 +1,57 @@
 """
-pipeline/phase5_summary.py
+pipeline/runners/summary.py
 ═══════════════════════════════════════════════════════════
-Phase 5: 摘要生成 — 双路径路由。
+摘要生成 runner — 双模式策略（native_video 聚合 / vlm_llm LLM 拼凑）。
 
-native_video:
-  纯 Python 聚合器 — 遍历 scenes.structured_caption，
-  Counter 频率统计 + 去重 → VideoSummary
+native_video: 纯 Python 聚合器（Counter 频率统计 + 去重）
+vlm_llm:      LLM 拼凑（DeepSeek API）
 
-vlm_llm:
-  LLM 拼凑 — 将所有 scene.caption 拼成剧本 →
-  summarizer API (DeepSeek) → 结构化 JSON → VideoSummary
+提取自 pipeline/phase5_summary.py
 """
 
 import logging
 from collections import Counter
 
-from core.interfaces import VideoContext, Scene
-from core.status_tracker import StatusTracker
+from core.interfaces import Scene
 from core.schemas import VideoSummary
+from pipeline.runners.base import OperationRunner, PipelineContext
 
 logger = logging.getLogger(__name__)
 
 
-class Phase5Summary:
-    """Phase 5 执行器 — 双路径摘要。"""
+class SummaryRunner(OperationRunner):
+    """摘要生成执行器 — 策略模式路由双模式。"""
 
-    def __init__(
-        self,
-        ctx: VideoContext,
-        plugins: dict,
-        config: dict,
-        tracker: StatusTracker,
-        prompt_loader=None,
-        summary_mode: str = "native_video",
-    ):
-        self.ctx = ctx
-        self.plugins = plugins
-        self.config = config
-        self.tracker = tracker
-        self.pl = prompt_loader
-        self.summary_mode = summary_mode
+    async def run(self, pctx: PipelineContext) -> None:
+        await pctx.tracker.update("summary")
 
-    async def execute(self) -> None:
-        await self.tracker.update("phase_5_summary")
-
-        scenes = self.ctx.scenes
+        scenes = pctx.ctx.scenes
         if not scenes:
-            logger.info("[Phase5] No scenes, skipping")
+            logger.info("[SummaryRunner] No scenes, skipping")
             return
 
-        if self.summary_mode == "vlm_llm":
-            await self._run_llm(scenes)
+        mode = getattr(pctx.video, "summary_mode", "native_video")
+
+        if mode == "vlm_llm":
+            await self._run_llm(pctx, scenes)
         else:
-            await self._run_aggregate(scenes)
+            await self._run_aggregate(pctx, scenes)
 
-    # ──────────────────────────────────────────────────────
-    # native_video: 纯 Python 聚合
-    # ──────────────────────────────────────────────────────
+    # ── native_video: 纯 Python 聚合 ──
 
-    async def _run_aggregate(self, scenes: list[Scene]) -> None:
+    async def _run_aggregate(self, pctx, scenes: list[Scene]) -> None:
         structured = [s for s in scenes if s.structured_caption]
         if not structured:
-            logger.warning("[Phase5] No structured captions, using fallback")
-            self.ctx.summary = self._fallback_summary(scenes)
+            logger.warning("[SummaryRunner] No structured captions, using fallback")
+            pctx.ctx.summary = self._fallback_summary(scenes)
             return
 
-        await self.tracker.update(
-            "phase_5_summary",
+        await pctx.tracker.update(
+            "summary",
             description=f"正在聚合 {len(structured)} 个场景的结构化数据...",
         )
         summary = self._aggregate(scenes, structured)
-        await self._validate_and_store(summary)
+        await self._validate_and_store(pctx, summary)
 
     @staticmethod
     def _aggregate(all_scenes: list[Scene], structured: list[Scene]) -> dict:
@@ -122,18 +103,15 @@ class Phase5Summary:
             "main_entities": entities,
         }
 
-    # ──────────────────────────────────────────────────────
-    # vlm_llm: LLM 拼凑摘要
-    # ──────────────────────────────────────────────────────
+    # ── vlm_llm: LLM 拼凑 ──
 
-    async def _run_llm(self, scenes: list[Scene]) -> None:
-        summarizer = self.plugins.get("summarizer")
+    async def _run_llm(self, pctx, scenes: list[Scene]) -> None:
+        summarizer = pctx.plugins.get("summarizer")
         if summarizer is None:
-            logger.warning("[Phase5] Summarizer plugin not loaded, skipping")
-            self.ctx.summary = self._fallback_summary(scenes)
+            logger.warning("[SummaryRunner] Summarizer plugin not loaded, using fallback")
+            pctx.ctx.summary = self._fallback_summary(scenes)
             return
 
-        # 构建剧本
         lines: list[str] = []
         for s in scenes:
             caption = (s.caption or "").strip()
@@ -152,42 +130,40 @@ class Phase5Summary:
 
         script = "\n".join(lines)
         if not script.strip():
-            logger.info("[Phase5] No content to summarize, skipping")
+            logger.info("[SummaryRunner] No content to summarize, skipping")
             return
 
-        await self.tracker.update(
-            "phase_5_summary",
+        await pctx.tracker.update(
+            "summary",
             description=f"正在生成摘要（{len(lines)} 个场景）...",
         )
 
-        system_prompt = self.pl.get_raw("summary_system") if self.pl else ""
+        pl = pctx.prompt_loader
+        system_prompt = pl.get_raw("summary_system") if pl else ""
         user_prompt = (
-            self.pl.get("summary_user", caption_timeline=script)
-            if self.pl
-            else script
+            pl.get("summary_user", caption_timeline=script)
+            if pl else script
         )
 
-        logger.info("[Phase5] Summarizing %d scenes via LLM...", len(lines))
+        logger.info("[SummaryRunner] Summarizing %d scenes via LLM...", len(lines))
         raw = await summarizer.summarize(script, system_prompt, user_prompt)
-        await self._validate_and_store(raw)
+        await self._validate_and_store(pctx, raw)
 
-    # ──────────────────────────────────────────────────────
-    # 共用
-    # ──────────────────────────────────────────────────────
+    # ── 共用 ──
 
-    async def _validate_and_store(self, summary: dict | None) -> None:
+    async def _validate_and_store(self, pctx, summary: dict | None) -> None:
         if summary is None:
             return
         try:
             validated = VideoSummary.model_validate(summary)
-            self.ctx.summary = validated.model_dump()
+            pctx.ctx.summary = validated.model_dump()
         except Exception as e:
-            logger.warning("[Phase5] Validation failed: %s", e)
-            self.ctx.summary = None
+            logger.warning("[SummaryRunner] Validation failed: %s", e)
+            pctx.ctx.summary = None
 
-        await self.tracker.update("phase_5_summary", progress=0.90)
+        await pctx.tracker.update("summary")
         one_liner = (summary or {}).get("one_liner", "")[:80]
-        logger.info("[Phase5] Summary done: %s", one_liner)
+        logger.info("[SummaryRunner] Done: %s", one_liner)
 
     @staticmethod
     def _fallback_summary(scenes: list[Scene]) -> dict:

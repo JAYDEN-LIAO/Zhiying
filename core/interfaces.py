@@ -1,7 +1,7 @@
 """
 core/interfaces.py
 ═══════════════════════════════════════════════════════════
-所有 AI 算法模块的抽象接口层。
+所有 AI 算法模块的抽象接口层 — 8 个 ABC（v0.8）。
 
 ⚠️  异步 / 同步边界 — 硬性约定
 ────────────────────────────────────────────────────────
@@ -41,23 +41,39 @@ import numpy as np
 
 @dataclass
 class Scene:
-    """单个场景的完整信息载体。在 Pipeline 各阶段逐步填充。"""
+    """单个场景的完整信息载体。按 Pipeline 阶段逐步填充。
+
+    填充顺序：分割 → 关键帧 → 对齐 → 描述 → 编码
+    """
+
+    # ── 分割阶段（Phase 1）填充 ──
     scene_id: int
     scene_index: int
     start_sec: float
     end_sec: float
-    keyframe: np.ndarray | None = None            # (H, W, C) uint8 — 代表帧（缩略图用）
+
+    # ── 关键帧阶段填充 ──
+    keyframe: np.ndarray | None = None            # (H,W,C) uint8 — 中点代表帧（缩略图用）
     keyframe_path: str | None = None
-    keyframes: list[np.ndarray] = field(default_factory=list)  # 1fps 帧池
-    frame_timestamps: list[float] = field(default_factory=list)  # 帧池对应的时间戳
-    _caption_frames: list[np.ndarray] | None = None  # vlm_llm 模式: VLM 选中的 3-7 帧代表帧
+    keyframes: list[np.ndarray] = field(default_factory=list)      # 1fps 帧池
+    frame_timestamps: list[float] = field(default_factory=list)    # 帧池对应时间戳
+    caption_frames: list[np.ndarray] | None = None  # vlm_llm 模式: VLM 选中的 3-7 帧（native_video 下为 None）
+
+    # ── 对齐阶段填充 ──
     ocr_text: str | None = None
     aligned_transcript: str | None = None
+
+    # ── 描述阶段填充 ──
     caption: str | None = None
     prev_caption: str | None = None
-    structured_caption: dict | None = None              # Phase 4 结构化 JSON（description/keywords/objects/actions/scene_type/lighting），Phase 5 聚合用
-    embedding: list[float] | None = None           # Vector(2048) — 保留兼容，不再写入
-    text_embedding: list[float] | None = None      # Vector(2048) — encode_text(caption)，文本语义搜索用
+    structured_caption: dict | None = None         # native_video 模式: 结构化 JSON {description, keywords, objects, actions, scene_type, lighting}
+
+    # ── 编码阶段填充 ──
+    # DEPRECATED (v0.8): 不再写入，仅兼容旧数据读取
+    embedding: list[float] | None = None
+    text_embedding: list[float] | None = None      # Vector(2048) — encode_text(caption+ocr+transcript)，文本语义搜索用
+
+    # ── 预留 ──
     entities: list[dict] = field(default_factory=list)
 
 

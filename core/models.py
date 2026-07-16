@@ -187,7 +187,7 @@ class Video(Base):
     )
 
     __table_args__ = (
-        {"comment": "视频主表 — 元数据 / 状态 / QC / 摘要"},
+        {"comment": "视频主表 — 元数据 / 状态 / 摘要"},
     )
 
 
@@ -225,10 +225,11 @@ class Scene(Base):
     )
 
     # ── 向量 (pgvector) ──
+    # DEPRECATED (v0.8): 不再由 Pipeline 写入，仅兼容旧数据读取。搜索请用 text_embedding。
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(2048),
         nullable=True,
-        comment="关键帧图像编码向量(Qwen3-VL-Embedding-2B输出2048维), HNSW 索引用于向量检索",
+        comment="关键帧图像编码向量(Qwen3-VL-Embedding-2B输出2048维) — DEPRECATED",
     )
     text_embedding: Mapped[list[float] | None] = mapped_column(
         Vector(2048),

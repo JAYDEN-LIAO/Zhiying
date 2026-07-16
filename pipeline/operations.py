@@ -1,0 +1,111 @@
+"""
+pipeline/operations.py
+═══════════════════════════════════════════════════════════
+操作注册表 — 系统的能力声明清单。
+
+engine 通过 ALL_OPERATIONS 发现所有可用操作，
+根据 gate 过滤 → 拓扑排序 → 逐批执行。
+
+新增感知模块时，只需在此列表添加一行 Operation(...) 即可。
+"""
+
+from pipeline.runners.base import Operation
+from pipeline.runners.duration import DurationRunner
+from pipeline.runners.segmentation import SegmentRunner
+from pipeline.runners.transcription import TranscribeRunner
+from pipeline.runners.keyframe import KeyframeRunner
+from pipeline.runners.alignment import AlignRunner
+from pipeline.runners.caption import CaptionRunner
+from pipeline.runners.summary import SummaryRunner
+from pipeline.runners.frame_encode import FrameEncodeRunner
+from pipeline.runners.chunk_encode import ChunkEncodeRunner
+from pipeline.runners.text_encode import TextEncodeRunner
+
+ALL_OPERATIONS: list[Operation] = [
+    Operation(
+        name="duration", runner=DurationRunner(),
+        label="视频信息", description="读取视频时长与元数据",
+        progress_weight=0.02,
+    ),
+
+    Operation(
+        name="segmentation", runner=SegmentRunner(),
+        depends_on=["duration"],
+        required_plugins=["segmenter"],
+        label="场景分割", description="镜头边界检测中",
+        progress_weight=0.15,
+    ),
+
+    Operation(
+        name="transcription", runner=TranscribeRunner(),
+        depends_on=["duration"],
+        gate=lambda v, _: v.audio_enabled,
+        required_plugins=["transcriber"],
+        label="音频转录", description="语音转文字中",
+        progress_weight=0.10,
+    ),
+
+    Operation(
+        name="keyframes", runner=KeyframeRunner(),
+        depends_on=["segmentation"],
+        gate=lambda v, _: v.vision_enabled,
+        label="关键帧抽取", description="1fps 帧池提取中",
+        progress_weight=0.15,
+    ),
+
+    Operation(
+        name="alignment", runner=AlignRunner(),
+        depends_on=["segmentation", "transcription"],
+        gate=lambda v, _: v.audio_enabled,
+        label="模态对齐", description="时间戳分配到场景中",
+        progress_weight=0.05,
+    ),
+
+    Operation(
+        name="caption", runner=CaptionRunner(),
+        depends_on=["keyframes"],
+        gate=lambda v, _: v.vision_enabled and v.caption_enabled,
+        required_plugins=["captioner"],
+        label="画面描述", description="VLM 画面描述中",
+        progress_weight=0.20,
+    ),
+
+    Operation(
+        name="summary", runner=SummaryRunner(),
+        depends_on=["caption"],
+        gate=lambda v, _: v.summary_enabled and v.caption_enabled and v.vision_enabled,
+        required_plugins=["summarizer"],
+        label="智能摘要", description="结构化摘要生成中",
+        progress_weight=0.10,
+    ),
+
+    Operation(
+        name="frame_encode", runner=FrameEncodeRunner(),
+        depends_on=["keyframes"],
+        gate=lambda v, _: v.search_index_enabled and v.vision_enabled,
+        required_plugins=["embedder"],
+        label="帧级编码", description="逐帧向量编码中",
+        progress_weight=0.08,
+    ),
+
+    Operation(
+        name="chunk_encode", runner=ChunkEncodeRunner(),
+        depends_on=["keyframes"],
+        gate=lambda v, cfg: (
+            v.search_index_enabled and v.vision_enabled
+            and cfg.get("pipeline", {}).get("chunk_encoding", False)
+        ),
+        required_plugins=["embedder"],
+        label="片段编码", description="滑动窗口编码中",
+        progress_weight=0.05,
+    ),
+
+    Operation(
+        name="text_encode", runner=TextEncodeRunner(),
+        depends_on=["caption"],
+        gate=lambda v, _: v.search_index_enabled and v.vision_enabled,
+        required_plugins=["embedder"],
+        label="文本语义编码", description="文本向量编码中",
+        progress_weight=0.07,
+    ),
+]

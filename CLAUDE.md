@@ -2,34 +2,45 @@
 
 ## One-Line Summary
 
-Cerno is a **video analytics engine** (v0.7) that ingests videos, runs a 5-stage async pipeline (QC → segmentation → captioning → embedding → aggregation), generates **3-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics), enables **3-path parallel semantic search** (frame + text, chunk 配置关闭默认不启用), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
+Cerno is a **video analytics engine** (v0.8) that ingests videos, runs a **declarative operation DAG** (10 operations with gate-driven orchestration), generates **3-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics), enables **3-path parallel semantic search** (frame + text, chunk 配置关闭默认不启用), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
 
 ## Quick File Map
 
 ```
 main.py                    — FastAPI app, lifespan, exception handlers, shared embedder
-api/routes.py              — ALL API endpoints (video CRUD, upload, stream, thumbnail, 3 search modes)
-api/router.py              — Re-exports from api/routes.py
+api/routes.py              — Transitional re-export (endpoints split into sub-routers)
+api/video_routes.py        — Video CRUD + upload + stream + thumbnail endpoints
+api/search_routes.py       — Semantic search + pipeline/operations endpoints
+api/settings_routes.py     — System settings (API keys) endpoints
+api/router.py              — Assembles sub-routers under /api/v1 prefix
 api/deps.py                — FastAPI dependency injection (get_db)
-api/video_routes.py        — (stub) planned video route extraction
-api/search_routes.py       — (stub) planned search route extraction
+api/schemas.py             — Shared API DTOs (APIResponse, search/status models)
 api/export_routes.py       — (stub) planned export endpoints
 api/maintenance_routes.py  — (stub) planned health/reindex endpoints
 core/models.py             — ORM: Video, Scene, Transcript, FrameEmbedding, Chunk (5 tables)
 core/schemas.py            — Pydantic v2 DTOs + JSONB validation models
-core/interfaces.py         — 9 abstract base classes (BaseQC, BaseCaptioner, ...)
-core/search.py             — 3 search functions: frame/chunk/text (废弃的全文/混合/模糊已移除)
+core/interfaces.py         — 8 abstract base classes (ABCs) + Scene/VideoContext dataclasses
+core/search.py             — 3 search functions: frame/chunk/text
 core/repository.py         — Data access layer + bulk_insert_frames/chunks
 core/db.py                 — Async engine, init_db(), incremental migration (pgvector, text_embedding)
 core/config_loader.py      — Loads config.yaml, merges .env secrets via _ENV_OVERRIDES
 core/prompt_loader.py      — Prompt template loader (config/prompts.yaml)
-core/status_tracker.py     — Pipeline progress + status_detail persistence (PHASE_WEIGHTS mapping)
+core/status_tracker.py     — Pipeline progress + dynamic operation-based weight calculation
 core/exceptions.py         — Custom exceptions
-pipeline/engine.py         — PipelineEngine orchestrator (5-stage + 3-path encode_frames)
-pipeline/phase1_qc.py      — QC + audio extraction + scene segmentation
-pipeline/phase3_alignment.py — Transcript-to-scene alignment
-pipeline/phase4_caption.py — Dual-path captioning: native_video (structured JSON) / vlm_llm (natural language)
-pipeline/phase5_summary.py — Dual-path summarization: Python aggregator / LLM summarizer
+pipeline/engine.py         — DAG executor: gate filter → topological sort → batch execute (~200 lines)
+pipeline/operations.py     — Operation registry: ALL_OPERATIONS declaration with gates/deps/labels
+pipeline/runners/          — 10 operation runners (one per processing unit):
+  runners/base.py            — OperationRunner ABC + PipelineContext + Operation dataclass
+  runners/duration.py        — ffprobe duration detection
+  runners/segmentation.py    — TransNetV2 scene segmentation
+  runners/transcription.py   — Audio extraction + faster-whisper transcription
+  runners/keyframe.py        — 1fps frame pool extraction + thumbnails
+  runners/alignment.py       — Transcript word-to-scene alignment
+  runners/caption.py         — Dual-mode: native_video (Qwen2.5-VL GPU) / vlm_llm (Qwen API)
+  runners/summary.py         — Dual-mode: Python aggregator / DeepSeek API LLM
+  runners/frame_encode.py    — 1fps batch image encoding → frame_embeddings
+  runners/chunk_encode.py    — Sliding window video encoding → chunks (config-gated)
+  runners/text_encode.py     — Text semantic encoding → scenes.text_embedding
 pipeline/search_engine.py  — 3-path parallel recall (frame/chunk/text) + label 预留 + scene-merge dedup
 plugins/factory.py         — Dynamic plugin loader (CATEGORY_MAP, _MODULE_OVERRIDES, _CLASS_OVERRIDES)
 config/config.yaml         — Main config: server/db/storage/plugins/pipeline
@@ -58,29 +69,27 @@ PUT /videos/{id}/params (after user configures)
   → background task: PipelineEngine.run()   (for pending videos)
   → background task: PipelineEngine.run_incremental()   (for completed videos, only summary/search_index)
 
-PipelineEngine.run() (with gate control from L2/L3 params):
-  initialize()    → Load 9 plugins (embedder reuses app.state shared instance)
-  _phase1()       → QC (FFmpeg) + audio extraction + scene segmentation (TransNetV2)
-                   → writes status_detail: "质检完成", "正在转录音频", "镜头分割完成: N 个场景"
-  _extract_keyframes() ← gated by vision_enabled → FFmpeg pipe → memory @1fps, 3-7 caption frames, thumbnails
-                   → writes status_detail: "正在抽取第 X/Y 个场景的关键帧"
-  _phase3()       ← gated by audio_enabled → Transcript-to-scene alignment
-                   → writes status_detail: "对齐完成: X/Y 个场景已分配转录文本"
-  _phase4()       ← gated by vision_enabled + caption_enabled → Caption (双模式: native_video / vlm_llm)
-                   → native_video: Qwen2.5-VL-7B 本地 GPU 直接观看视频片段 → 结构化 JSON
-                   → vlm_llm: Qwen-VL-Max API 看图说话 → 自然语言描述
-                   → writes status_detail: "正在描述第 X/Y 个场景"
-  _phase5()       ← gated by summary_enabled + caption_enabled → Summarization (双路径)
-                   → native_video: 纯 Python 聚合器 (Counter 频率统计 + 去重)
-                   → vlm_llm: LLM 拼凑 (DeepSeek API)
-                   → writes status_detail: "正在聚合/生成摘要..."
-  _persist()      → Write scenes (bulk) + transcript + artifacts to DB
-  _encode_frames() ← gated by search_index_enabled + vision_enabled → 2 active + 1 config-gated paths:
-                   → writes status_detail: "正在编码第 X/Y 个场景的帧向量"
-    a. Frame path:  encode_image(1fps) → frame_embeddings table
-    b. Chunk path:  config pipeline.chunk_encoding 控制, 默认关闭
-       (开启时: -c copy 流复制 → 480p 5fps 预处理 → encode_video → chunks)
-    c. Text path:   encode_text(caption+ocr+transcript) → scenes.text_embedding
+PipelineEngine.run() (DAG-based, gate-driven from L2/L3 params):
+  Gate Filter → topo sort → batches
+    Batch 0: [duration]
+    Batch 1: [segmentation, transcription] (parallel)
+    Batch 2: [keyframes, alignment] (parallel, depends on batch 1)
+    Batch 3: [caption, frame_encode] (parallel, depends on batch 2)
+    Batch 4: [summary, text_encode] (parallel, depends on batch 3)
+    (chunk_encode 与 frame_encode 同批，由 config pipeline.chunk_encoding 控制)
+  → _persist() → mark_completed()
+
+Each operation declared in pipeline/operations.py with:
+  - gate: lambda video, config → bool (parameter-driven enable/disable)
+  - depends_on: list[str] (DAG dependency edges)
+  - required_plugins: list[str] (auto-loaded by engine)
+  - label/description: (frontend progress bar labels)
+
+Adding a new perception module (e.g. YOLO detector):
+  1. Write runner class in pipeline/runners/detection.py
+  2. Add one Operation(...) entry to pipeline/operations.py ALL_OPERATIONS
+  3. Add column to Video model + field to PipelineParams (unavoidable)
+  → engine.py needs ZERO changes.
 
 Search (3-path parallel):
   text query → embedder.encode_text() → 2048-dim vector (shared, once)
@@ -103,8 +112,9 @@ Search (3-path parallel):
 - **Shared embedder**: Embedder is loaded once in `app.state.embedder` during lifespan startup. Pipeline and SearchEngine both reuse this instance — never call `load_plugin("embedder")` directly in business logic.
 - **Incremental migration**: `init_db()` uses `ALTER TABLE ADD COLUMN IF NOT EXISTS` for schema evolution (e.g., `text_embedding`, `status_detail` columns).
 - **Three encoding paths exist**: Frame (1fps per-frame), Chunk (config-gated, default disabled, `-c copy` + 480p 5fps preprocessing + encode_video), Text (caption+ocr+transcript 语义). All three reuse the shared embedder.
-- **Parameter system (v0.7)**: 4-level hierarchy — L1=Scene Type (general/meeting/surveillance/text_recognition/custom), L2=Perception Modules (vision/audio/ocr/caption, plus detection-grayed), L3=Function Switches (search_index/summary + summary_mode[native_video/vlm_llm]), L4=Advanced Params (language/sample_fps/segment_threshold/caption_with_context/summary_detail). Upper levels set defaults for lower levels. Pipeline uses `PipelineParams` Pydantic model with cross-field validation.
-- **Summary dual-mode (v0.7)**: `summary_mode` field controls the entire caption+summary path. `native_video` (default) uses local Qwen2.5-VL-7B + pure Python aggregator. `vlm_llm` uses Qwen-VL-Max API + DeepSeek API. Engine's `initialize()` sets plugin backends and parameters based on this mode. `_extract_keyframes()` only generates `_caption_frames` in vlm_llm mode. Summary mode changes require creating a new video record (cannot be done incrementally).
+- **Parameter system (v0.8)**: 4-level hierarchy — L1=Scene Type (general/meeting/surveillance/text_recognition/custom), L2=Perception Modules (vision/audio/ocr/caption, plus detection-grayed), L3=Function Switches (search_index/summary + summary_mode[native_video/vlm_llm]), L4=Advanced Params (language/sample_fps/segment_threshold/caption_with_context/summary_detail). Upper levels set defaults for lower levels. Pipeline uses `PipelineParams` Pydantic model with cross-field validation.
+- **Operation DAG (v0.8)**: Pipeline is no longer a fixed 5-stage sequence. Operations are declared in `pipeline/operations.py` with gate conditions, dependencies, and labels. Engine filters by gate, topologically sorts, and executes in parallel batches. Adding a new perception module only requires a new runner + one Operation entry — engine.py is never touched.
+- **Summary dual-mode (v0.8)**: `summary_mode` 控制 caption+summary 路径。`native_video`（默认）→ CaptionRunner 内部路由到 Qwen2.5-VL-7B 本地 GPU，SummaryRunner 内部路由到纯 Python 聚合器。`vlm_llm` → CaptionRunner 动态切换为 Qwen-VL-Max API captioner，SummaryRunner 内部路由到 DeepSeek API。双模式切换完全封装在 runner 内部，engine.py 不感知。Summary mode 变更需新建视频记录（不可增量）。
 - **Incremental processing**: Completed videos can re-run summary or search index independently via `run_incremental()`. Non-L3 param changes (including summary_mode) require creating a new video record (reuse file via `POST /videos/reuse`).
 
 ## Database Tables (5)
@@ -121,24 +131,24 @@ Search (3-path parallel):
 
 | Area | Status | Files |
 |---|---|---|
-| Pipeline core | ✅ Complete | engine.py, phase1, phase4, phase5 |
-| Frame/Chunk/Text encoding | ✅ Complete | engine.py _encode_frames(), core/repository.py |
-| Semantic search (3-path) | ✅ Verified | search_engine.py + api/routes.py (frame+chunk+text, label 预留) |
-| Captioner (local GPU + API) | ✅ Verified | plugins/captioner/qwen25_vl_captioner.py + qwen_api_captioner.py — dual-mode, engine routes by summary_mode |
+| Pipeline core (DAG) | ✅ Complete | engine.py, operations.py, runners/* (10 ops) |
+| Frame/Chunk/Text encoding | ✅ Complete | runners/frame_encode, chunk_encode, text_encode |
+| Semantic search (3-path) | ✅ Verified | search_engine.py + api/search_routes.py (frame+chunk+text, label 预留) |
+| Captioner (local GPU + API) | ✅ Verified | plugins/captioner/qwen25_vl_captioner.py + qwen_api_captioner.py |
 | Embedder (local GPU) | ✅ Verified | plugins/embedder/qwen_vl_embedder.py — preloaded at startup, shared via app.state.embedder |
-| Summarizer (aggregator + API) | ✅ Verified | phase5_summary.py dual-path: pure Python aggregator (default) + vllm_summarizer.py (vlm_llm fallback) |
+| Summarizer (aggregator + API) | ✅ Verified | runners/summary.py dual-path: Python aggregator (default) + vllm_summarizer.py (vlm_llm fallback) |
 | Segmenter (TransNetV2) | ✅ Verified | plugins/segmenter/transnet_v2.py |
 | Segmenter (time-based) | ✅ Verified | plugins/segmenter/time_based.py |
-| QC (FFmpeg) | ✅ Verified | plugins/qc/basic_qc.py |
+| QC (FFmpeg) | ❌ Removed (v0.8) | Was plugins/qc/basic_qc.py — removed, no replacement needed |
 | Transcriber (faster-whisper) | ✅ Plugin ready | plugins/transcriber/faster_whisper.py |
 | DB + migrations | ✅ Done | db.py, models.py, init_db() |
 | Prompt templates | ✅ Done | config/prompts.yaml |
-| Pipeline real-time status | ✅ Done | status_tracker.py writes status_detail; phases 1/3/4/5 + keyframe + encoding report progress |
+| Pipeline real-time status | ✅ Done | status_tracker.py with dynamic weight allocation + sub_progress per-operation interpolation |
 | Parameter system (4-level) | ✅ Done | core/schemas.py PipelineParams + model_validator; config/presets.yaml; frontend ParameterPanel with cascade |
 | Incremental processing | ✅ Done | pipeline/engine.py run_incremental(); services/video_service.py incremental_process() |
 | Settings API + API key mgmt | ✅ Done | core/settings_service.py; GET/PUT /api/v1/settings |
 | Frontend dashboard | ✅ Done | Dashboard.tsx + 8 extracted components in components/ (React 19 + Tailwind 4) — 参数面板四级联动, 动态 PipelineBar, 系统设置页, 历史记录自动刷新 |
-| Object Detection (YOLO) | ⬜ Shell only | plugins/detector/ + pipeline/phase2_perception.py |
+| Object Detection (YOLO) | ⬜ Shell only | plugins/detector/ (runner not yet implemented) |
 | OCR | ⬜ Shell only | plugins/ocr/ |
 | Grounding | ⬜ Shell only | plugins/grounding/ |
 | Export APIs | ⬜ Shell only | api/export_routes.py, services/export_service.py |
@@ -150,8 +160,8 @@ Search (3-path parallel):
 
 1. **Don't modify `.env`** — it contains API keys and is gitignored.
 2. **Don't delete empty `__init__.py` files** — they're intentional package markers.
-3. **Don't delete empty route/service files** (`api/video_routes.py`, `api/search_routes.py`, `api/export_routes.py`, etc.) — they're planned stubs for future route modularization.
-4. **Config-driven design**: when adding a model, add a new backend plugin file and register it in `plugins/factory.py` `CATEGORY_MAP` / `_MODULE_OVERRIDES` / `_CLASS_OVERRIDES`. No hardcoded model references in business logic.
+3. **Don't delete empty route/service files** (`api/export_routes.py`, `api/maintenance_routes.py`) — they're planned stubs for future endpoints. `api/video_routes.py` and `api/search_routes.py` are active route files, NOT stubs.
+4. **Config-driven design + operation registration**: when adding a new perception module, write a runner class in `pipeline/runners/`, add one `Operation(...)` entry to `pipeline/operations.py` `ALL_OPERATIONS`. For new plugin backends, register in `plugins/factory.py` `CATEGORY_MAP` / `_MODULE_OVERRIDES` / `_CLASS_OVERRIDES`. No hardcoded model references in business logic.
 5. **Sync vs Async**: all `core/interfaces.py` methods are `async def`. If your plugin runs synchronous model inference, wrap it with `asyncio.to_thread()`. Never call `model.predict()` directly in an async function.
 6. **Search paths**: `config_loader.py` and `prompt_loader.py` use `Path(__file__).resolve().parent.parent` to locate the project root. Keep this convention.
 7. **Vector dimension**: 2048. All vector columns (scenes.embedding, scenes.text_embedding, frame_embeddings.embedding, chunks.embedding) use `Vector(2048)`. No pgvector HNSW/IVFFlat index (2048 > 2000 limit, but full scan is fine for demo scale).

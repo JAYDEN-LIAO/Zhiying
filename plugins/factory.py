@@ -39,7 +39,7 @@ IMPL_CLASS_MAP: dict[str, str] = {
     "segmenter":    "TransNetV2Segmenter",
     "detector":     "YoloDetector",
     "ocr":          "PaddleOCRExtractor",
-    "captioner":    "QwenVLCaptioner",
+    "captioner":    "Qwen25VLCaptioner",
     "embedder":     "QwenVLEmbedder",
     "summarizer":   "VLLMSummarizer",
     "grounding":    "Florence2Grounding",

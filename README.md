@@ -54,23 +54,24 @@ curl -X POST -H "Content-Type: application/json" \
 ## Architecture Overview
 
 ```
-Upload → Pipeline → DB → Search → Frontend
-         ├─ QC + Scene Segmentation (TransNetV2)
+Upload → Pipeline (DAG) → DB → Search → Frontend
+         ├─ Duration detection (ffprobe)
+         ├─ Scene Segmentation (TransNetV2) + Audio Transcription (faster-whisper)
          ├─ Keyframe Extraction @1fps (FFmpeg pipe → memory)
-         ├─ Captioning — 双模式:
+         ├─ Captioning — 双模式 (runners/caption.py 内部策略):
          │    ├─ native_video (默认): Qwen2.5-VL-7B 本地 GPU 直接观看视频 → 结构化 JSON
          │    └─ vlm_llm (备选): Qwen-VL-Max API 看图说话 → 自然语言描述
          ├─ Embedding — 3 encoding paths:
          │    ├─ Frame-level: encode_image (1fps, per-frame)
          │    ├─ Chunk-level: encode_video (sliding window, 默认关闭)
          │    └─ Text-level: encode_text(caption+ocr+transcript)
-         └─ Summarization — 双模式:
+         └─ Summarization — 双模式 (runners/summary.py 内部策略):
               ├─ native_video (默认): 纯 Python 聚合器 (Counter 频率统计, 去重)
               └─ vlm_llm (备选): DeepSeek API LLM 拼凑摘要
 ```
 
-- **5-stage pipeline** orchestrated by `PipelineEngine`, with 3-path frame/chunk/text encoding
-- **9 abstract plugin interfaces** with dynamic factory loading
+- **Declarative pipeline** orchestrated by `PipelineEngine` (DAG executor), with 3-path frame/chunk/text encoding
+- **8 abstract plugin interfaces** with dynamic factory loading
 - **PostgreSQL + pgvector** with 5 tables: videos, scenes, transcripts, frame_embeddings, chunks
 - **3-path parallel semantic search**: frame (1fps precision) + chunk (process semantics) + text (caption+ocr+transcript semantics). label (JSONB) 预留等待 YOLO 接入
 - **Config-driven**: switch models or API providers via `config.yaml`; switch summary mode via frontend parameter panel (`summary_mode` field)
@@ -99,11 +100,13 @@ Upload → Pipeline → DB → Search → Frontend
 cerno/
 ├── main.py               # FastAPI entry point
 ├── api/                  # Route definitions
-│   ├── router.py         # Route assembly (re-exports from routes.py)
-│   ├── routes.py         # All API endpoints (video CRUD, search, upload)
+│   ├── router.py         # Route assembly (sub-routers under /api/v1)
+│   ├── routes.py         # Transitional re-export
 │   ├── deps.py           # FastAPI dependencies (DB session)
-│   ├── video_routes.py   # (stub) future video route extraction
-│   ├── search_routes.py  # (stub) future search route extraction
+│   ├── schemas.py        # Shared API DTOs
+│   ├── video_routes.py   # Video CRUD + upload + stream + thumbnail
+│   ├── search_routes.py  # Semantic search + pipeline/operations
+│   ├── settings_routes.py# System settings (API keys)
 │   ├── export_routes.py  # (stub) planned export endpoints
 │   └── maintenance_routes.py  # (stub) planned health/reindex endpoints
 ├── core/                 # DB models, schemas, search, config
@@ -112,38 +115,37 @@ cerno/
 │   ├── schemas.py        # Pydantic DTOs + JSONB validation
 │   ├── repository.py     # Data access layer + bulk_insert_frames/chunks
 │   ├── search.py         # 3 search functions: frame/chunk/text
-│   ├── interfaces.py     # 9 abstract plugin base classes
+│   ├── interfaces.py     # 8 abstract plugin base classes
 │   ├── config_loader.py  # YAML + .env loading with env var overrides
 │   ├── prompt_loader.py  # Prompt template loader
 │   ├── status_tracker.py # Pipeline progress persistence
+│   ├── settings_service.py # API key management (settings.json backed)
 │   └── exceptions.py     # Custom exceptions
 ├── config/               # Configuration
 │   ├── config.yaml       # Main config (server/db/storage/plugins/pipeline)
 │   ├── config_schema.py  # Pydantic config validation
 │   └── prompts.yaml      # Caption/Summarizer/Grounding prompt templates
-├── pipeline/             # Pipeline orchestrator + phases
-│   ├── engine.py         # 5-stage PipelineEngine + 3-path encoding
-│   ├── phase1_qc.py      # QC + segmentation
-│   ├── phase3_alignment.py
-│   ├── phase4_caption.py # 双路径: native_video (结构化JSON) / vlm_llm (自然语言)
-│   ├── phase5_summary.py # 双路径: Python聚合 / LLM拼凑
+├── pipeline/             # Pipeline DAG orchestrator + runners
+│   ├── engine.py         # DAG executor: gate filter → topo sort → batch execute
+│   ├── operations.py     # Operation registry: ALL_OPERATIONS with gates/deps/labels
+│   ├── runners/          # 10 operation runners (one per processing unit)
+│   │   ├── duration.py, segmentation.py, transcription.py
+│   │   ├── keyframe.py, alignment.py, caption.py, summary.py
+│   │   └── frame_encode.py, chunk_encode.py, text_encode.py
 │   └── search_engine.py  # 3-path parallel recall (frame+chunk+text) + scene-merge dedup
 ├── plugins/              # Plugin implementations + factory
 │   ├── factory.py        # Dynamic plugin loader
-│   ├── captioner/        # Qwen API captioner + local VL captioner
+│   ├── captioner/        # Qwen25VL captioner (local GPU) + Qwen API captioner
 │   ├── embedder/         # Qwen3-VL-Embedding (local GPU)
 │   ├── summarizer/       # DeepSeek API
 │   ├── segmenter/        # TransNetV2 / Time-based
 │   ├── transcriber/      # faster-whisper
-│   ├── qc/               # FFmpeg-based QC
 │   ├── detector/         # (stub) YOLO
 │   ├── ocr/              # (stub) PaddleOCR
 │   └── grounding/        # (stub) Florence-2
 ├── services/             # Business logic layer
 │   ├── video_service.py  # Video processing orchestration
 │   └── export_service.py # (stub) export logic
-├── core/
-│   └── settings_service.py # API key management (settings.json backed)
 ├── utils/                # FFmpeg tools, video utilities
 ├── frontend/             # React + Vite + Tailwind dashboard
 │   ├── public/
@@ -169,7 +171,7 @@ cerno/
 
 ## Development Status
 
+- **v0.8 — DAG architecture refactor**: 声明式操作 DAG 引擎 (10 operations + gate-driven orchestration). 操作注册表 (pipeline/operations.py) + runners 目录. 引擎门控过滤 → 拓扑排序 → 并行分批执行. StatusTracker 动态权重 + sub_progress 插值. API 路由拆分 (video/search/settings). 进度系统后端驱动 (GET /pipeline/operations). QC 模块移除. 新增感知模块只需 runner + Operation 注册.
 - **v0.7 — Summary architecture overhaul**: 双模式摘要系统 — native_video (Qwen2.5-VL-7B 本地 GPU 原生视频理解 + 纯 Python 聚合) / vlm_llm (传统 VLM+LLM, API 驱动). 前端 summary_mode 选择器 + 参数标签行. Embedder 启动时预加载到全局共享.
 - **v0.6 — Search architecture consolidation**: 3-path semantic search (frame+text 主力, chunk 配置关闭), 废弃全文/混合/模糊检索, encode_text 扩大至 caption+ocr+transcript, 路径感知排序与跨路去重修复
-- **P0 complete**: Pipeline core, search engine (3 search functions: frame/chunk/text), 13 API endpoints, frontend dashboard
 - **Planned**: Object detection (YOLO), OCR (PaddleOCR), Grounding (Florence-2), Export APIs (clip/JSON/Markdown)

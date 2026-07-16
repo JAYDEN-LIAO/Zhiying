@@ -1,7 +1,10 @@
 """
 pipeline/engine.py
 ═══════════════════════════════════════════════════════════
-五阶段认知 Pipeline 编排器。
+声明式操作 DAG 编排器（v0.8）。
+
+操作通过 pipeline/operations.py 中的 ALL_OPERATIONS 声明，
+引擎负责门控过滤 → 拓扑排序 → 分批并行执行。
 
 作为后台任务被 FastAPI 调用（BackgroundTasks.add_task），
 通过 PipelineEngine.run() 入口执行全流程。
@@ -9,9 +12,6 @@ pipeline/engine.py
 
 import asyncio
 import logging
-import os
-
-import numpy as np
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -22,17 +22,53 @@ from core.status_tracker import StatusTracker
 from core.prompt_loader import get_prompt_loader
 from core.repository import bulk_insert_scenes, save_video_artifacts
 from plugins.factory import load_plugin
+from pipeline.operations import ALL_OPERATIONS
+from pipeline.runners.base import PipelineContext
 
 logger = logging.getLogger(__name__)
 
 
+def topological_batches(ops: list) -> list[list]:
+    """按依赖拓扑排序，返回可并行执行的批次列表。
+
+    每个批次内的操作相互无依赖，可以 asyncio.gather 并行执行。
+    批次之间串行：上一批全部完成后才开始下一批。
+
+    Args:
+        ops: Operation 列表，每个 op 有 .name 和 .depends_on 属性。
+
+    Returns:
+        list[list[Operation]] — 从先到后排列的批次。
+
+    Raises:
+        ValueError: 检测到循环依赖。
+    """
+    name_to_op = {op.name: op for op in ops}
+    batches: list[list] = []
+    completed: set[str] = set()
+    remaining: set[str] = set(name_to_op.keys())
+
+    while remaining:
+        ready = {
+            name for name in remaining
+            if all(dep in completed for dep in name_to_op[name].depends_on)
+        }
+        if not ready:
+            raise ValueError(f"循环依赖: {remaining}")
+        batches.append([name_to_op[name] for name in ready])
+        completed |= ready
+        remaining -= ready
+
+    return batches
+
+
 class PipelineEngine:
-    """五阶段认知工作流编排器。
+    """声明式操作 DAG 编排器。
 
     设计原则:
-      - 每一阶段依赖前一阶段的产出
-      - 各阶段之间通过 VideoContext 传递数据
-      - 每阶段完成时调用 StatusTracker 更新进度
+      - 操作通过 ALL_OPERATIONS 声明（gate / depends_on / required_plugins）
+      - 引擎只做门控过滤 + 拓扑排序 + 逐批执行
+      - 各操作之间通过 VideoContext 传递数据
     """
 
     def __init__(
@@ -45,16 +81,8 @@ class PipelineEngine:
         self.config = config
         self.db_session_factory = db_session_factory
         self.video = video
-        self._shared_embedder = shared_embedder  # 启动时预加载，全局共享
+        self._shared_embedder = shared_embedder
 
-        # 保存原始 captioner 配置，防止切换 backend 时互相污染
-        import copy as _copy
-        self._captioner_cfg_native = _copy.deepcopy(config.get("plugins", {}).get("captioner", {}))
-
-        self.tracker = StatusTracker(
-            video_id=str(video.id),
-            db_session_factory=db_session_factory,
-        )
         self.ctx = VideoContext(
             video_id=str(video.id),
             file_path=video.file_path,
@@ -62,116 +90,228 @@ class PipelineEngine:
         self.prompt_loader = get_prompt_loader()
         self.plugins: dict[str, object] = {}
 
-    # ──────────────────────────────────────────────────────
-    # 插件加载
-    # ──────────────────────────────────────────────────────
-
-    async def initialize(self) -> None:
-        """按需加载算法插件（embedder 除外，由 _encode_frames 延迟加载）。
-
-        根据视频的功能开关（L2/L3 参数）和 summary_mode 决定加载哪些插件。
-        """
-        cats: list[str] = ["segmenter"]
-
-        if self.video.audio_enabled:
-            cats.append("transcriber")
-
-        use_vlm_llm = (
-            self.video.vision_enabled
-            and self.video.caption_enabled
-            and self.video.summary_enabled
-            and getattr(self.video, "summary_mode", "native_video") == "vlm_llm"
-        )
-        use_native = (
-            self.video.vision_enabled
-            and self.video.caption_enabled
-            and getattr(self.video, "summary_mode", "native_video") == "native_video"
-        )
-
-        if use_vlm_llm:
-            # vlm_llm 模式：Qwen DashScope API captioner + LLM summarizer
-            import os as _os
-            self.config["plugins"]["captioner"]["backend"] = "qwen_api"
-            self.config["plugins"]["captioner"]["params"] = {
-                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "api_key": _os.environ.get("DASHSCOPE_API_KEY", ""),
-                "model_name": "qwen-vl-max",
-            }
-            cats.append("captioner")
-            cats.append("summarizer")
-        elif use_native:
-            # native_video 模式：从副本恢复原生 captioner 配置
-            self.config["plugins"]["captioner"] = self._captioner_cfg_native
-            cats.append("captioner")
-
-        if self.video.ocr_enabled:
-            cats.append("ocr")
-        if self.video.grounding_enabled:
-            cats.append("grounding")
-
-        for cat in cats:
-            self.plugins[cat] = await load_plugin(self.config, cat)
-
-    # ──────────────────────────────────────────────────────
-    # 入口
-    # ──────────────────────────────────────────────────────
+    # ── 入口 ──
 
     async def run(self) -> None:
-        """按阶段顺序执行全流程，根据视频参数开关门控各阶段。
-
-        各阶段门控规则（来自 L2/L3 参数）:
-          vision_enabled=OFF  → 跳过关键帧、描述、编码
-          audio_enabled=OFF   → 跳过转录、对齐（在 phase1/3 内部检查）
-          caption_enabled=OFF → 跳过描述、摘要（摘要依赖描述）
-          summary_enabled=OFF → 跳过摘要
-          search_index_enabled=OFF → 跳过帧/块/文本编码
-        """
-        v = self.video  # shorthand
+        """门控过滤 → 拓扑排序 → 加载插件 → 逐批执行 → 持久化。"""
+        v = self.video
 
         try:
             await self._set_processing()
-            await self.initialize()
 
-            await self._phase1()
+            # 1. 门控过滤
+            enabled = [op for op in ALL_OPERATIONS if op.gate(v, self.config)]
 
-            if v.vision_enabled:
-                await self._extract_keyframes()
-            else:
-                logger.info("[Pipeline] vision_enabled=false, skipping keyframe extraction")
+            # 2. 拓扑排序 → 分批
+            batches = topological_batches(enabled)
 
-            await self._phase3()
+            # 3. 加载所需插件（从 enabled operations 的 required_plugins 推导）
+            await self._load_plugins(enabled)
 
-            if v.vision_enabled and v.caption_enabled:
-                await self._phase4()
-                # 释放 caption 模型显存，为后面的 embedder 腾出空间
-                cap = self.plugins.get("captioner")
-                if hasattr(cap, "unload"):
-                    cap.unload()
-            else:
-                logger.info("[Pipeline] caption_enabled=false, skipping captioning")
+            # 4. 创建 tracker（动态进度权重）和 context
+            tracker = StatusTracker(
+                video_id=str(v.id),
+                db_session_factory=self.db_session_factory,
+                operations=enabled,
+            )
+            pctx = PipelineContext(
+                video=v,
+                ctx=self.ctx,
+                config=self.config,
+                plugins=self.plugins,
+                tracker=tracker,
+                db_session_factory=self.db_session_factory,
+                shared_embedder=self._shared_embedder,
+                prompt_loader=self.prompt_loader,
+            )
 
-            if v.summary_enabled and v.caption_enabled:
-                await self._phase5()
-            else:
-                logger.info("[Pipeline] summary_enabled=false, skipping summarization")
+            # 5. 逐批执行
+            for batch in batches:
+                await asyncio.gather(*[
+                    op.runner.run(pctx) for op in batch
+                ])
 
+            # 6. 持久化
             await self._persist()
 
-            # _encode_frames 在 persist 后单独执行（不影响摘要）
-            if v.search_index_enabled and v.vision_enabled:
-                try:
-                    await self._encode_frames()
-                except Exception as e:
-                    logger.warning("[Pipeline] Frame/chunk encoding failed: %s", e)
-            else:
-                logger.info("[Pipeline] search_index_enabled=false, skipping encoding")
+            # 6. 卸载 captioner（释放 GPU 显存）
+            cap = self.plugins.get("captioner")
+            if cap is not None and hasattr(cap, "unload"):
+                cap.unload()
 
-            await self.tracker.mark_completed()
+            await tracker.mark_completed()
             logger.info("[Pipeline] video %s completed", self.video.id)
 
         except Exception as e:
             logger.exception("[Pipeline] video %s failed: %s", self.video.id, e)
-            await self.tracker.mark_failed(str(e))
+            tracker = StatusTracker(
+                video_id=str(self.video.id),
+                db_session_factory=self.db_session_factory,
+            )
+            await tracker.mark_failed(str(e))
+
+    async def run_incremental(self, added_modalities: set[str]) -> None:
+        """增量运行：对已完成的视频补跑指定操作。
+
+        Args:
+            added_modalities: {'summary'} / {'search_index'} / {'summary', 'search_index'}
+        """
+        v = self.video
+        need_summary = 'summary' in added_modalities
+        need_search = 'search_index' in added_modalities
+
+        try:
+            await self._set_processing()
+
+            # 确定需要运行的操作子集
+            op_names: set[str] = set()
+            if need_summary and v.caption_enabled:
+                op_names.update(["caption", "summary"])
+            if need_search and v.vision_enabled:
+                op_names.update(["keyframes", "frame_encode", "text_encode"])
+                if self.config.get("pipeline", {}).get("chunk_encoding", False):
+                    op_names.add("chunk_encode")
+
+            enabled = [op for op in ALL_OPERATIONS if op.name in op_names]
+
+            # 清理旧编码数据（防重入）
+            if need_search:
+                from sqlalchemy import delete as sa_delete
+                from core.models import FrameEmbedding, Chunk
+                async with self.db_session_factory() as session:
+                    await session.execute(
+                        sa_delete(FrameEmbedding).where(FrameEmbedding.video_id == v.id)
+                    )
+                    await session.execute(
+                        sa_delete(Chunk).where(Chunk.video_id == v.id)
+                    )
+                    await session.execute(
+                        update(Scene)
+                        .where(Scene.video_id == v.id)
+                        .values(text_embedding=None)
+                    )
+                    await session.commit()
+
+            # 从 DB 加载已有场景
+            await self._load_scenes_from_db()
+
+            await self._load_plugins(enabled)
+
+            batches = topological_batches(enabled)
+            tracker = StatusTracker(
+                video_id=str(v.id),
+                db_session_factory=self.db_session_factory,
+                operations=enabled,
+            )
+            pctx = PipelineContext(
+                video=v,
+                ctx=self.ctx,
+                config=self.config,
+                plugins=self.plugins,
+                tracker=tracker,
+                db_session_factory=self.db_session_factory,
+                shared_embedder=self._shared_embedder,
+                prompt_loader=self.prompt_loader,
+            )
+
+            for batch in batches:
+                await asyncio.gather(*[
+                    op.runner.run(pctx) for op in batch
+                ])
+
+            if need_summary:
+                await self._persist_summary_only()
+
+            await tracker.mark_completed()
+            logger.info("[Incremental] video %s completed", self.video.id)
+
+        except Exception as e:
+            logger.exception("[Incremental] video %s failed: %s (reverting to completed)", self.video.id, e)
+            async with self.db_session_factory() as session:
+                await session.execute(
+                    update(Video)
+                    .where(Video.id == self.video.id)
+                    .values(status=VideoStatus.COMPLETED, error_message=f"Incremental failed: {e}")
+                )
+                await session.commit()
+
+    # ── 插件加载 ──
+
+    async def _load_plugins(self, ops: list) -> None:
+        """从启用的 operations 推导需要的插件并加载。
+
+        共享实例（embedder）优先：已通过 shared_embedder 注入则跳过工厂加载，
+        避免重复初始化 GPU 模型。没有共享实例时（如独立测试），仍正常加载。
+        """
+        needed: set[str] = set()
+        for op in ops:
+            needed.update(op.required_plugins)
+
+        # 共享实例优先 — 已在 lifespan 预加载到 GPU，runner 通过 PipelineContext 注入
+        if self._shared_embedder is not None:
+            needed.discard("embedder")
+
+        for cat in needed:
+            self.plugins[cat] = await load_plugin(self.config, cat)
+
+    # ── 持久化 ──
+
+    async def _persist(self) -> None:
+        """将 VideoContext 中的数据写入数据库。"""
+        # 1. 视频时长
+        async with self.db_session_factory() as session:
+            await session.execute(
+                update(Video)
+                .where(Video.id == self.video.id)
+                .values(duration=self.ctx.duration)
+            )
+            await session.commit()
+
+        # 2. 批量写入 scenes
+        if self.ctx.scenes:
+            scenes_data = [
+                {
+                    "scene_index": s.scene_index,
+                    "start_sec": s.start_sec,
+                    "end_sec": s.end_sec,
+                    "keyframe_path": s.keyframe_path,
+                    "text_embedding": s.text_embedding,
+                    "ocr_text": s.ocr_text,
+                    "aligned_transcript": s.aligned_transcript,
+                    "caption": s.caption,
+                    "prev_caption": s.prev_caption,
+                    "entities": s.entities,
+                }
+                for s in self.ctx.scenes
+            ]
+            async with self.db_session_factory() as session:
+                await bulk_insert_scenes(session, self.video.id, scenes_data)
+
+        # 3. 写入 transcript
+        if self.ctx.transcript_full:
+            from core.models import Transcript as TranscriptModel
+            async with self.db_session_factory() as session:
+                session.add(TranscriptModel(
+                    video_id=self.video.id,
+                    full_text=self.ctx.transcript_full,
+                    words=self.ctx.transcript_words,
+                ))
+                await session.commit()
+
+        # 4. 保存摘要
+        if self.ctx.summary:
+            async with self.db_session_factory() as session:
+                await save_video_artifacts(
+                    session, self.video.id, summary=self.ctx.summary,
+                )
+
+    async def _persist_summary_only(self) -> None:
+        """仅写入摘要（增量用）。"""
+        if self.ctx.summary:
+            async with self.db_session_factory() as session:
+                await save_video_artifacts(
+                    session, self.video.id, summary=self.ctx.summary,
+                )
 
     async def _load_scenes_from_db(self) -> None:
         """从 DB 加载已有场景数据到 ctx.scenes（增量用）。"""
@@ -200,83 +340,10 @@ class PipelineEngine:
             )
             self.ctx.scenes.append(scene)
 
-        # 填充 prev_caption
         for i in range(1, len(self.ctx.scenes)):
             self.ctx.scenes[i].prev_caption = self.ctx.scenes[i - 1].caption
 
         logger.info("[Pipeline] Loaded %d scenes from DB for incremental run", len(self.ctx.scenes))
-
-    async def run_incremental(self, added_modalities: set[str]) -> None:
-        """增量运行：对已处理完成的视频补跑指定阶段。
-
-        Args:
-            added_modalities: {'summary'} / {'search_index'} / {'summary', 'search_index'}
-        """
-        v = self.video
-        need_summary = 'summary' in added_modalities
-        need_search = 'search_index' in added_modalities
-
-        try:
-            await self._set_processing()
-            await self.initialize()
-            await self._load_scenes_from_db()
-
-            # ── 补跑摘要 ──
-            if need_summary and v.caption_enabled:
-                logger.info("[Incremental] Running summary for video %s", self.video.id)
-                await self._phase5()
-
-            # ── 补跑搜索索引 ──
-            if need_search and v.vision_enabled:
-                logger.info("[Incremental] Running search index for video %s", self.video.id)
-
-                # 清理旧编码数据（防重入）
-                from sqlalchemy import delete as sa_delete
-                from core.models import FrameEmbedding, Chunk
-                async with self.db_session_factory() as session:
-                    await session.execute(
-                        sa_delete(FrameEmbedding).where(FrameEmbedding.video_id == self.video.id)
-                    )
-                    await session.execute(
-                        sa_delete(Chunk).where(Chunk.video_id == self.video.id)
-                    )
-                    await session.execute(
-                        update(Scene)
-                        .where(Scene.video_id == self.video.id)
-                        .values(text_embedding=None)
-                    )
-                    await session.commit()
-
-                await self._extract_keyframes()
-                await self._encode_frames()
-
-            if need_summary:
-                await self._persist_summary_only()
-
-            await self.tracker.mark_completed()
-            logger.info("[Incremental] video %s completed", self.video.id)
-
-        except Exception as e:
-            logger.exception("[Incremental] video %s failed: %s (reverting to completed)", self.video.id, e)
-            # 增量失败不破坏原始数据，恢复为 completed
-            async with self.db_session_factory() as session:
-                await session.execute(
-                    update(Video)
-                    .where(Video.id == self.video.id)
-                    .values(status=VideoStatus.COMPLETED, error_message=f"Incremental failed: {e}")
-                )
-                await session.commit()
-
-    async def _persist_summary_only(self) -> None:
-        """仅写入摘要（增量用）。"""
-        if self.ctx.summary:
-            from core.repository import save_video_artifacts
-            async with self.db_session_factory() as session:
-                await save_video_artifacts(
-                    session,
-                    self.video.id,
-                    summary=self.ctx.summary,
-                )
 
     async def _set_processing(self) -> None:
         """修改视频状态为 processing。"""
@@ -287,441 +354,3 @@ class PipelineEngine:
                 .values(status=VideoStatus.PROCESSING)
             )
             await session.commit()
-
-    # ──────────────────────────────────────────────────────
-    # 各阶段
-    # ──────────────────────────────────────────────────────
-
-    async def _phase1(self) -> None:
-        """Phase 1: 前置质检 + 音频抽取 + 镜头分割。"""
-        from pipeline.phase1_qc import Phase1QC
-        engine = Phase1QC(
-            ctx=self.ctx,
-            plugins=self.plugins,
-            config=self.config,
-            tracker=self.tracker,
-            video=self.video,
-        )
-        await engine.execute()
-
-    async def _extract_keyframes(self) -> None:
-        """关键帧抽取 — Phase 1 后、Phase 4 前执行。
-
-        按 1fps 逐帧抽取，全部存入 scene 帧池。
-        三条消费链路复用同一批帧：
-          ① 帧级路 → encode_image → frame_embeddings 表
-          ② chunk路 → encode_video → chunks 表
-          ③ VLM 路 → 选 3-7 帧 → caption
-        """
-        from utils.video_util import extract_keyframe_to_memory
-
-        scenes = self.ctx.scenes
-        if not scenes:
-            logger.info("[Pipeline] No scenes to extract keyframes from")
-            return
-
-        logger.info("[Pipeline] Extracting frame pool @ 1fps ...")
-        total_scenes = len(scenes)
-        for i, scene in enumerate(scenes):
-            await self.tracker.update(
-                None,
-                progress=0.15 + 0.05 * (i / total_scenes),
-                description=f"正在抽取第 {i + 1}/{total_scenes} 个场景的关键帧",
-            )
-            duration = scene.end_sec - scene.start_sec
-
-            # ── 1fps 逐帧抽取 ──
-            timestamps = list(range(
-                int(scene.start_sec), int(scene.end_sec),
-            ))
-            if not timestamps:
-                timestamps = [scene.start_sec + 0.1]
-
-            frames: list[np.ndarray] = []
-            frame_times: list[float] = []
-            for t in timestamps:
-                try:
-                    frame = await extract_keyframe_to_memory(
-                        self.ctx.file_path, t,
-                    )
-                    if frame is not None:
-                        frames.append(frame)
-                        frame_times.append(t)
-                except Exception as e:
-                    logger.warning(
-                        "[Pipeline] Frame extraction failed @ %.1f: %s", t, e,
-                    )
-
-            if not frames:
-                continue
-
-            scene.keyframes = frames
-            scene.frame_timestamps = frame_times
-            scene.keyframe = frames[len(frames) // 2]  # 中点帧（缩略图用）
-
-            # ── vlm_llm 模式：均匀选 3-7 帧代表帧（API captioner 用）──
-            if getattr(self.video, "summary_mode", "native_video") == "vlm_llm":
-                num_cf = min(len(frames), 7)
-                step = max(1, len(frames) // num_cf)
-                scene._caption_frames = [frames[k * step] for k in range(num_cf)]
-
-            # ── 保存 scene 缩略图 ──
-            try:
-                from PIL import Image
-                thumb_dir = os.path.join(
-                    self.config.get("storage", {}).get(
-                        "artifact_dir", "data/artifacts",
-                    ),
-                    "thumbnails", str(self.video.id),
-                )
-                os.makedirs(thumb_dir, exist_ok=True)
-                thumb_path = os.path.join(
-                    thumb_dir, f"scene_{scene.scene_index:04d}.jpg",
-                )
-                Image.fromarray(scene.keyframe).save(thumb_path, "JPEG", quality=80)
-                scene.keyframe_path = thumb_path
-            except Exception as e:
-                logger.warning(
-                    "[Pipeline] Thumbnail save failed for scene %d: %s", i, e,
-                )
-
-        total_frames = sum(len(s.keyframes) for s in scenes if s.keyframes)
-        logger.info("[Pipeline] Frame pool: %d frames @ 1fps", total_frames)
-
-    async def _encode_frames(self) -> None:
-        """帧池编码 — 帧级路 + chunk 路。
-
-        在 Phase 4（VLM caption）之后执行，
-        复用了 _extract_keyframes 的帧池。
-        """
-        from core.repository import bulk_insert_frames, bulk_insert_chunks
-
-        # 使用启动时预加载的共享 embedder（不再重复加载）
-        embedder = self._shared_embedder or self.plugins.get("embedder")
-        if embedder is None:
-            logger.warning("[Pipeline] No embedder available, skipping encoding")
-            return
-
-        scenes = self.ctx.scenes
-        if not scenes:
-            return
-
-        logger.info("[Pipeline] Encoding frame embeddings & chunks ...")
-
-        total_enc = sum(1 for s in scenes if s.keyframes and s.frame_timestamps)
-        enc_idx = 0
-        for scene in scenes:
-            if not scene.keyframes or not scene.frame_timestamps:
-                continue
-
-            enc_idx += 1
-            await self.tracker.update(
-                "completed",
-                description=f"正在编码第 {enc_idx}/{total_enc} 个场景的帧向量",
-            )
-
-            # ── a. 帧级路：batch 编码（默认 4 帧一批，比逐帧快 2-3x）──
-            _BATCH_SIZE = 4
-            frame_rows: list[dict] = []
-            frame_items = list(zip(scene.frame_timestamps, scene.keyframes))
-
-            for i in range(0, len(frame_items), _BATCH_SIZE):
-                batch = frame_items[i:i + _BATCH_SIZE]
-                batch_frames = [b[1] for b in batch]
-                batch_times = [b[0] for b in batch]
-
-                try:
-                    embs = await embedder.encode_images_batch(batch_frames)
-                except Exception:
-                    logger.warning("[Pipeline] Batch encode failed, falling back to single-frame")
-                    embs = []
-                    for f in batch_frames:
-                        try:
-                            embs.append(await embedder.encode_image(f))
-                        except Exception:
-                            embs.append(None)
-
-                for j, (t, emb) in enumerate(zip(batch_times, embs)):
-                    if not emb:
-                        continue
-                    frame_rows.append({
-                        "video_id": self.video.id,
-                        "scene_index": scene.scene_index,
-                        "timestamp_sec": t,
-                        "embedding": emb,
-                        "is_keyframe": False,
-                    })
-            if frame_rows:
-                async with self.db_session_factory() as session:
-                    await bulk_insert_frames(session, frame_rows)
-
-            # ── b. chunk 路（由 config pipeline.chunk_encoding 控制开关）──
-            chunk_enabled = self.config.get("pipeline", {}).get("chunk_encoding", False)
-            if chunk_enabled:
-                await self._encode_scene_chunks(scene, embedder)
-            else:
-                duration = scene.end_sec - scene.start_sec
-                if duration > 5:
-                    logger.debug(
-                        "[Pipeline] Chunk encoding disabled by config, "
-                        "skipping scene %d (%.1fs-%.1fs)",
-                        scene.scene_index, scene.start_sec, scene.end_sec,
-                    )
-
-            # ── c. 文本语义路：encode_text(caption + ocr + transcript) → text_embedding → 持久化 ──
-            text_parts = []
-            if scene.caption:
-                text_parts.append(scene.caption)
-            if scene.ocr_text:
-                text_parts.append(f"OCR: {scene.ocr_text}")
-            if scene.aligned_transcript:
-                text_parts.append(f"音频: {scene.aligned_transcript}")
-
-            if text_parts:
-                combined_text = " | ".join(text_parts)
-                text_emb = await embedder.encode_text(combined_text)
-                if text_emb:
-                    scene.text_embedding = text_emb
-                    async with self.db_session_factory() as session:
-                        await session.execute(
-                            update(Scene)
-                            .where(
-                                Scene.video_id == self.video.id,
-                                Scene.scene_index == scene.scene_index,
-                            )
-                            .values(text_embedding=text_emb)
-                        )
-                        await session.commit()
-
-        logger.info("[Pipeline] Frame encoding done")
-
-    async def _phase3(self) -> None:
-        """Phase 3: 模态交叉对齐（转录 → 场景）。"""
-        from pipeline.phase3_alignment import Phase3Alignment
-        engine = Phase3Alignment(
-            ctx=self.ctx,
-            plugins=self.plugins,
-            config=self.config,
-            tracker=self.tracker,
-        )
-        await engine.execute()
-
-    async def _phase4(self) -> None:
-        """Phase 4: 场景描述 — 双路径路由。"""
-        try:
-            from pipeline.phase4_caption import Phase4Caption
-        except ImportError:
-            logger.warning("[Pipeline] Phase4Caption not implemented, skipping")
-            return
-        sm = getattr(self.video, "summary_mode", "native_video")
-        engine = Phase4Caption(
-            ctx=self.ctx,
-            plugins=self.plugins,
-            config=self.config,
-            tracker=self.tracker,
-            prompt_loader=self.prompt_loader,
-            summary_mode=sm,
-        )
-        await engine.execute()
-
-    async def _phase5(self) -> None:
-        """Phase 5: 摘要 — native_video 聚合 或 vlm_llm LLM 拼凑。"""
-        try:
-            from pipeline.phase5_summary import Phase5Summary
-        except ImportError:
-            logger.warning("[Pipeline] Phase5Summary not implemented, skipping")
-            return
-        sm = getattr(self.video, "summary_mode", "native_video")
-        engine = Phase5Summary(
-            ctx=self.ctx,
-            plugins=self.plugins,
-            config=self.config,
-            tracker=self.tracker,
-            prompt_loader=self.prompt_loader,
-            summary_mode=sm,
-        )
-        await engine.execute()
-
-    # ──────────────────────────────────────────────────────
-    # 持久化
-    # ──────────────────────────────────────────────────────
-
-    async def _persist(self) -> None:
-        """将 VideoContext 中的数据写入数据库。
-
-        使用 repository 函数（bulk_insert_scenes / save_video_artifacts）
-        和直接 ORM add（transcript）分步写入，每步独立提交。
-        """
-        # ---- 1. 视频字段（duration） ----
-        async with self.db_session_factory() as session:
-            await session.execute(
-                update(Video)
-                .where(Video.id == self.video.id)
-                .values(duration=self.ctx.duration)
-            )
-            await session.commit()
-
-        # ---- 2. 批量写入 scenes ----
-        if self.ctx.scenes:
-            scenes_data = [
-                {
-                    "scene_index": s.scene_index,
-                    "start_sec": s.start_sec,
-                    "end_sec": s.end_sec,
-                    "keyframe_path": s.keyframe_path,
-                    "embedding": s.embedding,
-                    "text_embedding": s.text_embedding,
-                    "ocr_text": s.ocr_text,
-                    "aligned_transcript": s.aligned_transcript,
-                    "caption": s.caption,
-                    "prev_caption": s.prev_caption,
-                    "entities": s.entities,
-                }
-                for s in self.ctx.scenes
-            ]
-            async with self.db_session_factory() as session:
-                await bulk_insert_scenes(session, self.video.id, scenes_data)
-
-        # ---- 3. 写入 transcript ----
-        if self.ctx.transcript_full:
-            from core.models import Transcript as TranscriptModel
-            async with self.db_session_factory() as session:
-                session.add(TranscriptModel(
-                    video_id=self.video.id,
-                    full_text=self.ctx.transcript_full,
-                    words=self.ctx.transcript_words,
-                ))
-                await session.commit()
-
-        # ---- 4. 保存摘要制品 ----
-        if self.ctx.summary:
-            async with self.db_session_factory() as session:
-                await save_video_artifacts(
-                    session,
-                    self.video.id,
-                    summary=self.ctx.summary,
-                )
-
-    async def _encode_scene_chunks(
-        self, scene, embedder,
-    ) -> None:
-        """对单个 scene 执行 chunk 编码（流复制 → 预处理 → encode_video）。
-
-        两步 ffmpeg:
-          1. -c copy 流复制截取原始质量片段
-          2. 预处理：480p 5fps CRF 23（控制模型输入量，保留足够画质）
-        """
-        duration = scene.end_sec - scene.start_sec
-        if duration <= 5:
-            return
-
-        from core.repository import bulk_insert_chunks
-
-        temp_dir = os.path.join(
-            self.config.get("storage", {}).get(
-                "artifact_dir", "data/artifacts",
-            ),
-            "temp_chunks", str(self.video.id),
-        )
-        os.makedirs(temp_dir, exist_ok=True)
-        chunk_rows: list[dict] = []
-
-        async def _encode_one(
-            start: float, end: float, chunk_idx: int,
-        ) -> dict | None:
-            clip_dur = end - start
-            # Step 1: -c copy 流复制，零质量损失
-            raw_path = os.path.join(temp_dir, f"chunk_{chunk_idx}_raw.mp4")
-            proc = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-y",
-                "-ss", str(start),
-                "-i", self.ctx.file_path,
-                "-t", str(clip_dur),
-                "-c", "copy",
-                raw_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.communicate()
-            if proc.returncode != 0 or not os.path.exists(raw_path):
-                return None
-
-            # Step 2: 预处理缩放到 480p 5fps（控制模型输入量）
-            pre_path = os.path.join(temp_dir, f"chunk_{chunk_idx}.mp4")
-            pp_proc = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-y",
-                "-i", raw_path,
-                "-vf", "scale=-2:480,fps=5",
-                "-c:v", "libx264", "-crf", "23",
-                "-an",
-                pre_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await pp_proc.communicate()
-            try:
-                os.remove(raw_path)
-            except OSError:
-                pass
-            if pp_proc.returncode != 0 or not os.path.exists(pre_path):
-                return None
-
-            try:
-                emb = await embedder.encode_video(
-                    pre_path, fps=1.0, max_frames=32,
-                )
-            except Exception as e:
-                logger.warning(
-                    "[Pipeline] Chunk encoding failed @ %.1f-%.1f: %s",
-                    start, end, e,
-                )
-                return None
-            finally:
-                try:
-                    os.remove(pre_path)
-                except OSError:
-                    pass
-
-            if not emb:
-                return None
-            return {
-                "video_id": self.video.id,
-                "scene_index": scene.scene_index,
-                "chunk_index": chunk_idx,
-                "start_sec": start,
-                "end_sec": end,
-                "embedding": emb,
-            }
-
-        # ── 自适应窗口 ──
-        # ≤5s: 不切；>5s~≤60s: 窗口=时长/2, 步长=窗口/2; >60s: 窗口=30s, 步长=15s
-        if duration <= 60:
-            window_sec = duration / 2.0
-            step_sec = window_sec / 2.0
-        else:
-            window_sec = 30.0
-            step_sec = 15.0
-
-        if window_sec >= duration:
-            row = await _encode_one(scene.start_sec, scene.end_sec, 0)
-            if row:
-                chunk_rows.append(row)
-        else:
-            idx = 0
-            pos = scene.start_sec
-            while pos + window_sec <= scene.end_sec:
-                row = await _encode_one(
-                    pos, min(pos + window_sec, scene.end_sec), idx,
-                )
-                if row:
-                    chunk_rows.append(row)
-                    idx += 1
-                pos += step_sec
-
-        if chunk_rows:
-            async with self.db_session_factory() as session:
-                await bulk_insert_chunks(session, chunk_rows)
-            logger.info(
-                "[Pipeline] Encoded %d chunks for scene %d",
-                len(chunk_rows), scene.scene_index,
-            )

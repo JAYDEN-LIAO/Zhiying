@@ -165,7 +165,7 @@ export default function Dashboard() {
       <div className="fluid-blob fluid-blob-left-2" />
       <div className="fluid-blob fluid-blob-right" />
 
-      {/* ── Shared header: logo + page title + param tags ── */}
+      {/* ── Shared header: logo + page title ── */}
       <div className="absolute left-[112px] top-[24px] flex items-center gap-3 pointer-events-none">
         <img src="/cerno.svg" alt="Cerno" className="h-14 w-auto shrink-0 -mt-1" />
         <div className="relative" style={{ width: '5em', height: '1.5em' }}>
@@ -178,24 +178,6 @@ export default function Dashboard() {
             系统设置
           </span>
         </div>
-        {/* 当前视频参数标签 — 仅在工作台页面且有视频时显示 */}
-        {currentPage === "dashboard" && currentVideo && (
-          <div className="flex items-center gap-2 text-xs ml-3">
-            <span className="text-gray-300 select-none">|</span>
-            <span className="font-semibold text-gray-800">{ctLabel[currentVideo.content_type] || currentVideo.content_type}</span>
-            <span className="text-gray-300">·</span>
-            <span className="text-gray-800">{currentVideo.search_index_enabled ? "搜索" : ""}{currentVideo.search_index_enabled && currentVideo.summary_enabled ? " + " : ""}{currentVideo.summary_enabled ? "摘要" : ""}</span>
-            {currentVideo.summary_enabled && (
-              <span className="text-gray-500">({currentVideo.summary_mode === "vlm_llm" ? "API" : "原生"})</span>
-            )}
-            <span className="text-gray-300">·</span>
-            <span className="text-gray-800">{langLabel[currentVideo.language] || currentVideo.language}</span>
-            <span className="text-gray-300">·</span>
-            <span className="text-gray-800">{currentVideo.sample_fps.toFixed(1)}fps</span>
-            <span className="text-gray-300">·</span>
-            <span className="text-gray-800">阈值 {(currentVideo.segment_threshold ?? 0.5).toFixed(1)}</span>
-          </div>
-        )}
       </div>
 
       {/* ── 分割线 + 上传按钮 ── */}
@@ -318,15 +300,22 @@ export default function Dashboard() {
         <>
           <main className="flex-1 flex flex-col relative z-10">
             <div className="flex-1 pt-[23px] pl-8 pr-4 pb-4 flex flex-col">
-              {/* Stat Cards */}
+              {/* Stat + Param Tags */}
               {currentVideo ? (
-                <div className="flex mt-2 ml-auto">
-                  <div className="flex items-start gap-3">
-                    <div className="w-0.5 h-8 mt-0.5 bg-gray-300 rounded-full flex-shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-800">{statLabel}</p>
-                      <p className="text-gray-500 text-sm font-mono">{statValue}</p>
-                    </div>
+                <div className="flex mt-2 ml-auto items-center gap-2.5">
+                  <span className="font-semibold text-xs text-gray-700">{ctLabel[currentVideo.content_type] || currentVideo.content_type}</span>
+                  <span className="text-gray-300 text-xs">·</span>
+                  <span className="text-xs text-gray-600">{currentVideo.summary_enabled ? (currentVideo.summary_mode === "vlm_llm" ? "VLM+LLM" : "原生") : ""}{currentVideo.search_index_enabled ? (currentVideo.summary_enabled ? " + 搜索" : "搜索") : (currentVideo.summary_enabled ? "摘要" : "")}</span>
+                  <span className="text-gray-300 text-xs">·</span>
+                  <span className="text-xs text-gray-600">{langLabel[currentVideo.language] || currentVideo.language}</span>
+                  <span className="text-gray-300 text-xs">·</span>
+                  <span className="text-xs text-gray-600">{currentVideo.sample_fps.toFixed(1)}fps</span>
+                  <span className="text-gray-300 text-xs">·</span>
+                  <span className="text-xs text-gray-600">阈值 {(currentVideo.segment_threshold ?? 0.5).toFixed(1)}</span>
+                  <div className="w-0.5 h-8 mx-1 bg-gray-300 rounded-full flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">{statLabel}</p>
+                    <p className="text-gray-500 text-sm font-mono">{statValue}</p>
                   </div>
                 </div>
               ) : (
@@ -391,7 +380,7 @@ export default function Dashboard() {
               <VideoSummaryCard video={currentVideo} />
             </div>
             <div className="flex-1 min-h-0">
-              <VideoSearchCard currentVideoId={currentVideoId} searchIndexEnabled={currentVideo?.search_index_enabled ?? false} onSeekTo={(start: number, end: number | null) => setSeekTarget({ start, end })} />
+              <VideoSearchCard video={currentVideo} onSeekTo={(start: number, end: number | null) => setSeekTarget({ start, end })} />
             </div>
           </aside>
         </>
