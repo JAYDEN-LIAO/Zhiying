@@ -45,6 +45,7 @@ async def init_db():
         # ── 扩展 ──
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "vector"'))
+        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pg_trgm"'))
 
         # ── 创建所有表 ──
         await conn.run_sync(Base.metadata.create_all)
@@ -86,6 +87,11 @@ async def init_db():
             ALTER TABLE videos
             ADD COLUMN IF NOT EXISTS summary_detail varchar(16)
                 DEFAULT 'standard' NOT NULL
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS summary_mode varchar(16)
+                DEFAULT 'native_video' NOT NULL
         """))
 
         # ── 清理：删除废弃的列、枚举类型、触发器 ──

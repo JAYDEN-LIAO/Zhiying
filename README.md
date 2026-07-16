@@ -8,9 +8,9 @@ A general-purpose video analytics engine for semantic search and structured summ
 # 1. Start database
 docker-compose up -d db
 
-# 2. Set API keys
-set DASHSCOPE_API_KEY=sk-xxx   # Qwen-VL for captioning
-set DEEPSEEK_API_KEY=sk-xxx    # for summarization
+# 2. Set API keys (only needed for vlm_llm summary mode)
+set DASHSCOPE_API_KEY=sk-xxx   # Qwen-VL API (vlm_llm captioning)
+set DEEPSEEK_API_KEY=sk-xxx    # LLM summarizer (vlm_llm mode)
 
 # 3. Start backend server
 uvicorn main:app --reload
@@ -31,7 +31,7 @@ curl -X POST -H "Content-Type: application/json" \
 ```
 
 > **Note on API Keys**: Place keys in a `.env` file at project root (gitignored).  
-> See `.env.example` or `core/config_loader.py` for details.
+> Keys are only required when using the `vlm_llm` summary mode; the default `native_video` mode runs entirely on local GPU.
 
 ## Core Features
 
@@ -57,21 +57,25 @@ curl -X POST -H "Content-Type: application/json" \
 Upload → Pipeline → DB → Search → Frontend
          ├─ QC + Scene Segmentation (TransNetV2)
          ├─ Keyframe Extraction @1fps (FFmpeg pipe → memory)
-         ├─ VLM Captioning (API)
+         ├─ Captioning — 双模式:
+         │    ├─ native_video (默认): Qwen2.5-VL-7B 本地 GPU 直接观看视频 → 结构化 JSON
+         │    └─ vlm_llm (备选): Qwen-VL-Max API 看图说话 → 自然语言描述
          ├─ Embedding — 3 encoding paths:
          │    ├─ Frame-level: encode_image (1fps, per-frame)
-         │    ├─ Chunk-level: encode_video (sliding window)
+         │    ├─ Chunk-level: encode_video (sliding window, 默认关闭)
          │    └─ Text-level: encode_text(caption+ocr+transcript)
-         └─ LLM Summarization (API)
+         └─ Summarization — 双模式:
+              ├─ native_video (默认): 纯 Python 聚合器 (Counter 频率统计, 去重)
+              └─ vlm_llm (备选): DeepSeek API LLM 拼凑摘要
 ```
 
 - **5-stage pipeline** orchestrated by `PipelineEngine`, with 3-path frame/chunk/text encoding
 - **9 abstract plugin interfaces** with dynamic factory loading
 - **PostgreSQL + pgvector** with 5 tables: videos, scenes, transcripts, frame_embeddings, chunks
 - **3-path parallel semantic search**: frame (1fps precision) + chunk (process semantics) + text (caption+ocr+transcript semantics). label (JSONB) 预留等待 YOLO 接入
-- **Config-driven**: switch models or API providers via `config.yaml`
+- **Config-driven**: switch models or API providers via `config.yaml`; switch summary mode via frontend parameter panel (`summary_mode` field)
 - **Pipeline real-time status** — each phase writes human-readable progress descriptions (`status_detail`) to the database, displayed in the frontend in real time
-- **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, parameter panel, and settings page
+- **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, parameter panel, summary mode selector, and settings page
 
 ## Tech Stack
 
@@ -83,8 +87,8 @@ Upload → Pipeline → DB → Search → Frontend
 | CSS | Tailwind CSS 4 |
 | Database | PostgreSQL 17 + pgvector 0.8 |
 | Vector Embedding | Qwen3-VL-Embedding-2B (local GPU) |
-| Captioning | Qwen-VL-Max (DashScope API) |
-| Summarization | DeepSeek Chat (API) |
+| Captioning | Qwen2.5-VL-7B (local GPU, default) / Qwen-VL-Max (API, vlm_llm mode) |
+| Summarization | Pure Python aggregator (default) / DeepSeek Chat (API, vlm_llm mode) |
 | Scene Segmentation | TransNetV2 / Time-based (fixed interval) |
 | Audio Transcription | faster-whisper (plugin ready, opt-in) |
 | Video Processing | FFmpeg (asyncio subprocess) |
@@ -121,8 +125,8 @@ cerno/
 │   ├── engine.py         # 5-stage PipelineEngine + 3-path encoding
 │   ├── phase1_qc.py      # QC + segmentation
 │   ├── phase3_alignment.py
-│   ├── phase4_caption.py # Caption + embed
-│   ├── phase5_summary.py # LLM summarization
+│   ├── phase4_caption.py # 双路径: native_video (结构化JSON) / vlm_llm (自然语言)
+│   ├── phase5_summary.py # 双路径: Python聚合 / LLM拼凑
 │   └── search_engine.py  # 3-path parallel recall (frame+chunk+text) + scene-merge dedup
 ├── plugins/              # Plugin implementations + factory
 │   ├── factory.py        # Dynamic plugin loader
@@ -165,6 +169,7 @@ cerno/
 
 ## Development Status
 
-- **v0.7 — Search architecture consolidation**: 3-path semantic search (frame+text 主力, chunk 配置关闭), 废弃全文/混合/模糊检索, encode_text 扩大至 caption+ocr+transcript, 路径感知排序与跨路去重修复
+- **v0.7 — Summary architecture overhaul**: 双模式摘要系统 — native_video (Qwen2.5-VL-7B 本地 GPU 原生视频理解 + 纯 Python 聚合) / vlm_llm (传统 VLM+LLM, API 驱动). 前端 summary_mode 选择器 + 参数标签行. Embedder 启动时预加载到全局共享.
+- **v0.6 — Search architecture consolidation**: 3-path semantic search (frame+text 主力, chunk 配置关闭), 废弃全文/混合/模糊检索, encode_text 扩大至 caption+ocr+transcript, 路径感知排序与跨路去重修复
 - **P0 complete**: Pipeline core, search engine (3 search functions: frame/chunk/text), 13 API endpoints, frontend dashboard
 - **Planned**: Object detection (YOLO), OCR (PaddleOCR), Grounding (Florence-2), Export APIs (clip/JSON/Markdown)

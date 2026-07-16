@@ -85,9 +85,10 @@ L3: Function Switches (2)
   ├─ search_index_enabled → 3-path encoding for semantic search
   └─ summary_enabled      → global structured summary
 
-L4: Advanced Params (5)
+L4: Advanced Params (6)
   ├─ language, sample_fps, segment_threshold
-  └─ caption_with_context, summary_detail
+  ├─ caption_with_context, summary_detail
+  └─ summary_mode: "native_video" (默认, 本地Qwen2.5-VL + 纯Python聚合) | "vlm_llm" (VLM+LLM, API驱动)
 
 Validation: PipelineParams model_validator in core/schemas.py
   ● vision OFF → ocr/caption forced OFF
@@ -96,8 +97,8 @@ Validation: PipelineParams model_validator in core/schemas.py
   ● search+summary both OFF → reject
 
 Incremental: Only L3 switches can be toggled on completed videos
+  → summary_mode change requires new video record (POST /videos/reuse)
   → runs run_incremental() → skips completed phases
-  → other param changes require POST /videos/reuse
 ```
 
 ## Pipeline Detail
@@ -121,7 +122,8 @@ Keyframe Extraction (Phase 1→4 间)
   │   按 1fps 逐帧抽取，全部存入 scene 帧池
   │   状态: "正在抽取第 X/Y 个场景的关键帧"
   ├─ 中点帧 → scene.keyframe（缩略图用）
-  ├─ 均匀选 3-7 帧 → scene._caption_frames（VLM caption 用）
+  ├─ vlm_llm 模式: 均匀选 3-7 帧 → scene._caption_frames（API captioner 用）
+  │   native_video 模式: 跳过（模型直接读视频，不需要代表帧）
   └─ 三条消费链路复用同一批帧（chunk 路由 config pipeline.chunk_encoding 控制）：
       ① 帧级路 → encode_image → frame_embeddings 表
       ② Chunk 路 → encode_video(clip) → chunks 表（默认关闭）
@@ -137,19 +139,30 @@ Phase 3 (Alignment, 可选)
 
   ↓
 
-Phase 4 (Understanding)
-  ├─ Caption (Qwen-VL API / 本地 Qwen-VL) → scene.caption
-  │   记忆窗口: 传入 prev_caption 作为上下文
-  │   状态: "正在描述第 X/Y 个场景"
+**Phase 4: Understanding (双模式)**
+  ├─ native_video (默认): Qwen2.5-VL-7B 本地 GPU 直接观看视频片段
+  │    → 输出结构化 JSON {description, keywords, objects, actions, scene_type, lighting}
+  │    → scene.caption ← description (搜索用), scene.structured_caption ← 完整 JSON
+  │    状态: "正在描述第 X/Y 个场景"
+  ├─ vlm_llm (备选): Qwen-VL-Max API 看图说话
+  │    → 传入 3-7 帧 _caption_frames → 自然语言描述
+  │    → scene.caption ← 纯文本, scene.structured_caption ← None
+  │    状态: "正在描述第 X/Y 个场景"
   └─ Embed (Qwen3-VL-Embedding, 本地 GPU) → 编码在 Encode Frames 阶段完成
-      （scene.embedding 已废弃，帧级编码统一在 _encode_frames 中处理）
+      (scene.embedding 已废弃，帧级编码统一在 _encode_frames 中处理)
+      (embedder 在 lifespan 启动时预加载到 app.state.embedder，全局共享)
 
   ↓
 
-Phase 5 (Summarization)
-  └─ LLM (DeepSeek API) → 结构化 JSON summary
-      {one_liner, scenes_summary, tags, main_topics, main_entities}
-      状态: "正在生成摘要（N 个场景）..."
+Phase 5: Summarization (双模式)
+  ├─ native_video (默认): 纯 Python 聚合器
+  │    → 遍历 scenes.structured_caption, Counter 频率统计 + 去重
+  │    → 自动生成 one_liner / tags / main_topics / main_entities
+  │    → VideoSummary 结构化 summary JSON → videos.summary
+  │    状态: "正在聚合 N 个场景的结构化数据..."
+  └─ vlm_llm (备选): LLM 拼凑 (DeepSeek API)
+       → 所有 scene.caption 拼成剧本 → summarizer API → 结构化 JSON
+       状态: "正在生成摘要（N 个场景）..."
 
   ↓
 
@@ -253,9 +266,10 @@ config.yaml controls which backends to load:
 
   qc:          native_qc     → FFmpeg-based (asyncio subprocess)
   segmenter:   transnetv2    → TransNetV2 neural network scene detection
-  captioner:   qwen_api      → calls Qwen-VL-Max API (DashScope)
-  embedder:    qwen3_vl_embedding → runs local GPU model (Qwen3-VL-Embedding-2B)
-  summarizer:  vllm          → calls DeepSeek API via OpenAI-compatible endpoint
+  captioner:   qwen25_vl     → local Qwen2.5-VL-7B video understanding (default)
+               qwen_api      → Qwen-VL-Max DashScope API (vlm_llm mode)
+  embedder:    qwen3_vl_embedding → local GPU model (Qwen3-VL-Embedding-2B), loaded at startup
+  summarizer:  vllm          → DeepSeek API (vlm_llm mode only; native mode uses Python aggregator)
   transcriber: null          → disabled (faster-whisper plugin exists, opt-in)
   detector:    null          → disabled (placeholder)
   ocr:         null          → disabled (placeholder)
@@ -389,7 +403,8 @@ Vite 开发代理:
 | **Plugin + Factory** | Swap models via config.yaml, zero code changes |
 | **pgvector over standalone vector DB** | Simpler deployment, transactional consistency |
 | **Local GPU for Embedder** | 2048-dim encoding every scene/frame; API latency unacceptable |
-| **API for Captioner/Summarizer** | Better quality, zero GPU footprint on 4060 8GB |
+| **Local GPU for Captioner (default)** | Qwen2.5-VL-7B 4-bit on 4060, native video understanding; API captioner available as vlm_llm fallback |
+| **Pure Python summarizer (default)** | native_video mode: aggregated from structured captions, no LLM API costs or latency |
 | **FFmpeg pipe → memory** | No frame files on disk, reduces I/O |
 | **TransNetV2 segmentation** | Neural scene boundary detection, superior to fixed-interval |
 | **1fps frame pool + 3 encoding paths** | Frame-level precision (主力) + text semantics + chunk (config-gated, 默认关闭) |
@@ -406,7 +421,7 @@ Vite 开发代理:
 
 | Module | Status | Note |
 |---|---|---|
-| Pipeline Core | ✅ | Phase 1→Keyframe→3→4→5→Persist→Encode Frames verified E2E, with gate controls |
+| Pipeline Core | ✅ | Phase 1→Keyframe→3→4(dual-mode)→5(dual-path)→Persist→Encode Frames E2E verified, with gate controls |
 | Semantic Search (3-path) | ✅ | frame + chunk + text 并行召回, scene-merge dedup, label 预留 |
 | Frame-level Encoding | ✅ | 1fps 逐帧 encode_image → frame_embeddings 表 |
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭（`-c copy` + 480p 5fps 预处理） |

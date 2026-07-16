@@ -29,6 +29,7 @@ export interface VideoListItem {
   audio_enabled: boolean;
   caption_enabled: boolean;
   summary_enabled: boolean;
+  summary_mode: string;
   search_index_enabled: boolean;
   sample_fps: number;
   language: string;
@@ -85,6 +86,7 @@ export interface VideoResponse {
   grounding_enabled: boolean;
   caption_enabled: boolean;
   summary_enabled: boolean;
+  summary_mode: string;
   search_index_enabled: boolean;
   sample_fps: number;
   segment_threshold: number;
@@ -144,6 +146,7 @@ export interface PipelineParams {
   caption_enabled: boolean;
   search_index_enabled: boolean;
   summary_enabled: boolean;
+  summary_mode: string;
   language: string;
   sample_fps: number;
   segment_threshold: number;

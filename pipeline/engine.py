@@ -40,10 +40,16 @@ class PipelineEngine:
         config: dict,
         db_session_factory: async_sessionmaker[AsyncSession],
         video: Video,
+        shared_embedder=None,
     ):
         self.config = config
         self.db_session_factory = db_session_factory
         self.video = video
+        self._shared_embedder = shared_embedder  # 启动时预加载，全局共享
+
+        # 保存原始 captioner 配置，防止切换 backend 时互相污染
+        import copy as _copy
+        self._captioner_cfg_native = _copy.deepcopy(config.get("plugins", {}).get("captioner", {}))
 
         self.tracker = StatusTracker(
             video_id=str(video.id),
@@ -61,17 +67,49 @@ class PipelineEngine:
     # ──────────────────────────────────────────────────────
 
     async def initialize(self) -> None:
-        """加载算法插件（embedder 除外，由 _encode_frames 延迟加载）。
+        """按需加载算法插件（embedder 除外，由 _encode_frames 延迟加载）。
 
-        embedder（2B ~5GB）与 caption 模型（7B 4bit ~5GB）在 8GB GPU 上
-        无法共存，因此 embedder 不在初始化时加载——等 Phase 4 结束后、
-        _encode_frames 需要时才加载，此时 caption 模型已释放。
+        根据视频的功能开关（L2/L3 参数）和 summary_mode 决定加载哪些插件。
         """
-        categories = [
-            "transcriber", "segmenter", "detector",
-            "ocr", "captioner", "summarizer", "grounding",
-        ]
-        for cat in categories:
+        cats: list[str] = ["segmenter"]
+
+        if self.video.audio_enabled:
+            cats.append("transcriber")
+
+        use_vlm_llm = (
+            self.video.vision_enabled
+            and self.video.caption_enabled
+            and self.video.summary_enabled
+            and getattr(self.video, "summary_mode", "native_video") == "vlm_llm"
+        )
+        use_native = (
+            self.video.vision_enabled
+            and self.video.caption_enabled
+            and getattr(self.video, "summary_mode", "native_video") == "native_video"
+        )
+
+        if use_vlm_llm:
+            # vlm_llm 模式：Qwen DashScope API captioner + LLM summarizer
+            import os as _os
+            self.config["plugins"]["captioner"]["backend"] = "qwen_api"
+            self.config["plugins"]["captioner"]["params"] = {
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "api_key": _os.environ.get("DASHSCOPE_API_KEY", ""),
+                "model_name": "qwen-vl-max",
+            }
+            cats.append("captioner")
+            cats.append("summarizer")
+        elif use_native:
+            # native_video 模式：从副本恢复原生 captioner 配置
+            self.config["plugins"]["captioner"] = self._captioner_cfg_native
+            cats.append("captioner")
+
+        if self.video.ocr_enabled:
+            cats.append("ocr")
+        if self.video.grounding_enabled:
+            cats.append("grounding")
+
+        for cat in cats:
             self.plugins[cat] = await load_plugin(self.config, cat)
 
     # ──────────────────────────────────────────────────────
@@ -319,12 +357,13 @@ class PipelineEngine:
 
             scene.keyframes = frames
             scene.frame_timestamps = frame_times
-            scene.keyframe = frames[len(frames) // 2]  # 中点帧
+            scene.keyframe = frames[len(frames) // 2]  # 中点帧（缩略图用）
 
-            # ── VLM caption 代表帧（均匀选 3-7 帧） ──
-            num_cf = min(len(frames), 7)
-            step = max(1, len(frames) // num_cf)
-            scene._caption_frames = [frames[k * step] for k in range(num_cf)]
+            # ── vlm_llm 模式：均匀选 3-7 帧代表帧（API captioner 用）──
+            if getattr(self.video, "summary_mode", "native_video") == "vlm_llm":
+                num_cf = min(len(frames), 7)
+                step = max(1, len(frames) // num_cf)
+                scene._caption_frames = [frames[k * step] for k in range(num_cf)]
 
             # ── 保存 scene 缩略图 ──
             try:
@@ -357,14 +396,11 @@ class PipelineEngine:
         """
         from core.repository import bulk_insert_frames, bulk_insert_chunks
 
-        embedder = self.plugins.get("embedder")
+        # 使用启动时预加载的共享 embedder（不再重复加载）
+        embedder = self._shared_embedder or self.plugins.get("embedder")
         if embedder is None:
-            # 延迟加载：Phase 4（caption 模型）已结束，GPU 空闲，可加载 embedder
-            logger.info("[Pipeline] Lazy-loading embedder for frame encoding ...")
-            embedder = await load_plugin(self.config, "embedder")
-            if embedder is None:
-                return
-            self.plugins["embedder"] = embedder
+            logger.warning("[Pipeline] No embedder available, skipping encoding")
+            return
 
         scenes = self.ctx.scenes
         if not scenes:
@@ -388,11 +424,6 @@ class PipelineEngine:
             _BATCH_SIZE = 4
             frame_rows: list[dict] = []
             frame_items = list(zip(scene.frame_timestamps, scene.keyframes))
-            _cf_indices = set()
-            if scene._caption_frames:
-                num_cf = min(len(frame_items), len(scene._caption_frames))
-                step = max(1, len(frame_items) // num_cf)
-                _cf_indices = {k * step for k in range(num_cf)}
 
             for i in range(0, len(frame_items), _BATCH_SIZE):
                 batch = frame_items[i:i + _BATCH_SIZE]
@@ -418,7 +449,7 @@ class PipelineEngine:
                         "scene_index": scene.scene_index,
                         "timestamp_sec": t,
                         "embedding": emb,
-                        "is_keyframe": (i + j) in _cf_indices,
+                        "is_keyframe": False,
                     })
             if frame_rows:
                 async with self.db_session_factory() as session:
@@ -476,34 +507,38 @@ class PipelineEngine:
         await engine.execute()
 
     async def _phase4(self) -> None:
-        """Phase 4: 记忆窗口深度描述 + 向量编码。"""
+        """Phase 4: 场景描述 — 双路径路由。"""
         try:
             from pipeline.phase4_caption import Phase4Caption
         except ImportError:
             logger.warning("[Pipeline] Phase4Caption not implemented, skipping")
             return
+        sm = getattr(self.video, "summary_mode", "native_video")
         engine = Phase4Caption(
             ctx=self.ctx,
             plugins=self.plugins,
             config=self.config,
             tracker=self.tracker,
             prompt_loader=self.prompt_loader,
+            summary_mode=sm,
         )
         await engine.execute()
 
     async def _phase5(self) -> None:
-        """Phase 5: 全局 LLM 摘要。"""
+        """Phase 5: 摘要 — native_video 聚合 或 vlm_llm LLM 拼凑。"""
         try:
             from pipeline.phase5_summary import Phase5Summary
         except ImportError:
             logger.warning("[Pipeline] Phase5Summary not implemented, skipping")
             return
+        sm = getattr(self.video, "summary_mode", "native_video")
         engine = Phase5Summary(
             ctx=self.ctx,
             plugins=self.plugins,
             config=self.config,
             tracker=self.tracker,
             prompt_loader=self.prompt_loader,
+            summary_mode=sm,
         )
         await engine.execute()
 

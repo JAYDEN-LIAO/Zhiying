@@ -2,7 +2,7 @@
 
 ## One-Line Summary
 
-Cerno is a **video analytics engine** (v0.6) that ingests videos, runs a 5-stage async pipeline (QC → segmentation → captioning → embedding → summarization), generates **3-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics), enables **3-path parallel semantic search** (frame + text, chunk 配置关闭默认不启用), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
+Cerno is a **video analytics engine** (v0.7) that ingests videos, runs a 5-stage async pipeline (QC → segmentation → captioning → embedding → aggregation), generates **3-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics), enables **3-path parallel semantic search** (frame + text, chunk 配置关闭默认不启用), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
 
 ## Quick File Map
 
@@ -28,8 +28,8 @@ core/exceptions.py         — Custom exceptions
 pipeline/engine.py         — PipelineEngine orchestrator (5-stage + 3-path encode_frames)
 pipeline/phase1_qc.py      — QC + audio extraction + scene segmentation
 pipeline/phase3_alignment.py — Transcript-to-scene alignment
-pipeline/phase4_caption.py — Caption + Embed (core logic)
-pipeline/phase5_summary.py — LLM summarization
+pipeline/phase4_caption.py — Dual-path captioning: native_video (structured JSON) / vlm_llm (natural language)
+pipeline/phase5_summary.py — Dual-path summarization: Python aggregator / LLM summarizer
 pipeline/search_engine.py  — 3-path parallel recall (frame/chunk/text) + label 预留 + scene-merge dedup
 plugins/factory.py         — Dynamic plugin loader (CATEGORY_MAP, _MODULE_OVERRIDES, _CLASS_OVERRIDES)
 config/config.yaml         — Main config: server/db/storage/plugins/pipeline
@@ -66,10 +66,14 @@ PipelineEngine.run() (with gate control from L2/L3 params):
                    → writes status_detail: "正在抽取第 X/Y 个场景的关键帧"
   _phase3()       ← gated by audio_enabled → Transcript-to-scene alignment
                    → writes status_detail: "对齐完成: X/Y 个场景已分配转录文本"
-  _phase4()       ← gated by vision_enabled + caption_enabled → Caption (API, with memory window)
+  _phase4()       ← gated by vision_enabled + caption_enabled → Caption (双模式: native_video / vlm_llm)
+                   → native_video: Qwen2.5-VL-7B 本地 GPU 直接观看视频片段 → 结构化 JSON
+                   → vlm_llm: Qwen-VL-Max API 看图说话 → 自然语言描述
                    → writes status_detail: "正在描述第 X/Y 个场景"
-  _phase5()       ← gated by summary_enabled + caption_enabled → LLM summary (API)
-                   → writes status_detail: "正在生成摘要（N 个场景）..."
+  _phase5()       ← gated by summary_enabled + caption_enabled → Summarization (双路径)
+                   → native_video: 纯 Python 聚合器 (Counter 频率统计 + 去重)
+                   → vlm_llm: LLM 拼凑 (DeepSeek API)
+                   → writes status_detail: "正在聚合/生成摘要..."
   _persist()      → Write scenes (bulk) + transcript + artifacts to DB
   _encode_frames() ← gated by search_index_enabled + vision_enabled → 2 active + 1 config-gated paths:
                    → writes status_detail: "正在编码第 X/Y 个场景的帧向量"
@@ -99,14 +103,15 @@ Search (3-path parallel):
 - **Shared embedder**: Embedder is loaded once in `app.state.embedder` during lifespan startup. Pipeline and SearchEngine both reuse this instance — never call `load_plugin("embedder")` directly in business logic.
 - **Incremental migration**: `init_db()` uses `ALTER TABLE ADD COLUMN IF NOT EXISTS` for schema evolution (e.g., `text_embedding`, `status_detail` columns).
 - **Three encoding paths exist**: Frame (1fps per-frame), Chunk (config-gated, default disabled, `-c copy` + 480p 5fps preprocessing + encode_video), Text (caption+ocr+transcript 语义). All three reuse the shared embedder.
-- **Parameter system (v0.6)**: 4-level hierarchy — L1=Scene Type (general/meeting/surveillance/text_recognition/custom), L2=Perception Modules (vision/audio/ocr/caption, plus detection-grayed), L3=Function Switches (search_index/summary), L4=Advanced Params (language/sample_fps/segment_threshold/caption_with_context/summary_detail). Upper levels set defaults for lower levels. Pipeline uses `PipelineParams` Pydantic model with cross-field validation.
-- **Incremental processing**: Completed videos can re-run summary or search index independently via `run_incremental()`. Non-incremental param changes require creating a new video record (reuse file via `POST /videos/reuse`).
+- **Parameter system (v0.7)**: 4-level hierarchy — L1=Scene Type (general/meeting/surveillance/text_recognition/custom), L2=Perception Modules (vision/audio/ocr/caption, plus detection-grayed), L3=Function Switches (search_index/summary + summary_mode[native_video/vlm_llm]), L4=Advanced Params (language/sample_fps/segment_threshold/caption_with_context/summary_detail). Upper levels set defaults for lower levels. Pipeline uses `PipelineParams` Pydantic model with cross-field validation.
+- **Summary dual-mode (v0.7)**: `summary_mode` field controls the entire caption+summary path. `native_video` (default) uses local Qwen2.5-VL-7B + pure Python aggregator. `vlm_llm` uses Qwen-VL-Max API + DeepSeek API. Engine's `initialize()` sets plugin backends and parameters based on this mode. `_extract_keyframes()` only generates `_caption_frames` in vlm_llm mode. Summary mode changes require creating a new video record (cannot be done incrementally).
+- **Incremental processing**: Completed videos can re-run summary or search index independently via `run_incremental()`. Non-L3 param changes (including summary_mode) require creating a new video record (reuse file via `POST /videos/reuse`).
 
 ## Database Tables (5)
 
 | Table | Key Columns | Purpose |
 |---|---|---|
-| `videos` | id, status, progress, status_detail, qc_result(JSONB), summary(JSONB), content_type, perception switches (vision/audio/ocr/grounding/caption/summary_enabled), function switches (search_index_enabled), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail), language | Video master |
+| `videos` | id, status, progress, status_detail, summary(JSONB), content_type, summary_mode (native_video/vlm_llm), perception switches (vision/audio/ocr/grounding/caption/summary_enabled), function switches (search_index_enabled), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail), language | Video master |
 | `scenes` | id, video_id(FK), scene_index, text_embedding(Vector2048), caption, ocr_text, aligned_transcript | Core search grain (text_embedding = caption+ocr+transcript 语义) |
 | `transcripts` | id, video_id(FK, UNIQUE), full_text, words(JSONB) | Speech transcripts |
 | `frame_embeddings` | id, video_id(FK), timestamp_sec, embedding(Vector2048), is_keyframe | 1fps frame vectors |
@@ -119,9 +124,9 @@ Search (3-path parallel):
 | Pipeline core | ✅ Complete | engine.py, phase1, phase4, phase5 |
 | Frame/Chunk/Text encoding | ✅ Complete | engine.py _encode_frames(), core/repository.py |
 | Semantic search (3-path) | ✅ Verified | search_engine.py + api/routes.py (frame+chunk+text, label 预留) |
-| Captioner (API) | ✅ Verified | plugins/captioner/qwen_api_captioner.py |
-| Embedder (local GPU) | ✅ Verified | plugins/embedder/qwen_vl_embedder.py |
-| Summarizer (API) | ✅ Verified | plugins/summarizer/vllm_summarizer.py |
+| Captioner (local GPU + API) | ✅ Verified | plugins/captioner/qwen25_vl_captioner.py + qwen_api_captioner.py — dual-mode, engine routes by summary_mode |
+| Embedder (local GPU) | ✅ Verified | plugins/embedder/qwen_vl_embedder.py — preloaded at startup, shared via app.state.embedder |
+| Summarizer (aggregator + API) | ✅ Verified | phase5_summary.py dual-path: pure Python aggregator (default) + vllm_summarizer.py (vlm_llm fallback) |
 | Segmenter (TransNetV2) | ✅ Verified | plugins/segmenter/transnet_v2.py |
 | Segmenter (time-based) | ✅ Verified | plugins/segmenter/time_based.py |
 | QC (FFmpeg) | ✅ Verified | plugins/qc/basic_qc.py |

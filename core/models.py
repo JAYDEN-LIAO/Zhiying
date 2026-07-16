@@ -123,6 +123,10 @@ class Video(Base):
         Boolean, default=True, nullable=False,
         comment="摘要生成开关",
     )
+    summary_mode: Mapped[str] = mapped_column(
+        String(16), default="native_video", nullable=False,
+        comment="摘要模式: native_video(本地Qwen2.5-VL) / vlm_llm(VLM+LLM)",
+    )
 
     # ── 参数层新增 (v0.6) ──
     search_index_enabled: Mapped[bool] = mapped_column(

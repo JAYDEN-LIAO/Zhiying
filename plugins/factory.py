@@ -50,6 +50,7 @@ IMPL_CLASS_MAP: dict[str, str] = {
 _MODULE_OVERRIDES: dict[tuple[str, str], str] = {
     ("segmenter", "transnetv2"): "transnet_v2",
     ("captioner", "qwen_api"): "qwen_api_captioner",
+    ("captioner", "qwen25_vl"): "qwen25_vl_captioner",
     ("embedder", "qwen3_vl_embedding"): "qwen_vl_embedder",
     ("summarizer", "vllm"): "vllm_summarizer",
 }

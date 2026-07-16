@@ -50,11 +50,12 @@ class Scene:
     keyframe_path: str | None = None
     keyframes: list[np.ndarray] = field(default_factory=list)  # 1fps 帧池
     frame_timestamps: list[float] = field(default_factory=list)  # 帧池对应的时间戳
-    _caption_frames: list[np.ndarray] | None = None  # VLM caption 选中的代表帧子集
+    _caption_frames: list[np.ndarray] | None = None  # vlm_llm 模式: VLM 选中的 3-7 帧代表帧
     ocr_text: str | None = None
     aligned_transcript: str | None = None
     caption: str | None = None
     prev_caption: str | None = None
+    structured_caption: dict | None = None              # Phase 4 结构化 JSON（description/keywords/objects/actions/scene_type/lighting），Phase 5 聚合用
     embedding: list[float] | None = None           # Vector(2048) — 保留兼容，不再写入
     text_embedding: list[float] | None = None      # Vector(2048) — encode_text(caption)，文本语义搜索用
     entities: list[dict] = field(default_factory=list)

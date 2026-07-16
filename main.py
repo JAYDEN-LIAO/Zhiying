@@ -42,17 +42,14 @@ async def lifespan(app: FastAPI):
     app.state.db_session_factory = AsyncSessionLocal
     await init_db()
 
-    # 启动时加载共享 embedder（4GB 模型进显存），
-    # Pipeline 和 Search 复用此实例，避免每视频重复加载
-    # 不预加载任何 GPU 模型（embedder / caption 模型在需要时延迟加载）
-    app.state.embedder = None
-    logger.info("GPU models will be loaded on demand (embedder for search, "
-                 "caption model for pipeline)")
+    # 启动时加载共享 embedder（模型仅 2B，占 ~4GB 显存），
+    # Pipeline 和 Search 复用同一实例，避免重复加载
+    logger.info("Loading shared embedder ...")
+    from plugins.factory import load_plugin as _load_embedder
+    app.state.embedder = await _load_embedder(config, "embedder")
+    logger.info("Embedder loaded, GPU ready")
 
-    # 预热 SearchEngine（纯 CPU 对象，触发模块导入）
-    from pipeline.search_engine import SearchEngine
-    app.state._searcher = SearchEngine(AsyncSessionLocal, None)
-    logger.info("SearchEngine pre-initialized")
+    # SearchEngine 不在此处预初始化——embedder 按需加载，首次搜索时自动创建
 
     yield
     await engine.dispose()

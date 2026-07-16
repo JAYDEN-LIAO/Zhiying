@@ -148,6 +148,11 @@ export default function Dashboard() {
   }, []);
 
   /* ── Stats ── */
+  const ctLabel: Record<string, string> = {
+    general: "通用", meeting: "会议", surveillance: "监控", text_recognition: "文字识别", custom: "自定义",
+  };
+  const langLabel: Record<string, string> = { auto: "自动", zh: "中文", en: "English", ja: "日本語", ko: "한국어" };
+
   const statLabel = currentVideo?.file_name ?? "等待选择";
   const statValue = currentVideo?.duration != null ? fmtDuration(currentVideo.duration) : "—";
 
@@ -160,7 +165,7 @@ export default function Dashboard() {
       <div className="fluid-blob fluid-blob-left-2" />
       <div className="fluid-blob fluid-blob-right" />
 
-      {/* ── Shared header: logo + page title ── */}
+      {/* ── Shared header: logo + page title + param tags ── */}
       <div className="absolute left-[112px] top-[24px] flex items-center gap-3 pointer-events-none">
         <img src="/cerno.svg" alt="Cerno" className="h-14 w-auto shrink-0 -mt-1" />
         <div className="relative" style={{ width: '5em', height: '1.5em' }}>
@@ -173,6 +178,24 @@ export default function Dashboard() {
             系统设置
           </span>
         </div>
+        {/* 当前视频参数标签 — 仅在工作台页面且有视频时显示 */}
+        {currentPage === "dashboard" && currentVideo && (
+          <div className="flex items-center gap-2 text-xs ml-3">
+            <span className="text-gray-300 select-none">|</span>
+            <span className="font-semibold text-gray-800">{ctLabel[currentVideo.content_type] || currentVideo.content_type}</span>
+            <span className="text-gray-300">·</span>
+            <span className="text-gray-800">{currentVideo.search_index_enabled ? "搜索" : ""}{currentVideo.search_index_enabled && currentVideo.summary_enabled ? " + " : ""}{currentVideo.summary_enabled ? "摘要" : ""}</span>
+            {currentVideo.summary_enabled && (
+              <span className="text-gray-500">({currentVideo.summary_mode === "vlm_llm" ? "API" : "原生"})</span>
+            )}
+            <span className="text-gray-300">·</span>
+            <span className="text-gray-800">{langLabel[currentVideo.language] || currentVideo.language}</span>
+            <span className="text-gray-300">·</span>
+            <span className="text-gray-800">{currentVideo.sample_fps.toFixed(1)}fps</span>
+            <span className="text-gray-300">·</span>
+            <span className="text-gray-800">阈值 {(currentVideo.segment_threshold ?? 0.5).toFixed(1)}</span>
+          </div>
+        )}
       </div>
 
       {/* ── 分割线 + 上传按钮 ── */}

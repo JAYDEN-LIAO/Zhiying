@@ -60,6 +60,7 @@ export const api = {
     form.append("ocr_enabled", String(params?.ocr_enabled ?? false));
     form.append("caption_enabled", String(params?.caption_enabled ?? true));
     form.append("summary_enabled", String(params?.summary_enabled ?? true));
+    form.append("summary_mode", params?.summary_mode ?? "native_video");
     form.append("search_index_enabled", String(params?.search_index_enabled ?? true));
     form.append("sample_fps", String(params?.sample_fps ?? 1.0));
     form.append("segment_threshold", String(params?.segment_threshold ?? 0.5));

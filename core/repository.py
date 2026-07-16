@@ -38,6 +38,7 @@ async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video:
         grounding_enabled=video_dto.grounding_enabled,
         caption_enabled=video_dto.caption_enabled,
         summary_enabled=video_dto.summary_enabled,
+        summary_mode=video_dto.summary_mode,
         search_index_enabled=video_dto.search_index_enabled,
         sample_fps=video_dto.sample_fps,
         segment_threshold=video_dto.segment_threshold,

@@ -124,6 +124,10 @@ export function ParameterPanel({
     if (saved?.advanced) return { ...DEFAULT_ADVANCED, ...saved.advanced as Partial<AdvancedParams> };
     return { ...DEFAULT_ADVANCED };
   });
+  const [summaryMode, setSummaryMode] = useState<string>(() => {
+    const saved = loadCustomParams();
+    return (saved?.summaryMode as string) ?? "native_video";
+  });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -148,7 +152,7 @@ export function ParameterPanel({
   /* ── 自定义参数自动保存 ── */
   useEffect(() => {
     if (sceneType === "custom") {
-      saveCustomParams({ sceneType, modules, functions, advanced });
+      saveCustomParams({ sceneType, modules, functions, advanced, summaryMode });
     }
   }, [sceneType, modules, functions, advanced]);
 
@@ -161,6 +165,7 @@ export function ParameterPanel({
       if (saved?.modules) setModules(saved.modules as Record<ModuleKey, boolean>);
       if (saved?.functions) setFunctions(saved.functions as Record<string, boolean>);
       if (saved?.advanced) setAdvanced({ ...DEFAULT_ADVANCED, ...saved.advanced as Partial<AdvancedParams> });
+      if (saved?.summaryMode) setSummaryMode(saved.summaryMode as string);
       return;
     }
     const preset = SCENE_PRESETS[ct];
@@ -225,6 +230,7 @@ export function ParameterPanel({
       caption_enabled: modules.caption,
       search_index_enabled: functions.searchIndex,
       summary_enabled: functions.summary,
+      summary_mode: summaryMode,
       language: advanced.language,
       sample_fps: advanced.sampleFps,
       segment_threshold: advanced.segmentThreshold,
@@ -270,7 +276,7 @@ export function ParameterPanel({
 
       // 持久化自定义参数
       if (sceneType === "custom") {
-        saveCustomParams({ sceneType, modules, functions, advanced });
+        saveCustomParams({ sceneType, modules, functions, advanced, summaryMode });
       } else {
         localStorage.removeItem(CUSTOM_PARAMS_KEY);
       }
@@ -415,6 +421,41 @@ export function ParameterPanel({
               <p className="text-[11px] text-red-400 mt-1">搜索索引和智能摘要至少开启一个</p>
             )}
           </div>
+
+          {/* 摘要模式选择（仅智能摘要开启时显示） */}
+          {functions.summary && (
+            <div className="mt-3 pt-3 border-t border-gray-200/60">
+              <p className="text-[11px] font-medium text-gray-500 mb-2">摘要模式</p>
+              <div className="space-y-1.5">
+                {([
+                  { key: "native_video", label: "原生视频理解", desc: "本地 Qwen2.5-VL 直接观看视频片段，输出结构化摘要" },
+                  { key: "vlm_llm", label: "VLM + LLM", desc: "传统看图说话 + LLM 拼凑摘要（需 API）" },
+                ] as const).map((opt) => (
+                  <label
+                    key={opt.key}
+                    className={`flex items-start gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all border ${
+                      summaryMode === opt.key
+                        ? "bg-blue-50 border-blue-300"
+                        : "bg-white/60 border-gray-200/60 hover:border-gray-300"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="summaryMode"
+                      value={opt.key}
+                      checked={summaryMode === opt.key}
+                      onChange={() => setSummaryMode(opt.key)}
+                      className="mt-0.5 accent-blue-500"
+                    />
+                    <div className="min-w-0">
+                      <span className="text-xs font-medium text-gray-800 block">{opt.label}</span>
+                      <span className="text-[10px] text-gray-400 block">{opt.desc}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         {/* L4: 高级参数 */}

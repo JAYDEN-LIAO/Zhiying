@@ -59,6 +59,7 @@ class Qwen25VLCaptioner(BaseCaptioner):
         self.max_pixels = max_pixels
         self._model = None
         self._processor = None
+        self._load_lock = asyncio.Lock()
 
         # 由 Phase4Caption 在执行前注入（轻量胶水，不影响接口）
         self.video_path: str | None = None
@@ -85,9 +86,11 @@ class Qwen25VLCaptioner(BaseCaptioner):
         Returns:
             视频片段的自然语言描述。
         """
-        # 延迟加载（首次调用时加载模型）
+        # 延迟加载（首次调用时加载模型，Lock 防并发竞态）
         if self._model is None:
-            await self._load_model()
+            async with self._load_lock:
+                if self._model is None:  # 双重检查
+                    await self._load_model()
 
         if self.video_path is None:
             logger.warning("[Qwen25VLCaptioner] video_path not set, falling back to empty caption")
@@ -191,11 +194,16 @@ class Qwen25VLCaptioner(BaseCaptioner):
             )
         else:
             # 原版模型：用 bitsandbytes 4-bit 量化加载
+            from transformers import BitsAndBytesConfig
+            bnb = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype="bfloat16",
+            )
             self._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 self.model_name,
                 device_map="auto",
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype="float16",
+                quantization_config=bnb,
             )
         self._model.eval()
 
@@ -223,6 +231,12 @@ class Qwen25VLCaptioner(BaseCaptioner):
         image_inputs, video_inputs, video_kwargs = process_vision_info(
             messages, return_video_kwargs=True,
         )
+        # decord 0.6.0 的 get_avg_fps() 返回 list 而非标量，
+        # 需展开为 float 以避免 huggingface_hub StrictDataclass 校验失败
+        if video_kwargs and "fps" in video_kwargs:
+            fps_val = video_kwargs["fps"]
+            if isinstance(fps_val, (list, tuple)):
+                video_kwargs["fps"] = float(fps_val[0])
 
         inputs = self._processor(
             text=[text],
@@ -235,9 +249,17 @@ class Qwen25VLCaptioner(BaseCaptioner):
         inputs = {k: v.to(self._model.device) for k, v in inputs.items()}
 
         generated_ids = self._model.generate(**inputs, max_new_tokens=max_tokens)
+        # transformers 5.x: generate() 返回 GenerateDecoderOnlyOutput (OrderedDict-like)
+        if isinstance(generated_ids, dict):
+            output_ids = generated_ids["sequences"]
+        elif hasattr(generated_ids, "sequences"):
+            output_ids = generated_ids.sequences
+        else:
+            output_ids = generated_ids
+        input_ids = inputs["input_ids"]
         trimmed = [
             out_ids[len(in_ids):]
-            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+            for in_ids, out_ids in zip(input_ids, output_ids)
         ]
         output = self._processor.batch_decode(
             trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=True,

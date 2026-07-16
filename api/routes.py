@@ -132,6 +132,7 @@ async def upload_video(
     grounding_enabled: bool = Form(False),
     caption_enabled: bool = Form(True),
     summary_enabled: bool = Form(True),
+    summary_mode: str = Form("native_video"),
     search_index_enabled: bool = Form(True),
     sample_fps: float = Form(1.0),
     segment_threshold: float = Form(0.5),
@@ -170,6 +171,7 @@ async def upload_video(
         grounding_enabled=grounding_enabled,
         caption_enabled=caption_enabled,
         summary_enabled=summary_enabled,
+        summary_mode=summary_mode,
         search_index_enabled=search_index_enabled,
         sample_fps=sample_fps,
         segment_threshold=segment_threshold,
@@ -193,6 +195,7 @@ class ReuseRequest(BaseModel):
     ocr_enabled: bool = False
     caption_enabled: bool = True
     summary_enabled: bool = True
+    summary_mode: str = "native_video"
     search_index_enabled: bool = True
     sample_fps: float = Field(default=1.0, ge=0.5, le=3.0)
     segment_threshold: float = Field(default=0.5, ge=0.2, le=0.8)
@@ -233,6 +236,7 @@ async def reuse_video(
         grounding_enabled=False,
         caption_enabled=payload.caption_enabled,
         summary_enabled=payload.summary_enabled,
+        summary_mode=payload.summary_mode,
         search_index_enabled=payload.search_index_enabled,
         sample_fps=payload.sample_fps,
         segment_threshold=payload.segment_threshold,
@@ -247,6 +251,7 @@ async def reuse_video(
     service = VideoService(
         config=config,
         db_session_factory=db_session_factory,
+        embedder=request.app.state.embedder,
     )
     background_tasks.add_task(service.process_video, video.id)
 
@@ -288,6 +293,7 @@ async def update_video_params(
                 ocr_enabled=payload.ocr_enabled,
                 caption_enabled=payload.caption_enabled,
                 summary_enabled=payload.summary_enabled,
+                summary_mode=payload.summary_mode,
                 search_index_enabled=payload.search_index_enabled,
                 language=payload.language,
                 sample_fps=payload.sample_fps,
@@ -304,7 +310,7 @@ async def update_video_params(
         service = VideoService(
             config=config,
             db_session_factory=db_session_factory,
-            embedder=getattr(request.app.state, "embedder", None),
+            
         )
         background_tasks.add_task(service.process_video, video.id)
         logger.info("[Params] video=%s full pipeline starting", video_id)
@@ -324,6 +330,7 @@ async def update_video_params(
             "caption_with_context": video.caption_with_context,
             "summary_detail": video.summary_detail,
             "summary_enabled": video.summary_enabled,
+            "summary_mode": video.summary_mode,
             "search_index_enabled": video.search_index_enabled,
         }
 
@@ -339,13 +346,15 @@ async def update_video_params(
             "caption_with_context": payload.caption_with_context,
             "summary_detail": payload.summary_detail,
             "summary_enabled": payload.summary_enabled,
+            "summary_mode": payload.summary_mode,
             "search_index_enabled": payload.search_index_enabled,
         }
 
         # 检查只有 L3 功能开关变化
+        # summary_mode 改变需新建记录（native_video ↔ vlm_llm 路径完全不同）
         non_l3_keys = {"content_type", "vision_enabled", "audio_enabled", "ocr_enabled",
                        "caption_enabled", "language", "sample_fps", "segment_threshold",
-                       "caption_with_context", "summary_detail"}
+                       "caption_with_context", "summary_detail", "summary_mode"}
         l3_keys = {"summary_enabled", "search_index_enabled"}
 
         non_l3_changed = {k for k in non_l3_keys if old.get(k) != new.get(k)}
@@ -380,7 +389,7 @@ async def update_video_params(
         service = VideoService(
             config=config,
             db_session_factory=db_session_factory,
-            embedder=getattr(request.app.state, "embedder", None),
+            
         )
         background_tasks.add_task(service.incremental_process, video.id, l3_turned_on)
 
@@ -537,12 +546,8 @@ async def search_semantic(
     se: SearchEngine | None = getattr(request.app.state, "_searcher", None)
     if se is None:
         from pipeline.search_engine import SearchEngine
-        # 按需加载 embedder（首次搜索触发，后续请求复用缓存实例）
-        embedder = getattr(request.app.state, "embedder", None)
-        if embedder is None:
-            from plugins.factory import load_plugin as _load_plugin
-            embedder = await _load_plugin(request.app.state.config, "embedder")
-            request.app.state.embedder = embedder
+        # embedder 已在 lifespan 启动时预加载到 app.state.embedder
+        embedder = request.app.state.embedder
         se = SearchEngine(request.app.state.db_session_factory, embedder)
         request.app.state._searcher = se
 

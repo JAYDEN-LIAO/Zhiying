@@ -20,8 +20,10 @@ models/
 .DS_Store
 Thumbs.db
 
+# Python venv
+.venv/
+
 # Debug scraps
-_check_encoding.py
 /tmp/
 
 # Test videos (too large for git)
