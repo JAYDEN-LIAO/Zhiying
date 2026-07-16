@@ -40,12 +40,10 @@ class PipelineEngine:
         config: dict,
         db_session_factory: async_sessionmaker[AsyncSession],
         video: Video,
-        shared_embedder=None,
     ):
         self.config = config
         self.db_session_factory = db_session_factory
         self.video = video
-        self.shared_embedder = shared_embedder
 
         self.tracker = StatusTracker(
             video_id=str(video.id),
@@ -63,19 +61,17 @@ class PipelineEngine:
     # ──────────────────────────────────────────────────────
 
     async def initialize(self) -> None:
-        """加载所有 9 类算法插件（可能为 None=被禁用）。
+        """加载算法插件（embedder 除外，由 _encode_frames 延迟加载）。
 
-        若提供了共享 embedder（由 app.state 统一管理），
-        则跳过 load_plugin 直接复用，避免每视频重新加载 4GB 模型。
+        embedder（2B ~5GB）与 caption 模型（7B 4bit ~5GB）在 8GB GPU 上
+        无法共存，因此 embedder 不在初始化时加载——等 Phase 4 结束后、
+        _encode_frames 需要时才加载，此时 caption 模型已释放。
         """
         categories = [
             "transcriber", "segmenter", "detector",
-            "ocr", "captioner", "embedder", "summarizer", "grounding",
+            "ocr", "captioner", "summarizer", "grounding",
         ]
         for cat in categories:
-            if cat == "embedder" and self.shared_embedder is not None:
-                self.plugins["embedder"] = self.shared_embedder
-                continue
             self.plugins[cat] = await load_plugin(self.config, cat)
 
     # ──────────────────────────────────────────────────────
@@ -109,6 +105,10 @@ class PipelineEngine:
 
             if v.vision_enabled and v.caption_enabled:
                 await self._phase4()
+                # 释放 caption 模型显存，为后面的 embedder 腾出空间
+                cap = self.plugins.get("captioner")
+                if hasattr(cap, "unload"):
+                    cap.unload()
             else:
                 logger.info("[Pipeline] caption_enabled=false, skipping captioning")
 
@@ -359,7 +359,12 @@ class PipelineEngine:
 
         embedder = self.plugins.get("embedder")
         if embedder is None:
-            return
+            # 延迟加载：Phase 4（caption 模型）已结束，GPU 空闲，可加载 embedder
+            logger.info("[Pipeline] Lazy-loading embedder for frame encoding ...")
+            embedder = await load_plugin(self.config, "embedder")
+            if embedder is None:
+                return
+            self.plugins["embedder"] = embedder
 
         scenes = self.ctx.scenes
         if not scenes:
@@ -379,21 +384,42 @@ class PipelineEngine:
                 description=f"正在编码第 {enc_idx}/{total_enc} 个场景的帧向量",
             )
 
-            # ── a. 帧级路：逐帧 encode_image ──
+            # ── a. 帧级路：batch 编码（默认 4 帧一批，比逐帧快 2-3x）──
+            _BATCH_SIZE = 4
             frame_rows: list[dict] = []
-            for t, frame in zip(scene.frame_timestamps, scene.keyframes):
-                emb = await embedder.encode_image(frame)
-                if not emb:
-                    continue
-                frame_rows.append({
-                    "video_id": self.video.id,
-                    "scene_index": scene.scene_index,
-                    "timestamp_sec": t,
-                    "embedding": emb,
-                    "is_keyframe": any(
-                        frame is cf for cf in (scene._caption_frames or [])
-                    ),
-                })
+            frame_items = list(zip(scene.frame_timestamps, scene.keyframes))
+            _cf_indices = set()
+            if scene._caption_frames:
+                num_cf = min(len(frame_items), len(scene._caption_frames))
+                step = max(1, len(frame_items) // num_cf)
+                _cf_indices = {k * step for k in range(num_cf)}
+
+            for i in range(0, len(frame_items), _BATCH_SIZE):
+                batch = frame_items[i:i + _BATCH_SIZE]
+                batch_frames = [b[1] for b in batch]
+                batch_times = [b[0] for b in batch]
+
+                try:
+                    embs = await embedder.encode_images_batch(batch_frames)
+                except Exception:
+                    logger.warning("[Pipeline] Batch encode failed, falling back to single-frame")
+                    embs = []
+                    for f in batch_frames:
+                        try:
+                            embs.append(await embedder.encode_image(f))
+                        except Exception:
+                            embs.append(None)
+
+                for j, (t, emb) in enumerate(zip(batch_times, embs)):
+                    if not emb:
+                        continue
+                    frame_rows.append({
+                        "video_id": self.video.id,
+                        "scene_index": scene.scene_index,
+                        "timestamp_sec": t,
+                        "embedding": emb,
+                        "is_keyframe": (i + j) in _cf_indices,
+                    })
             if frame_rows:
                 async with self.db_session_factory() as session:
                     await bulk_insert_frames(session, frame_rows)

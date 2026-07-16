@@ -9,6 +9,7 @@ Qwen3-VL-Embedding 向量编码插件。
 编码方式：
   - 文本：apply_chat_template + pooling_last（非 mean pooling）
   - 图像：process_vision_info + apply_chat_template + pooling_last
+  - 批量图像：多帧 packing 为同一 batch，一次前向，池化后拆为独立向量
   - 视频：process_vision_info + apply_chat_template + pooling_last
 """
 
@@ -113,6 +114,35 @@ class QwenVLEmbedder(BaseEmbedder):
             logger.exception("[QwenVLEmbedder] Video encoding failed")
             raise
 
+    async def encode_images_batch(
+        self, images: list[np.ndarray],
+    ) -> list[list[float]]:
+        """批量图像编码 — 多帧一次前向，比逐帧 encode_image 吞吐更高。
+
+        Args:
+            images: 图像列表，每项为 (H, W, 3) uint8 numpy 数组。
+
+        Returns:
+            list[list[float]] — 每帧 2048 维归一化向量，顺序与输入一致。
+        """
+        # 统一通道数
+        processed = []
+        for img in images:
+            if img.ndim == 2:
+                img = np.stack([img] * 3, axis=-1)
+            elif img.shape[2] == 4:
+                img = img[:, :, :3]
+            processed.append(img)
+
+        try:
+            vectors = await asyncio.to_thread(
+                self._sync_encode_images_batch, processed,
+            )
+            return vectors
+        except Exception as e:
+            logger.exception("[QwenVLEmbedder] Batch image encoding failed")
+            raise
+
     # ═════════════════════════════════════════════════════════
     # 同步推理（线程池中执行）
     # ═════════════════════════════════════════════════════════
@@ -201,6 +231,81 @@ class QwenVLEmbedder(BaseEmbedder):
                 pass
 
         return result
+
+    def _sync_encode_images_batch(
+        self, images: list[np.ndarray],
+    ) -> list[list[float]]:
+        """批量图像编码 — 多帧 packing 为同一 batch 送入模型。
+
+        每帧独立走 process_vision_info + chat template，
+        最后拼成 batch 做一次前向，由 pooling_last 输出各自向量。
+        """
+        from PIL import Image as PILImage
+        from qwen_vl_utils import process_vision_info
+
+        # 将所有帧写入临时 JPEG 文件
+        tmp_paths: list[str] = []
+        for img in images:
+            tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            tmp_path = tmp.name
+            try:
+                PILImage.fromarray(img).save(tmp_path, format="JPEG", quality=85)
+            except Exception:
+                os.unlink(tmp_path)
+                raise
+            finally:
+                tmp.close()
+            tmp_paths.append(tmp_path)
+
+        try:
+            conversations = [
+                [
+                    {"role": "system", "content": [{"type": "text", "text": self._SYSTEM_PROMPT}]},
+                    {"role": "user", "content": [{"type": "image", "image": p}]},
+                ]
+                for p in tmp_paths
+            ]
+
+            texts = []
+            all_images: list = []
+            for conv in conversations:
+                text = self.processor.apply_chat_template(
+                    conv, tokenize=False, add_generation_prompt=True,
+                )
+                imgs, _ = process_vision_info(conv)
+                texts.append(text)
+                all_images.append(imgs[0] if imgs else None)
+
+            inputs = self.processor(
+                text=texts,
+                images=all_images,
+                return_tensors="pt",
+                padding=True,
+            )
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+
+            embeddings = self._pool_last_token(
+                outputs.last_hidden_state, inputs["attention_mask"],
+            )
+            # embeddings shape: (batch_size, hidden_dim)
+
+            results: list[list[float]] = []
+            for emb in embeddings:
+                norm = torch.linalg.norm(emb)
+                if norm > 0:
+                    emb = emb / norm
+                results.append(emb.cpu().numpy().astype(np.float64).tolist())
+            return results
+
+        finally:
+            for p in tmp_paths:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
 
     def _sync_encode_video(
         self, video_path: str, fps: float, max_frames: int,

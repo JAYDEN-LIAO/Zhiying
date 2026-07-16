@@ -58,6 +58,7 @@ _MODULE_OVERRIDES: dict[tuple[str, str], str] = {
 # 当 config 中的 backend 要求使用不同的实现类时配置。
 _CLASS_OVERRIDES: dict[tuple[str, str], str] = {
     ("captioner", "qwen_api"): "QwenAPICaptioner",
+    ("captioner", "qwen25_vl"): "Qwen25VLCaptioner",
     ("segmenter", "time_based"): "TimeBasedSegmenter",
 }
 

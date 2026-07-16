@@ -247,7 +247,6 @@ async def reuse_video(
     service = VideoService(
         config=config,
         db_session_factory=db_session_factory,
-        embedder=getattr(request.app.state, "embedder", None),
     )
     background_tasks.add_task(service.process_video, video.id)
 
@@ -534,11 +533,16 @@ async def search_semantic(
     """
     t0 = time.monotonic()
 
-    # ── 延后初始化 SearchEngine（复用 app.state 中的共享 embedder）──
+    # ── 延后初始化 SearchEngine ──
     se: SearchEngine | None = getattr(request.app.state, "_searcher", None)
     if se is None:
         from pipeline.search_engine import SearchEngine
+        # 按需加载 embedder（首次搜索触发，后续请求复用缓存实例）
         embedder = getattr(request.app.state, "embedder", None)
+        if embedder is None:
+            from plugins.factory import load_plugin as _load_plugin
+            embedder = await _load_plugin(request.app.state.config, "embedder")
+            request.app.state.embedder = embedder
         se = SearchEngine(request.app.state.db_session_factory, embedder)
         request.app.state._searcher = se
 
