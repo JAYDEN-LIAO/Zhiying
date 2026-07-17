@@ -94,7 +94,19 @@ h2 {
 .blue-accent { background: #1a65e1; }
 .green-accent { background: #34d399; }
 
+/* ── Navigation removed — use keyboard arrows ── */
 
+/* ── SLIDE CONTENT ── */
+.slide-content {
+  position: relative; z-index: 1;
+  padding: clamp(24px, 4vw, 48px) clamp(28px, 4.5vw, 56px);
+  height: 100%;
+  display: flex; flex-direction: column;
+}
+
+/* Cover */
+.cover-layout { align-items: center; justify-content: center; text-align: center; }
+.cover-layout .logo { height: clamp(36px, 5vw, 56px); margin-bottom: clamp(16px, 2.5vw, 28px); }
 .cover-layout h1 {
   font-size: clamp(28px, 4.5vw, 52px); font-weight: 800;
   color: #1a65e1; letter-spacing: -0.02em; line-height: 1.1;
@@ -150,10 +162,10 @@ h2 {
 .stat-box { flex:1; text-align:center; background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); border-radius: 12px; padding: 14px 8px; box-shadow: 0 2px 6px -2px rgba(0,0,0,0.08); }
 .stat-num { display:block; font-size:clamp(18px,2vw,26px); font-weight:800; color:#1a65e1; line-height:1.1; }
 .stat-label { display:block; font-size:clamp(9px,0.9vw,11px); color:#6b7280; margin-top:4px; }
-.main-area { flex:1; display:flex; gap:12px; min-height:0; }
-.quadrant-chart { flex:3; min-height:0; }
-.quadrant-note { width:260px; flex-shrink:0; display:flex; align-items:center; }
-.quadrant-note p { font-size:12px; color:#374151; line-height:1.6; }
+.main-area { flex:1; display:flex; gap:14px; min-height:0; }
+.quadrant-chart { flex:1; min-height:0; }
+.quadrant-note { width:200px; flex-shrink:0; display:flex; align-items:center; }
+.quadrant-note p { font-size:12px; color:#374151; line-height:1.5; }
 
 /* Three Stack (competitors) */
 .three-stack-layout .stack-row { display:flex; gap:clamp(10px,1.5vw,18px); margin-bottom:16px; }
@@ -373,8 +385,33 @@ h2 {
   <p class="version">v0.8 / 2026.07</p>
 </div>
 </div>
-<!-- Slide 2 removed -->
 <div class="slide" data-index="1">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
+
+<div class="slide-content two-col-layout">
+  <div class="col-left">
+    <p class="section-label">ABOUT</p>
+    <h2>Cerno 是什么</h2>
+    <p class="lead-text">一个完全本地部署的视频理解与检索系统——<br>自动摘要 + 自由搜索。</p>
+    <p class="body-text">上传视频 → 自动输出结构化摘要（一句话概括 + 场景级描述 + 关键词 + 主题 + 实体）。四级摘要质量可升降——默认零成本 Python 聚合器，可按需升级到 DeepSeek V3 / R1 / 本地部署 LLM。</p>
+  </div>
+  <div class="col-right">
+    <div class="feature-card">
+      <div class="card-icon">📝</div>
+      <h3>视频内容智能摘要</h3>
+      <p>上传视频 → 自动输出结构化摘要。四级摘要质量可升降——默认零成本 Python 聚合器，可按需升级到 DeepSeek V3 / R1。</p>
+    </div>
+    <div class="feature-card">
+      <div class="card-icon">🔍</div>
+      <h3>视频内容自由检索</h3>
+      <p>用自然语言搜索视频中的任意片段。3 路并行检索（帧级 1fps + chunk 滑动窗口 + 文本语义）互补覆盖。</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="2">
   <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
   <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
   <div class="blob-right" style="bottom:0;right:0;width:25%;height:45%"></div>
@@ -387,133 +424,85 @@ h2 {
   </div>
   <div class="main-area">
     <div class="quadrant-chart">
-      <svg viewBox="0 0 520 440" style="width:100%;height:100%">
+      <svg viewBox="0 0 520 420" style="width:100%;height:100%">
         <!-- Axes -->
-        <line x1="60" y1="360" x2="480" y2="360" stroke="#374151" stroke-width="1.5"/>
-        <line x1="60" y1="60" x2="60" y2="360" stroke="#374151" stroke-width="1.5"/>
+        <line x1="60" y1="360" x2="480" y2="360" stroke="#d1d5db" stroke-width="1.5"/>
+        <line x1="60" y1="60" x2="60" y2="360" stroke="#d1d5db" stroke-width="1.5"/>
         <!-- Axis labels -->
-        <text x="260" y="395" text-anchor="middle" fill="#374151" font-size="11" font-family="Inter" font-weight="500">视频综合分析能力 →</text>
-        <text x="30" y="210" text-anchor="middle" fill="#374151" font-size="11" font-family="Inter" font-weight="500" transform="rotate(-90,30,210)">数据隐私 / 部署可控性 →</text>
+        <text x="260" y="395" text-anchor="middle" fill="#9ca3af" font-size="11" font-family="Inter">语义理解深度 →</text>
+        <text x="30" y="210" text-anchor="middle" fill="#9ca3af" font-size="11" font-family="Inter" transform="rotate(-90,30,210)">数据隐私 / 部署可控性 →</text>
         <!-- Arrow labels -->
-        <text x="480" y="355" text-anchor="end" fill="#374151" font-size="10" font-family="Inter" font-weight="600">深</text>
-        <text x="60" y="355" text-anchor="start" fill="#374151" font-size="10" font-family="Inter" font-weight="600">浅</text>
-        <text x="56" y="60" text-anchor="end" fill="#374151" font-size="10" font-family="Inter" font-weight="600">高</text>
-        <text x="56" y="365" text-anchor="end" fill="#374151" font-size="10" font-family="Inter" font-weight="600">低</text>
+        <text x="480" y="355" text-anchor="end" fill="#9ca3af" font-size="10" font-family="Inter">深</text>
+        <text x="60" y="355" text-anchor="start" fill="#9ca3af" font-size="10" font-family="Inter">浅</text>
+        <text x="56" y="60" text-anchor="end" fill="#9ca3af" font-size="10" font-family="Inter">高</text>
+        <text x="56" y="365" text-anchor="end" fill="#9ca3af" font-size="10" font-family="Inter">低</text>
         <!-- Quadrant labels (faded) -->
-        <text x="140" y="120" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私好·能力弱</text>
-        <text x="380" y="120" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私好·能力强</text>
-        <text x="140" y="280" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私差·能力弱</text>
-        <text x="380" y="280" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私差·能力强</text>
-        <!-- Dots: Cerno green dot, no label -->
-        <circle cx="295" cy="130" r="22" fill="#34d399" opacity="0.15"/>
-        <circle cx="295" cy="130" r="12" fill="#34d399" stroke="white" stroke-width="3"/>
-        <!-- 绝影 -->
+        <text x="140" y="120" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私好·语义浅</text>
+        <text x="380" y="120" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私好·语义深</text>
+        <text x="140" y="280" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私差·语义浅</text>
+        <text x="380" y="280" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私差·语义深</text>
+        <!-- Dots -->
+        <!-- Cerno - top right (highlighted) -->
+        <circle cx="390" cy="110" r="10" fill="#1a65e1" stroke="white" stroke-width="3"/>
+        <text x="390" y="92" text-anchor="middle" fill="#1a65e1" font-size="11" font-weight="700" font-family="Inter">Cerno</text>
+        <!-- 绝影 - top right -->
         <circle cx="340" cy="130" r="7" fill="#67c4c0" stroke="white" stroke-width="2"/>
         <text x="340" y="112" text-anchor="middle" fill="#67c4c0" font-size="10" font-weight="600" font-family="Inter">绝影</text>
-        <!-- Twelve Labs -->
-        <circle cx="410" cy="280" r="7" fill="#5ca8e8" stroke="white" stroke-width="2"/>
-        <text x="410" y="300" text-anchor="middle" fill="#5ca8e8" font-size="10" font-weight="600" font-family="Inter">Twelve Labs</text>
-        <!-- Mixpeek -->
+        <!-- Twelve Labs - bottom right -->
+        <circle cx="370" cy="280" r="7" fill="#5ca8e8" stroke="white" stroke-width="2"/>
+        <text x="370" y="300" text-anchor="middle" fill="#5ca8e8" font-size="10" font-weight="600" font-family="Inter">Twelve Labs</text>
+        <!-- Mixpeek - bottom right -->
         <circle cx="310" cy="260" r="7" fill="#5799e9" stroke="white" stroke-width="2"/>
         <text x="310" y="278" text-anchor="middle" fill="#5799e9" font-size="10" font-weight="600" font-family="Inter">Mixpeek</text>
-        <!-- txtai -->
+        <!-- txtai - top left -->
         <circle cx="140" cy="140" r="7" fill="#4f93ed" stroke="white" stroke-width="2"/>
         <text x="140" y="122" text-anchor="middle" fill="#4f93ed" font-size="10" font-weight="600" font-family="Inter">txtai</text>
-        <!-- VideoDB -->
+        <!-- VideoDB - center right -->
         <circle cx="280" cy="200" r="7" fill="#63b4e0" stroke="white" stroke-width="2"/>
         <text x="280" y="218" text-anchor="middle" fill="#63b4e0" font-size="10" font-weight="600" font-family="Inter">VideoDB</text>
-        <!-- Cloud giants -->
+        <!-- Cloud giants - bottom left -->
         <circle cx="120" cy="310" r="7" fill="#d1d5db" stroke="white" stroke-width="2"/>
         <text x="120" y="328" text-anchor="middle" fill="#d1d5db" font-size="10" font-weight="600" font-family="Inter">云巨头</text>
-        <!-- Chart title below axis -->
-        <text x="260" y="418" text-anchor="middle" fill="#6b7280" font-size="10" font-family="Inter">竞品定位图 — 二维散点（X 轴：视频综合分析能力 · Y 轴：数据隐私/部署可控性）</text>
+        <!-- Label: 空位标注 -->
+        <rect x="335" y="68" width="120" height="22" rx="11" fill="#1a65e1" opacity="0.12"/>
+        <text x="395" y="83" text-anchor="middle" fill="#1a65e1" font-size="9" font-weight="600" font-family="Inter">右上角是空的 →</text>
       </svg>
     </div>
     <div class="quadrant-note glass-card">
-      <p>当前市场上的竞品存在一个结构性空白：<strong>做深度视频分析的不能本地部署</strong>（Twelve Labs、Mixpeek 均为纯云 API），<strong>能本地部署的不做深度视频分析</strong>（绝影为公安封闭场景专项、txtai 用通用模型套视频）。<br><br>Cerno 是唯一在「<strong>深度视频分析</strong>」×「<strong>全本地部署</strong>」两个维度同时做到可用的方案——既有 Qwen3 家族视频原生编码的开源模型栈，又有声明式 DAG 保证扩展性，同时数据完全不出域。</p>
-    </div>
-  </div>
-</div>
-</div>
-<div class="slide" data-index="2">
-  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
-  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
-
-<style>
-.tl-flow { display:flex; flex-direction:row; gap:clamp(14px,2vw,24px); flex:1; }
-.tl-left { flex:1; display:flex; flex-direction:column; }
-.tl-right { flex:1; display:flex; flex-direction:column; justify-content:center; }
-.tl-prod { background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:12px; padding:clamp(10px,1.1vw,16px); box-shadow:0 2px 8px -2px rgba(0,0,0,0.10),0 8px 24px -6px rgba(0,0,0,0.12); margin-top:6px; }
-.tl-prod h3 { font-size:clamp(13px,1.2vw,15px); font-weight:700; color:#111827; margin-bottom:6px; }
-.tl-prod p { font-size:clamp(10px,0.9vw,11px); color:#4b5563; line-height:1.6; }
-.tl-pillars { display:flex; gap:8px; margin-top:8px; }
-.tl-pillars span { flex:1; text-align:center; font-size:clamp(9px,0.8vw,10px); background:rgba(26,101,225,0.06); border-radius:6px; padding:4px 6px; color:#4f93ed; font-weight:500; }
-.tl-procon { display:flex; gap:10px; margin-top:8px; }
-.tl-pro { flex:1; background:rgba(52,211,153,0.06); border-radius:8px; padding:8px 10px; }
-.tl-con { flex:1; background:rgba(239,68,68,0.04); border-radius:8px; padding:8px 10px; }
-.tl-pro p, .tl-con p { font-size:clamp(9px,0.8vw,10px); line-height:1.5; }
-.tl-pro p:first-child { font-weight:600; color:#34d399; margin-bottom:3px; }
-.tl-con p:first-child { font-weight:600; color:#ef4444; margin-bottom:3px; }
-.tl-step { display:flex; align-items:flex-start; gap:10px; padding:clamp(5px,0.6vw,8px) 0; position:relative; }
-.tl-step:not(:last-child)::after { content:''; position:absolute; left:13px; top:28px; width:2px; height:calc(100% - 14px); background:linear-gradient(180deg,#1a65e1,#34d399); }
-.tl-num { width:28px; height:28px; border-radius:50%; background:#1a65e1; color:white; font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; z-index:1; }
-.tl-body { flex:1; }
-.tl-body .tl-label { font-size:clamp(11px,1vw,13px); font-weight:700; color:#111827; }
-.tl-body .tl-text { font-size:clamp(9px,0.8vw,10px); color:#4b5563; line-height:1.5; margin-top:2px; }
-</style>
-<div class="slide-content tl-flow">
-  <div class="tl-left">
-    <p class="section-label">COMPETITIVE ANALYSIS</p>
-    <h2>Twelve Labs — 行业标杆</h2>
-    <p class="body-text" style="font-size:clamp(11px,1vw,12px);">视频语义搜索标杆，累计融资 $207M。2025-2026 年产品线升级。</p>
-    <div class="tl-prod">
-      <h3>Marengo 3.0 — 原生视频嵌入</h3>
-      <p>覆盖 visual/audio/speech/text 四路信号，512 维空间。36 语种，4h 视频。语义/实体/组合三种检索。索引速度 2x，存储减半。</p>
-    </div>
-    <div class="tl-prod" style="margin-top:6px;">
-      <h3>Pegasus 1.5 — 视频推理</h3>
-      <p>视频→结构化 JSON（场景/实体/事件/情感/品牌安全）。跨查询持久记忆。</p>
-      <div class="tl-pillars">
-        <span>👁 Perception</span>
-        <span>🧠 Memory</span>
-        <span>⚡ Reasoning</span>
-      </div>
-    </div>
-    <div class="tl-procon">
-      <div class="tl-pro"><p>✅ Cerno 认可</p><span>产品成熟·512 维高密度<br>AWS Bedrock 集成</span></div>
-      <div class="tl-con"><p>❌ 纯云 API 天花板</p><span>数据出境·厂商锁定<br>$2.61/h · 不可验证</span></div>
-    </div>
-  </div>
-  <div class="tl-right">
-    <p style="font-size:clamp(12px,1.1vw,14px);font-weight:600;color:#111827;margin-bottom:4px;">🎯 三个关键决策——Cerno 的回应</p>
-    <div class="tl-step">
-      <div class="tl-num">1</div>
-      <div class="tl-body">
-        <div class="tl-label">Embedding：专有 512 维 → 开源 2048 维</div>
-        <div class="tl-text">Marengo 512 维专有 → Qwen3-VL-Emb-8B（MMEB-V2 77.8 公开第一）。4x 存储精度换，当前可接受。</div>
-      </div>
-    </div>
-    <div class="tl-step">
-      <div class="tl-num">2</div>
-      <div class="tl-body">
-        <div class="tl-label">检索：单路混合 → 3 路并行精度分层</div>
-        <div class="tl-text">Twelve Labs 单一路径 → Cerno 帧×1.0 + 文本×0.85 + chunk×0.7，帧簇优先合并。</div>
-      </div>
-    </div>
-    <div class="tl-step">
-      <div class="tl-num">3</div>
-      <div class="tl-body">
-        <div class="tl-label">摘要：Pegasus 专有 → 四级升降</div>
-        <div class="tl-text">专有模型不可复制 → 零成本聚合器 → DeepSeek V3（￥8）→ R1（￥16）→ 自部署。</div>
-      </div>
-    </div>
-    <div class="glass-card" style="padding:8px 14px;margin-top:4px;text-align:center;">
-      <p style="font-size:clamp(10px,0.9vw,11px);color:#1a65e1;font-weight:500;">Twelve Labs 告诉我们「该做成什么样」，也暴露了纯云 API 的天花板</p>
+      <p>做语义搜索的不能本地部署，能本地部署的不做语义搜索。<br><strong>Cerno 卡的就是这个位。</strong></p>
     </div>
   </div>
 </div>
 </div>
 <div class="slide" data-index="3">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content three-card-layout">
+  <div class="section-header">
+    <p class="section-label">COMPETITIVE ANALYSIS</p>
+    <h2>Twelve Labs — 行业标杆，我们的决策起点</h2>
+  </div>
+  <div class="cards-row">
+    <div class="info-card">
+      <div class="card-accent blue-accent"></div>
+      <h3>🚀  Marengo + Pegasus</h3>
+      <p>多模态嵌入 Marengo（512 维，专有）+ Pegasus 1.2 摘要模型。<br>仅云 API，按分钟 + 查询双重计费。</p>
+    </div>
+    <div class="info-card">
+      <div class="card-accent blue-accent"></div>
+      <h3>⚖️  优势与劣势</h3>
+      <p>优势：产品成熟、嵌入效率高（512 维仅为 Cerno 2048 的 1/4）。<br>劣势：数据必须上传、不可本地部署、不可定制。</p>
+    </div>
+    <div class="info-card">
+      <div class="card-accent blue-accent"></div>
+      <h3>🎯  影响我们三个关键决策</h3>
+      <p>Embedding 选型 → 开源 Qwen3-VL-Emb 而非自研<br>检索架构 → 3 路并行而非单一路径<br>摘要方案 → 四级升降而非绑定单个模型</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="4">
   <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
   <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
   <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
@@ -546,7 +535,7 @@ h2 {
   </div>
 </div>
 </div>
-<div class="slide" data-index="4">
+<div class="slide" data-index="5">
   <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
   <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
 
@@ -579,279 +568,104 @@ h2 {
   </div>
 </div>
 </div>
-<div class="slide" data-index="5">
-  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
-  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
-<style>
-.vlm-landscape { display:flex; flex-direction:column; }
-.vlm-leaderboard { flex:1; display:flex; flex-direction:column; gap:clamp(2px,0.25vw,4px); }
-.vlm-lb-row { display:flex; align-items:center; gap:clamp(4px,0.5vw,8px); padding:clamp(3px,0.3vw,5px) clamp(6px,0.6vw,10px); border-radius:6px; font-size:clamp(9px,0.8vw,10px); }
-.vlm-lb-row.prop { background:rgba(239,68,68,0.04); }
-.vlm-lb-row.open { background:rgba(52,211,153,0.04); }
-.vlm-lb-rank { width:clamp(16px,1.4vw,22px); text-align:center; font-weight:600; color:#6b7280; font-size:clamp(9px,0.8vw,10px); }
-.vlm-lb-model { width:clamp(120px,14vw,170px); font-weight:600; color:#111827; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.vlm-lb-score { width:clamp(34px,3.2vw,44px); text-align:center; font-weight:700; color:#1a65e1; font-family:monospace; font-size:clamp(10px,0.85vw,11px); }
-.vlm-lb-tag { font-size:clamp(7px,0.6vw,8px); padding:1px 6px; border-radius:4px; font-weight:600; }
-.vlm-lb-tag.closed { background:rgba(239,68,68,0.1); color:#dc2626; }
-.vlm-lb-tag.opensrc { background:rgba(52,211,153,0.12); color:#34d399; }
-.vlm-lb-bar-wrap { width:clamp(50px,5vw,80px); height:10px; background:#f3f4f6; border-radius:5px; overflow:hidden; }
-.vlm-lb-bar-wrap > div { height:100%; border-radius:5px; }
-.vlm-lb-deploy { width:clamp(80px,9vw,120px); text-align:center; font-size:clamp(8px,0.7vw,9px); color:#6b7280; line-height:1.3; white-space:nowrap; }
-.vlm-conclusion { background:linear-gradient(135deg,rgba(255,255,255,0.7),rgba(255,255,255,0.5)); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.6); border-radius:10px; padding:clamp(8px,0.8vw,12px) clamp(12px,1.2vw,16px); margin-top:clamp(4px,0.5vw,8px); display:flex; align-items:center; gap:12px; flex-shrink:0; }
-.vlm-conclusion strong { color:#1a65e1; }
-</style>
-<div class="slide-content vlm-landscape">
-  <p class="section-label">MODEL SELECTION · VLM</p>
-  <h2>VLM 全景排行 — 2026 年 7 月</h2>
-
-  <div class="vlm-leaderboard">
-    <div class="vlm-lb-row" style="background:none;box-shadow:none;font-size:clamp(8px,0.7vw,9px);color:#9ca3af;font-weight:600;border-bottom:1px solid #e5e7eb;padding-bottom:clamp(3px,0.3vw,5px);">
-      <span class="vlm-lb-rank">#</span>
-      <span class="vlm-lb-model">模型</span>
-      <span class="vlm-lb-score">Score</span>
-      <span class="vlm-lb-bar-wrap" style="background:transparent;height:auto;">得分</span>
-      <span style="width:40px;text-align:center">类型</span>
-      <span class="vlm-lb-deploy">完整/量化</span>
-      <span style="flex:0.8;text-align:center;">开发方</span>
-    </div>
-    <div class="vlm-lb-row prop">
-      <span class="vlm-lb-rank">1</span>
-      <span class="vlm-lb-model">Seed 2.1 Pro</span>
-      <span class="vlm-lb-score">89.2</span>
-      <div class="vlm-lb-bar-wrap"><div style="width:100%;background:#ef4444"></div></div>
-      <span class="vlm-lb-tag closed">闭源</span>
-      <span class="vlm-lb-deploy">仅云 API</span>
-      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">字节跳动</span>
-    </div>
-    <div class="vlm-lb-row open">
-      <span class="vlm-lb-rank">2</span>
-      <span class="vlm-lb-model">MiMo-V2.5 (311B)</span>
-      <span class="vlm-lb-score">87.7</span>
-      <div class="vlm-lb-bar-wrap"><div style="width:98%;background:#34d399"></div></div>
-      <span class="vlm-lb-tag opensrc">开源</span>
-      <span class="vlm-lb-deploy">A100×8 BF16</span>
-      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">小米</span>
-    </div>
-    <div class="vlm-lb-row open">
-      <span class="vlm-lb-rank">3</span>
-      <span class="vlm-lb-model">Qwen3.5-122B-A10B</span>
-      <span class="vlm-lb-score">87.3</span>
-      <div class="vlm-lb-bar-wrap"><div style="width:98%;background:#4f93ed"></div></div>
-      <span class="vlm-lb-tag opensrc">开源</span>
-      <span class="vlm-lb-deploy">A100×4 FP8</span>
-      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">阿里 Qwen 团队</span>
-    </div>
-    <div class="vlm-lb-row open">
-      <span class="vlm-lb-rank">4</span>
-      <span class="vlm-lb-model">Qwen3.5-27B (Dense)</span>
-      <span class="vlm-lb-score">87.0</span>
-      <div class="vlm-lb-bar-wrap"><div style="width:97%;background:#5ca8e8"></div></div>
-      <span class="vlm-lb-tag opensrc">开源</span>
-      <span class="vlm-lb-deploy">A100 FP16 / 24GB Q4</span>
-      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">阿里 Qwen 团队</span>
-    </div>
-    <div class="vlm-lb-row open">
-      <span class="vlm-lb-rank">5</span>
-      <span class="vlm-lb-model">Qwen3.5-35B-A3B</span>
-      <span class="vlm-lb-score">86.6</span>
-      <div class="vlm-lb-bar-wrap"><div style="width:97%;background:#1a65e1"></div></div>
-      <span class="vlm-lb-tag opensrc">开源</span>
-      <span class="vlm-lb-deploy">A100 FP8 / 20GB Q4</span>
-      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">阿里 Qwen 团队</span>
-    </div>
-    <div class="vlm-lb-row open">
-      <span class="vlm-lb-rank">6</span>
-      <span class="vlm-lb-model">Qwen3-Omni-30B-A3B</span>
-      <span class="vlm-lb-score">82.0¹</span>
-      <div class="vlm-lb-bar-wrap"><div style="width:92%;background:#63b4e0"></div></div>
-      <span class="vlm-lb-tag opensrc">开源</span>
-      <span class="vlm-lb-deploy">4090 FP8 / 20GB Q4</span>
-      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">阿里 Qwen 团队</span>
-    </div>
-    <div class="vlm-lb-row open">
-      <span class="vlm-lb-rank">7</span>
-      <span class="vlm-lb-model">VST-32B</span>
-      <span class="vlm-lb-score">67.2</span>
-      <div class="vlm-lb-bar-wrap"><div style="width:75%;background:#9ca3af"></div></div>
-      <span class="vlm-lb-tag opensrc">开源</span>
-      <span class="vlm-lb-deploy">A100 BF16 / 24GB Q4</span>
-      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">学术团队</span>
-    </div>
-    <div class="vlm-lb-row open">
-      <span class="vlm-lb-rank">8</span>
-      <span class="vlm-lb-model">MiniCPM-V 4.6 (1.3B)</span>
-      <span class="vlm-lb-score">59.7</span>
-      <div class="vlm-lb-bar-wrap"><div style="width:67%;background:#d1d5db"></div></div>
-      <span class="vlm-lb-tag opensrc">开源</span>
-      <span class="vlm-lb-deploy">任意显卡 FP16</span>
-      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">面壁智能</span>
-    </div>
-  </div>
-
-  <div class="vlm-conclusion">
-    <span style="font-size:clamp(20px,2vw,28px);">📊</span>
-    <div>
-      <p style="font-size:clamp(11px,0.95vw,12px);color:#374151;"><strong>Qwen3.5 家族</strong>在开源 VLM 中形成断层领先：前 6 名中 5 席来自 Qwen 团队。<strong>35B-A3B</strong> 的 Video-MME 为 86.6，略低于同族 27B Dense（87.0）和 122B-A10B（87.3），但 MoE 架构仅 3B 激活参数，推理速度快 2.4 倍，上下文 4 倍。数据来源于各模型官方 Model Card。¹Qwen3-Omni 为 Video-MME short 分数。</p>
-    </div>
-  </div>
-</div>
-</div>
 <div class="slide" data-index="6">
   <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
   <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
-  <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
-<style>
-.qwen-compact { display:flex; flex-direction:column; }
-.qw-table { flex:1; border-collapse:separate; border-spacing:0 3px; font-size:clamp(9px,0.8vw,10px); width:100%; }
-.qw-table th { text-align:left; padding:6px 8px; background:rgba(26,101,225,0.06); border-radius:4px; font-weight:600; color:#374151; }
-.qw-table td { padding:6px 8px; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:4px; }
-.qw-table .m { font-weight:500; color:#6b7280; }
-.qw-table .v { font-weight:600; color:#111827; }
-.qw-table .win { background:rgba(26,101,225,0.08); }
-.qw-table .hl { color:#1a65e1; }
-.qw-bar { background:linear-gradient(135deg,rgba(255,255,255,0.7),rgba(255,255,255,0.5)); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.6); border-radius:8px; padding:6px 12px; margin-top:6px; font-size:clamp(9px,0.8vw,10px); color:#374151; display:flex; gap:16px; flex-shrink:0; }
-.qw-bar strong { color:#1a65e1; }
-</style>
-<div class="slide-content qwen-compact">
-  <p class="section-label">MODEL SELECTION · VLM</p>
-  <h2>Qwen3.5 家族内部对决 — 四款 VLM 硬碰硬</h2>
-  <table class="qw-table">
-    <tr><th>维度</th><th class="win">🏆 Qwen3.5-35B-A3B</th><th>Qwen3.5-122B-A10B</th><th>Qwen3.5-27B</th><th>Qwen3-Omni-30B</th></tr>
-    <tr><td class="m">架构</td><td class="v win">MoE 35B/3B激活</td><td class="v">MoE 122B/10B</td><td class="v">Dense 27B</td><td class="v">MoE 30B/3B</td></tr>
-    <tr><td class="m">Video-MME</td><td class="v win"><span class="hl">86.6</span></td><td class="v">87.3</td><td class="v">87.0</td><td class="v">82.0¹</td></tr>
-    <tr><td class="m">上下文</td><td class="v win"><span class="hl">1M</span></td><td class="v">1M</td><td class="v">262K</td><td class="v">256K</td></tr>
-    <tr><td class="m">速度(4090Q4)</td><td class="v win"><span class="hl">196 tok/s</span></td><td class="v">~80 tok/s</td><td class="v">CPU offload</td><td class="v">~80 tok/s</td></tr>
-    <tr><td class="m">多模态</td><td class="v win">图文视频</td><td class="v">图文视频</td><td class="v">图文视频</td><td class="v">图文视频音频</td></tr>
-    <tr><td class="m">部署弹性</td><td class="v win"><span class="hl">4060→A100 全覆盖</span></td><td class="v">A100×4+</td><td class="v">A100 / 24GB Q4</td><td class="v">4090 24GB Q4</td></tr>
-  </table>
-  <div class="qw-bar">
-    <span><strong>🔑 1</strong> 86.6 排名家族第3，但 MoE 3B 激活速度是 27B Dense 的 <strong>2.4×</strong></span>
-    <span><strong>🔑 2</strong> 1M 上下文是 27B 的 <strong>4 倍</strong>，长视频无需分片</span>
-    <span><strong>🔑 3</strong> 部署从 4060 到 A100 全谱系覆盖</span>
-  </div>
-</div>
-</div>
+  <div class="blob-right" style="bottom:0;right:0;width:25%;height:45%"></div>
 
+<div class="slide-content top-title-layout">
+  <p class="section-label">MODEL SELECTION</p>
+  <h2>VLM — 视频理解的眼睛 (1/3)：赛道扫描</h2>
+  <p class="body-text" style="max-width:90%;margin-bottom:16px;">VLM 的选型目标：在单 GPU 可部署的约束下，找到视频理解能力最强的开源模型。</p>
+  <div class="model-grid">
+    <div class="model-family selected">
+      <div class="fam-header"><span class="fam-dot" style="background:#1a65e1"></span>Qwen-VL 系列 ← 最终选择</div>
+      <p>Qwen → Qwen2-VL → Qwen2.5-VL → <strong>Qwen3-VL (Dense+MoE)</strong><br>原生视频 120fps 输入，256K 上下文，Thinking 模式。全部 Apache 2.0，中文优化最深。</p>
+    </div>
+    <div class="model-family">
+      <div class="fam-header"><span class="fam-dot" style="background:#5ca8e8"></span>InternVL 系列</div>
+      <p>上海 AI Lab，MIT 开源。26B/76B 接近 Qwen 但中文优化不足，EgoPlan-Bench 帧扩展性差。</p>
+    </div>
+    <div class="model-family">
+      <div class="fam-header"><span class="fam-dot" style="background:#63b4e0"></span>LLaVA 系列</div>
+      <p>学术开源标杆。Video-MME 57.8%（7B）vs Qwen2.5-VL 71.6%——14 个百分点的代际差距。</p>
+    </div>
+    <div class="model-family excluded">
+      <div class="fam-header"><span class="fam-dot" style="background:#d1d5db"></span>MiniCPM-V</div>
+      <p>端侧轻量，视频非核心方向。</p>
+    </div>
+  </div>
+  <div class="note-bar">其他排除：CogVLM2（无视频分支）、VideoLLaMA3（评测不合格）、DeepSeek-VL2（视频非重点）</div>
+</div>
+</div>
 <div class="slide" data-index="7">
   <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
   <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
-<style>
-.rej-layout { display:flex; flex-direction:column; }
-.rej-grid { display:flex; gap:10px; flex:1; }
-.rej-card { flex:1; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:10px; padding:12px; box-shadow:0 2px 6px -2px rgba(0,0,0,0.10); display:flex; flex-direction:column; }
-.rej-card h3 { font-size:13px; font-weight:700; color:#111827; margin-bottom:2px; }
-.rej-tag { font-size:9px; font-weight:600; padding:2px 7px; border-radius:5px; margin-bottom:4px; display:inline-block; }
-.r-pro .rej-tag { background:rgba(239,68,68,0.1); color:#dc2626; }
-.r-size .rej-tag { background:rgba(245,158,11,0.1); color:#d97706; }
-.r-perf .rej-tag { background:rgba(107,114,128,0.1); color:#6b7280; }
-.rej-card p { font-size:10px; color:#4b5563; line-height:1.5; }
-.rej-foot { display:flex; gap:10px; margin-top:6px; flex-shrink:0; }
-.rej-fi { flex:1; background:linear-gradient(135deg,rgba(255,255,255,0.7),rgba(255,255,255,0.5)); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.6); border-radius:8px; padding:8px 12px; font-size:10px; color:#374151; }
-.rej-fi strong { color:#1a65e1; }
-</style>
-<div class="slide-content rej-layout">
-  <p class="section-label">MODEL SELECTION · VLM</p>
-  <h2>外部挑战者逐一排除 — 不是不比较，是比较了才排除</h2>
-  <div class="rej-grid">
-    <div class="rej-card r-pro">
-      <span class="rej-tag">❌ 闭源不可部署</span>
-      <h3>Seed 2.1 Pro</h3>
-      <p><strong>字节跳动 · Video-MME 89.2（第 1）</strong></p>
-      <p>仅火山引擎 API——数据入境、不可定制、闭源锁。Cerno 全本地+全开源原则直接排除。</p>
-    </div>
-    <div class="rej-card r-size">
-      <span class="rej-tag">❌ 规模不可承受</span>
-      <h3>MiMo-V2.5 (311B)</h3>
-      <p><strong>小米 · Video-MME 87.7</strong></p>
-      <p>311B 需 4-8 卡 A100。Cerno Pipeline 还需加载 Embedding/ASR 等多模型，为 VLM 独占多卡不可接受。</p>
-    </div>
-    <div class="rej-card r-perf">
-      <span class="rej-tag">❌ 性能不足</span>
-      <h3>VST-32B / MiniCPM-V 4.6</h3>
-      <p><strong>Video-MME 67.2 / 59.7</strong></p>
-      <p>与 35B-A3B（86.6）差 19-27 个百分点。复杂场景描述准确率不足，直接拖累下游摘要质量。</p>
-    </div>
-  </div>
-  <div class="rej-foot">
-    <span class="rej-fi"><strong>📊 排除：</strong>Seed（闭源）· MiMo（规模）· VST/MiniCPM（性能）· InternVL（中文）· LLaVA（代际）</span>
-    <span class="rej-fi"><strong>🎯 最终候选：</strong>Qwen3.5-35B-A3B — Benchmark、效率、部署、生态四维无短板</span>
-  </div>
-</div>
-</div>
+  <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
 
+<div class="slide-content funnel-layout">
+  <p class="section-label">MODEL SELECTION</p>
+  <h2>VLM — 30+ → 13 → 8 → 1</h2>
+  <div class="funnel-svg-wrap">
+    <svg viewBox="0 0 600 340" style="width:100%;height:100%">
+      <!-- Funnel shape -->
+      <polygon points="300,20 520,100 480,160 120,160 80,100" fill="#e8f0fc" stroke="#4f93ed" stroke-width="1.5"/>
+      <text x="300" y="60" text-anchor="middle" fill="#4f93ed" font-size="11" font-weight="600" font-family="Inter">全领域 30+ VLM</text>
+      <text x="300" y="75" text-anchor="middle" fill="#9ca3af" font-size="9" font-family="Inter">包括 Qwen/InternVL/LLaVA/MiniCPM 等全系列</text>
+      <!-- Layer 1 -->
+      <rect x="160" y="95" width="280" height="28" rx="14" fill="#1a65e1" opacity="0.15"/>
+      <text x="300" y="113" text-anchor="middle" fill="#1a65e1" font-size="10" font-weight="600" font-family="Inter">第一层：硬性功能筛选 — 必须支持视频输入</text>
+      <!-- Layer 2 -->
+      <rect x="180" y="130" width="240" height="28" rx="14" fill="#1a65e1" opacity="0.2"/>
+      <text x="300" y="148" text-anchor="middle" fill="#1a65e1" font-size="10" font-weight="600" font-family="Inter">第二层：部署可行性 — 开源 + 单 GPU</text>
+      <!-- Narrowing -->
+      <polygon points="300,165 420,200 380,240 220,240 180,200" fill="#d8e5ef" stroke="#5799e9" stroke-width="1.5"/>
+      <text x="300" y="195" text-anchor="middle" fill="#5799e9" font-size="11" font-weight="600" font-family="Inter">短名单 13 个</text>
+      <text x="300" y="210" text-anchor="middle" fill="#9ca3af" font-size="9" font-family="Inter">Qwen/InternVL/LLaVA 各尺寸入围</text>
+      <!-- Layer 3 -->
+      <rect x="200" y="220" width="200" height="24" rx="12" fill="#5ca8e8" opacity="0.2"/>
+      <text x="300" y="236" text-anchor="middle" fill="#5ca8e8" font-size="10" font-weight="600" font-family="Inter">第三层：Benchmark 验证 — Video-MME</text>
+      <!-- Final -->
+      <polygon points="300,250 360,280 340,310 260,310 240,280" fill="#e6f0ed" stroke="#34d399" stroke-width="1.5"/>
+      <text x="300" y="280" text-anchor="middle" fill="#34d399" font-size="12" font-weight="700" font-family="Inter">Qwen3-VL-32B</text>
+      <text x="300" y="296" text-anchor="middle" fill="#9ca3af" font-size="9" font-family="Inter">Video-MME 74.5%</text>
+      <!-- First round exclusion bubbles -->
+      <text x="530" y="120" text-anchor="start" fill="#9ca3af" font-size="9" font-family="Inter">❌ LLaVA (57.8~63.5%)</text>
+      <text x="530" y="136" text-anchor="start" fill="#9ca3af" font-size="9" font-family="Inter">❌ InternVL2-76B (多卡)</text>
+      <!-- Second round -->
+      <text x="530" y="210" text-anchor="start" fill="#9ca3af" font-size="9" font-family="Inter">❌ InternVL 中文不足</text>
+      <text x="530" y="226" text-anchor="start" fill="#9ca3af" font-size="9" font-family="Inter">❌ Qwen2.5-VL-72B (4卡)</text>
+      <text x="530" y="242" text-anchor="start" fill="#9ca3af" font-size="9" font-family="Inter">❌ Qwen3-VL-8B (74.5 vs 71.4)</text>
+    </svg>
+  </div>
+</div>
+</div>
 <div class="slide" data-index="8">
   <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
   <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
-<style>
-.final-vote { display:flex; flex-direction:column; }
-.final-duo { display:flex; gap:16px; flex:1; }
-.final-left { flex:1.2; display:flex; flex-direction:column; gap:8px; justify-content:center; }
-.final-pillar { display:flex; gap:8px; align-items:flex-start; }
-.final-pnum { width:24px; height:24px; border-radius:50%; background:#1a65e1; color:white; font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-.final-pbody { flex:1; }
-.final-pbody h4 { font-size:13px; font-weight:700; color:#111827; }
-.final-pbody p { font-size:10px; color:#4b5563; line-height:1.5; }
-.final-pbody .ev { font-size:9px; color:#1a65e1; margin-top:1px; font-weight:500; }
-.final-right { flex:0.8; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:12px; padding:14px; box-shadow:0 2px 8px -2px rgba(0,0,0,0.10); display:flex; flex-direction:column; justify-content:center; }
-.final-right h3 { font-size:13px; font-weight:700; color:#111827; margin-bottom:6px; }
-.final-right p { font-size:10px; color:#4b5563; line-height:1.5; }
-.final-spec { display:flex; gap:8px; margin-top:6px; flex-shrink:0; }
-.final-spec-item { flex:1; text-align:center; background:linear-gradient(135deg,rgba(255,255,255,0.7),rgba(255,255,255,0.5)); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.6); border-radius:8px; padding:6px; }
-.final-spec-item .fn { font-size:16px; font-weight:800; color:#1a65e1; display:block; }
-.final-spec-item .fl { font-size:8px; color:#6b7280; }
-</style>
-<div class="slide-content final-vote">
-  <p class="section-label">MODEL SELECTION · VLM</p>
-  <h2>最终选择 — Qwen3.5-35B-A3B</h2>
-  <div class="final-duo">
-    <div class="final-left">
-      <div class="final-pillar">
-        <div class="final-pnum">1</div>
-        <div class="final-pbody">
-          <h4>Benchmark 断层领先</h4>
-          <p>Video-MME 86.6——家族内排第 3，但 MoE 仅 3B 激活 35B 总量。122B-A10B（87.3）需 4 卡，27B（87.0）慢 2.4 倍。</p>
-          <div class="ev">📊 86.6 vs MiMo 87.7（4-8卡）· VST 67.2 · MiniCPM 59.7</div>
-        </div>
-      </div>
-      <div class="final-pillar">
-        <div class="final-pnum">2</div>
-        <div class="final-pbody">
-          <h4>MoE 极致效率</h4>
-          <p>35B 仅 3B 激活，256 专家。速度是 27B Dense 的 2.4 倍。4060 8GB（Q4）到 A100（BF16）全谱系覆盖。</p>
-          <div class="ev">⚡ 2.4× vs 27B · 196 tok/s（4090 Q4）</div>
-        </div>
-      </div>
-      <div class="final-pillar">
-        <div class="final-pnum">3</div>
-        <div class="final-pbody">
-          <h4>1M 上下文 · 长视频原生</h4>
-          <p>1M tokens 可处理 2 小时视频。27B 只能 30 分钟（262K），超长视频需分片拼接。</p>
-          <div class="ev">📹 2h 一次性推理 vs 27B 需分片</div>
-        </div>
-      </div>
-      <div class="final-pillar">
-        <div class="final-pnum">4</div>
-        <div class="final-pbody">
-          <h4>Apache 2.0 + 中文生态</h4>
-          <p>全框架支持（vLLM/llama.cpp/SGLang），社区最活跃。</p>
-          <div class="ev">🔓 201 语言 · 阿里持续维护</div>
-        </div>
-      </div>
-    </div>
-    <div class="final-right">
-      <h3>📋 部署方案</h3>
-      <p><strong>最低（Caption 离线）：</strong>RTX 4060 8GB · Q4</p>
-      <p><strong>推荐（生产）：</strong>RTX 4090 24GB · FP8 · 196 tok/s</p>
-      <p><strong>高吞吐（多视频并发）：</strong>2-4× A100 · Tensor Parallel</p>
-    </div>
+
+<div class="slide-content three-card-layout">
+  <div class="section-header">
+    <p class="section-label">MODEL SELECTION</p>
+    <h2>最终选择：Qwen3-VL-32B MoE</h2>
+    <p class="body-text" style="margin-top:4px;font-size:13px;">32B 参数 · MoE 仅 3B 激活 · Video-MME 74.5% · INT4 后约 8GB 单卡推理</p>
   </div>
-  <div class="final-spec">
-    <div class="final-spec-item"><span class="fn">86.6</span><span class="fl">Video-MME</span></div>
-    <div class="final-spec-item"><span class="fn">3B</span><span class="fl">激活参数</span></div>
-    <div class="final-spec-item"><span class="fn">1M</span><span class="fl">上下文</span></div>
-    <div class="final-spec-item"><span class="fn">2.4×</span><span class="fl">vs 27B 速度</span></div>
-    <div class="final-spec-item"><span class="fn">196</span><span class="fl">tok/s 4090</span></div>
-    <div class="final-spec-item"><span class="fn">Apache 2.0</span><span class="fl">开源</span></div>
+  <div class="cards-row">
+    <div class="info-card">
+      <div class="card-accent green-accent"></div>
+      <h3>🎯 MoE 架构红利</h3>
+      <p>32B 参数仅 3B 激活。INT4 后约 8GB 单卡推理，质量接近 72B 级别（Video-MME 74.5% vs ~77%+），显存需求少 <strong>4.5 倍</strong>。</p>
+    </div>
+    <div class="info-card">
+      <div class="card-accent green-accent"></div>
+      <h3>📹 原生视频 120fps</h3>
+      <p>不是帧采样后拼接——是模型原生接受视频流，内部时序编码。帧采样丢失帧间运动信息，原生视频保留动作连贯性。</p>
+    </div>
+    <div class="info-card">
+      <div class="card-accent green-accent"></div>
+      <h3>🧠 Thinking 模式 + 长视频</h3>
+      <p>Chain-of-Thought 推理——先分析再描述。20+ 分钟连续理解，长会议、监控录像不需要切分再拼合。</p>
+    </div>
   </div>
 </div>
 </div>
