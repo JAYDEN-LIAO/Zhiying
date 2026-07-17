@@ -1,0 +1,1451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cerno · 视频语义分析引擎</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: #1a1d23;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+/* ── Slide Container ── */
+#presentation {
+  position: relative;
+  width: min(1024px, 95vw);
+  aspect-ratio: 16 / 9;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 25px 80px -12px rgba(0,0,0,0.5);
+}
+
+.slide {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+  background: linear-gradient(135deg, #e4eaf4 0%, #d8e5ef 20%, #e6f0ed 50%, #f4f5f7 100%);
+  display: flex;
+  flex-direction: column;
+}
+.slide.active {
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 2;
+}
+
+/* ── Fluid Blobs (shared) ── */
+.blob-blue {
+  position: absolute; z-index: 0; pointer-events: none;
+  background: radial-gradient(circle at 40% 45%, rgba(135,178,245,0.35) 0%, rgba(135,178,245,0) 60%);
+  filter: blur(70px);
+}
+.blob-green {
+  position: absolute; z-index: 0; pointer-events: none;
+  background: radial-gradient(circle at 50% 40%, rgba(144,212,194,0.45) 0%, rgba(144,212,194,0) 55%);
+  filter: blur(50px);
+}
+.blob-left {
+  position: absolute; z-index: 0; pointer-events: none;
+  background: radial-gradient(circle at 30% 50%, rgba(26,101,225,0.20) 0%, rgba(26,101,225,0) 60%);
+  filter: blur(80px);
+}
+.blob-right {
+  position: absolute; z-index: 0; pointer-events: none;
+  background: radial-gradient(circle at 50% 40%, rgba(52,211,153,0.25) 0%, rgba(52,211,153,0) 55%);
+  filter: blur(60px);
+}
+
+/* ── Shared Text Styles ── */
+.section-label {
+  font-size: 11px; font-weight: 600; color: #1a65e1;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+h2 {
+  font-size: clamp(22px, 3vw, 32px); font-weight: 700; color: #111827;
+  line-height: 1.2; margin-bottom: 12px;
+}
+.body-text { font-size: clamp(12px, 1.3vw, 14px); color: #4b5563; line-height: 1.6; }
+.glass-card {
+  background: linear-gradient(135deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0.5) 100%);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.6);
+  border-radius: 14px;
+  padding: 18px 22px;
+  box-shadow: 0 4px 24px -6px rgba(0,0,0,0.04);
+}
+.card-accent {
+  height: 3px; border-radius: 3px 3px 0 0; margin: -1px -1px 12px -1px;
+}
+.blue-accent { background: #1a65e1; }
+.green-accent { background: #34d399; }
+
+
+.cover-layout h1 {
+  font-size: clamp(28px, 4.5vw, 52px); font-weight: 800;
+  color: #1a65e1; letter-spacing: -0.02em; line-height: 1.1;
+  margin-bottom: 12px;
+}
+.cover-layout .subtitle {
+  font-size: clamp(13px, 1.6vw, 20px); font-weight: 400;
+  color: #6b7280; letter-spacing: 0.02em;
+}
+.cover-layout .tagline-row { display: flex; gap: clamp(8px, 1.5vw, 16px); justify-content: center; margin-top: clamp(20px, 3vw, 32px); flex-wrap: wrap; }
+.cover-layout .tag {
+  font-size: clamp(11px, 1.1vw, 13px); font-weight: 500;
+  color: #6b7280;
+  padding: 6px 16px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0.5));
+  backdrop-filter: blur(20px);
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.6);
+}
+.cover-layout .version { margin-top: clamp(28px, 4vw, 48px); font-size: clamp(11px, 1vw, 13px); color: #9ca3af; }
+
+/* Two Column */
+.two-col-layout { flex-direction: row !important; gap: clamp(16px, 2.5vw, 32px); }
+.two-col-layout .col-left { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+.two-col-layout .col-right { flex: 1; display: flex; flex-direction: column; gap: 12px; justify-content: center; }
+.lead-text { font-size: clamp(14px, 1.6vw, 18px); font-weight: 500; color: #111827; line-height: 1.4; margin-bottom: 12px; }
+
+.feature-card {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border-radius: 14px; padding: 18px 20px;
+  box-shadow: 0 2px 8px -2px rgba(0,0,0,0.10), 0 8px 24px -6px rgba(0,0,0,0.12), 0 16px 48px -12px rgba(0,0,0,0.08);
+}
+.feature-card .card-icon { font-size: 24px; margin-bottom: 6px; }
+.feature-card h3 { font-size: clamp(13px, 1.2vw, 15px); font-weight: 700; color: #1a65e1; margin-bottom: 6px; }
+.feature-card p { font-size: clamp(11px, 1vw, 13px); color: #4b5563; line-height: 1.5; }
+
+/* Three Card Layout */
+.three-card-layout .section-header { margin-bottom: clamp(8px, 1.2vw, 14px); }
+.cards-row { display: flex; gap: clamp(10px, 1.5vw, 18px); flex:1; }
+.info-card {
+  flex: 1;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border-radius: 14px; padding: 18px 18px;
+  box-shadow: 0 2px 8px -2px rgba(0,0,0,0.10), 0 8px 24px -6px rgba(0,0,0,0.12);
+  display: flex; flex-direction: column;
+}
+.info-card h3 { font-size: clamp(12px, 1.2vw, 15px); font-weight: 700; color: #111827; margin-bottom: 8px; }
+.info-card p { font-size: clamp(10px, 0.95vw, 12px); color: #4b5563; line-height: 1.5; }
+.three-wide { display: flex; gap: clamp(10px, 1.5vw, 18px); flex:1; }
+
+/* Quadrant Layout */
+.quadrant-layout .top-row { display: flex; gap: 14px; margin-bottom: 12px; }
+.stat-box { flex:1; text-align:center; background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); border-radius: 12px; padding: 14px 8px; box-shadow: 0 2px 6px -2px rgba(0,0,0,0.08); }
+.stat-num { display:block; font-size:clamp(18px,2vw,26px); font-weight:800; color:#1a65e1; line-height:1.1; }
+.stat-label { display:block; font-size:clamp(9px,0.9vw,11px); color:#6b7280; margin-top:4px; }
+.main-area { flex:1; display:flex; gap:12px; min-height:0; }
+.quadrant-chart { flex:3; min-height:0; }
+.quadrant-note { width:260px; flex-shrink:0; display:flex; align-items:center; }
+.quadrant-note p { font-size:12px; color:#374151; line-height:1.6; }
+
+/* Three Stack (competitors) */
+.three-stack-layout .stack-row { display:flex; gap:clamp(10px,1.5vw,18px); margin-bottom:16px; }
+.mini-card { flex:1; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:12px; padding:14px 16px; box-shadow:0 2px 6px -2px rgba(0,0,0,0.08); }
+.mini-card h3 { font-size:14px; font-weight:700; color:#111827; margin-bottom:4px; }
+.mini-tag { display:inline-block; font-size:9px; font-weight:600; color:#1a65e1; background:rgba(26,101,225,0.1); padding:2px 8px; border-radius:6px; margin-bottom:6px; }
+.mini-card p { font-size:11px; color:#4b5563; line-height:1.5; }
+.diff-section h3 { font-size:16px; font-weight:700; color:#111827; margin-bottom:10px; }
+.diff-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.diff-item { display:flex; align-items:flex-start; gap:10px; }
+.diff-num { width:22px; height:22px; border-radius:50%; background:#1a65e1; color:white; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.diff-item strong { display:block; font-size:12px; color:#111827; }
+.diff-desc { display:block; font-size:10px; color:#6b7280; margin-top:2px; }
+
+/* Split Layout */
+.split-layout { flex-direction:row !important; gap:clamp(16px,2.5vw,32px); }
+.split-left { flex:1; display:flex; flex-direction:column; }
+.split-right { flex:1; display:flex; flex-direction:column; gap:12px; }
+.engine-list { display:flex; flex-direction:column; gap:10px; margin-top:12px; }
+.engine-item { display:flex; align-items:flex-start; gap:8px; font-size:11px; color:#4b5563; line-height:1.5; }
+.engine-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; margin-top:4px; }
+.highlight-card { background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:12px; padding:14px 16px; box-shadow:0 2px 6px -2px rgba(0,0,0,0.08); }
+.highlight-card h3 { font-size:13px; font-weight:700; color:#111827; margin-bottom:8px; }
+.metric-row { display:flex; gap:12px; }
+.metric-row > div { text-align:center; flex:1; }
+.metric-num { display:block; font-size:18px; font-weight:800; color:#1a65e1; }
+.metric-lbl { display:block; font-size:9px; color:#6b7280; margin-top:2px; }
+.moat-card { background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:12px; padding:14px 16px; box-shadow:0 2px 6px -2px rgba(0,0,0,0.08); }
+.moat-card h3 { font-size:13px; font-weight:700; color:#111827; margin-bottom:6px; }
+.moat-card p { font-size:11px; color:#4b5563; line-height:1.5; }
+.learn-tag { display:inline-block; font-size:10px; color:#1a65e1; background:rgba(26,101,225,0.08); padding:4px 10px; border-radius:8px; margin-top:8px; }
+
+/* Top Title Layout */
+.top-title-layout .model-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.model-family { background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:10px; padding:12px 14px; box-shadow:0 1px 4px -1px rgba(0,0,0,0.06); }
+.fam-header { font-size:12px; font-weight:700; color:#111827; margin-bottom:4px; display:flex; align-items:center; gap:6px; }
+.fam-dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
+.model-family p { font-size:11px; color:#4b5563; line-height:1.5; }
+.model-family.selected { border-left:3px solid #1a65e1; }
+.model-family.excluded { opacity:0.5; }
+.note-bar { background:rgba(255,255,255,0.6); border-radius:8px; padding:8px 14px; font-size:11px; color:#6b7280; margin-top:8px; }
+
+/* Funnel */
+.funnel-layout .funnel-svg-wrap { flex:1; min-height:0; display:flex; }
+
+/* Tier Layout */
+.tier-layout .tier-row { display:flex; gap:12px; flex:1; align-items:stretch; }
+.tier-card { flex:1; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:14px; padding:16px; box-shadow:0 2px 8px -2px rgba(0,0,0,0.10); display:flex; flex-direction:column; position:relative; overflow:hidden; }
+.tier-badge { display:inline-block; font-size:9px; font-weight:600; padding:3px 10px; border-radius:10px; margin-bottom:8px; align-self:flex-start; }
+.l1 .tier-badge { background:rgba(52,211,153,0.15); color:#34d399; }
+.l2 .tier-badge { background:rgba(26,101,225,0.12); color:#1a65e1; }
+.l3 .tier-badge { background:rgba(79,147,237,0.12); color:#4f93ed; }
+.l4 .tier-badge { background:rgba(103,196,192,0.12); color:#67c4c0; }
+.tier-card h3 { font-size:15px; font-weight:700; color:#111827; }
+.tier-cost { font-size:28px; font-weight:800; color:#1a65e1; margin:4px 0 8px; }
+.tier-card p { font-size:11px; color:#4b5563; line-height:1.5; flex:1; }
+
+/* Model Summary 5 */
+.summary-5-layout .summary-5-grid { display:flex; gap:12px; flex:1; align-items:stretch; }
+.s5-card { flex:1; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:12px; padding:14px 12px; box-shadow:0 2px 6px -2px rgba(0,0,0,0.08); text-align:center; display:flex; flex-direction:column; }
+.s5-icon { font-size:22px; margin-bottom:4px; }
+.s5-card h3 { font-size:12px; font-weight:700; color:#111827; }
+.s5-model { font-size:11px; font-weight:600; color:#1a65e1; margin:4px 0; }
+.s5-reason { font-size:10px; color:#6b7280; line-height:1.4; flex:1; }
+.methodology-bar { background:rgba(255,255,255,0.6); border-radius:10px; padding:10px 16px; font-size:11px; color:#4b5563; text-align:center; margin-top:8px; }
+
+/* DAG Layout */
+.dag-layout { flex-direction:row !important; gap:clamp(16px,2.5vw,32px); }
+.dag-left { flex:1; display:flex; flex-direction:column; }
+.dag-right { flex:1; min-height:0; display:flex; align-items:center; }
+.dag-benefits { margin-top:10px; display:flex; flex-direction:column; gap:8px; }
+.dag-benefit { font-size:12px; color:#374151; line-height:1.4; }
+.dag-check { margin-right:6px; }
+
+/* Search Flow */
+.search-flow-layout .search-body { flex:1; display:flex; flex-direction:column; gap:12px; }
+.search-query { text-align:center; font-size:14px; color:#374151; }
+.search-paths { display:flex; gap:10px; flex:1; }
+.path-card { flex:1; border-radius:12px; padding:12px 14px; display:flex; flex-direction:column; }
+.path-frame { background:linear-gradient(180deg,rgba(79,147,237,0.08),rgba(79,147,237,0.02)); border:1px solid rgba(79,147,237,0.2); }
+.path-chunk { background:linear-gradient(180deg,rgba(96,201,168,0.08),rgba(96,201,168,0.02)); border:1px solid rgba(96,201,168,0.2); }
+.path-text { background:linear-gradient(180deg,rgba(103,196,192,0.08),rgba(103,196,192,0.02)); border:1px solid rgba(103,196,192,0.2); }
+.path-label { background:linear-gradient(180deg,rgba(156,163,175,0.08),rgba(156,163,175,0.02)); border:1px solid rgba(156,163,175,0.2); }
+.path-head { font-size:13px; font-weight:700; color:#111827; margin-bottom:4px; }
+.path-detail { font-size:11px; color:#4b5563; }
+.path-precision { font-size:10px; margin:4px 0; }
+.path-precision span { font-weight:600; }
+.path-frame .path-precision span { color:#4f93ed; }
+.path-chunk .path-precision span { color:#60c9a8; }
+.path-text .path-precision span { color:#67c4c0; }
+.search-merge { text-align:center; font-size:13px; color:#374151; }
+
+/* Param System */
+.param-layout .param-body { display:flex; gap:16px; flex:1; }
+.index-section { display:flex; flex-direction:column; gap:10px; flex:1; }
+.index-card { display:flex; align-items:flex-start; gap:10px; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:12px; padding:14px 16px; box-shadow:0 2px 6px -2px rgba(0,0,0,0.08); }
+.idx-num { width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:white; flex-shrink:0; }
+.idx-frame .idx-num { background:#4f93ed; }
+.idx-text .idx-num { background:#67c4c0; }
+.idx-chunk .idx-num { background:#34d399; }
+.index-card h3 { font-size:14px; font-weight:700; color:#111827; }
+.index-card p { font-size:11px; color:#6b7280; line-height:1.4; }
+.param-pyramid { flex:1; display:flex; align-items:center; }
+
+/* Tech Stack */
+.tech-layout .tech-body { flex:1; display:flex; flex-direction:column; gap:12px; }
+.tech-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.tech-item { display:flex; align-items:center; gap:8px; background:rgba(255,255,255,0.6); border-radius:8px; padding:8px 12px; font-size:11px; color:#374151; }
+.tech-cat { font-weight:700; color:#1a65e1; white-space:nowrap; font-size:10px; background:rgba(26,101,225,0.1); padding:2px 8px; border-radius:6px; }
+.status-cols { display:flex; gap:16px; flex:1; }
+.status-col { flex:1; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:12px; padding:14px 16px; box-shadow:0 2px 6px -2px rgba(0,0,0,0.08); }
+.status-col h3 { font-size:13px; font-weight:700; color:#111827; margin-bottom:8px; }
+.status-col ul { list-style:none; font-size:11px; color:#4b5563; line-height:1.8; }
+.status-col ul li::before { content:"▸ "; color:#34d399; }
+.road-item { font-size:11px; color:#374151; margin-bottom:6px; line-height:1.4; padding-left:4px; }
+.road-prio { display:inline-block; font-size:9px; font-weight:700; padding:1px 6px; border-radius:4px; margin-right:4px; }
+.p0 { background:rgba(52,211,153,0.15); color:#34d399; }
+.p1 { background:rgba(26,101,225,0.12); color:#1a65e1; }
+.p2 { background:rgba(156,163,175,0.2); color:#6b7280; }
+
+/* VS Layout */
+.vs-layout .vs-body { display:flex; gap:12px; flex:1; }
+.vs-col { flex:1; border-radius:12px; padding:14px 16px; display:flex; flex-direction:column; }
+.vs-red { background:linear-gradient(180deg,rgba(239,68,68,0.05),rgba(239,68,68,0.01)); border:1px solid rgba(239,68,68,0.12); }
+.vs-blue { background:linear-gradient(180deg,rgba(26,101,225,0.05),rgba(26,101,225,0.01)); border:1px solid rgba(26,101,225,0.12); }
+.vs-mid { background:linear-gradient(180deg,rgba(103,196,192,0.05),rgba(103,196,192,0.01)); border:1px solid rgba(103,196,192,0.12); }
+.vs-col h3 { font-size:15px; font-weight:700; margin-bottom:10px; }
+.vs-red h3 { color:#dc2626; }
+.vs-blue h3 { color:#1a65e1; }
+.vs-mid h3 { color:#67c4c0; }
+.vs-col ul { list-style:none; font-size:11px; color:#374151; line-height:1.9; }
+.vs-col ul li::before { content:"• "; margin-right:4px; }
+.vs-red ul li::before { color:#dc2626; }
+.vs-blue ul li::before { color:#1a65e1; }
+.vs-col p { font-size:11px; color:#4b5563; line-height:1.5; }
+.vs-mid-title { font-size:11px; font-weight:700; color:#374151; margin-top:4px; }
+
+/* Compact List (roadmap) */
+.compact-list { display:flex; flex-direction:column; gap:8px; }
+.compact-item { display:flex; align-items:flex-start; gap:6px; font-size:11px; color:#374151; line-height:1.4; }
+.compact-check { width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; flex-shrink:0; }
+.compact-check.green { background:rgba(52,211,153,0.15); color:#34d399; }
+.compact-check.blue { background:rgba(26,101,225,0.12); color:#1a65e1; }
+
+/* Paradigm Grid */
+.paradigm-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; flex:1; }
+.paradigm-card { border-radius:10px; overflow:hidden; box-shadow:0 2px 6px -2px rgba(0,0,0,0.08); }
+.para-header { color:white; font-size:12px; font-weight:700; padding:8px 12px; }
+.para-body { background:white; padding:10px 12px; }
+.para-example { font-size:11px; font-weight:600; color:#1a65e1; margin-bottom:4px; }
+.para-body p { font-size:11px; color:#4b5563; line-height:1.5; }
+.paradigm-card.highlighted { box-shadow:0 0 0 2px #1a65e1; }
+
+/* Route list */
+.route-list { display:flex; flex-direction:column; gap:8px; margin:8px 0; }
+.route-item { display:flex; align-items:center; gap:8px; font-size:12px; color:#374151; }
+.route-badge { font-size:9px; font-weight:700; color:white; padding:3px 8px; border-radius:6px; white-space:nowrap; }
+
+/* Bench compare */
+.bench-compare { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+.bench-row { display:flex; align-items:center; gap:8px; }
+.bench-model { width:130px; font-size:11px; color:#374151; text-align:right; }
+.bench-bar { flex:1; height:18px; background:#f3f4f6; border-radius:9px; overflow:hidden; }
+.bench-bar > div { height:100%; border-radius:9px; }
+.bench-score { width:30px; font-size:12px; font-weight:700; color:#1a65e1; }
+
+/* Summary Close */
+.summary-close-layout { position:relative; }
+.close-content { position:relative; z-index:1; flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+.close-content h2 { font-size:clamp(28px,4vw,44px); font-weight:800; color:#1a65e1; margin-bottom:8px; }
+.close-tagline { font-size:clamp(14px,1.5vw,18px); font-weight:500; color:#111827; max-width:700px; line-height:1.4; margin-bottom:clamp(20px,3vw,36px); }
+.close-counters { display:flex; gap:clamp(16px,2.5vw,32px); margin-bottom:clamp(20px,3vw,36px); }
+.close-stat { text-align:center; }
+.close-num { display:block; font-size:clamp(28px,3.5vw,42px); font-weight:800; color:#1a65e1; line-height:1; }
+.close-label { display:block; font-size:clamp(9px,1vw,12px); color:#6b7280; margin-top:4px; line-height:1.3; }
+.close-footer { font-size:clamp(11px,1.1vw,14px); color:#4b5563; max-width:800px; line-height:1.6; }
+
+/* Responsive text size tweaks for small screens */
+@media (max-width: 600px) {
+  .two-col-layout { flex-direction:column !important; }
+  .cards-row { flex-direction:column; }
+  .tier-row { flex-direction:column; }
+  .summary-5-grid { flex-direction:column; }
+  .search-paths { flex-direction:column; }
+  .vs-body { flex-direction:column; }
+  .paradigm-grid { grid-template-columns:1fr; }
+  .status-cols { flex-direction:column; }
+  .model-grid { grid-template-columns:1fr; }
+  .three-wide { flex-direction:column; }
+  .three-stack-layout .stack-row { flex-direction:column; }
+  .main-area { flex-direction:column; }
+  .param-body { flex-direction:column; }
+  .diff-grid { grid-template-columns:1fr; }
+  .split-layout { flex-direction:column !important; }
+  .dag-layout { flex-direction:column !important; }
+  .quadrant-note { width:100%; }
+  .close-counters { flex-wrap:wrap; justify-content:center; }
+}
+</style>
+</head>
+<body>
+
+<div id="presentation">
+<div class="slide active" data-index="0">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content cover-layout">
+  <img class="logo" src="data:image/png;base64,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" alt="Cerno">
+  <h1>Cerno — 通用视频语义分析引擎</h1>
+  <p class="subtitle">完全本地部署 · 声明式 DAG 驱动 · 3 路并行语义编码</p>
+  <div class="tagline-row">
+    <span class="tag">🎥 自动摘要</span>
+    <span class="tag">🔍 自然语言搜索</span>
+    <span class="tag">🔒 数据不出域</span>
+  </div>
+  <p class="version">v0.8 / 2026.07</p>
+</div>
+</div>
+<!-- Slide 2 removed -->
+<div class="slide" data-index="1">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-right" style="bottom:0;right:0;width:25%;height:45%"></div>
+
+<div class="slide-content quadrant-layout">
+  <div class="top-row">
+    <div class="stat-box"><span class="stat-num">$422亿</span><span class="stat-label">AI 视频分析市场 2030</span></div>
+    <div class="stat-box"><span class="stat-num">90%+</span><span class="stat-label">自托管 vs 公共 API 成本降低</span></div>
+    <div class="stat-box"><span class="stat-num">87%</span><span class="stat-label">大型企业正在部署 AI</span></div>
+  </div>
+  <div class="main-area">
+    <div class="quadrant-chart">
+      <svg viewBox="0 0 520 440" style="width:100%;height:100%">
+        <!-- Axes -->
+        <line x1="60" y1="360" x2="480" y2="360" stroke="#374151" stroke-width="1.5"/>
+        <line x1="60" y1="60" x2="60" y2="360" stroke="#374151" stroke-width="1.5"/>
+        <!-- Axis labels -->
+        <text x="260" y="395" text-anchor="middle" fill="#374151" font-size="11" font-family="Inter" font-weight="500">视频综合分析能力 →</text>
+        <text x="30" y="210" text-anchor="middle" fill="#374151" font-size="11" font-family="Inter" font-weight="500" transform="rotate(-90,30,210)">数据隐私 / 部署可控性 →</text>
+        <!-- Arrow labels -->
+        <text x="480" y="355" text-anchor="end" fill="#374151" font-size="10" font-family="Inter" font-weight="600">深</text>
+        <text x="60" y="355" text-anchor="start" fill="#374151" font-size="10" font-family="Inter" font-weight="600">浅</text>
+        <text x="56" y="60" text-anchor="end" fill="#374151" font-size="10" font-family="Inter" font-weight="600">高</text>
+        <text x="56" y="365" text-anchor="end" fill="#374151" font-size="10" font-family="Inter" font-weight="600">低</text>
+        <!-- Quadrant labels (faded) -->
+        <text x="140" y="120" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私好·能力弱</text>
+        <text x="380" y="120" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私好·能力强</text>
+        <text x="140" y="280" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私差·能力弱</text>
+        <text x="380" y="280" text-anchor="middle" fill="#e5e7eb" font-size="18" font-family="Inter" font-weight="700">隐私差·能力强</text>
+        <!-- Dots: Cerno green dot, no label -->
+        <circle cx="295" cy="130" r="22" fill="#34d399" opacity="0.15"/>
+        <circle cx="295" cy="130" r="12" fill="#34d399" stroke="white" stroke-width="3"/>
+        <!-- 绝影 -->
+        <circle cx="340" cy="130" r="7" fill="#67c4c0" stroke="white" stroke-width="2"/>
+        <text x="340" y="112" text-anchor="middle" fill="#67c4c0" font-size="10" font-weight="600" font-family="Inter">绝影</text>
+        <!-- Twelve Labs -->
+        <circle cx="410" cy="280" r="7" fill="#5ca8e8" stroke="white" stroke-width="2"/>
+        <text x="410" y="300" text-anchor="middle" fill="#5ca8e8" font-size="10" font-weight="600" font-family="Inter">Twelve Labs</text>
+        <!-- Mixpeek -->
+        <circle cx="310" cy="260" r="7" fill="#5799e9" stroke="white" stroke-width="2"/>
+        <text x="310" y="278" text-anchor="middle" fill="#5799e9" font-size="10" font-weight="600" font-family="Inter">Mixpeek</text>
+        <!-- txtai -->
+        <circle cx="140" cy="140" r="7" fill="#4f93ed" stroke="white" stroke-width="2"/>
+        <text x="140" y="122" text-anchor="middle" fill="#4f93ed" font-size="10" font-weight="600" font-family="Inter">txtai</text>
+        <!-- VideoDB -->
+        <circle cx="280" cy="200" r="7" fill="#63b4e0" stroke="white" stroke-width="2"/>
+        <text x="280" y="218" text-anchor="middle" fill="#63b4e0" font-size="10" font-weight="600" font-family="Inter">VideoDB</text>
+        <!-- Cloud giants -->
+        <circle cx="120" cy="310" r="7" fill="#d1d5db" stroke="white" stroke-width="2"/>
+        <text x="120" y="328" text-anchor="middle" fill="#d1d5db" font-size="10" font-weight="600" font-family="Inter">云巨头</text>
+        <!-- Chart title below axis -->
+        <text x="260" y="418" text-anchor="middle" fill="#6b7280" font-size="10" font-family="Inter">竞品定位图 — 二维散点（X 轴：视频综合分析能力 · Y 轴：数据隐私/部署可控性）</text>
+      </svg>
+    </div>
+    <div class="quadrant-note glass-card">
+      <p>当前市场上的竞品存在一个结构性空白：<strong>做深度视频分析的不能本地部署</strong>（Twelve Labs、Mixpeek 均为纯云 API），<strong>能本地部署的不做深度视频分析</strong>（绝影为公安封闭场景专项、txtai 用通用模型套视频）。<br><br>Cerno 是唯一在「<strong>深度视频分析</strong>」×「<strong>全本地部署</strong>」两个维度同时做到可用的方案——既有 Qwen3 家族视频原生编码的开源模型栈，又有声明式 DAG 保证扩展性，同时数据完全不出域。</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="2">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<style>
+.tl-flow { display:flex; flex-direction:row; gap:clamp(14px,2vw,24px); flex:1; }
+.tl-left { flex:1; display:flex; flex-direction:column; }
+.tl-right { flex:1; display:flex; flex-direction:column; justify-content:center; }
+.tl-prod { background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:12px; padding:clamp(10px,1.1vw,16px); box-shadow:0 2px 8px -2px rgba(0,0,0,0.10),0 8px 24px -6px rgba(0,0,0,0.12); margin-top:6px; }
+.tl-prod h3 { font-size:clamp(13px,1.2vw,15px); font-weight:700; color:#111827; margin-bottom:6px; }
+.tl-prod p { font-size:clamp(10px,0.9vw,11px); color:#4b5563; line-height:1.6; }
+.tl-pillars { display:flex; gap:8px; margin-top:8px; }
+.tl-pillars span { flex:1; text-align:center; font-size:clamp(9px,0.8vw,10px); background:rgba(26,101,225,0.06); border-radius:6px; padding:4px 6px; color:#4f93ed; font-weight:500; }
+.tl-procon { display:flex; gap:10px; margin-top:8px; }
+.tl-pro { flex:1; background:rgba(52,211,153,0.06); border-radius:8px; padding:8px 10px; }
+.tl-con { flex:1; background:rgba(239,68,68,0.04); border-radius:8px; padding:8px 10px; }
+.tl-pro p, .tl-con p { font-size:clamp(9px,0.8vw,10px); line-height:1.5; }
+.tl-pro p:first-child { font-weight:600; color:#34d399; margin-bottom:3px; }
+.tl-con p:first-child { font-weight:600; color:#ef4444; margin-bottom:3px; }
+.tl-step { display:flex; align-items:flex-start; gap:10px; padding:clamp(5px,0.6vw,8px) 0; position:relative; }
+.tl-step:not(:last-child)::after { content:''; position:absolute; left:13px; top:28px; width:2px; height:calc(100% - 14px); background:linear-gradient(180deg,#1a65e1,#34d399); }
+.tl-num { width:28px; height:28px; border-radius:50%; background:#1a65e1; color:white; font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; z-index:1; }
+.tl-body { flex:1; }
+.tl-body .tl-label { font-size:clamp(11px,1vw,13px); font-weight:700; color:#111827; }
+.tl-body .tl-text { font-size:clamp(9px,0.8vw,10px); color:#4b5563; line-height:1.5; margin-top:2px; }
+</style>
+<div class="slide-content tl-flow">
+  <div class="tl-left">
+    <p class="section-label">COMPETITIVE ANALYSIS</p>
+    <h2>Twelve Labs — 行业标杆</h2>
+    <p class="body-text" style="font-size:clamp(11px,1vw,12px);">视频语义搜索标杆，累计融资 $207M。2025-2026 年产品线升级。</p>
+    <div class="tl-prod">
+      <h3>Marengo 3.0 — 原生视频嵌入</h3>
+      <p>覆盖 visual/audio/speech/text 四路信号，512 维空间。36 语种，4h 视频。语义/实体/组合三种检索。索引速度 2x，存储减半。</p>
+    </div>
+    <div class="tl-prod" style="margin-top:6px;">
+      <h3>Pegasus 1.5 — 视频推理</h3>
+      <p>视频→结构化 JSON（场景/实体/事件/情感/品牌安全）。跨查询持久记忆。</p>
+      <div class="tl-pillars">
+        <span>👁 Perception</span>
+        <span>🧠 Memory</span>
+        <span>⚡ Reasoning</span>
+      </div>
+    </div>
+    <div class="tl-procon">
+      <div class="tl-pro"><p>✅ Cerno 认可</p><span>产品成熟·512 维高密度<br>AWS Bedrock 集成</span></div>
+      <div class="tl-con"><p>❌ 纯云 API 天花板</p><span>数据出境·厂商锁定<br>$2.61/h · 不可验证</span></div>
+    </div>
+  </div>
+  <div class="tl-right">
+    <p style="font-size:clamp(12px,1.1vw,14px);font-weight:600;color:#111827;margin-bottom:4px;">🎯 三个关键决策——Cerno 的回应</p>
+    <div class="tl-step">
+      <div class="tl-num">1</div>
+      <div class="tl-body">
+        <div class="tl-label">Embedding：专有 512 维 → 开源 2048 维</div>
+        <div class="tl-text">Marengo 512 维专有 → Qwen3-VL-Emb-8B（MMEB-V2 77.8 公开第一）。4x 存储精度换，当前可接受。</div>
+      </div>
+    </div>
+    <div class="tl-step">
+      <div class="tl-num">2</div>
+      <div class="tl-body">
+        <div class="tl-label">检索：单路混合 → 3 路并行精度分层</div>
+        <div class="tl-text">Twelve Labs 单一路径 → Cerno 帧×1.0 + 文本×0.85 + chunk×0.7，帧簇优先合并。</div>
+      </div>
+    </div>
+    <div class="tl-step">
+      <div class="tl-num">3</div>
+      <div class="tl-body">
+        <div class="tl-label">摘要：Pegasus 专有 → 四级升降</div>
+        <div class="tl-text">专有模型不可复制 → 零成本聚合器 → DeepSeek V3（￥8）→ R1（￥16）→ 自部署。</div>
+      </div>
+    </div>
+    <div class="glass-card" style="padding:8px 14px;margin-top:4px;text-align:center;">
+      <p style="font-size:clamp(10px,0.9vw,11px);color:#1a65e1;font-weight:500;">Twelve Labs 告诉我们「该做成什么样」，也暴露了纯云 API 的天花板</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="3">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
+
+<div class="slide-content split-layout">
+  <div class="split-left">
+    <p class="section-label">COMPETITIVE ANALYSIS</p>
+    <h2>绝影V3.0</h2>
+    <p class="body-text" style="margin-top:8px;">北京多维视通（中科院自动化所背景），公安视频侦查装备。以自研「多维视界大模型」为底座。</p>
+    <div class="engine-list">
+      <div class="engine-item"><div class="engine-dot" style="background:#4f93ed"></div><strong>文搜图大模型</strong> — 共享字典 Codebook 跨模态对齐，支持模糊自然语言检索</div>
+      <div class="engine-item"><div class="engine-dot" style="background:#5ca8e8"></div><strong>REID 大模型</strong> — 人体先验自监督预训练，20+ 维度特征融合，换装可识别</div>
+      <div class="engine-item"><div class="engine-dot" style="background:#67c4c0"></div><strong>目标检测大模型</strong> — 与文搜图/REID 协同，大幅降低误报率</div>
+    </div>
+  </div>
+  <div class="split-right">
+    <div class="highlight-card">
+      <h3>📊 关键指标</h3>
+      <div class="metric-row">
+        <div><span class="metric-num">60-360x</span><span class="metric-lbl">倍速处理</span></div>
+        <div><span class="metric-num">29 省</span><span class="metric-lbl">公安代表队</span></div>
+        <div><span class="metric-num">120h→1h</span><span class="metric-lbl">视频压缩筛查</span></div>
+      </div>
+    </div>
+    <div class="moat-card">
+      <h3>🏰 真正的护城河</h3>
+      <p>不是模型——是「影系列」完整产品生态（掠影→绝影→猎影→汇影→火影）、技战法体系、多源硬件接入（GB28181/DVR/NVR）、信创适配。十余年深耕公安的生态积累。</p>
+      <div class="learn-tag">Cerno 可学习：YOLO 检测集成、REID 开源方案、Codebook 技术储备</div>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="4">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content three-stack-layout">
+  <div class="stack-row">
+    <div class="mini-card">
+      <h3>Mixpeek</h3>
+      <div class="mini-tag">架构最接近</div>
+      <p>多模态提取 pipeline + 多阶段检索。与 Cerno 3 路编码思路高度相似，但用通用图像嵌入 + 外部 API（Gemini）。</p>
+    </div>
+    <div class="mini-card">
+      <h3>VideoDB</h3>
+      <div class="mini-tag">Agent-first</div>
+      <p>「视频即数据」理念，Agent 驱动交互。与 Cerno 声明式 DAG 不同设计哲学——适合实时交互 vs 可配置批量分析。</p>
+    </div>
+    <div class="mini-card">
+      <h3>txtai</h3>
+      <div class="mini-tag">通用框架</div>
+      <p>Apache 2.0 开源的全能型 AI 框架。all-MiniLM-L6-v2（384 维）+ BLIP，证明通用框架套视频的局限性。</p>
+    </div>
+  </div>
+  <div class="diff-section">
+    <h3>Cerno 四个差异化锚点</h3>
+    <div class="diff-grid">
+      <div class="diff-item"><span class="diff-num">1</span><div><strong>全本地 + 全开源</strong><span class="diff-desc">唯一同时满足数据不出域 + 不锁定供应商的方案</span></div></div>
+      <div class="diff-item"><span class="diff-num">2</span><div><strong>声明式 DAG</strong><span class="diff-desc">新增感知模块只需 Runner + Operation 注册，引擎零改动</span></div></div>
+      <div class="diff-item"><span class="diff-num">3</span><div><strong>3 路并行检索 + 精度分层</strong><span class="diff-desc">帧级 1fps > 文本场景级 > chunk 窗口级，互补覆盖</span></div></div>
+      <div class="diff-item"><span class="diff-num">4</span><div><strong>四级摘要升降</strong><span class="diff-desc">默认零成本 Python 聚合器，不绑定单一方案</span></div></div>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="5">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+<style>
+.vlm-landscape { display:flex; flex-direction:column; }
+.vlm-leaderboard { flex:1; display:flex; flex-direction:column; gap:clamp(2px,0.25vw,4px); }
+.vlm-lb-row { display:flex; align-items:center; gap:clamp(4px,0.5vw,8px); padding:clamp(3px,0.3vw,5px) clamp(6px,0.6vw,10px); border-radius:6px; font-size:clamp(9px,0.8vw,10px); }
+.vlm-lb-row.prop { background:rgba(239,68,68,0.04); }
+.vlm-lb-row.open { background:rgba(52,211,153,0.04); }
+.vlm-lb-rank { width:clamp(16px,1.4vw,22px); text-align:center; font-weight:600; color:#6b7280; font-size:clamp(9px,0.8vw,10px); }
+.vlm-lb-model { width:clamp(120px,14vw,170px); font-weight:600; color:#111827; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.vlm-lb-score { width:clamp(34px,3.2vw,44px); text-align:center; font-weight:700; color:#1a65e1; font-family:monospace; font-size:clamp(10px,0.85vw,11px); }
+.vlm-lb-tag { font-size:clamp(7px,0.6vw,8px); padding:1px 6px; border-radius:4px; font-weight:600; }
+.vlm-lb-tag.closed { background:rgba(239,68,68,0.1); color:#dc2626; }
+.vlm-lb-tag.opensrc { background:rgba(52,211,153,0.12); color:#34d399; }
+.vlm-lb-bar-wrap { width:clamp(50px,5vw,80px); height:10px; background:#f3f4f6; border-radius:5px; overflow:hidden; }
+.vlm-lb-bar-wrap > div { height:100%; border-radius:5px; }
+.vlm-lb-deploy { width:clamp(80px,9vw,120px); text-align:center; font-size:clamp(8px,0.7vw,9px); color:#6b7280; line-height:1.3; white-space:nowrap; }
+.vlm-conclusion { background:linear-gradient(135deg,rgba(255,255,255,0.7),rgba(255,255,255,0.5)); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.6); border-radius:10px; padding:clamp(8px,0.8vw,12px) clamp(12px,1.2vw,16px); margin-top:clamp(4px,0.5vw,8px); display:flex; align-items:center; gap:12px; flex-shrink:0; }
+.vlm-conclusion strong { color:#1a65e1; }
+</style>
+<div class="slide-content vlm-landscape">
+  <p class="section-label">MODEL SELECTION · VLM</p>
+  <h2>VLM 全景排行 — 2026 年 7 月</h2>
+
+  <div class="vlm-leaderboard">
+    <div class="vlm-lb-row" style="background:none;box-shadow:none;font-size:clamp(8px,0.7vw,9px);color:#9ca3af;font-weight:600;border-bottom:1px solid #e5e7eb;padding-bottom:clamp(3px,0.3vw,5px);">
+      <span class="vlm-lb-rank">#</span>
+      <span class="vlm-lb-model">模型</span>
+      <span class="vlm-lb-score">Score</span>
+      <span class="vlm-lb-bar-wrap" style="background:transparent;height:auto;">得分</span>
+      <span style="width:40px;text-align:center">类型</span>
+      <span class="vlm-lb-deploy">完整/量化</span>
+      <span style="flex:0.8;text-align:center;">开发方</span>
+    </div>
+    <div class="vlm-lb-row prop">
+      <span class="vlm-lb-rank">1</span>
+      <span class="vlm-lb-model">Seed 2.1 Pro</span>
+      <span class="vlm-lb-score">89.2</span>
+      <div class="vlm-lb-bar-wrap"><div style="width:100%;background:#ef4444"></div></div>
+      <span class="vlm-lb-tag closed">闭源</span>
+      <span class="vlm-lb-deploy">仅云 API</span>
+      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">字节跳动</span>
+    </div>
+    <div class="vlm-lb-row open">
+      <span class="vlm-lb-rank">2</span>
+      <span class="vlm-lb-model">MiMo-V2.5 (311B)</span>
+      <span class="vlm-lb-score">87.7</span>
+      <div class="vlm-lb-bar-wrap"><div style="width:98%;background:#34d399"></div></div>
+      <span class="vlm-lb-tag opensrc">开源</span>
+      <span class="vlm-lb-deploy">A100×8 BF16</span>
+      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">小米</span>
+    </div>
+    <div class="vlm-lb-row open">
+      <span class="vlm-lb-rank">3</span>
+      <span class="vlm-lb-model">Qwen3.5-122B-A10B</span>
+      <span class="vlm-lb-score">87.3</span>
+      <div class="vlm-lb-bar-wrap"><div style="width:98%;background:#4f93ed"></div></div>
+      <span class="vlm-lb-tag opensrc">开源</span>
+      <span class="vlm-lb-deploy">A100×4 FP8</span>
+      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">阿里 Qwen 团队</span>
+    </div>
+    <div class="vlm-lb-row open">
+      <span class="vlm-lb-rank">4</span>
+      <span class="vlm-lb-model">Qwen3.5-27B (Dense)</span>
+      <span class="vlm-lb-score">87.0</span>
+      <div class="vlm-lb-bar-wrap"><div style="width:97%;background:#5ca8e8"></div></div>
+      <span class="vlm-lb-tag opensrc">开源</span>
+      <span class="vlm-lb-deploy">A100 FP16 / 24GB Q4</span>
+      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">阿里 Qwen 团队</span>
+    </div>
+    <div class="vlm-lb-row open">
+      <span class="vlm-lb-rank">5</span>
+      <span class="vlm-lb-model">Qwen3.5-35B-A3B</span>
+      <span class="vlm-lb-score">86.6</span>
+      <div class="vlm-lb-bar-wrap"><div style="width:97%;background:#1a65e1"></div></div>
+      <span class="vlm-lb-tag opensrc">开源</span>
+      <span class="vlm-lb-deploy">A100 FP8 / 20GB Q4</span>
+      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">阿里 Qwen 团队</span>
+    </div>
+    <div class="vlm-lb-row open">
+      <span class="vlm-lb-rank">6</span>
+      <span class="vlm-lb-model">Qwen3-Omni-30B-A3B</span>
+      <span class="vlm-lb-score">82.0¹</span>
+      <div class="vlm-lb-bar-wrap"><div style="width:92%;background:#63b4e0"></div></div>
+      <span class="vlm-lb-tag opensrc">开源</span>
+      <span class="vlm-lb-deploy">4090 FP8 / 20GB Q4</span>
+      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">阿里 Qwen 团队</span>
+    </div>
+    <div class="vlm-lb-row open">
+      <span class="vlm-lb-rank">7</span>
+      <span class="vlm-lb-model">VST-32B</span>
+      <span class="vlm-lb-score">67.2</span>
+      <div class="vlm-lb-bar-wrap"><div style="width:75%;background:#9ca3af"></div></div>
+      <span class="vlm-lb-tag opensrc">开源</span>
+      <span class="vlm-lb-deploy">A100 BF16 / 24GB Q4</span>
+      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">学术团队</span>
+    </div>
+    <div class="vlm-lb-row open">
+      <span class="vlm-lb-rank">8</span>
+      <span class="vlm-lb-model">MiniCPM-V 4.6 (1.3B)</span>
+      <span class="vlm-lb-score">59.7</span>
+      <div class="vlm-lb-bar-wrap"><div style="width:67%;background:#d1d5db"></div></div>
+      <span class="vlm-lb-tag opensrc">开源</span>
+      <span class="vlm-lb-deploy">任意显卡 FP16</span>
+      <span style="color:#6b7280;font-size:clamp(8px,0.7vw,9px);">面壁智能</span>
+    </div>
+  </div>
+
+  <div class="vlm-conclusion">
+    <span style="font-size:clamp(20px,2vw,28px);">📊</span>
+    <div>
+      <p style="font-size:clamp(11px,0.95vw,12px);color:#374151;"><strong>Qwen3.5 家族</strong>在开源 VLM 中形成断层领先：前 6 名中 5 席来自 Qwen 团队。<strong>35B-A3B</strong> 的 Video-MME 为 86.6，略低于同族 27B Dense（87.0）和 122B-A10B（87.3），但 MoE 架构仅 3B 激活参数，推理速度快 2.4 倍，上下文 4 倍。数据来源于各模型官方 Model Card。¹Qwen3-Omni 为 Video-MME short 分数。</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="6">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
+<style>
+.qwen-compact { display:flex; flex-direction:column; }
+.qw-table { flex:1; border-collapse:separate; border-spacing:0 3px; font-size:clamp(9px,0.8vw,10px); width:100%; }
+.qw-table th { text-align:left; padding:6px 8px; background:rgba(26,101,225,0.06); border-radius:4px; font-weight:600; color:#374151; }
+.qw-table td { padding:6px 8px; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:4px; }
+.qw-table .m { font-weight:500; color:#6b7280; }
+.qw-table .v { font-weight:600; color:#111827; }
+.qw-table .win { background:rgba(26,101,225,0.08); }
+.qw-table .hl { color:#1a65e1; }
+.qw-bar { background:linear-gradient(135deg,rgba(255,255,255,0.7),rgba(255,255,255,0.5)); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.6); border-radius:8px; padding:6px 12px; margin-top:6px; font-size:clamp(9px,0.8vw,10px); color:#374151; display:flex; gap:16px; flex-shrink:0; }
+.qw-bar strong { color:#1a65e1; }
+</style>
+<div class="slide-content qwen-compact">
+  <p class="section-label">MODEL SELECTION · VLM</p>
+  <h2>Qwen3.5 家族内部对决 — 四款 VLM 硬碰硬</h2>
+  <table class="qw-table">
+    <tr><th>维度</th><th class="win">🏆 Qwen3.5-35B-A3B</th><th>Qwen3.5-122B-A10B</th><th>Qwen3.5-27B</th><th>Qwen3-Omni-30B</th></tr>
+    <tr><td class="m">架构</td><td class="v win">MoE 35B/3B激活</td><td class="v">MoE 122B/10B</td><td class="v">Dense 27B</td><td class="v">MoE 30B/3B</td></tr>
+    <tr><td class="m">Video-MME</td><td class="v win"><span class="hl">86.6</span></td><td class="v">87.3</td><td class="v">87.0</td><td class="v">82.0¹</td></tr>
+    <tr><td class="m">上下文</td><td class="v win"><span class="hl">1M</span></td><td class="v">1M</td><td class="v">262K</td><td class="v">256K</td></tr>
+    <tr><td class="m">速度(4090Q4)</td><td class="v win"><span class="hl">196 tok/s</span></td><td class="v">~80 tok/s</td><td class="v">CPU offload</td><td class="v">~80 tok/s</td></tr>
+    <tr><td class="m">多模态</td><td class="v win">图文视频</td><td class="v">图文视频</td><td class="v">图文视频</td><td class="v">图文视频音频</td></tr>
+    <tr><td class="m">部署弹性</td><td class="v win"><span class="hl">4060→A100 全覆盖</span></td><td class="v">A100×4+</td><td class="v">A100 / 24GB Q4</td><td class="v">4090 24GB Q4</td></tr>
+  </table>
+  <div class="qw-bar">
+    <span><strong>🔑 1</strong> 86.6 排名家族第3，但 MoE 3B 激活速度是 27B Dense 的 <strong>2.4×</strong></span>
+    <span><strong>🔑 2</strong> 1M 上下文是 27B 的 <strong>4 倍</strong>，长视频无需分片</span>
+    <span><strong>🔑 3</strong> 部署从 4060 到 A100 全谱系覆盖</span>
+  </div>
+</div>
+</div>
+
+<div class="slide" data-index="7">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+<style>
+.rej-layout { display:flex; flex-direction:column; }
+.rej-grid { display:flex; gap:10px; flex:1; }
+.rej-card { flex:1; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:10px; padding:12px; box-shadow:0 2px 6px -2px rgba(0,0,0,0.10); display:flex; flex-direction:column; }
+.rej-card h3 { font-size:13px; font-weight:700; color:#111827; margin-bottom:2px; }
+.rej-tag { font-size:9px; font-weight:600; padding:2px 7px; border-radius:5px; margin-bottom:4px; display:inline-block; }
+.r-pro .rej-tag { background:rgba(239,68,68,0.1); color:#dc2626; }
+.r-size .rej-tag { background:rgba(245,158,11,0.1); color:#d97706; }
+.r-perf .rej-tag { background:rgba(107,114,128,0.1); color:#6b7280; }
+.rej-card p { font-size:10px; color:#4b5563; line-height:1.5; }
+.rej-foot { display:flex; gap:10px; margin-top:6px; flex-shrink:0; }
+.rej-fi { flex:1; background:linear-gradient(135deg,rgba(255,255,255,0.7),rgba(255,255,255,0.5)); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.6); border-radius:8px; padding:8px 12px; font-size:10px; color:#374151; }
+.rej-fi strong { color:#1a65e1; }
+</style>
+<div class="slide-content rej-layout">
+  <p class="section-label">MODEL SELECTION · VLM</p>
+  <h2>外部挑战者逐一排除 — 不是不比较，是比较了才排除</h2>
+  <div class="rej-grid">
+    <div class="rej-card r-pro">
+      <span class="rej-tag">❌ 闭源不可部署</span>
+      <h3>Seed 2.1 Pro</h3>
+      <p><strong>字节跳动 · Video-MME 89.2（第 1）</strong></p>
+      <p>仅火山引擎 API——数据入境、不可定制、闭源锁。Cerno 全本地+全开源原则直接排除。</p>
+    </div>
+    <div class="rej-card r-size">
+      <span class="rej-tag">❌ 规模不可承受</span>
+      <h3>MiMo-V2.5 (311B)</h3>
+      <p><strong>小米 · Video-MME 87.7</strong></p>
+      <p>311B 需 4-8 卡 A100。Cerno Pipeline 还需加载 Embedding/ASR 等多模型，为 VLM 独占多卡不可接受。</p>
+    </div>
+    <div class="rej-card r-perf">
+      <span class="rej-tag">❌ 性能不足</span>
+      <h3>VST-32B / MiniCPM-V 4.6</h3>
+      <p><strong>Video-MME 67.2 / 59.7</strong></p>
+      <p>与 35B-A3B（86.6）差 19-27 个百分点。复杂场景描述准确率不足，直接拖累下游摘要质量。</p>
+    </div>
+  </div>
+  <div class="rej-foot">
+    <span class="rej-fi"><strong>📊 排除：</strong>Seed（闭源）· MiMo（规模）· VST/MiniCPM（性能）· InternVL（中文）· LLaVA（代际）</span>
+    <span class="rej-fi"><strong>🎯 最终候选：</strong>Qwen3.5-35B-A3B — Benchmark、效率、部署、生态四维无短板</span>
+  </div>
+</div>
+</div>
+
+<div class="slide" data-index="8">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+<style>
+.final-vote { display:flex; flex-direction:column; }
+.final-duo { display:flex; gap:16px; flex:1; }
+.final-left { flex:1.2; display:flex; flex-direction:column; gap:8px; justify-content:center; }
+.final-pillar { display:flex; gap:8px; align-items:flex-start; }
+.final-pnum { width:24px; height:24px; border-radius:50%; background:#1a65e1; color:white; font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.final-pbody { flex:1; }
+.final-pbody h4 { font-size:13px; font-weight:700; color:#111827; }
+.final-pbody p { font-size:10px; color:#4b5563; line-height:1.5; }
+.final-pbody .ev { font-size:9px; color:#1a65e1; margin-top:1px; font-weight:500; }
+.final-right { flex:0.8; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); border-radius:12px; padding:14px; box-shadow:0 2px 8px -2px rgba(0,0,0,0.10); display:flex; flex-direction:column; justify-content:center; }
+.final-right h3 { font-size:13px; font-weight:700; color:#111827; margin-bottom:6px; }
+.final-right p { font-size:10px; color:#4b5563; line-height:1.5; }
+.final-spec { display:flex; gap:8px; margin-top:6px; flex-shrink:0; }
+.final-spec-item { flex:1; text-align:center; background:linear-gradient(135deg,rgba(255,255,255,0.7),rgba(255,255,255,0.5)); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.6); border-radius:8px; padding:6px; }
+.final-spec-item .fn { font-size:16px; font-weight:800; color:#1a65e1; display:block; }
+.final-spec-item .fl { font-size:8px; color:#6b7280; }
+</style>
+<div class="slide-content final-vote">
+  <p class="section-label">MODEL SELECTION · VLM</p>
+  <h2>最终选择 — Qwen3.5-35B-A3B</h2>
+  <div class="final-duo">
+    <div class="final-left">
+      <div class="final-pillar">
+        <div class="final-pnum">1</div>
+        <div class="final-pbody">
+          <h4>Benchmark 断层领先</h4>
+          <p>Video-MME 86.6——家族内排第 3，但 MoE 仅 3B 激活 35B 总量。122B-A10B（87.3）需 4 卡，27B（87.0）慢 2.4 倍。</p>
+          <div class="ev">📊 86.6 vs MiMo 87.7（4-8卡）· VST 67.2 · MiniCPM 59.7</div>
+        </div>
+      </div>
+      <div class="final-pillar">
+        <div class="final-pnum">2</div>
+        <div class="final-pbody">
+          <h4>MoE 极致效率</h4>
+          <p>35B 仅 3B 激活，256 专家。速度是 27B Dense 的 2.4 倍。4060 8GB（Q4）到 A100（BF16）全谱系覆盖。</p>
+          <div class="ev">⚡ 2.4× vs 27B · 196 tok/s（4090 Q4）</div>
+        </div>
+      </div>
+      <div class="final-pillar">
+        <div class="final-pnum">3</div>
+        <div class="final-pbody">
+          <h4>1M 上下文 · 长视频原生</h4>
+          <p>1M tokens 可处理 2 小时视频。27B 只能 30 分钟（262K），超长视频需分片拼接。</p>
+          <div class="ev">📹 2h 一次性推理 vs 27B 需分片</div>
+        </div>
+      </div>
+      <div class="final-pillar">
+        <div class="final-pnum">4</div>
+        <div class="final-pbody">
+          <h4>Apache 2.0 + 中文生态</h4>
+          <p>全框架支持（vLLM/llama.cpp/SGLang），社区最活跃。</p>
+          <div class="ev">🔓 201 语言 · 阿里持续维护</div>
+        </div>
+      </div>
+    </div>
+    <div class="final-right">
+      <h3>📋 部署方案</h3>
+      <p><strong>最低（Caption 离线）：</strong>RTX 4060 8GB · Q4</p>
+      <p><strong>推荐（生产）：</strong>RTX 4090 24GB · FP8 · 196 tok/s</p>
+      <p><strong>高吞吐（多视频并发）：</strong>2-4× A100 · Tensor Parallel</p>
+    </div>
+  </div>
+  <div class="final-spec">
+    <div class="final-spec-item"><span class="fn">86.6</span><span class="fl">Video-MME</span></div>
+    <div class="final-spec-item"><span class="fn">3B</span><span class="fl">激活参数</span></div>
+    <div class="final-spec-item"><span class="fn">1M</span><span class="fl">上下文</span></div>
+    <div class="final-spec-item"><span class="fn">2.4×</span><span class="fl">vs 27B 速度</span></div>
+    <div class="final-spec-item"><span class="fn">196</span><span class="fl">tok/s 4090</span></div>
+    <div class="final-spec-item"><span class="fn">Apache 2.0</span><span class="fl">开源</span></div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="9">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content top-title-layout">
+  <p class="section-label">MODEL SELECTION</p>
+  <h2>Embedding — 搜索质量的基石 (1/2)</h2>
+  <p class="body-text" style="max-width:90%;margin-bottom:16px;">选型目标：三模态统一（同一模型同时支持图像、文本、视频编码），共同嵌入空间，search compare 无需跨模型校准。</p>
+  <div class="model-grid">
+    <div class="model-family selected">
+      <div class="fam-header"><span class="fam-dot" style="background:#1a65e1"></span>Qwen3-VL-Embedding ← 最终选择</div>
+      <p>2B / 8B，2048 维，30+ 语言。<strong>唯一做到三模态统一 + 有视频 benchmark + 开源</strong>的模型系列。<br>MMEB-V2 总分 <strong>77.8（8B）</strong>——所有 embedding 模型中的总冠军。</p>
+    </div>
+    <div class="model-family">
+      <div class="fam-header"><span class="fam-dot" style="background:#5ca8e8"></span>CLIP / SigLIP 家族</div>
+      <p>最庞大的嵌入家族。致命短板：不支持视频编码。逐帧 mean pooling 丢失帧间时序。</p>
+    </div>
+    <div class="model-family">
+      <div class="fam-header"><span class="fam-dot" style="background:#63b4e0"></span>InternVideo2 系列</div>
+      <p>原生视频编码 MSRVTT R@1 55.9。但只支持 encode_video，不支持 image/text——需要多个模型，向量空间不可比。</p>
+    </div>
+    <div class="model-family excluded">
+      <div class="fam-header"><span class="fam-dot" style="background:#d1d5db"></span>Jina / BGE / VLM2Vec</div>
+      <p>89 语言支持强大但无视频；视频子项仅 34.6/33.6 vs Qwen 的 67.1。</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="10">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
+  <div class="blob-right" style="bottom:0;right:0;width:25%;height:45%"></div>
+
+<div class="slide-content two-col-layout">
+  <div class="col-left">
+    <p class="section-label">MODEL SELECTION</p>
+    <h2>Qwen3-VL-Embedding-8B</h2>
+    <p class="body-text" style="margin-top:8px;">MMEB-V2 总分 <strong style="color:#1a65e1;font-size:28px;">77.8</strong> — 第一</p>
+    <div class="bench-compare">
+      <div class="bench-row"><span class="bench-model">Qwen3-VL-Emb-8B</span><div class="bench-bar"><div style="width:95%;background:#1a65e1"></div></div><span class="bench-score">77.8</span></div>
+      <div class="bench-row"><span class="bench-model">Qwen3-VL-Emb-2B</span><div class="bench-bar"><div style="width:88%;background:#4f93ed"></div></div><span class="bench-score">73.2</span></div>
+      <div class="bench-row"><span class="bench-model">VLM2Vec-V2</span><div class="bench-bar"><div style="width:60%;background:#9ca3af"></div></div><span class="bench-score">~50</span></div>
+      <div class="bench-row"><span class="bench-model">GME-2B</span><div class="bench-bar"><div style="width:55%;background:#d1d5db"></div></div><span class="bench-score">~46</span></div>
+    </div>
+  </div>
+  <div class="col-right">
+    <div class="feature-card">
+      <h3>🏆 断层领先</h3>
+      <p>视频子项 <strong>67.1</strong> vs 竞争对手 34.6/33.6——将近 2 倍的差距。<br>「搜得到」和「搜不到」的区别。</p>
+    </div>
+    <div class="feature-card">
+      <h3>🔗 三模态统一</h3>
+      <p>encode_image + encode_text + encode_video 共享一个模型实例。三条编码路径同一嵌入空间，无需跨模型校准。</p>
+    </div>
+    <div class="feature-card">
+      <h3>📐 2048 维</h3>
+      <p>vs Twelve Labs Marengo 512 维——4x 存储。当前 demo 可接受，未来可 Matryoshka 降维或向量数据库升级。</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="11">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content three-card-layout">
+  <div class="section-header">
+    <p class="section-label">MODEL SELECTION</p>
+    <h2>ASR + 场景分割 — 非核心差异化模块的选型逻辑</h2>
+  </div>
+  <div class="three-wide">
+    <div class="info-card">
+      <div class="card-accent blue-accent"></div>
+      <h3>🎤 ASR — 双引擎路由</h3>
+      <p><strong>中文/中英混合 → SenseVoice-Small</strong><br>CER 7.81%，169.6x 倍实时，1.6GB 显存<br>2.5x 精度提升，13x 速度提升，省 70% 显存</p>
+      <p style="margin-top:8px;"><strong>非中文 → faster-whisper large-v3</strong><br>99 语言覆盖，13.4x 倍实时</p>
+    </div>
+    <div class="info-card">
+      <div class="card-accent blue-accent"></div>
+      <h3>✂️ 场景分割 — TransNetV2</h3>
+      <p>6 个候选人分三档：PySceneDetect（F1 0.061≈随机）、CLIP-based（F1 0.815 精度最高但 3-4 个模型）、<strong>TransNetV2（F1 0.648，30+ FPS）</strong>。</p>
+      <p style="margin-top:8px;">分割服务于下游 caption/embedding，不是最终产品。「够用就行」是合理的工程判断。</p>
+    </div>
+    <div class="info-card">
+      <div class="card-accent blue-accent"></div>
+      <h3>📊 排除逻辑一览</h3>
+      <p>Fun-ASR-Nano 17x 太慢（1h 视频需 3.5 分钟转录）<br>WhisperX 的 ±30ms 词级时间戳 Cerno 已有 alignment<br>CLIP 方案 F1 从 0.648→0.815 的收益不值得 3-4 模型显存</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="12">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content tier-layout">
+  <p class="section-label">MODEL SELECTION</p>
+  <h2>摘要 LLM — 不绑定单一模型，构建四级质量/成本阶梯</h2>
+  <div class="tier-row">
+    <div class="tier-card l1">
+      <div class="tier-badge">L1 默认</div>
+      <h3>Python 聚合器</h3>
+      <div class="tier-cost">￥0</div>
+      <p>Counter 频率统计 + 去重排序。零成本、零延迟、零数据外泄。对日常/教育视频完全够用。</p>
+    </div>
+    <div class="tier-card l2">
+      <div class="tier-badge">L2 主力</div>
+      <h3>DeepSeek V3</h3>
+      <div class="tier-cost">￥8 /百万输出</div>
+      <p>中文摘要质量优秀，128K 上下文，开源权重可自部署。价格为 GPT-4o 的 <strong>1/9</strong>。</p>
+    </div>
+    <div class="tier-card l3">
+      <div class="tier-badge">L3 高质</div>
+      <h3>DeepSeek R1</h3>
+      <div class="tier-cost">￥16 /百万输出</div>
+      <p>ROUGE-L +17.6% vs 通用 LLM，R1-0528 幻觉率降低 45-50%。复杂推理场景首选。</p>
+    </div>
+    <div class="tier-card l4">
+      <div class="tier-badge">L4 全隐私</div>
+      <h3>本地 DeepSeek V3</h3>
+      <div class="tier-cost">GPU 成本</div>
+      <p>开源权重，完全离线。政府/军工等隐私极高场景。零数据外泄。</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="13">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
+
+<div class="slide-content summary-5-layout">
+  <p class="section-label">MODEL SELECTION</p>
+  <h2>五模块选型总览</h2>
+  <div class="summary-5-grid">
+    <div class="s5-card" style="border-top:3px solid #1a65e1">
+      <div class="s5-icon">👁️</div>
+      <h3>VLM</h3>
+      <div class="s5-model">Qwen3-VL-32B MoE</div>
+      <p class="s5-reason">MoE 让 32B 仅 3B 激活，质量接近 72B 但显存省 4.5x</p>
+    </div>
+    <div class="s5-card" style="border-top:3px solid #4f93ed">
+      <div class="s5-icon">🧩</div>
+      <h3>Embedding</h3>
+      <div class="s5-model">Qwen3-VL-Emb-8B</div>
+      <p class="s5-reason">MMEB-V2 77.8 总分第一，没有更强的可选</p>
+    </div>
+    <div class="s5-card" style="border-top:3px solid #5ca8e8">
+      <div class="s5-icon">🎤</div>
+      <h3>ASR</h3>
+      <div class="s5-model">SenseVoice + Whisper</div>
+      <p class="s5-reason">双引擎：中文 2.5x 精度 + 169.6x 加速，双引擎覆盖全语种</p>
+    </div>
+    <div class="s5-card" style="border-top:3px solid #63b4e0">
+      <div class="s5-icon">✂️</div>
+      <h3>分割</h3>
+      <div class="s5-model">TransNetV2</div>
+      <p class="s5-reason">传统最优，满足 pipeline 需求，F1 0.648</p>
+    </div>
+    <div class="s5-card" style="border-top:3px solid #55c890">
+      <div class="s5-icon">📝</div>
+      <h3>LLM</h3>
+      <div class="s5-model">四级升降方案</div>
+      <p class="s5-reason">￥0 → ￥8 → ￥16 → 本地，不绑定单一方案</p>
+    </div>
+  </div>
+  <div class="methodology-bar">
+    <span>选型方法论：全量候选枚举 → 硬性排除 → 定量对比（benchmark）→ 定性论证（显存/速度/生态/语言/视频原生）</span>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="14">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-right" style="bottom:0;right:0;width:25%;height:45%"></div>
+
+<div class="slide-content dag-layout">
+  <div class="dag-left">
+    <p class="section-label">ARCHITECTURE</p>
+    <h2>声明式 DAG 编排</h2>
+    <p class="body-text">每个处理能力被抽象成一个独立「操作」，声明「我需要等谁完成」。引擎自动计算哪些操作需要执行、哪些可以并行、哪些有先后依赖。</p>
+    <div class="dag-benefits">
+      <div class="dag-benefit"><span class="dag-check">✅</span><strong>新增能力不影响现有功能</strong> — 未来加 YOLO/REID 只需新增一个操作声明</div>
+      <div class="dag-benefit"><span class="dag-check">✅</span><strong>参数联动自动校验</strong> — 关掉 Vision，Caption 和 Summary 自动关闭</div>
+      <div class="dag-benefit"><span class="dag-check">✅</span><strong>能并行的自动并行</strong> — 转录和分割自动拆到两条线同时跑</div>
+    </div>
+    <div class="dag-inspiration glass-card" style="padding:14px 18px;margin-top:12px;">
+      <p style="font-size:11px;color:#6b7280;">灵感来源：AirFlow/Dagster 的任务编排（+ Gate 驱动条件过滤） · Kubernetes 声明式配置 · 微服务插件化</p>
+    </div>
+  </div>
+  <div class="dag-right">
+    <svg viewBox="0 0 360 360" style="width:100%;height:100%">
+      <!-- DAG nodes -->
+      <!-- Duration -->
+      <rect x="140" y="10" width="80" height="32" rx="16" fill="#34d399" stroke="white" stroke-width="2"/>
+      <text x="180" y="30" text-anchor="middle" fill="white" font-size="10" font-weight="600" font-family="Inter">Duration</text>
+      <!-- Row 1: Segmentation + Transcription -->
+      <rect x="50" y="72" width="100" height="32" rx="16" fill="#4f93ed" stroke="white" stroke-width="2"/>
+      <text x="100" y="92" text-anchor="middle" fill="white" font-size="10" font-weight="600" font-family="Inter">Segmentation</text>
+      <rect x="210" y="72" width="110" height="32" rx="16" fill="#5799e9" stroke="white" stroke-width="2"/>
+      <text x="265" y="92" text-anchor="middle" fill="white" font-size="10" font-weight="600" font-family="Inter">Transcription</text>
+      <!-- Row 2: Keyframes + Alignment -->
+      <rect x="30" y="140" width="100" height="32" rx="16" fill="#5ca8e8" stroke="white" stroke-width="2"/>
+      <text x="80" y="160" text-anchor="middle" fill="white" font-size="10" font-weight="600" font-family="Inter">Keyframes</text>
+      <rect x="230" y="140" width="100" height="32" rx="16" fill="#63b4e0" stroke="white" stroke-width="2"/>
+      <text x="280" y="160" text-anchor="middle" fill="white" font-size="10" font-weight="600" font-family="Inter">Alignment</text>
+      <!-- Row 3: Caption + Frame Encode -->
+      <rect x="50" y="210" width="90" height="32" rx="16" fill="#67c4c0" stroke="white" stroke-width="2"/>
+      <text x="95" y="230" text-anchor="middle" fill="white" font-size="10" font-weight="600" font-family="Inter">Caption</text>
+      <rect x="220" y="210" width="110" height="32" rx="16" fill="#60c9a8" stroke="white" stroke-width="2"/>
+      <text x="275" y="230" text-anchor="middle" fill="white" font-size="10" font-weight="600" font-family="Inter">Frame Encode</text>
+      <!-- Row 4: Summary + Text Encode -->
+      <rect x="50" y="280" width="90" height="32" rx="16" fill="#55c890" stroke="white" stroke-width="2"/>
+      <text x="95" y="300" text-anchor="middle" fill="white" font-size="10" font-weight="600" font-family="Inter">Summary</text>
+      <rect x="220" y="280" width="110" height="32" rx="16" fill="#34d399" stroke="white" stroke-width="2"/>
+      <text x="275" y="300" text-anchor="middle" fill="white" font-size="10" font-weight="600" font-family="Inter">Text Encode</text>
+      <!-- Arrows -->
+      <line x1="180" y1="42" x2="100" y2="72" stroke="#d1d5db" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <line x1="180" y1="42" x2="265" y2="72" stroke="#d1d5db" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <line x1="100" y1="104" x2="80" y2="140" stroke="#d1d5db" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <line x1="265" y1="104" x2="280" y2="140" stroke="#d1d5db" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <line x1="80" y1="172" x2="95" y2="210" stroke="#d1d5db" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <line x1="280" y1="172" x2="275" y2="210" stroke="#d1d5db" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <line x1="95" y1="242" x2="95" y2="280" stroke="#d1d5db" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <line x1="275" y1="242" x2="275" y2="280" stroke="#d1d5db" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <!-- Gate icon -->
+      <circle cx="320" cy="320" r="16" fill="#1a65e1" opacity="0.15"/>
+      <text x="320" y="325" text-anchor="middle" fill="#1a65e1" font-size="10" font-weight="700" font-family="Inter">Gate</text>
+      <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10" fill="none" stroke="#d1d5db" stroke-width="1.5"/></marker></defs>
+    </svg>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="15">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content two-col-layout">
+  <div class="col-left">
+    <p class="section-label">SOLUTION COMPARISON</p>
+    <h2>视频摘要三大路线</h2>
+    <div class="route-list">
+      <div class="route-item"><span class="route-badge" style="background:#4f93ed">端到端</span><span>原始视频 → 巨型多模态模型 → 摘要文本</span></div>
+      <div class="route-item"><span class="route-badge" style="background:#1a65e1">Pipeline</span><span>原始视频 → 分割 → VLM Caption → LLM/聚合器拼合 → 摘要</span></div>
+      <div class="route-item"><span class="route-badge" style="background:#67c4c0">混合</span><span>粗粒度 API + 细粒度本地方案 → 融合输出</span></div>
+    </div>
+    <div class="evidence-card glass-card" style="margin-top:16px;">
+      <p style="font-size:12px;color:#1a65e1;font-weight:600;">📖 关键学术证据：Pipeline 在长视频上已反超端到端</p>
+      <p style="font-size:11px;color:#6b7280;margin-top:4px;">Video-RAG（NeurIPS 2025）证明：配合 72B 级别模型的 Pipeline 方案在长视频摘要上可超越 Gemini-1.5-Pro 和 GPT-4o。</p>
+    </div>
+    <p class="body-text" style="font-size:12px;margin-top:12px;"><strong>Cerno 选择：Pipeline</strong> — 学术证据 + 本地部署硬约束 + 零成本聚合器 + 结构化输出</p>
+  </div>
+  <div class="col-right" style="gap:12px;">
+    <div class="info-card">
+      <h3>🚀 Gemini 2.5 Pro</h3>
+      <p>Video-MME 84.8% SOTA。3h 上下文。仅云 API，数据出境，闭源。token 成本不可控。</p>
+    </div>
+    <div class="info-card">
+      <h3>🏢 NVIDIA LVS</h3>
+      <p>层级式摘要标杆。30-60s 固定窗口 + VLM 描述 + CA-RAG 聚合。管道式无限扩展，但无统一产品形态。</p>
+    </div>
+    <div class="info-card">
+      <h3>🔒 Cerno</h3>
+      <p>双模式 Pipeline：逐场景 Caption（结构化 JSON）→ Python 聚合器（零成本），可选升级到 DeepSeek V3/R1。</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="16">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
+
+<div class="slide-content top-title-layout">
+  <p class="section-label">SOLUTION COMPARISON</p>
+  <h2>四种检索范式横向对比</h2>
+  <div class="paradigm-grid">
+    <div class="paradigm-card">
+      <div class="para-header" style="background:#4f93ed">统一嵌入 + 单路检索</div>
+      <div class="para-body">
+        <p class="para-example">Twelve Labs Marengo 512 维</p>
+        <p>最简洁的方案。单路径无法区分精度层级——用户不能控制帧级还是场景级。</p>
+      </div>
+    </div>
+    <div class="paradigm-card">
+      <div class="para-header" style="background:#5ca8e8">Codebook 跨模态对齐</div>
+      <div class="para-body">
+        <p class="para-example">绝影V3.0 文搜图</p>
+        <p>双侧塔架构，共享字典离散空间对齐。公安封闭目标集可针对性优化，但模型不可替换。</p>
+      </div>
+    </div>
+    <div class="paradigm-card">
+      <div class="para-header" style="background:#63b4e0">多模型拼接 + RRF 融合</div>
+      <div class="para-body">
+        <p class="para-example">Mixpeek</p>
+        <p>CLIP + Gemini + Whisper 各自检索后用 RRF 合并。灵活但向量空间不可比，融合有损。</p>
+      </div>
+    </div>
+    <div class="paradigm-card highlighted">
+      <div class="para-header" style="background:#1a65e1">统一嵌入 + 3 路并行</div>
+      <div class="para-body">
+        <p class="para-example">Cerno</p>
+        <p>Qwen3-VL-Emb 单模型覆盖三路。帧路×1.0 / 文本路×0.85 / chunk 路×0.7，智能合并。</p>
+      </div>
+    </div>
+  </div>
+  <div class="note-bar" style="margin-top:12px;">四种范式的本质差异：「在哪里做跨模态对齐」——模型内 / Codebook / 融合阶段 / 根本不专门做</div>
+</div>
+</div>
+<div class="slide" data-index="17">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content search-flow-layout">
+  <div class="section-header">
+    <p class="section-label">SOLUTION COMPARISON</p>
+    <h2>Cerno 的 3 路并行 + 统一嵌入</h2>
+  </div>
+  <div class="search-body">
+    <div class="search-query glass-card">
+      <span>🔍</span> 用户查询 → <strong>Qwen3-VL-Emb-8B</strong> encode_text() → 2048-dim 向量
+    </div>
+    <div class="search-paths">
+      <div class="path-card path-frame">
+        <div class="path-head">路 1 · 帧级检索</div>
+        <div class="path-detail">frame_embeddings 表 · cosine ×1.0</div>
+        <div class="path-precision">precision: <span>frame</span></div>
+        <p>1fps 秒级定位，最高精度</p>
+      </div>
+      <div class="path-card path-chunk">
+        <div class="path-head">路 2 · Chunk 检索</div>
+        <div class="path-detail">chunks 表 · cosine ×0.7</div>
+        <div class="path-precision">precision: <span>chunk</span></div>
+        <p>原生视频编码，保留时序动态</p>
+      </div>
+      <div class="path-card path-text">
+        <div class="path-head">路 3 · 文本检索</div>
+        <div class="path-detail">scenes.text_embedding · cosine ×0.85</div>
+        <div class="path-precision">precision: <span>text</span></div>
+        <p>caption + OCR + transcript 语义</p>
+      </div>
+      <div class="path-card path-label" style="opacity:0.5">
+        <div class="path-head">路 4 · Label 检索 (预留)</div>
+        <div class="path-detail">scenes.entities JSONB</div>
+        <div class="path-precision">precision: <span>label</span></div>
+        <p>YOLO 激活后启用</p>
+      </div>
+    </div>
+    <div class="search-merge glass-card">
+      <strong>按 Scene 合并去重</strong> · 帧簇优先（≤4s 聚类），非重叠保留，路径感知排序
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="18">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-right" style="bottom:0;right:0;width:25%;height:45%"></div>
+
+<div class="slide-content param-layout">
+  <div class="param-top">
+    <p class="section-label">ARCHITECTURE</p>
+    <h2>三级索引体系 + 4 级参数系统</h2>
+  </div>
+  <div class="param-body">
+    <div class="index-section">
+      <div class="index-card idx-frame"><div class="idx-num">1</div><h3>画面索引</h3><p>帧级 1fps，最高精度。搜「穿黑衣服的人」——精确到秒。</p></div>
+      <div class="index-card idx-text"><div class="idx-num">2</div><h3>内容索引</h3><p>文本级语义最深。搜「讨论预算的会议」——理解上下文。</p></div>
+      <div class="index-card idx-chunk"><div class="idx-num">3</div><h3>过程索引</h3><p>chunk 级保留动态。搜「有人站起来」——捕捉连续动作。</p></div>
+    </div>
+    <div class="param-pyramid">
+      <svg viewBox="0 0 500 260" style="width:100%">
+        <!-- L1 -->
+        <polygon points="250,10 460,50 40,50" fill="rgba(26,101,225,0.12)" stroke="#1a65e1" stroke-width="2"/>
+        <text x="250" y="35" text-anchor="middle" fill="#1a65e1" font-size="14" font-weight="700" font-family="Inter">L1 场景类型</text>
+        <text x="250" y="48" text-anchor="middle" fill="#6b7280" font-size="9" font-family="Inter">「会议」「监控」「课程」— 自动填充三层默认值</text>
+        <!-- L2 -->
+        <polygon points="250,60 420,100 80,100" fill="rgba(26,101,225,0.08)" stroke="#4f93ed" stroke-width="1.5"/>
+        <text x="250" y="85" text-anchor="middle" fill="#4f93ed" font-size="13" font-weight="600" font-family="Inter">L2 感知模块</text>
+        <text x="250" y="98" text-anchor="middle" fill="#6b7280" font-size="9" font-family="Inter">Vision / Audio / OCR / Caption — 按需勾选</text>
+        <!-- L3 -->
+        <polygon points="250,108 380,148 120,148" fill="rgba(79,147,237,0.08)" stroke="#5ca8e8" stroke-width="1.5"/>
+        <text x="250" y="133" text-anchor="middle" fill="#5ca8e8" font-size="12" font-weight="600" font-family="Inter">L3 功能路径</text>
+        <text x="250" y="146" text-anchor="middle" fill="#6b7280" font-size="9" font-family="Inter">摘要 / 搜索索引 — 质量 vs 成本权衡</text>
+        <!-- L4 -->
+        <polygon points="250,156 340,196 160,196" fill="rgba(92,168,232,0.08)" stroke="#63b4e0" stroke-width="1"/>
+        <text x="250" y="181" text-anchor="middle" fill="#63b4e0" font-size="11" font-weight="600" font-family="Inter">L4 高级参数</text>
+        <text x="250" y="194" text-anchor="middle" fill="#6b7280" font-size="9" font-family="Inter">语言 / 采样帧率 / 阈值 / 摘要详情 — 专家模式</text>
+      </svg>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="19">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
+
+<div class="slide-content tech-layout">
+  <div class="section-header">
+    <p class="section-label">PROJECT STATUS</p>
+    <h2>技术栈 & 当前状态</h2>
+  </div>
+  <div class="tech-body">
+    <div class="tech-grid">
+      <div class="tech-item"><span class="tech-cat">后端</span><span>FastAPI (Python 3.12) + SQLAlchemy async</span></div>
+      <div class="tech-item"><span class="tech-cat">数据库</span><span>PostgreSQL 17 + pgvector 0.8</span></div>
+      <div class="tech-item"><span class="tech-cat">VLM</span><span>Qwen3-VL-32B MoE · 3B 激活 · Video-MME 74.5%</span></div>
+      <div class="tech-item"><span class="tech-cat">Embedding</span><span>Qwen3-VL-Emb-8B · 2048 维 · MMEB-V2 77.8</span></div>
+      <div class="tech-item"><span class="tech-cat">ASR</span><span>SenseVoice-Small + faster-whisper 双引擎</span></div>
+      <div class="tech-item"><span class="tech-cat">前端</span><span>React 19 + Vite 6 + Tailwind CSS 4</span></div>
+    </div>
+    <div class="status-cols">
+      <div class="status-col">
+        <h3>✅ 已完成 (v0.8)</h3>
+        <ul>
+          <li>Pipeline DAG 引擎（10 操作）</li>
+          <li>3 路编码：frame / chunk / text</li>
+          <li>3 路并行语义搜索</li>
+          <li>双模式摘要 + Caption</li>
+          <li>4 级参数系统</li>
+          <li>TransNetV2 分割</li>
+          <li>React 前端 Dashboard（8 子组件）</li>
+          <li>增量处理 + 14 API Endpoint</li>
+        </ul>
+      </div>
+      <div class="status-col">
+        <h3>🔄 路线图</h3>
+        <div class="road-item"><span class="road-prio p0">P0</span>1-3 月：ASR/VLM/Emb 升级，YOLO 集成，benchmark</div>
+        <div class="road-item"><span class="road-prio p1">P1</span>3-6 月：OCR/REID 调研，频次分析，向量库升级</div>
+        <div class="road-item"><span class="road-prio p2">P2</span>6-12 月：Agentic 分析，分布式 Pipeline，信创评估</div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="20">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content vs-layout">
+  <p class="section-label">COMPETITIVE ANALYSIS</p>
+  <h2>绝影V3.0 vs Cerno — 差异分析</h2>
+  <div class="vs-body">
+    <div class="vs-col vs-red">
+      <h3>绝影 领先</h3>
+      <ul>
+        <li><strong>REID 跨镜追踪</strong> — 换装可识别，复杂场景 +40%</li>
+        <li><strong>目标检测</strong> — 自研三联协同检测引擎</li>
+        <li><strong>技战法体系</strong> — 频次/同行人/M:N/轨迹分析</li>
+        <li><strong>多源硬件接入</strong> — GB28181/DVR/NVR/硬盘直读</li>
+        <li><strong>信创适配</strong> — 国产芯片+OS</li>
+        <li><strong>十余年实战积累</strong> — 29 省反馈闭环</li>
+        <li><strong>完整产品生态</strong> — 掠影→绝影→猎影→汇影→火影</li>
+      </ul>
+    </div>
+    <div class="vs-col vs-blue">
+      <h3>Cerno 占优</h3>
+      <ul>
+        <li><strong>声明式 DAG</strong> — 新增模块引擎零改动</li>
+        <li><strong>3 路并行 + 精度分层</strong> — 三级互补覆盖</li>
+        <li><strong>4 级参数系统</strong> — 场景→模块→功能→高级级联</li>
+        <li><strong>四级摘要升降</strong> — 默认零成本</li>
+        <li><strong>全开源 + 模型可替换</strong> — 零供应商锁定</li>
+        <li><strong>方案链学术证据</strong> — MMEB-V2 77.8，Video-RAG</li>
+        <li><strong>通用场景</strong> — 会议/教育/媒体/监控</li>
+      </ul>
+    </div>
+    <div class="vs-col vs-mid">
+      <h3>对等 & 追赶</h3>
+      <p class="vs-mid-title">双方对等：</p>
+      <p>以文搜视频、全本地部署、零 API 成本</p>
+      <p class="vs-mid-title" style="margin-top:12px;">6-12 月可追赶：</p>
+      <p>YOLO 检测 → label 搜索 · REID 开源集成 → 跨镜基础能力 · 频次/同行人初版 · RTSP 接入</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="21">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content two-col-layout">
+  <div class="col-left">
+    <p class="section-label">ROADMAP</p>
+    <h2>包装 + 能力补齐</h2>
+    <p class="body-text" style="margin-bottom:12px;">把 Cerno 从一个能跑的系统变成一个能拿得出手的产品。</p>
+    <div class="feature-card" style="margin-bottom:10px">
+      <h3>📺 播放器集成</h3>
+      <p>搜索结果点击直接跳转对应时间点 + 匹配帧缩略图。对标 Twelve Labs 产品体验。</p>
+    </div>
+    <div class="feature-card">
+      <h3>🎬 Demo 展示层</h3>
+      <p>整理四类场景 demo 视频库 + 在线试用环境 + 快速开始指南。</p>
+    </div>
+  </div>
+  <div class="col-right">
+    <h3 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:12px;">⚡ 短期能力补齐</h3>
+    <div class="compact-list">
+      <div class="compact-item"><span class="compact-check green">✓</span><strong>以图搜图</strong> — 已有 encode_image，同一模型不费力</div>
+      <div class="compact-item"><span class="compact-check blue">✓</span><strong>YOLO + label 搜索</strong> — 3-5 天可集成，JSONB 精确查询零假阳性</div>
+      <div class="compact-item"><span class="compact-check blue">✓</span><strong>rerank 重排序</strong> — cross-encoder 精排 top-K，粗排→精排两阶段</div>
+      <div class="compact-item"><span class="compact-check green">✓</span><strong>chunk 正式启用</strong> — 静止帧跳过，帧差阈值判定</div>
+      <div class="compact-item"><span class="compact-check blue">✓</span><strong>维数截断</strong> — 2048→1024 评估，为 HNSW 腾空间</div>
+      <div class="compact-item"><span class="compact-check green">✓</span><strong>模型升级</strong> — SenseVoice(1-2d) / 32B MoE(3-5d) / Emb-8B(1-2d)</div>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="22">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
+  <div class="blob-right" style="bottom:0;right:0;width:25%;height:45%"></div>
+
+<div class="slide-content three-card-layout">
+  <div class="section-header">
+    <p class="section-label">ROADMAP</p>
+    <h2>中长期升级与深挖</h2>
+  </div>
+  <div class="cards-row">
+    <div class="info-card">
+      <div class="card-accent blue-accent"></div>
+      <h3>🏗️ 生产级改造</h3>
+      <p><strong>容错队列</strong> — Celery/ARQ 持久化，失败重试，断点续跑</p>
+      <p><strong>数据库升级</strong> — pgvector → LanceDB/Qdrant 评估</p>
+      <p><strong>模型持续跟踪</strong> — 建立定期评估节奏，Qwen/DeepSeek 升级</p>
+    </div>
+    <div class="info-card">
+      <div class="card-accent green-accent"></div>
+      <h3>🔬 深挖方向</h3>
+      <p><strong>Highlights / 异常检测</strong> — VLM 直接判断「有什么不寻常事件」</p>
+      <p><strong>REID 跨镜追踪</strong> — OSNet/CLIP-ReID 开源起步</p>
+      <p><strong>动态聚档</strong> — 基于时序聚类生成目标时间线</p>
+      <p><strong>多源接入</strong> — RTSP 实时流 → GB28181</p>
+    </div>
+    <div class="info-card">
+      <div class="card-accent" style="background:linear-gradient(135deg,#1a65e1,#34d399)"></div>
+      <h3>🎯 对标参考</h3>
+      <p>绝影的 60-360x 倍速不仅是模型快，更是工程调度成熟——容错队列是前提。</p>
+      <p>Highlights 走 VLM 路线绕开传统 CV 规则，差异化切入。</p>
+      <p>REID 是最难的但对标绝影必须迈过的坎。</p>
+    </div>
+  </div>
+</div>
+</div>
+<div class="slide" data-index="23">
+
+<div class="slide-content summary-close-layout">
+  <div class="blob-blue" style="top:-10%;right:-5%;width:50%;height:100%"></div>
+  <div class="blob-green" style="bottom:-10%;right:-5%;width:45%;height:60%"></div>
+  <div class="blob-left" style="top:5%;left:-2%;width:25%;height:90%"></div>
+  <div class="close-content">
+    <h2>Cerno</h2>
+    <p class="close-tagline">完全本地部署的、声明式 DAG 驱动的、3 路并行语义编码的视频理解与检索系统。</p>
+    <div class="close-counters">
+      <div class="close-stat"><span class="close-num">10</span><span class="close-label">操作 × DAG<br>新增模块引擎零改动</span></div>
+      <div class="close-stat"><span class="close-num">3</span><span class="close-label">路并行检索<br>帧级 + chunk + 文本互补</span></div>
+      <div class="close-stat"><span class="close-num">5</span><span class="close-label">模块全量选型<br>枚举→排除→benchmark 定量</span></div>
+      <div class="close-stat"><span class="close-num">77.8</span><span class="close-label">MMEB-V2 第一<br>公开 benchmark 可验证</span></div>
+    </div>
+    <p class="close-footer">
+      融合 Twelve Labs 的语义搜索产品思路、AirFlow 的 DAG 编排理念、RAG 的多路召回范式、绝影V3.0 的产品化深度参考，在<strong>「全本地 + 全开源 + 深度语义搜索」</strong>这一交叉点上，目前没有对手站在同一个位置。
+    </p>
+  </div>
+</div>
+</div>
+
+</div>
+
+<script>
+const total = 24;
+let current = 0;
+
+function showSlide(idx) {
+  document.querySelectorAll('.slide').forEach((el, i) => {
+    el.classList.toggle('active', i === idx);
+  });
+}
+showSlide(0);
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (current < total - 1) { current++; showSlide(current); }
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (current > 0) { current--; showSlide(current); }
+  }
+});
+</script>
+</body>
+</html>
