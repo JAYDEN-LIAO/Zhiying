@@ -28,6 +28,7 @@ export interface VideoListItem {
   summary_one_liner: string | null;
   audio_enabled: boolean;
   caption_enabled: boolean;
+  detection_enabled: boolean;
   summary_enabled: boolean;
   summary_mode: string;
   search_index_enabled: boolean;
@@ -85,6 +86,7 @@ export interface VideoResponse {
   ocr_enabled: boolean;
   grounding_enabled: boolean;
   caption_enabled: boolean;
+  detection_enabled: boolean;
   summary_enabled: boolean;
   summary_mode: string;
   search_index_enabled: boolean;
@@ -144,6 +146,8 @@ export interface PipelineParams {
   audio_enabled: boolean;
   ocr_enabled: boolean;
   caption_enabled: boolean;
+  detection_enabled: boolean;
+  detection_classes: string[] | null;
   search_index_enabled: boolean;
   summary_enabled: boolean;
   summary_mode: string;
@@ -165,4 +169,26 @@ export interface ApiKeyInfo {
 
 export interface SettingsData {
   api_keys: Record<string, ApiKeyInfo>;
+}
+
+/* ── Detection & Tracking ── */
+
+export interface Detection {
+  bbox: { x1: number; y1: number; x2: number; y2: number };
+  class_name: string;
+  track_id: number;
+}
+
+export interface Track {
+  track_id: number;
+  class_name: string;
+  first_seen: number;
+  last_seen: number;
+  frame_count: number;
+}
+
+export interface DetectionData {
+  has_detection: boolean;
+  tracks: Track[];
+  detections: Record<string, Detection[]>;  // key: integer timestamp string
 }

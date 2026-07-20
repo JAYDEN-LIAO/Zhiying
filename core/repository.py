@@ -14,7 +14,7 @@ from sqlalchemy import select, update, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from core.models import Video, Scene, VideoStatus, FrameEmbedding, Chunk
+from core.models import Video, Scene, VideoStatus, FrameEmbedding, Chunk, FrameDetection, Track
 from core.schemas import VideoCreate
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,8 @@ async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video:
         ocr_enabled=video_dto.ocr_enabled,
         grounding_enabled=video_dto.grounding_enabled,
         caption_enabled=video_dto.caption_enabled,
+        detection_enabled=video_dto.detection_enabled,
+        detection_classes=video_dto.detection_classes,
         summary_enabled=video_dto.summary_enabled,
         summary_mode=video_dto.summary_mode,
         search_index_enabled=video_dto.search_index_enabled,
@@ -271,4 +273,54 @@ async def bulk_insert_chunks(
     except Exception:
         await session.rollback()
         logger.exception("[Repo] Failed to bulk insert chunk embeddings")
+        raise
+
+
+# ═══════════════════════════════════════════════════════════
+# 检测与追踪写入
+# ═══════════════════════════════════════════════════════════
+
+async def bulk_insert_frame_detections(
+    session: AsyncSession,
+    rows: list[dict],
+) -> None:
+    """批量写入逐帧检测结果。
+
+    rows 已包含全部列 (video_id, track_id, timestamp_sec,
+    class_name, confidence, bbox)。
+    """
+    if not rows:
+        return
+    try:
+        stmt = insert(FrameDetection.__table__)
+        await session.execute(stmt, rows)
+        await session.commit()
+        logger.info("[Repo] Bulk inserted %d frame detections", len(rows))
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to bulk insert frame detections")
+        raise
+
+
+async def bulk_insert_tracks(
+    session: AsyncSession,
+    rows: list[dict],
+) -> None:
+    """批量写入追踪轨迹。
+
+    使用 ON CONFLICT DO NOTHING 防止增量重跑时产生重复记录。
+    """
+    if not rows:
+        return
+    try:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        stmt = pg_insert(Track.__table__).values(rows).on_conflict_do_nothing(
+            constraint="uq_track_video"
+        )
+        await session.execute(stmt)
+        await session.commit()
+        logger.info("[Repo] Bulk inserted %d tracks", len(rows))
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to bulk insert tracks")
         raise

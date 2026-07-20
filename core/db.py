@@ -94,6 +94,19 @@ async def init_db():
                 DEFAULT 'native_video' NOT NULL
         """))
 
+        # ── 增量迁移 v0.8: 物体检测开关 ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS detection_enabled boolean
+                DEFAULT false NOT NULL
+        """))
+
+        # ── 增量迁移 v0.9: 检测类别过滤 ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS detection_classes jsonb
+        """))
+
         # ── 清理：删除废弃的列、枚举类型、触发器 ──
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS preset

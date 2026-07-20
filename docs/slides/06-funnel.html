@@ -1,0 +1,78 @@
+<div class="slide" data-index="6">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content" style="padding:clamp(24px,4vw,48px) clamp(28px,4.5vw,56px);height:100%;display:flex;flex-direction:column;">
+  <div class="section-header" style="margin-bottom:12px;">
+    <p class="section-label">MODEL SELECTION · 2/2</p>
+    <h2>两套方案 — 按 GPU 配置选择</h2>
+  </div>
+
+  <div style="flex:1;display:flex;gap:14px;">
+    <!-- 方案 A：27B Dense -->
+    <div style="flex:1;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px -6px rgba(79,147,237,0.12);border:1px solid rgba(79,147,237,0.15);">
+      <div style="background:linear-gradient(135deg,#4f93ed,#67c4c0);color:white;padding:12px 18px;display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-size:13px;font-weight:700;">方案 A：27B Dense</span>
+        <span style="font-size:9px;background:rgba(255,255,255,0.2);padding:2px 10px;border-radius:6px;">高分方案</span>
+      </div>
+      <div style="flex:1;background:linear-gradient(180deg,#ffffff,#f8fafc);padding:16px 20px;">
+        <div style="display:flex;gap:10px;margin-bottom:12px;">
+          <div style="flex:1;text-align:center;background:rgba(79,147,237,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#4f93ed;">82.8</span>
+            <span style="font-size:8px;color:#6b7280;">Video-MME</span>
+          </div>
+          <div style="flex:1;text-align:center;background:rgba(79,147,237,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#4f93ed;">27B</span>
+            <span style="font-size:8px;color:#6b7280;">全部激活</span>
+          </div>
+          <div style="flex:1;text-align:center;background:rgba(79,147,237,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#f59e0b;">~16GB</span>
+            <span style="font-size:8px;color:#6b7280;">INT4 显存</span>
+          </div>
+        </div>
+        <p style="font-size:10px;color:#374151;line-height:1.6;"><strong>优势：</strong>分数最高（82.8），Dense 架构推理延迟稳定，社区生态成熟，HF 上 fine-tune 版本丰富。</p>
+        <p style="font-size:10px;color:#374151;line-height:1.6;margin-top:6px;"><strong>代价：</strong>~16GB 占掉大部分显存，同一张卡很难再加载 Embedding 模型（~16GB）。需要双卡或多卡分离部署 VLM 和 Embedding。</p>
+        <p style="font-size:10px;color:#374151;line-height:1.6;margin-top:6px;"><strong>适合：</strong>拥有 48GB+ 显存（A6000 / 双卡 4090）的配置，追求极致单模型质量。</p>
+      </div>
+    </div>
+
+    <!-- 方案 B：35B MoE -->
+    <div style="flex:1;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px -6px rgba(52,211,153,0.15);border:2px solid #34d399;">
+      <div style="background:linear-gradient(135deg,#1a65e1,#34d399);color:white;padding:12px 18px;display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-size:13px;font-weight:700;">方案 B：35B MoE（推荐默认）</span>
+        <span style="font-size:9px;background:rgba(255,255,255,0.2);padding:2px 10px;border-radius:6px;">单卡最优</span>
+      </div>
+      <div style="flex:1;background:linear-gradient(180deg,#ffffff,#f0f5fc);padding:16px 20px;">
+        <div style="display:flex;gap:10px;margin-bottom:12px;">
+          <div style="flex:1;text-align:center;background:rgba(52,211,153,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#1a65e1;">82.5</span>
+            <span style="font-size:8px;color:#6b7280;">Video-MME</span>
+          </div>
+          <div style="flex:1;text-align:center;background:rgba(52,211,153,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#34d399;">35B/3B</span>
+            <span style="font-size:8px;color:#6b7280;">MoE 激活</span>
+          </div>
+          <div style="flex:1;text-align:center;background:rgba(52,211,153,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#34d399;">~8GB</span>
+            <span style="font-size:8px;color:#6b7280;">INT4 显存</span>
+          </div>
+        </div>
+        <p style="font-size:10px;color:#374151;line-height:1.6;"><strong>优势：</strong>MoE 3B 激活仅占 ~8GB，留出 ~16GB 在同卡加载 Embedding 模型（VLM 8GB + Emb 16GB = 24GB 刚好装满）。82.5 vs 82.8 的 0.3 分差在 benchmark 噪声范围内。</p>
+        <p style="font-size:10px;color:#374151;line-height:1.6;margin-top:6px;"><strong>代价：</strong>MoE 推理延迟略高于同激活参数的 Dense 模型（约 +10%），社区 fine-tune 版本不如 Dense 丰富。</p>
+        <p style="font-size:10px;color:#374151;line-height:1.6;margin-top:6px;"><strong>适合：</strong>单卡 RTX 4090（24GB）标准配置，VLM + Embedding 串行执行刚好装满。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部对比条 -->
+  <div style="margin-top:10px;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px -2px rgba(0,0,0,0.06);">
+    <div style="background:rgba(255,255,255,0.5);padding:10px 18px;display:flex;align-items:center;gap:14px;border:1px solid rgba(255,255,255,0.6);">
+      <span style="font-size:18px;">💡</span>
+      <div style="flex:1;font-size:10px;color:#374151;line-height:1.4;">
+        两个模型质量几乎等同（82.8 vs 82.5，差 0.3 分）。<strong>选择取决于硬件：</strong>单卡 4090 推荐 MoE 方案（VLM+Embedding 一卡搞定）；双卡或 48GB+ 可选 Dense 方案（追求极致单模型质量）。Cerno 默认走 MoE 方案。
+      </div>
+      <div style="font-size:9px;color:#6b7280;background:white;border-radius:6px;padding:4px 12px;white-space:nowrap;">数据：llm-stats.com 2026.07</div>
+    </div>
+  </div>
+</div>
+</div>

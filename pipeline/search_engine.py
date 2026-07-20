@@ -13,7 +13,7 @@ pipeline/search_engine.py
 import asyncio
 import logging
 
-from sqlalchemy import select, func
+from sqlalchemy import literal_column, select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.models import Scene, FrameEmbedding, Chunk
@@ -155,7 +155,9 @@ class SearchEngine:
         async with self.db_session_factory() as session:
             stmt = (
                 select(Scene)
-                .where(Scene.entities.op("@>")(f'[{{"label": "{query}"}}]'))
+                .where(Scene.entities.op("@>")(
+                    literal_column(f"'[{{\"label\": \"{query}\"}}]'::jsonb")
+                ))
                 .limit(limit)
             )
             if video_ids:

@@ -43,7 +43,7 @@
 │  Batch 0: [duration]        │
 │  Batch 1: [seg, transcribe]│
 │  Batch 2: [keyframes, align]│
-│  Batch 3: [caption, frame_e]│
+│  Batch 3: [detect, caption, frame_e]│
 │  Batch 4: [summary, text_e] │
 │  Persist: Write to DB       │
 │  3-path encoding runs in     │
@@ -74,12 +74,13 @@ L1: Scene Type (1 of 5)
   ├─ text_recognition → ocr ON, caption OFF, audio OFF
   └─ custom        → user-modified preset, auto-saved to localStorage
 
-L2: Perception Modules (5 switches, 1 grayed)
+L2: Perception Modules (6 switches, 1 grayed)
   ├─ vision_enabled   → frame processing master switch
   ├─ audio_enabled    → transcription (grayed when plugin disabled)
   ├─ ocr_enabled      → text from frames (grayed when plugin disabled)
   ├─ caption_enabled  → VLM scene description
-  └─ detection_enabled → YOLO (always grayed, plugin not implemented)
+  ├─ detection_enabled → YOLO11 + ByteTrack object detection (dual-gated: config + per-video)
+  └─ grounding_enabled → Florence-2 grounding (always grayed, plugin not implemented)
 
 L3: Function Switches (2)
   ├─ search_index_enabled → 3-path encoding for semantic search
@@ -91,7 +92,7 @@ L4: Advanced Params (6)
   └─ summary_mode: "native_video" (默认, 本地Qwen2.5-VL + 纯Python聚合) | "vlm_llm" (VLM+LLM, API驱动)
 
 Validation: PipelineParams model_validator in core/schemas.py
-  ● vision OFF → ocr/caption forced OFF
+  ● vision OFF → ocr/caption/detection forced OFF
   ● caption OFF → summary forced OFF
   ● vision+audio both OFF → reject
   ● search+summary both OFF → reject
@@ -269,7 +270,7 @@ config.yaml controls which backends to load:
   embedder:    qwen3_vl_embedding → local GPU model (Qwen3-VL-Embedding-2B), loaded at startup
   summarizer:  vllm          → DeepSeek API (vlm_llm mode only; native mode uses Python aggregator)
   transcriber: null          → disabled (faster-whisper plugin exists, opt-in)
-  detector:    null          → disabled (placeholder)
+  detector:    yolo          → YOLO11s object detection (default: enabled via config)
   ocr:         null          → disabled (placeholder)
   grounding:   null          → disabled (placeholder)
 ```
@@ -341,6 +342,17 @@ chunks
   ├─ scene_index, chunk_index, start_sec, end_sec
   ├─ embedding (Vector 2048), thumbnail_path
   └─ created_at
+
+frame_detections
+  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
+  ├─ track_id, timestamp_sec, class_name, confidence
+  ├─ bbox (JSONB, {x1, y1, x2, y2} 归一化 0-1)
+  └─ created_at
+
+tracks
+  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
+  ├─ track_id, class_name, first_seen, last_seen, frame_count
+  └─ created_at
 ```
 
 ## API Endpoints
@@ -360,7 +372,8 @@ chunks
 | GET | /api/v1/settings | 获取系统设置 (API key 状态) |
 | PUT | /api/v1/settings | 更新系统设置 (保存 API key) |
 | GET | /api/v1/pipeline/operations | 查询启用的操作列表 + 进度范围（前端 PipelineBar 用） |
-| POST | /api/v1/search/semantic | 语义搜索 (三路并行召回 + 按 scene 合并) |
+| GET | /api/v1/videos/{id}/detection/data | 获取检测框 + 追踪轨迹 JSON（前端 Canvas overlay 用） |
+| POST | /api/v1/search/semantic | 语义搜索 (四路并行召回：frame+chunk+text+label，按 scene 合并) |
 
 ## Frontend Architecture
 
@@ -436,7 +449,7 @@ Vite 开发代理:
 | DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration |
 | TransNetV2 Segmenter | ✅ | Neural scene boundary detection |
 | faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
-| Object Detection | 📋 | YOLO plugin shell only |
+| Object Detection + Tracking | ✅ | YOLO11s + ByteTrack, dual-gate control, frontend canvas overlay |
 | OCR | 📋 | PaddleOCR shell only |
 | Grounding | 📋 | Florence-2 shell only |
 | Export APIs | 📋 | export_routes.py / export_service.py shells |

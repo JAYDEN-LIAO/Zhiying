@@ -16,6 +16,7 @@ import { VideoSummaryCard } from "./components/VideoSummaryCard";
 import { VideoSearchCard } from "./components/VideoSearchCard";
 import { HistoryPanelContent } from "./components/HistoryPanelContent";
 import { SettingsPage } from "./components/SettingsPage";
+import { DetectionOverlay } from "./components/DetectionOverlay";
 
 export default function Dashboard() {
   const [currentPage, setCurrentPage] = useState<PageView>("dashboard");
@@ -335,18 +336,25 @@ export default function Dashboard() {
               {/* Video Player Area */}
               <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-black/5 shadow-inner flex items-center justify-center">
                 {currentVideoId && currentVideo ? (
-                  <video
-                    ref={videoRef}
-                    key={currentVideoId}
-                    className="w-full h-full object-contain bg-black"
-                    src={api.getVideoStreamUrl(currentVideoId)}
-                    controls
-                    autoPlay={false}
-                    preload="auto"
-                    playsInline
-                  >
-                    您的浏览器不支持视频播放
-                  </video>
+                  <div className="relative w-full h-full">
+                    <video
+                      ref={videoRef}
+                      key={currentVideoId}
+                      className="w-full h-full object-contain bg-black"
+                      src={api.getVideoStreamUrl(currentVideoId)}
+                      controls
+                      autoPlay={false}
+                      preload="auto"
+                      playsInline
+                    >
+                      您的浏览器不支持视频播放
+                    </video>
+                    <DetectionOverlay
+                      videoRef={videoRef}
+                      videoId={currentVideoId}
+                      enabled={currentVideo.detection_enabled ?? false}
+                    />
+                  </div>
                 ) : isUploading ? (
                   <div className="flex flex-col items-center gap-4">
                     <div className="w-12 h-12 rounded-full bg-black/30 flex items-center justify-center shadow-lg">

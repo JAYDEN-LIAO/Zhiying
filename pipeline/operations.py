@@ -20,6 +20,7 @@ from pipeline.runners.summary import SummaryRunner
 from pipeline.runners.frame_encode import FrameEncodeRunner
 from pipeline.runners.chunk_encode import ChunkEncodeRunner
 from pipeline.runners.text_encode import TextEncodeRunner
+from pipeline.runners.detection import DetectionRunner
 
 ALL_OPERATIONS: list[Operation] = [
     Operation(
@@ -59,6 +60,18 @@ ALL_OPERATIONS: list[Operation] = [
         gate=lambda v, _: v.audio_enabled,
         label="模态对齐", description="时间戳分配到场景中",
         progress_weight=0.05,
+    ),
+
+    Operation(
+        name="detection", runner=DetectionRunner(),
+        depends_on=["segmentation"],
+        gate=lambda v, cfg: (
+            cfg.get("plugins", {}).get("detector", {}).get("backend") is not None
+            and getattr(v, "detection_enabled", False)
+        ),
+        required_plugins=["detector"],
+        label="物体检测", description="YOLO11 检测 + BoT-SORT 追踪（独立帧率）",
+        progress_weight=0.10,
     ),
 
     Operation(

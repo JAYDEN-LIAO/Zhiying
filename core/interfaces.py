@@ -12,16 +12,15 @@ faster-whisper 等）的内部模型推理是同步 CPU/GPU 密集型计算。
 实现规范：
 
   ✅ 正确写法（YOLO 检测器示例）:
-      async def detect(self, frame, start_sec, end_sec):
-          results = await asyncio.to_thread(self._sync_predict, frame)
-          return self._parse_results(results, start_sec, end_sec)
+      async def detect(self, frames: list[np.ndarray]):
+          return await asyncio.to_thread(self._sync_predict, frames)
 
-      def _sync_predict(self, frame):
-          return self.model(frame, conf=0.35, device="cuda", verbose=False)
+      def _sync_predict(self, frames: list[np.ndarray]):
+          return self.model(frames, conf=0.35, device="cuda", verbose=False)
 
   ❌ 反例（禁止 — 会卡死事件循环）:
-      async def detect(self, frame, start_sec, end_sec):
-          return self.model(frame, conf=0.35, device="cuda")   # ← 阻塞!
+      async def detect(self, frames: list[np.ndarray]):
+          return self.model(frames, conf=0.35, device="cuda")   # ← 阻塞!
 
   例外：VLLMSummarizer（走 AsyncOpenAI HTTP）不需要 to_thread。
 
@@ -87,6 +86,8 @@ class VideoContext:
     transcript_full: str | None = None
     transcript_words: list[dict] = field(default_factory=list)
     summary: dict | None = None
+    frame_detections: list[dict] | None = None   # detection runner 产出
+    tracks: list[dict] | None = None              # detection runner 产出
 
     # 异步进度回调: async def cb(progress: float, phase: str, desc: str)
     progress_callback: Callable[[float, str, str], Awaitable[None]] | None = None
@@ -153,34 +154,31 @@ class BaseSegmenter(ABC):
 
 
 class BaseDetector(ABC):
-    """物体检测 — 单帧 → 检测物列表。"""
+    """物体检测 — 批量帧 → 批量检测物列表。
+
+    GPU 推理受益于批量处理（amortize kernel launch overhead）。
+    时间范围和跟踪 ID 由上层（ByteTrack / runner）负责，检测器只回答
+    "这幅图里有什么物体"。
+    """
 
     @abstractmethod
-    async def detect(
-        self,
-        frame: np.ndarray,
-        start_sec: float,
-        end_sec: float,
-    ) -> list[dict]:
+    async def detect(self, frames: list[np.ndarray]) -> list[list[dict]]:
         """
-        对关键帧执行物体检测。
+        对一批帧执行物体检测。
 
         Args:
-            frame: 单帧图像 (H, W, C) uint8。
-            start_sec: 该帧所属场景的开始时间。
-            end_sec: 该帧所属场景的结束时间。
+            frames: RGB 图像列表 (H, W, 3) uint8，长度通常为 batch_size（8）。
 
         Returns:
-            [
-                {
-                    "label": str,                            # 物体标签
-                    "bbox": [x1, y1, x2, y2],                # 边界框坐标
-                    "confidence": float,                     # 置信度 (0~1)
-                    "start_sec": float,                      # 出现时间
-                    "end_sec": float,                        # 消失时间
-                    "track_id": int | None,                  # 跟踪 ID（跨帧关联）
-                },
-            ]
+            与 frames 等长的列表。每个元素是该帧的检测物列表::
+
+                [
+                    {
+                        "bbox": [x1, y1, x2, y2],   # 归一化 0-1 坐标
+                        "confidence": float,         # 置信度 (0~1)
+                        "class_name": str,          # COCO 类别名
+                    },
+                ]
         """
         ...
 

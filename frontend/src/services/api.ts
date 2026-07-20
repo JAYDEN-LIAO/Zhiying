@@ -10,6 +10,7 @@ import type {
   SearchResults,
   PipelineParams,
   SettingsData,
+  DetectionData,
 } from "../types";
 
 const BASE = "/api/v1";
@@ -61,6 +62,10 @@ export const api = {
     form.append("caption_enabled", String(params?.caption_enabled ?? true));
     form.append("summary_enabled", String(params?.summary_enabled ?? true));
     form.append("summary_mode", params?.summary_mode ?? "native_video");
+    form.append("detection_enabled", String(params?.detection_enabled ?? false));
+    if (params?.detection_classes?.length) {
+      form.append("detection_classes", JSON.stringify(params.detection_classes));
+    }
     form.append("search_index_enabled", String(params?.search_index_enabled ?? true));
     form.append("sample_fps", String(params?.sample_fps ?? 1.0));
     form.append("segment_threshold", String(params?.segment_threshold ?? 0.5));
@@ -122,6 +127,11 @@ export const api = {
   /* ── Get video stream URL ── */
   getVideoStreamUrl(videoId: string): string {
     return `${BASE}/videos/${videoId}/stream`;
+  },
+
+  /* ── Detection data ── */
+  fetchDetectionData(videoId: string) {
+    return request<DetectionData>(`${BASE}/videos/${videoId}/detection/data`);
   },
 
   /* ── Settings ── */

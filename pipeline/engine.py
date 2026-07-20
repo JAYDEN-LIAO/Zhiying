@@ -20,7 +20,10 @@ from core.interfaces import VideoContext
 from core.models import Video, Scene, VideoStatus
 from core.status_tracker import StatusTracker
 from core.prompt_loader import get_prompt_loader
-from core.repository import bulk_insert_scenes, save_video_artifacts
+from core.repository import (
+    bulk_insert_scenes, save_video_artifacts,
+    bulk_insert_frame_detections, bulk_insert_tracks,
+)
 from plugins.factory import load_plugin
 from pipeline.operations import ALL_OPERATIONS
 from pipeline.runners.base import PipelineContext
@@ -304,6 +307,12 @@ class PipelineEngine:
                 await save_video_artifacts(
                     session, self.video.id, summary=self.ctx.summary,
                 )
+
+        # 5. 写入检测与追踪数据
+        if self.ctx.frame_detections:
+            async with self.db_session_factory() as session:
+                await bulk_insert_frame_detections(session, self.ctx.frame_detections)
+                await bulk_insert_tracks(session, self.ctx.tracks)
 
     async def _persist_summary_only(self) -> None:
         """仅写入摘要（增量用）。"""

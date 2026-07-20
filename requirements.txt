@@ -19,3 +19,6 @@ pytest-asyncio>=0.23.5
 
 qwen-vl-utils>=0.0.14
 python-multipart>=0.0.7
+
+# ── 物体检测与追踪 ──
+ultralytics>=8.3.0

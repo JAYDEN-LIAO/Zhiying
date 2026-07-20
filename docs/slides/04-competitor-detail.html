@@ -1,0 +1,58 @@
+<div class="slide" data-index="4">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+
+<div class="slide-content" style="padding:clamp(24px,4vw,48px) clamp(28px,4.5vw,56px);height:100%;display:flex;flex-direction:column;">
+  <div class="section-header" style="margin-bottom:14px;">
+    <p class="section-label">COMPETITIVE ANALYSIS</p>
+    <h2>其他竞品速览</h2>
+  </div>
+  <div style="flex:1;display:flex;flex-direction:column;gap:10px;">
+    <!-- Mixpeek -->
+    <div style="flex:1;display:flex;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px -2px rgba(0,0,0,0.10),0 4px 16px -6px rgba(0,0,0,0.06);">
+      <div style="width:6px;background:#4f93ed;"></div>
+      <div style="flex:1;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);padding:16px 20px;display:flex;flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+          <span style="font-size:22px;">🔧</span>
+          <span style="font-size:15px;font-weight:700;color:#111827;">Mixpeek</span>
+          <span style="font-size:9px;font-weight:600;color:#4f93ed;background:rgba(79,147,237,0.08);padding:2px 10px;border-radius:6px;">架构最接近的开源参考</span>
+          <span style="flex:1;"></span>
+          <span style="font-size:9px;color:#6b7280;">pipeline 路线</span>
+        </div>
+        <p style="font-size:11px;color:#4b5563;line-height:1.5;flex:1;">多模态提取 pipeline（Whisper + CLIP/SigLIP + Gemini VLM）+ 多阶段检索（RRF/DBSF/加权融合）。与 Cerno 3 路编码思路高度相似。核心差异：Mixpeek 用通用图像嵌入 + 外部 API 做 VLM，Cerno 用视频原生嵌入 + 本地 GPU。</p>
+        <p style="font-size:10px;color:#6b7280;margin-top:4px;border-top:1px solid rgba(0,0,0,0.04);padding-top:4px;">→ Mixpeek 证明了 pipeline 路线可行；Cerno 的改进方向是去 API 依赖和视频原生编码</p>
+      </div>
+    </div>
+    <!-- VideoDB -->
+    <div style="flex:1;display:flex;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px -2px rgba(0,0,0,0.10),0 4px 16px -6px rgba(0,0,0,0.06);">
+      <div style="width:6px;background:#34d399;"></div>
+      <div style="flex:1;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);padding:16px 20px;display:flex;flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+          <span style="font-size:22px;">🤖</span>
+          <span style="font-size:15px;font-weight:700;color:#111827;">VideoDB</span>
+          <span style="font-size:9px;font-weight:600;color:#34d399;background:rgba(52,211,153,0.1);padding:2px 10px;border-radius:6px;">Agent-first</span>
+          <span style="flex:1;"></span>
+          <span style="font-size:9px;color:#6b7280;">Agent 驱动</span>
+        </div>
+        <p style="font-size:11px;color:#4b5563;line-height:1.5;flex:1;">「视频即数据」理念，See-Understand-Act 循环。2026 年推出 Director 开源框架（20+ 预置 video agents）和 Agentic Streams——Agent 自主完成检索、剪辑、配音、翻译。收购 Devzery 强化开发者工具链。</p>
+        <p style="font-size:10px;color:#6b7280;margin-top:4px;border-top:1px solid rgba(0,0,0,0.04);padding-top:4px;">→ 与 Cerno 声明式 DAG 不同哲学：Agent 灵活但不可预测，声明式可控但灵活度较低。目标殊途同归</p>
+      </div>
+    </div>
+    <!-- txtai -->
+    <div style="flex:1;display:flex;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px -2px rgba(0,0,0,0.10),0 4px 16px -6px rgba(0,0,0,0.06);">
+      <div style="width:6px;background:#9ca3af;"></div>
+      <div style="flex:1;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);padding:16px 20px;display:flex;flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+          <span style="font-size:22px;">📦</span>
+          <span style="font-size:15px;font-weight:700;color:#111827;">txtai</span>
+          <span style="font-size:9px;font-weight:600;color:#6b7280;background:rgba(156,163,175,0.12);padding:2px 10px;border-radius:6px;">通用框架</span>
+          <span style="flex:1;"></span>
+          <span style="font-size:9px;color:#6b7280;">Apache 2.0</span>
+        </div>
+        <p style="font-size:11px;color:#4b5563;line-height:1.5;flex:1;">Apache 2.0 开源全能型 AI 框架。视频能力仅为多模态延伸——all-MiniLM-L6-v2（384 维）通用嵌入 + BLIP 图像字幕，缺乏场景分割、1fps 帧编码、滑动窗口 chunk 等视频专项设计。</p>
+        <p style="font-size:10px;color:#6b7280;margin-top:4px;border-top:1px solid rgba(0,0,0,0.04);padding-top:4px;">→ 证明了"通用框架套视频"行不通——视频需要原生嵌入 + 场景分割 + 时序建模的专项优化</p>
+      </div>
+    </div>
+  </div>
+</div>
+</div>

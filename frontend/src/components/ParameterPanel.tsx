@@ -10,31 +10,31 @@ import type { ContentType, PipelineParams } from "../types";
 const SCENE_PRESETS: Record<string, {
   label: string;
   desc: string;
-  modules: { vision: boolean; audio: boolean; ocr: boolean; caption: boolean };
+  modules: { vision: boolean; audio: boolean; ocr: boolean; caption: boolean; detection: boolean };
   functions: { searchIndex: boolean; summary: boolean };
 }> = {
   general: {
     label: "通用",
     desc: "均衡模式，适合未知内容类型",
-    modules: { vision: true, audio: false, ocr: false, caption: true },
+    modules: { vision: true, audio: false, ocr: false, caption: true, detection: false },
     functions: { searchIndex: true, summary: true },
   },
   meeting: {
     label: "会议",
     desc: "以语音和对话为核心（含课堂、访谈、教程）",
-    modules: { vision: true, audio: true, ocr: true, caption: true },
+    modules: { vision: true, audio: true, ocr: true, caption: true, detection: false },
     functions: { searchIndex: true, summary: true },
   },
   surveillance: {
     label: "监控",
     desc: "固定机位，无音频轨道，纯视觉分析",
-    modules: { vision: true, audio: false, ocr: false, caption: true },
+    modules: { vision: true, audio: false, ocr: false, caption: true, detection: true },
     functions: { searchIndex: true, summary: false },
   },
   text_recognition: {
     label: "文字识别",
     desc: "扫描视频中的文件、聊天截图、票据、PPT 等文字",
-    modules: { vision: true, audio: false, ocr: true, caption: false },
+    modules: { vision: true, audio: false, ocr: true, caption: false, detection: false },
     functions: { searchIndex: true, summary: false },
   },
 };
@@ -58,10 +58,34 @@ const SUMMARY_DETAILS = [
 const MODULE_AVAILABLE: Record<string, boolean> = {
   audio: false,
   ocr: false,
-  detection: false,
+  detection: true,
 };
 
-type ModuleKey = "vision" | "audio" | "ocr" | "caption";
+/* ── COCO 80 类（YOLO11 完整列表）── */
+const COCO_ALL = [
+  "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck",
+  "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench",
+  "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra",
+  "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
+  "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
+  "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup",
+  "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
+  "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
+  "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse",
+  "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+  "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier",
+  "toothbrush",
+];
+
+const COMMON_CLASSES = [
+  "person", "car", "truck", "bus", "motorcycle", "bicycle",
+  "dog", "cat", "bird", "horse",
+  "chair", "couch", "bed", "dining table",
+  "laptop", "cell phone", "tv", "book",
+  "backpack", "umbrella", "bottle", "cup",
+];
+
+type ModuleKey = "vision" | "audio" | "ocr" | "caption" | "detection";
 
 interface AdvancedParams {
   language: string;
@@ -128,6 +152,11 @@ export function ParameterPanel({
     const saved = loadCustomParams();
     return (saved?.summaryMode as string) ?? "native_video";
   });
+  const [detectionClasses, setDetectionClasses] = useState<string[] | null>(() => {
+    const saved = loadCustomParams();
+    return (saved?.detectionClasses as string[] | null) ?? null;
+  });
+  const [classSearch, setClassSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -138,7 +167,7 @@ export function ParameterPanel({
     g.audio = !MODULE_AVAILABLE.audio;
     g.ocr = !MODULE_AVAILABLE.ocr || !modules.vision;
     g.caption = !modules.vision;
-    g.detection = true;
+    g.detection = !MODULE_AVAILABLE.detection || !modules.vision;
     // 功能开关
     g.summary = !modules.caption;
     // 高级参数
@@ -146,15 +175,16 @@ export function ParameterPanel({
     g.sampleFps = !modules.vision;
     g.captionWithContext = !modules.caption;
     g.summaryDetail = !functions.summary || !modules.caption;
+    g.detectionClasses = !modules.detection;
     return g;
   }, [modules, functions]);
 
   /* ── 自定义参数自动保存 ── */
   useEffect(() => {
     if (sceneType === "custom") {
-      saveCustomParams({ sceneType, modules, functions, advanced, summaryMode });
+      saveCustomParams({ sceneType, modules, functions, advanced, summaryMode, detectionClasses });
     }
-  }, [sceneType, modules, functions, advanced]);
+  }, [sceneType, modules, functions, advanced, detectionClasses]);
 
   /* ── L1 场景类型变更 → 重设 L2/L3 默认值 ── */
   const handleSceneTypeChange = (ct: ContentType) => {
@@ -180,10 +210,11 @@ export function ParameterPanel({
     if (grayed[key]) return;
     setModules((prev) => {
       const next = { ...prev, [key]: !prev[key] };
-      // vision 关闭 → ocr / caption 强制关闭
+      // vision 关闭 → ocr / caption / detection 强制关闭
       if (!next.vision) {
         next.ocr = false;
         next.caption = false;
+        next.detection = false;
       }
       // caption 关闭 → summary 强制关闭
       if (!next.caption) {
@@ -214,6 +245,7 @@ export function ParameterPanel({
     if (!modules.vision && !modules.audio) return "视觉分析和音频转录至少开启一个";
     if (!functions.searchIndex && !functions.summary) return "搜索索引和智能摘要至少开启一个";
     if (!modules.vision && modules.caption) return "视觉分析已关闭，画面描述应同时关闭";
+    if (!modules.vision && modules.detection) return "视觉分析已关闭，物体检测应同时关闭";
     if (!modules.caption && functions.summary) return "画面描述已关闭，智能摘要应同时关闭";
     return null;
   };
@@ -228,6 +260,8 @@ export function ParameterPanel({
       audio_enabled: modules.audio,
       ocr_enabled: modules.ocr,
       caption_enabled: modules.caption,
+      detection_enabled: modules.detection,
+      detection_classes: modules.detection ? detectionClasses : null,
       search_index_enabled: functions.searchIndex,
       summary_enabled: functions.summary,
       summary_mode: summaryMode,
@@ -356,10 +390,10 @@ export function ParameterPanel({
               { key: "audio" as ModuleKey, label: "音频转录", hint: grayed.audio ? "插件未启用" : "语音转文字" },
               { key: "ocr" as ModuleKey, label: "文字识别", hint: grayed.ocr ? (MODULE_AVAILABLE.ocr ? "依赖视觉分析" : "插件未启用") : "提取画面文字" },
               { key: "caption" as ModuleKey, label: "画面描述", hint: grayed.caption ? "依赖视觉分析" : "VLM 场景描述" },
-              { key: "detection" as ModuleKey, label: "物体检测", hint: "YOLO 插件未实现" },
+              { key: "detection" as ModuleKey, label: "物体检测", hint: grayed.detection ? (MODULE_AVAILABLE.detection ? "依赖视觉分析" : "插件未启用") : "YOLO11 逐帧检测与 ByteTrack 追踪" },
             ] as const).map((mod) => {
-              const isOn = mod.key === "detection" ? false : modules[mod.key];
-              const isGrayed = mod.key === "detection" ? true : grayed[mod.key];
+              const isOn = modules[mod.key];
+              const isGrayed = grayed[mod.key];
               return (
                 <div
                   key={mod.key}
@@ -376,13 +410,118 @@ export function ParameterPanel({
                   </div>
                   <Toggle
                     checked={isOn}
-                    onChange={() => mod.key !== "detection" && toggleModule(mod.key)}
+                    onChange={() => toggleModule(mod.key)}
                     disabled={isGrayed}
                   />
                 </div>
               );
             })}
           </div>
+
+          {/* 物体检测 → 目标类别选择（仅检测开启时显示） */}
+          {modules.detection && (
+            <div className={`mt-2 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
+              grayed.detectionClasses ? "border-gray-150 bg-gray-50/30 opacity-40" : "border-blue-300 bg-blue-50/30"
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className={`text-[11px] font-medium ${grayed.detectionClasses ? "text-gray-350" : "text-gray-500"}`}>
+                  目标类别
+                </span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => !grayed.detectionClasses && setDetectionClasses(null)}
+                    disabled={grayed.detectionClasses}
+                    className={`px-2 py-0.5 text-[10px] font-medium rounded-md transition-all ${
+                      grayed.detectionClasses ? "text-gray-300 cursor-not-allowed" :
+                      detectionClasses === null ? "bg-[#1a65e1] text-white" : "bg-gray-100/60 text-gray-500 hover:bg-gray-100"
+                    }`}
+                  >
+                    全部
+                  </button>
+                  <button
+                    onClick={() => !grayed.detectionClasses && setDetectionClasses([])}
+                    disabled={grayed.detectionClasses}
+                    className={`px-2 py-0.5 text-[10px] font-medium rounded-md transition-all ${
+                      grayed.detectionClasses ? "text-gray-300 cursor-not-allowed" :
+                      detectionClasses !== null ? "bg-[#1a65e1] text-white" : "bg-gray-100/60 text-gray-500 hover:bg-gray-100"
+                    }`}
+                  >
+                    自定义
+                  </button>
+                </div>
+              </div>
+
+              {/* 自定义模式：已选类别 + 常用类别 + 搜索 */}
+              {detectionClasses !== null && (
+                <div className="space-y-2">
+                  {/* 已选类别（可移除） */}
+                  {detectionClasses.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {detectionClasses.map((cls) => (
+                        <span
+                          key={cls}
+                          onClick={() => setDetectionClasses((prev) => (prev ?? []).filter((c) => c !== cls))}
+                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-[#1a65e1] text-white rounded-md cursor-pointer hover:bg-blue-700 transition-colors"
+                        >
+                          {cls}
+                          <svg className="w-2.5 h-2.5 opacity-70" viewBox="0 0 12 12" fill="currentColor">
+                            <path d="M3 3l6 6M9 3l-6 6" stroke="white" strokeWidth="1.5" fill="none" />
+                          </svg>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 搜索输入 */}
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={classSearch}
+                      onChange={(e) => setClassSearch(e.target.value)}
+                      placeholder="搜索匹配 80 类…"
+                      className="w-full px-2.5 py-1 text-[11px] border border-gray-200 rounded-md focus:outline-none focus:border-blue-400 bg-white/80 placeholder:text-gray-350"
+                    />
+                    {classSearch && (() => {
+                      const q = classSearch.toLowerCase();
+                      const matches = COCO_ALL.filter(
+                        (c) => c.toLowerCase().includes(q) && !(detectionClasses ?? []).includes(c),
+                      ).slice(0, 6);
+                      if (!matches.length) return null;
+                      return (
+                        <div className="absolute top-full left-0 right-0 mt-0.5 bg-white border border-gray-200 rounded-md shadow-lg z-10 max-h-[140px] overflow-y-auto custom-scrollbar">
+                          {matches.map((c) => (
+                            <button
+                              key={c}
+                              onClick={() => {
+                                setDetectionClasses((prev) => [...(prev ?? []), c]);
+                                setClassSearch("");
+                              }}
+                              className="w-full text-left px-2.5 py-1 text-[11px] hover:bg-blue-50 text-gray-600 transition-colors"
+                            >
+                              {c}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* 常用类别 chips */}
+                  <div className="flex flex-wrap gap-1">
+                    {COMMON_CLASSES.filter((c) => !(detectionClasses ?? []).includes(c)).map((cls) => (
+                      <button
+                        key={cls}
+                        onClick={() => setDetectionClasses((prev) => [...(prev ?? []), cls])}
+                        className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-100/60 text-gray-500 rounded-md hover:bg-blue-100 hover:text-blue-700 transition-colors"
+                      >
+                        + {cls}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         {/* L3: 功能开关 */}

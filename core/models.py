@@ -16,7 +16,7 @@ import enum
 
 from sqlalchemy import (
     String, Integer, Float, Boolean, DateTime, Text,
-    ForeignKey, Index, Enum as SAEnum,
+    ForeignKey, Index, UniqueConstraint, Enum as SAEnum,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -119,6 +119,14 @@ class Video(Base):
         Boolean, default=True, nullable=False,
         comment="场景描述开关",
     )
+    detection_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False,
+        comment="物体检测与追踪开关（YOLO11 + ByteTrack）",
+    )
+    detection_classes: Mapped[list[str] | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="目标检测类别列表，如 ['person', 'car']；NULL = 所有 80 类",
+    )
     summary_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False,
         comment="摘要生成开关",
@@ -184,6 +192,12 @@ class Video(Base):
     )
     chunks: Mapped[list["Chunk"]] = relationship(
         "Chunk", back_populates="video", cascade="all, delete-orphan",
+    )
+    frame_detections: Mapped[list["FrameDetection"]] = relationship(
+        "FrameDetection", back_populates="video", cascade="all, delete-orphan",
+    )
+    tracks_video: Mapped[list["Track"]] = relationship(
+        "Track", back_populates="video", cascade="all, delete-orphan",
     )
 
     __table_args__ = (
@@ -425,4 +439,101 @@ class Chunk(Base):
         Index("idx_chunks_video_scene", "video_id", "scene_index"),
         Index("idx_chunks_time_range", "video_id", "start_sec", "end_sec"),
         {"comment": "视频窗口向量表 — 场景内滑动窗口，用于过程语义搜索"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# FrameDetection — 逐帧物体检测结果，1fps 采样
+# ═══════════════════════════════════════════════════════════
+
+class FrameDetection(Base):
+    """逐帧检测结果表 — 每帧每物体一行。
+
+    按 (video_id, timestamp_sec) 复合索引，前端 canvas overlay
+    通过时间戳 O(1) 查找当前帧的检测框。
+    """
+
+    __tablename__ = "frame_detections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    track_id: Mapped[int] = mapped_column(
+        Integer, nullable=False, index=True,
+        comment="ByteTrack 分配的跨帧追踪 ID",
+    )
+    timestamp_sec: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="视频时间戳(秒)，1fps 粒度",
+    )
+    class_name: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="COCO 类别名，如 person/car/dog",
+    )
+    confidence: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="YOLO 置信度 (0~1)",
+    )
+    bbox: Mapped[dict] = mapped_column(
+        JSONB, nullable=False,
+        comment="归一化边界框 {x1, y1, x2, y2}，坐标 0-1",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+    )
+
+    video: Mapped["Video"] = relationship("Video", back_populates="frame_detections")
+
+    __table_args__ = (
+        Index("ix_frame_detections_video_ts", "video_id", "timestamp_sec"),
+        {"comment": "逐帧检测结果表 — 1fps 采样，前端逐帧查询 bbox"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# Track — 跨帧追踪轨迹摘要
+# ═══════════════════════════════════════════════════════════
+
+class Track(Base):
+    """追踪轨迹摘要表 — 每个 ByteTrack track_id 一行。
+
+    前端点击选中 + 高亮同一 track 的跨帧 bbox 时使用。
+    """
+
+    __tablename__ = "tracks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    track_id: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="ByteTrack 内部追踪 ID",
+    )
+    class_name: Mapped[str] = mapped_column(
+        String(64), nullable=False,
+        comment="多数类别（track 跨帧投票得出）",
+    )
+    first_seen: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="首次出现时间戳(秒)",
+    )
+    last_seen: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="最后出现时间戳(秒)",
+    )
+    frame_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="出现帧数",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+    )
+
+    video: Mapped["Video"] = relationship("Video", back_populates="tracks_video")
+
+    __table_args__ = (
+        UniqueConstraint("video_id", "track_id", name="uq_track_video"),
+        Index("ix_tracks_video_class", "video_id", "class_name"),
+        {"comment": "追踪轨迹摘要表 — 每 track_id 一行，用于跨帧高亮与搜索"},
     )

@@ -53,6 +53,7 @@ _MODULE_OVERRIDES: dict[tuple[str, str], str] = {
     ("captioner", "qwen25_vl"): "qwen25_vl_captioner",
     ("embedder", "qwen3_vl_embedding"): "qwen_vl_embedder",
     ("summarizer", "vllm"): "vllm_summarizer",
+    ("detector", "yolo"): "yolo",
 }
 
 # 后端标识 → 实现类名覆盖
@@ -61,6 +62,7 @@ _CLASS_OVERRIDES: dict[tuple[str, str], str] = {
     ("captioner", "qwen_api"): "QwenAPICaptioner",
     ("captioner", "qwen25_vl"): "Qwen25VLCaptioner",
     ("segmenter", "time_based"): "TimeBasedSegmenter",
+    ("detector", "yolo"): "YoloDetector",
 }
 
 

@@ -53,6 +53,8 @@ async def upload_video(
     ocr_enabled: bool = Form(False),
     grounding_enabled: bool = Form(False),
     caption_enabled: bool = Form(True),
+    detection_enabled: bool = Form(False),
+    detection_classes: str | None = Form(None),
     summary_enabled: bool = Form(True),
     summary_mode: str = Form("native_video"),
     search_index_enabled: bool = Form(True),
@@ -76,6 +78,16 @@ async def upload_video(
 
     file_size = os.path.getsize(dest_path)
 
+    # 解析 JSON 字符串 → list[str] | None
+    detection_classes_list: list[str] | None = None
+    if detection_classes:
+        import json as _json
+        try:
+            parsed = _json.loads(detection_classes)
+            detection_classes_list = parsed if isinstance(parsed, list) else None
+        except (_json.JSONDecodeError, TypeError):
+            detection_classes_list = None
+
     dto = VideoCreate(
         file_path=dest_path,
         file_name=file.filename or f"video_{file_id}{ext}",
@@ -87,6 +99,8 @@ async def upload_video(
         ocr_enabled=ocr_enabled,
         grounding_enabled=grounding_enabled,
         caption_enabled=caption_enabled,
+        detection_enabled=detection_enabled,
+        detection_classes=detection_classes_list,
         summary_enabled=summary_enabled,
         summary_mode=summary_mode,
         search_index_enabled=search_index_enabled,
@@ -127,6 +141,8 @@ async def reuse_video(
         ocr_enabled=payload.ocr_enabled,
         grounding_enabled=False,
         caption_enabled=payload.caption_enabled,
+        detection_enabled=payload.detection_enabled,
+        detection_classes=payload.detection_classes,
         summary_enabled=payload.summary_enabled,
         summary_mode=payload.summary_mode,
         search_index_enabled=payload.search_index_enabled,
@@ -178,6 +194,8 @@ async def update_video_params(
                 audio_enabled=payload.audio_enabled,
                 ocr_enabled=payload.ocr_enabled,
                 caption_enabled=payload.caption_enabled,
+                detection_enabled=payload.detection_enabled,
+                detection_classes=payload.detection_classes,
                 summary_enabled=payload.summary_enabled,
                 summary_mode=payload.summary_mode,
                 search_index_enabled=payload.search_index_enabled,
@@ -209,6 +227,8 @@ async def update_video_params(
             "audio_enabled": video.audio_enabled,
             "ocr_enabled": video.ocr_enabled,
             "caption_enabled": video.caption_enabled,
+            "detection_enabled": video.detection_enabled,
+            "detection_classes": video.detection_classes,
             "language": video.language,
             "sample_fps": video.sample_fps,
             "segment_threshold": video.segment_threshold,
@@ -225,6 +245,8 @@ async def update_video_params(
             "audio_enabled": payload.audio_enabled,
             "ocr_enabled": payload.ocr_enabled,
             "caption_enabled": payload.caption_enabled,
+            "detection_enabled": payload.detection_enabled,
+            "detection_classes": payload.detection_classes,
             "language": payload.language,
             "sample_fps": payload.sample_fps,
             "segment_threshold": payload.segment_threshold,
@@ -236,8 +258,10 @@ async def update_video_params(
         }
 
         non_l3_keys = {"content_type", "vision_enabled", "audio_enabled", "ocr_enabled",
-                       "caption_enabled", "language", "sample_fps", "segment_threshold",
-                       "caption_with_context", "summary_detail", "summary_mode"}
+                       "caption_enabled", "detection_enabled", "detection_classes",
+                       "language", "sample_fps",
+                       "segment_threshold", "caption_with_context", "summary_detail",
+                       "summary_mode"}
         l3_keys = {"summary_enabled", "search_index_enabled"}
 
         non_l3_changed = {k for k in non_l3_keys if old.get(k) != new.get(k)}

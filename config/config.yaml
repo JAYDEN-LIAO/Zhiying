@@ -21,9 +21,14 @@ plugins:
       threshold: 0.5
       scene_min_duration: 1.0
 
-  # ── 物体检测（Demo 跳过）──
+  # ── 物体检测 + 追踪（YOLO11 + 内置 BoT-SORT，默认启用）──
   detector:
-    backend: null
+    backend: yolo
+    model: models/yolo26s.pt
+    confidence_threshold: 0.4
+    iou_threshold: 0.5
+    batch_size: 8
+    detection_fps: 10
 
   # ── OCR（Demo 跳过）──
   ocr:

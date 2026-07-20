@@ -93,6 +93,8 @@ class ReuseRequest(BaseModel):
     vision_enabled: bool = True
     ocr_enabled: bool = False
     caption_enabled: bool = True
+    detection_enabled: bool = False
+    detection_classes: list[str] | None = None
     summary_enabled: bool = True
     summary_mode: str = "native_video"
     search_index_enabled: bool = True

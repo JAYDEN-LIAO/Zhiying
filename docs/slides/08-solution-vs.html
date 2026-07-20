@@ -1,0 +1,93 @@
+<div class="slide" data-index="8">
+  <div class="blob-blue" style="top:-5%;right:-5%;width:45%;height:80%"></div>
+  <div class="blob-green" style="bottom:-5%;right:-5%;width:40%;height:55%"></div>
+  <div class="blob-left" style="top:10%;left:-2%;width:20%;height:80%"></div>
+  <div class="blob-right" style="bottom:0;right:0;width:25%;height:45%"></div>
+
+<div class="slide-content" style="padding:clamp(24px,4vw,48px) clamp(28px,4.5vw,56px);height:100%;display:flex;flex-direction:column;">
+  <div class="section-header" style="margin-bottom:12px;">
+    <p class="section-label">MODEL SELECTION · EMBEDDING 2/2</p>
+    <h2>8B vs 2B — 质量与显存的权衡</h2>
+  </div>
+
+  <div style="flex:1;display:flex;gap:14px;">
+    <!-- 方案 A：8B -->
+    <div style="flex:1;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px -6px rgba(52,211,153,0.15);border:2px solid #34d399;">
+      <div style="background:linear-gradient(135deg,#1a65e1,#34d399);color:white;padding:12px 18px;display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-size:13px;font-weight:700;">Qwen3-VL-Emb-8B（推荐默认）</span>
+        <span style="font-size:9px;background:rgba(255,255,255,0.2);padding:2px 10px;border-radius:6px;">MMEB-V2 第一</span>
+      </div>
+      <div style="flex:1;background:linear-gradient(180deg,#ffffff,#f0f5fc);padding:16px 20px;">
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <div style="flex:1;text-align:center;background:rgba(26,101,225,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#1a65e1;">77.8</span>
+            <span style="font-size:8px;color:#6b7280;">MMEB-V2 总分</span>
+          </div>
+          <div style="flex:1;text-align:center;background:rgba(52,211,153,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#34d399;">67.1</span>
+            <span style="font-size:8px;color:#6b7280;">视频子项</span>
+          </div>
+          <div style="flex:1;text-align:center;background:rgba(79,147,237,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#4f93ed;">8B</span>
+            <span style="font-size:8px;color:#6b7280;">参数量</span>
+          </div>
+          <div style="flex:1;text-align:center;background:rgba(103,196,192,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#f59e0b;">~16GB</span>
+            <span style="font-size:8px;color:#6b7280;">FP16 显存</span>
+          </div>
+        </div>
+        <p style="font-size:10px;color:#374151;line-height:1.6;"><strong>优势：</strong>MMEB-V2 总分第一（77.8），视频子项 67.1 断层领先（第二名仅 59.2）。"搜得到"和"搜不到"的区别。三模态统一，2048 维，30+ 语言，Apache 2.0。</p>
+        <p style="font-size:10px;color:#374151;line-height:1.6;margin-top:6px;"><strong>代价：</strong>FP16 约 16GB，加上 VLM（~8GB）后 24GB 刚好装满。支持 INT8 量化可降到 ~8GB，但 embedding 量化可能影响精度。</p>
+        <p style="font-size:10px;color:#374151;line-height:1.6;margin-top:6px;"><strong>Matryoshka 降维：</strong>支持 64-4096 灵活维度裁剪。2048→1024 预计精度损失 <1%，可节省 50% 存储。参考 Jina CLIP v2 降维 75% 仍保留 99% 性能。</p>
+      </div>
+    </div>
+
+    <!-- 方案 B：2B -->
+    <div style="flex:1;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px -6px rgba(79,147,237,0.12);border:1px solid rgba(79,147,237,0.15);">
+      <div style="background:linear-gradient(135deg,#4f93ed,#67c4c0);color:white;padding:12px 18px;display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-size:13px;font-weight:700;">Qwen3-VL-Emb-2B（轻量备选）</span>
+        <span style="font-size:9px;background:rgba(255,255,255,0.2);padding:2px 10px;border-radius:6px;">省显存方案</span>
+      </div>
+      <div style="flex:1;background:linear-gradient(180deg,#ffffff,#f8fafc);padding:16px 20px;">
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <div style="flex:1;text-align:center;background:rgba(26,101,225,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#1a65e1;">73.2</span>
+            <span style="font-size:8px;color:#6b7280;">MMEB-V2 总分</span>
+          </div>
+          <div style="flex:1;text-align:center;background:rgba(52,211,153,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#34d399;">61.9</span>
+            <span style="font-size:8px;color:#6b7280;">视频子项</span>
+          </div>
+          <div style="flex:1;text-align:center;background:rgba(79,147,237,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#4f93ed;">2B</span>
+            <span style="font-size:8px;color:#6b7280;">参数量</span>
+          </div>
+          <div style="flex:1;text-align:center;background:rgba(103,196,192,0.06);border-radius:8px;padding:8px;">
+            <span style="display:block;font-size:20px;font-weight:800;color:#34d399;">~4GB</span>
+            <span style="font-size:8px;color:#6b7280;">FP16 显存</span>
+          </div>
+        </div>
+        <p style="font-size:10px;color:#374151;line-height:1.6;"><strong>优势：</strong>仅 ~4GB FP16，VLM（8GB）+ Emb（4GB）= 12GB，远低于 24GB 上限，余量充足。同样三模态统一，2048 维，30+ 语言，Apache 2.0。总分 73.2 仍然排名第 4。</p>
+        <p style="font-size:10px;color:#374151;line-height:1.6;margin-top:6px;"><strong>代价：</strong>视频子项 61.9 vs 8B 的 67.1——差距约 8%。在模糊查询场景（"穿黑衣服的人"）中，top-10 召回率可能下降。图像任务 75.0 vs 80.1，也差 6%。</p>
+        <p style="font-size:10px;color:#374151;line-height:1.6;margin-top:6px;"><strong>适合：</strong>需要更低显存占用的场景，或与 VLM 同卡并行推理时余量不足的配置。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部结论条 -->
+  <div style="margin-top:10px;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px -2px rgba(0,0,0,0.06);">
+    <div style="background:rgba(255,255,255,0.5);padding:10px 18px;display:flex;align-items:center;gap:14px;border:1px solid rgba(255,255,255,0.6);">
+      <span style="font-size:18px;">💡</span>
+      <div style="flex:1;font-size:10px;color:#374151;line-height:1.4;">
+        <strong>选型结论：Qwen3-VL-Embedding-8B</strong> —— 总分第一 77.8，视频 67.1 断层领先，没有可替代的竞品。2B 版本作为降级备选。两模型共享同一架构和嵌入空间，切换只需改一行配置，无需重建索引。
+      </div>
+      <div style="display:flex;gap:6px;">
+        <div style="background:rgba(26,101,225,0.08);border-radius:6px;padding:3px 10px;font-size:8px;color:#1a65e1;text-align:center;">
+          <div style="font-weight:700;">VLM 8G</div>
+          <div>+ Emb 16G = 24G ✅</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>

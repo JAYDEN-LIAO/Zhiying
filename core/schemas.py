@@ -82,6 +82,8 @@ class VideoCreate(BaseModel):
     ocr_enabled: bool       = Field(default=False)
     grounding_enabled: bool = Field(default=False)
     caption_enabled: bool   = Field(default=True)
+    detection_enabled: bool = Field(default=False)
+    detection_classes: list[str] | None = Field(default=None)
     summary_enabled: bool   = Field(default=True)
     summary_mode: str       = Field(default="native_video", pattern=r"^(native_video|vlm_llm)$")
 
@@ -106,6 +108,8 @@ class PipelineParams(BaseModel):
     audio_enabled: bool     = Field(default=False)
     ocr_enabled: bool       = Field(default=False)
     caption_enabled: bool   = Field(default=True)
+    detection_enabled: bool = Field(default=False)
+    detection_classes: list[str] | None = Field(default=None, description="目标类别列表，如 ['person', 'car']；None=全部")
 
     # L3: 功能开关
     search_index_enabled: bool = Field(default=True)
@@ -122,12 +126,14 @@ class PipelineParams(BaseModel):
     @model_validator(mode="after")
     def validate_cross_dependencies(self):
         """跨字段依赖校验 — 与前端连锁规则保持一致。"""
-        # vision 关闭 → ocr / caption 必须为 false
+        # vision 关闭 → ocr / caption / detection 必须为 false
         if not self.vision_enabled:
             if self.ocr_enabled:
                 raise ValueError("视觉分析已关闭，文字识别必须同时关闭")
             if self.caption_enabled:
                 raise ValueError("视觉分析已关闭，画面描述必须同时关闭")
+            if self.detection_enabled:
+                raise ValueError("视觉分析已关闭，物体检测必须同时关闭")
 
         # caption 关闭 → summary 必须为 false
         if not self.caption_enabled and self.summary_enabled:
@@ -170,6 +176,8 @@ class VideoResponse(BaseModel):
     ocr_enabled: bool
     grounding_enabled: bool
     caption_enabled: bool
+    detection_enabled: bool
+    detection_classes: list[str] | None = None
     summary_enabled: bool
     summary_mode: str
 
@@ -203,6 +211,8 @@ class VideoListItem(BaseModel):
     # 参数展示字段（来自 Video ORM）
     audio_enabled: bool            = False
     caption_enabled: bool          = True
+    detection_enabled: bool        = False
+    detection_classes: list[str] | None = None
     summary_enabled: bool          = True
     summary_mode: str              = "native_video"
     search_index_enabled: bool     = True
