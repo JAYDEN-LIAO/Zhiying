@@ -42,10 +42,10 @@ export function PipelineBar({
   );
 
   return (
-    <div className="card-surface rounded-2xl px-5 py-4 border border-gray-200/60 w-full flex flex-col gap-y-2.5">
+    <div className="card-surface rounded-xl px-4 py-2 border border-gray-200/60 w-full flex flex-col gap-y-1">
       {/* ── Row 1: Progress bar ── */}
       <div>
-        <div className="relative h-5 w-full rounded-full overflow-hidden bg-gray-100/50">
+        <div className="relative h-3 w-full rounded-full overflow-hidden bg-gray-100/50">
           <div
             className="absolute inset-0 rounded-full transition-all duration-700 ease-out"
             style={{
@@ -67,23 +67,23 @@ export function PipelineBar({
           return (
             <div key={stage.id} className="flex items-center gap-1.5">
               {isDone ? (
-                <div className="w-[18px] h-[18px] rounded-full bg-green-400 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" strokeWidth="3" stroke="currentColor">
+                <div className="w-[14px] h-[14px] rounded-full bg-green-400 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 24 24" strokeWidth="3" stroke="currentColor">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                 </div>
               ) : isActive ? (
                 <div
-                  className="w-[18px] h-[18px] rounded-full flex items-center justify-center flex-shrink-0"
+                  className="w-[14px] h-[14px] rounded-full flex items-center justify-center flex-shrink-0"
                   style={{ backgroundColor: c }}
                 >
-                  <div className="w-2 h-2 rounded-full bg-white" />
+                  <div className="w-[5px] h-[5px] rounded-full bg-white" />
                 </div>
               ) : (
-                <div className="w-[18px] h-[18px] rounded-full bg-gray-200/70 flex-shrink-0" />
+                <div className="w-[14px] h-[14px] rounded-full bg-gray-200/70 flex-shrink-0" />
               )}
               <span
-                className={`text-xs font-medium whitespace-nowrap ${
+                className={`text-[10px] font-medium whitespace-nowrap ${
                   isDone ? "text-gray-700" : isActive ? "text-gray-900" : "text-gray-400"
                 }`}
               >
@@ -97,8 +97,8 @@ export function PipelineBar({
       {/* ── Row 3: Status line ── */}
       {statusText && (
         <p
-          className={`text-[11px] ${
-            isComplete ? "text-green-500 font-medium" : "text-gray-500"
+          className={`text-[10px] ${
+            isComplete ? "text-green-500 font-medium" : "text-gray-400"
           }`}
         >
           {statusText}

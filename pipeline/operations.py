@@ -21,6 +21,7 @@ from pipeline.runners.frame_encode import FrameEncodeRunner
 from pipeline.runners.chunk_encode import ChunkEncodeRunner
 from pipeline.runners.text_encode import TextEncodeRunner
 from pipeline.runners.detection import DetectionRunner
+from pipeline.runners.track_encode import TrackEncodeRunner
 
 ALL_OPERATIONS: list[Operation] = [
     Operation(
@@ -116,9 +117,23 @@ ALL_OPERATIONS: list[Operation] = [
     Operation(
         name="text_encode", runner=TextEncodeRunner(),
         depends_on=["caption"],
-        gate=lambda v, _: v.search_index_enabled and v.vision_enabled,
+        gate=lambda v, _: v.search_index_enabled and v.vision_enabled and v.caption_enabled,
         required_plugins=["embedder"],
         label="文本语义编码", description="文本向量编码中",
         progress_weight=0.07,
+    ),
+
+    Operation(
+        name="track_encode", runner=TrackEncodeRunner(),
+        depends_on=["detection", "frame_encode"],
+        gate=lambda v, cfg: (
+            v.detection_enabled
+            and v.search_index_enabled
+            and v.vision_enabled
+            and cfg.get("plugins", {}).get("detector", {}).get("backend") is not None
+        ),
+        required_plugins=["embedder"],
+        label="物体语义编码", description="Track 跨模态嵌入 + 全局重识别",
+        progress_weight=0.03,
     ),
 ]

@@ -324,3 +324,32 @@ async def bulk_insert_tracks(
         await session.rollback()
         logger.exception("[Repo] Failed to bulk insert tracks")
         raise
+
+
+async def bulk_insert_track_embeddings(
+    session: AsyncSession,
+    video_id: uuid.UUID,
+    rows: list[dict],
+) -> None:
+    """批量写入 track 嵌入向量 — track_encode runner 产出。"""
+    if not rows:
+        return
+    try:
+        from core.models import TrackEmbedding
+        session.add_all([
+            TrackEmbedding(
+                video_id=video_id,
+                track_id=r["track_id"],
+                class_name=r["class_name"],
+                embedding=r.get("embedding"),
+                timestamp_sec=r["timestamp_sec"],
+                bbox=r["bbox"],
+            )
+            for r in rows
+        ])
+        await session.commit()
+        logger.info("[Repo] Bulk inserted %d track embeddings", len(rows))
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to bulk insert track embeddings")
+        raise

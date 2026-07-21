@@ -54,6 +54,13 @@ class CaptionRunner(OperationRunner):
             logger.info("[CaptionRunner] Captioner disabled or no scenes, skipping")
             return
 
+        # 纯检索模式 (摘要未开) + scene 太少 → 跳过 caption, 省 30s/场景
+        if not pctx.video.summary_enabled and len(scenes) < 4:
+            logger.info(
+                "[CaptionRunner] Skipping: summary off + only %d scenes (< 4)", len(scenes),
+            )
+            return
+
         mode = getattr(pctx.video, "summary_mode", "native_video")
 
         # vlm_llm 模式需要切换 captioner backend

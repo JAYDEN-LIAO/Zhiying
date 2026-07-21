@@ -19,16 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.models import Scene, FrameEmbedding, Chunk
 from core.search import (
     frame_vector_search, chunk_vector_search,
-    text_vector_search,
+    text_vector_search, track_vector_search,
 )
 
 logger = logging.getLogger(__name__)
 
-_PRECISION_ORDER = {"frame": 0, "chunk": 1, "text": 2, "label": 3}
+_PRECISION_ORDER = {"frame": 0, "chunk": 1, "text": 2, "label": 3, "track": 2}
 _CLUSTER_GAP = 4.0  # 帧聚类最大间隔（秒）
-# 各路径相似度校准权重（相似度不可跨路直接比）
-# frame × 1.0（金标准） > text × 0.85（语义可靠但时间粗） > chunk × 0.7（编码质量退化）
-_PATH_WEIGHT = {"frame": 1.0, "chunk": 0.7, "text": 0.85, "label": 1.0}
+_PATH_WEIGHT = {"frame": 1.0, "chunk": 0.7, "text": 0.85, "label": 1.0, "track": 0.9}
 
 
 class SearchEngine:
@@ -65,7 +63,7 @@ class SearchEngine:
             统一格式的搜索结果列表，按 similarity 降序。
         """
         if search_types is None:
-            search_types = ["frame", "chunk", "text", "label"]
+            search_types = ["frame", "chunk", "text", "label", "track"]
 
         # 文本查询 → 向量编码（仅一次，三条路共享）
         vec = image_vec
@@ -83,6 +81,8 @@ class SearchEngine:
             tasks.append(self._text_search(vec, video_ids, top_k * 2))
         if "label" in search_types and query:
             tasks.append(self._label_search(query, video_ids, top_k * 2))
+        if "track" in search_types and vec is not None:
+            tasks.append(self._track_search(vec, video_ids, top_k * 2))
 
         if not tasks:
             return []
@@ -144,6 +144,39 @@ class SearchEngine:
                 session, vec, limit=limit, video_ids=video_ids,
             )
         return [self._scene_to_dict(s, sim, "text") for s, sim in results]
+
+    async def _track_search(
+        self,
+        vec: list[float],
+        video_ids: list[str] | None,
+        limit: int,
+    ) -> list[dict]:
+        """track 嵌入召回 — encode_text(query) vs crop 跨模态嵌入。"""
+        async with self.db_session_factory() as session:
+            results = await track_vector_search(
+                session, vec, limit=limit, video_ids=video_ids,
+            )
+            # 批量取 track 生命周期
+            track_keys = [(str(r.video_id), r.track_id) for r, _ in results]
+            track_map = await _load_track_ranges(session, track_keys)
+        return [self._track_to_dict(t, sim, track_map) for t, sim in results]
+
+    @staticmethod
+    def _track_to_dict(track_emb, sim: float, track_map: dict | None = None) -> dict:
+        key = (str(track_emb.video_id), track_emb.track_id)
+        trk = track_map.get(key) if track_map else None
+        return {
+            "video_id": str(track_emb.video_id),
+            "track_id": track_emb.track_id,
+            "class_name": track_emb.class_name,
+            "scene_index": 0,
+            "precise_start": trk["first_seen"] if trk else track_emb.timestamp_sec,
+            "precise_end": trk["last_seen"] if trk else None,
+            "precision_level": "track",
+            "similarity": float(sim),
+            "source": "track",
+            "bbox": track_emb.bbox,
+        }
 
     async def _label_search(
         self,
@@ -330,3 +363,33 @@ class SearchEngine:
             "source": source,
             "thumbnail_url": f"/api/v1/videos/{scene.video_id}/thumbnail/{scene.scene_index}",
         }
+
+
+async def _load_track_ranges(
+    session: AsyncSession,
+    keys: list[tuple[str, int]],
+) -> dict[tuple[str, int], dict]:
+    """批量查询 track 生命周期 (first_seen, last_seen)。"""
+    if not keys:
+        return {}
+    from sqlalchemy import or_
+    from core.models import Track
+
+    # 构造 (video_id, track_id) IN 条件
+    conditions = [
+        (Track.video_id == vid) & (Track.track_id == tid)
+        for vid, tid in keys
+    ]
+    if not conditions:
+        return {}
+
+    stmt = select(Track).where(or_(*conditions))
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+
+    return {
+        (str(r.video_id), r.track_id): {
+            "first_seen": r.first_seen, "last_seen": r.last_seen,
+        }
+        for r in rows
+    }

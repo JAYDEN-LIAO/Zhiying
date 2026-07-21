@@ -117,7 +117,7 @@ export const api = {
       body: JSON.stringify({
         query,
         video_ids: options?.video_ids,
-        search_types: options?.search_types ?? ["frame", "chunk", "text"],
+        search_types: options?.search_types ?? ["frame", "chunk", "text", "track", "label"],
         top_k: options?.top_k ?? 20,
         min_similarity: options?.min_similarity ?? 0.3,
       }),

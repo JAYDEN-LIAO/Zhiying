@@ -23,6 +23,7 @@ from core.prompt_loader import get_prompt_loader
 from core.repository import (
     bulk_insert_scenes, save_video_artifacts,
     bulk_insert_frame_detections, bulk_insert_tracks,
+    bulk_insert_track_embeddings,
 )
 from plugins.factory import load_plugin
 from pipeline.operations import ALL_OPERATIONS
@@ -313,6 +314,13 @@ class PipelineEngine:
             async with self.db_session_factory() as session:
                 await bulk_insert_frame_detections(session, self.ctx.frame_detections)
                 await bulk_insert_tracks(session, self.ctx.tracks)
+
+        # 6. 写入 track 嵌入向量 (v0.10)
+        if self.ctx.track_embeddings:
+            async with self.db_session_factory() as session:
+                await bulk_insert_track_embeddings(
+                    session, self.video.id, self.ctx.track_embeddings,
+                )
 
     async def _persist_summary_only(self) -> None:
         """仅写入摘要（增量用）。"""

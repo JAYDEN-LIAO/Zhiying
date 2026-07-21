@@ -109,10 +109,13 @@ class YoloDetector(BaseDetector):
         from ultralytics import YOLO
 
         # 相对路径 → 基于项目根目录解析（和 config_loader / prompt_loader 一致）
+        project_root = Path(__file__).resolve().parent.parent.parent
         model_path = self._model_name
         if not Path(model_path).is_absolute():
-            project_root = Path(__file__).resolve().parent.parent.parent
             model_path = str(project_root / model_path)
+
+        # 本地 tracker 配置（track_buffer=120, 6s @ 20fps）
+        self._tracker_config = str(project_root / "config" / "botsort.yaml")
 
         import torch
 
@@ -136,7 +139,7 @@ class YoloDetector(BaseDetector):
             iou=self._iou,
             classes=self._target_class_ids,
             persist=True,
-            tracker="botsort.yaml",
+            tracker=self._tracker_config,
             verbose=False,
         )
 

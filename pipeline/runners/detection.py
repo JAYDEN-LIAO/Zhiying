@@ -71,6 +71,7 @@ class DetectionRunner(OperationRunner):
         video_path = pctx.ctx.file_path
         frame_detections: list[dict] = []
         tracks_map: dict[int, dict] = {}
+        best_cache: dict[int, dict] = {}  # track_id → {frame, bbox, timestamp, conf}
 
         batch_frames: list[np.ndarray] = []
         batch_timestamps: list[float] = []
@@ -87,16 +88,17 @@ class DetectionRunner(OperationRunner):
             source_fps = cap.get(cv2.CAP_PROP_FPS)
             if source_fps <= 0:
                 source_fps = 30.0
-            step = max(1, int(source_fps / detection_fps))
+            frame_interval = 1.0 / detection_fps
             frame_idx = 0
+            next_ts = 0.0
 
             while True:
                 ret, frame = cap.read()
                 if not ret:
                     break
-                if frame_idx % step == 0:
-                    timestamp = frame_idx / source_fps
-                    if timestamp <= duration:
+                timestamp = frame_idx / source_fps
+                if timestamp >= next_ts - 0.001 and timestamp <= duration:
+                        next_ts += frame_interval
                         # BGR→RGB（cv2 读取 BGR，YOLO 需要 RGB）
                         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         batch_frames.append(rgb)
@@ -105,7 +107,7 @@ class DetectionRunner(OperationRunner):
                         if len(batch_frames) >= batch_size:
                             await self._process_batch(
                                 detector, batch_frames, batch_timestamps,
-                                pctx, frame_detections, tracks_map,
+                                pctx, frame_detections, tracks_map, best_cache,
                             )
                             processed += len(batch_frames)
                             await pctx.tracker.update(
@@ -138,6 +140,7 @@ class DetectionRunner(OperationRunner):
 
         pctx.ctx.frame_detections = frame_detections
         pctx.ctx.tracks = ctx_tracks
+        pctx.ctx.track_best_frames = best_cache
 
         # ── 按场景聚合 entities（给 label search 用）──
         self._aggregate_scene_entities(scenes, frame_detections)
@@ -160,15 +163,13 @@ class DetectionRunner(OperationRunner):
         pctx: PipelineContext,
         frame_detections: list[dict],
         tracks_map: dict[int, dict],
+        best_cache: dict[int, dict] | None = None,
     ) -> None:
-        """处理一批帧：检测+追踪 → 累加到 frame_detections 和 tracks_map。
-
-        detector.detect() 内部调用 model.track(persist=True)，
-        track_id 由 ultralytics 内置 BoT-SORT 分配，跨 batch 一致。
-        """
+        """处理一批帧：检测+追踪 → 累加到 frame_detections + tracks_map + best_cache。"""
         batch_dets = await detector.detect(frames)
 
-        for timestamp, dets in zip(timestamps, batch_dets):
+        for i, (timestamp, dets) in enumerate(zip(timestamps, batch_dets)):
+            frame = frames[i]
             for t in dets:
                 tid = t.get("track_id")
                 if tid is None or tid < 0:
@@ -198,6 +199,17 @@ class DetectionRunner(OperationRunner):
                     trk = tracks_map[tid]
                     trk["last_seen"] = float(timestamp)
                     trk["frame_count"] += 1
+
+                # 维护最佳帧缓存 (track_encode runner 复用)
+                if best_cache is not None:
+                    conf = t["confidence"]
+                    if tid not in best_cache or conf > best_cache[tid]["conf"]:
+                        best_cache[tid] = {
+                            "frame": frame,
+                            "bbox": t["bbox"],
+                            "timestamp": float(timestamp),
+                            "conf": conf,
+                        }
 
     @staticmethod
     def _aggregate_scene_entities(scenes, frame_detections: list[dict]) -> None:

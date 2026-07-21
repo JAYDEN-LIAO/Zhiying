@@ -88,6 +88,8 @@ class VideoContext:
     summary: dict | None = None
     frame_detections: list[dict] | None = None   # detection runner 产出
     tracks: list[dict] | None = None              # detection runner 产出
+    track_best_frames: dict | None = None          # {track_id: {frame, bbox, timestamp, conf}}
+    track_embeddings: list[dict] | None = None     # track_encode runner 产出
 
     # 异步进度回调: async def cb(progress: float, phase: str, desc: str)
     progress_callback: Callable[[float, str, str], Awaitable[None]] | None = None

@@ -107,6 +107,30 @@ async def init_db():
             ADD COLUMN IF NOT EXISTS detection_classes jsonb
         """))
 
+        # ── 增量迁移 v0.10: tracks.segments (ReID 合并时间片段) ──
+        await conn.execute(text("""
+            ALTER TABLE tracks
+            ADD COLUMN IF NOT EXISTS segments jsonb
+        """))
+
+        # ── 增量迁移 v0.10: track 嵌入表 ──
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS track_embeddings (
+                id SERIAL PRIMARY KEY,
+                video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                track_id INTEGER NOT NULL,
+                class_name VARCHAR(64) NOT NULL,
+                embedding vector(2048),
+                timestamp_sec DOUBLE PRECISION NOT NULL,
+                bbox JSONB NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_track_emb_video_track
+            ON track_embeddings (video_id, track_id)
+        """))
+
         # ── 清理：删除废弃的列、枚举类型、触发器 ──
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS preset

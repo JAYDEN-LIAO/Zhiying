@@ -15,7 +15,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.models import Scene, FrameEmbedding, Chunk
+from core.models import Scene, FrameEmbedding, Chunk, TrackEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -99,3 +99,27 @@ async def text_vector_search(
         stmt = stmt.where(Scene.video_id.in_(video_ids))
     result = await session.execute(stmt)
     return [(row.Scene, row.sim) for row in result]
+
+
+# ═══════════════════════════════════════════════════════════
+# 4. track 级向量搜索（物体 crop 跨模态嵌入 — v0.10）
+# ═══════════════════════════════════════════════════════════
+
+async def track_vector_search(
+    session: AsyncSession,
+    query_vector: list[float],
+    limit: int = 20,
+    video_ids: list[str] | None = None,
+) -> list[tuple[TrackEmbedding, float]]:
+    """track 嵌入搜索 — encode_text(query) vs crop 跨模态嵌入。"""
+    similarity = (1.0 - TrackEmbedding.embedding.cosine_distance(query_vector)).label("sim")
+    stmt = (
+        select(TrackEmbedding, similarity)
+        .where(TrackEmbedding.embedding.isnot(None))
+        .order_by(similarity.desc())
+        .limit(limit)
+    )
+    if video_ids:
+        stmt = stmt.where(TrackEmbedding.video_id.in_(video_ids))
+    result = await session.execute(stmt)
+    return [(row.TrackEmbedding, row.sim) for row in result]

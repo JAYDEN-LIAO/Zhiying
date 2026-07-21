@@ -185,6 +185,7 @@ export interface Track {
   first_seen: number;
   last_seen: number;
   frame_count: number;
+  segments?: { start: number; end: number }[];
 }
 
 export interface DetectionData {

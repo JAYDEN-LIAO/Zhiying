@@ -526,6 +526,10 @@ class Track(Base):
     frame_count: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="出现帧数",
     )
+    segments: Mapped[list[dict] | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="时间片段列表 [{start, end}]；被 ReID 合并的 track 有多个片段",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False,
     )
@@ -536,4 +540,52 @@ class Track(Base):
         UniqueConstraint("video_id", "track_id", name="uq_track_video"),
         Index("ix_tracks_video_class", "video_id", "class_name"),
         {"comment": "追踪轨迹摘要表 — 每 track_id 一行，用于跨帧高亮与搜索"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# TrackEmbedding — YOLO track crop 跨模态嵌入
+# ═══════════════════════════════════════════════════════════
+
+class TrackEmbedding(Base):
+    """Track 语义嵌入表 — YOLO crop 跨模态编码，用于 track 路搜索 + 全局 ReID。
+
+    每条 track 存储其最佳帧 crop 的 Qwen3-VL-Embedding 向量，
+    encode_text(查询) vs embedding 直接命中具体物体。
+    """
+
+    __tablename__ = "track_embeddings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    track_id: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="合并后的最终 track ID",
+    )
+    class_name: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="COCO 类别名",
+    )
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(2048), nullable=True,
+        comment="crop 跨模态嵌入, encode_image(best_frame_crop) 输出",
+    )
+    timestamp_sec: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="最佳帧时间戳(秒)",
+    )
+    bbox: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, comment="最佳帧归一化 bbox {x1,y1,x2,y2}",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+    )
+
+    video: Mapped["Video"] = relationship("Video")
+
+    __table_args__ = (
+        Index("ix_track_emb_video_track", "video_id", "track_id"),
+        {"comment": "Track 语义嵌入表 — crop 跨模态编码，track 路搜索 + 全局 ReID"},
     )

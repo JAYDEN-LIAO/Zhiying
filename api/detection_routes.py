@@ -1,19 +1,23 @@
 """
 api/detection_routes.py
 ═══════════════════════════════════════════════════════════
-检测数据 API — 前端 canvas overlay 获取逐帧检测框 + 追踪轨迹。
+检测数据 API — 前端 canvas overlay 获取逐帧检测框 + 追踪轨迹 + 缩略图。
 """
 
+import io
 import uuid
 import logging
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select, func
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from PIL import Image
 
 from api.deps import get_db
 from api.schemas import APIResponse
-from core.models import FrameDetection, Track
+from core.models import FrameDetection, Track, Video
+from utils.video_util import extract_keyframe_to_memory
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +78,7 @@ async def get_detection_data(
             "first_seen": t.first_seen,
             "last_seen": t.last_seen,
             "frame_count": t.frame_count,
+            "segments": t.segments or [{"start": t.first_seen, "end": t.last_seen}],
         }
         for t in db_tracks
     ]
@@ -96,3 +101,50 @@ async def get_detection_data(
         "tracks": tracks_data,
         "detections": detections_by_ts,
     })
+
+
+@router.get("/{video_id}/detection/thumbnail")
+async def get_detection_thumbnail(
+    video_id: uuid.UUID,
+    timestamp: float = Query(..., description="视频时间戳(秒)"),
+    x1: float | None = Query(None), y1: float | None = Query(None),
+    x2: float | None = Query(None), y2: float | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """提取指定时间点帧，返回 JPEG 缩略图。
+
+    可选 bbox 参数（归一化 0-1）进行裁剪；不传 bbox 则返回全帧。
+    始终缩放到 120px 宽，高度按比例缩放。
+    """
+    result = await db.execute(
+        select(Video.file_path).where(Video.id == video_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    file_path: str = row[0]
+    frame = await extract_keyframe_to_memory(file_path, timestamp)
+
+    # 可选裁剪
+    has_bbox = (x1 is not None and y1 is not None and x2 is not None and y2 is not None)
+    if has_bbox:
+        h, w = frame.shape[:2]
+        px1, py1 = max(0, int(x1 * w)), max(0, int(y1 * h))
+        px2, py2 = min(w, int(x2 * w)), min(h, int(y2 * h))
+        if px2 > px1 and py2 > py1:
+            frame = frame[py1:py2, px1:px2]
+
+    # 缩放到 120px 宽
+    img = Image.fromarray(frame)
+    thumb_w = 120
+    ratio = thumb_w / img.width
+    thumb_h = max(1, int(img.height * ratio))
+    img = img.resize((thumb_w, thumb_h), Image.LANCZOS)
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=65)
+    buf.seek(0)
+
+    return Response(content=buf.getvalue(), media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
