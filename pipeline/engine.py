@@ -1,13 +1,11 @@
 """
 pipeline/engine.py
 ═══════════════════════════════════════════════════════════
-声明式操作 DAG 编排器（v0.8）。
+声明式操作 DAG 编排器（v0.10 — 事件驱动调度）。
 
 操作通过 pipeline/operations.py 中的 ALL_OPERATIONS 声明，
-引擎负责门控过滤 → 拓扑排序 → 分批并行执行。
-
-作为后台任务被 FastAPI 调用（BackgroundTasks.add_task），
-通过 PipelineEngine.run() 入口执行全流程。
+引擎负责门控过滤 → 事件驱动调度：每个操作只等直接上游，
+就绪即启动 — 不再有批次壁垒。
 """
 
 import asyncio
@@ -27,10 +25,66 @@ from core.repository import (
 )
 from plugins.factory import load_plugin
 from pipeline.operations import ALL_OPERATIONS
-from pipeline.runners.base import PipelineContext
+from pipeline.runners.base import PipelineContext, Operation
 
 logger = logging.getLogger(__name__)
 
+
+# ═══════════════════════════════════════════════════════════
+# 事件驱动 DAG 调度器 (v0.10)
+# ═══════════════════════════════════════════════════════════
+
+class EventDrivenScheduler:
+    """每个 op 独立 task → await 上游 done events → 就绪即跑。
+
+    替代原 topological_batches + asyncio.gather 的静态批次模式。
+    """
+
+    def __init__(
+        self,
+        operations: list[Operation],
+        pctx: PipelineContext,
+        tracker: StatusTracker,
+    ):
+        self._ops = {op.name: op for op in operations}
+        self._pctx = pctx
+        self._tracker = tracker
+        self._done: dict[str, asyncio.Event] = {
+            name: asyncio.Event() for name in self._ops
+        }
+
+    async def run(self) -> None:
+        """启动所有 op, 每个内部先等依赖完成, 再执行。"""
+        tasks = [
+            asyncio.create_task(self._run_op(name))
+            for name in self._ops
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        errors = [r for r in results if isinstance(r, Exception)]
+        if errors:
+            logger.error("[Scheduler] %d ops failed", len(errors))
+            for e in errors:
+                logger.error("[Scheduler] %s", e)
+            raise errors[0]
+
+    async def _run_op(self, name: str) -> None:
+        op = self._ops[name]
+
+        # 等所有上游
+        for dep_name in op.depends_on:
+            event = self._done.get(dep_name)
+            if event is not None:
+                await event.wait()
+
+        logger.debug("[Scheduler] Starting: %s", name)
+        try:
+            await op.runner.run(self._pctx)
+        finally:
+            self._done[name].set()
+            logger.debug("[Scheduler] Completed: %s", name)
+
+
+# ── 保留：增量处理仍需拓扑分批（逻辑简单，不改）──
 
 def topological_batches(ops: list) -> list[list]:
     """按依赖拓扑排序，返回可并行执行的批次列表。
@@ -127,13 +181,12 @@ class PipelineEngine:
                 db_session_factory=self.db_session_factory,
                 shared_embedder=self._shared_embedder,
                 prompt_loader=self.prompt_loader,
+                embedder_lock=asyncio.Lock(),
             )
 
-            # 5. 逐批执行
-            for batch in batches:
-                await asyncio.gather(*[
-                    op.runner.run(pctx) for op in batch
-                ])
+            # 5. 事件驱动调度 (替代原拓扑分批+gather)
+            scheduler = EventDrivenScheduler(enabled, pctx, tracker)
+            await scheduler.run()
 
             # 6. 持久化
             await self._persist()
@@ -261,66 +314,57 @@ class PipelineEngine:
     # ── 持久化 ──
 
     async def _persist(self) -> None:
-        """将 VideoContext 中的数据写入数据库。"""
-        # 1. 视频时长
+        """将 VideoContext 中的数据写入数据库（单 session 批量写入）。"""
         async with self.db_session_factory() as session:
+            # 视频时长
             await session.execute(
                 update(Video)
                 .where(Video.id == self.video.id)
                 .values(duration=self.ctx.duration)
             )
-            await session.commit()
 
-        # 2. 批量写入 scenes
-        if self.ctx.scenes:
-            scenes_data = [
-                {
-                    "scene_index": s.scene_index,
-                    "start_sec": s.start_sec,
-                    "end_sec": s.end_sec,
-                    "keyframe_path": s.keyframe_path,
-                    "text_embedding": s.text_embedding,
-                    "ocr_text": s.ocr_text,
-                    "aligned_transcript": s.aligned_transcript,
-                    "caption": s.caption,
-                    "prev_caption": s.prev_caption,
-                    "entities": s.entities,
-                }
-                for s in self.ctx.scenes
-            ]
-            async with self.db_session_factory() as session:
+            # scenes
+            if self.ctx.scenes:
+                scenes_data = [
+                    {
+                        "scene_index": s.scene_index, "start_sec": s.start_sec,
+                        "end_sec": s.end_sec, "keyframe_path": s.keyframe_path,
+                        "text_embedding": s.text_embedding, "ocr_text": s.ocr_text,
+                        "aligned_transcript": s.aligned_transcript,
+                        "caption": s.caption, "prev_caption": s.prev_caption,
+                        "entities": s.entities,
+                    }
+                    for s in self.ctx.scenes
+                ]
                 await bulk_insert_scenes(session, self.video.id, scenes_data)
 
-        # 3. 写入 transcript
-        if self.ctx.transcript_full:
-            from core.models import Transcript as TranscriptModel
-            async with self.db_session_factory() as session:
+            # transcript
+            if self.ctx.transcript_full:
+                from core.models import Transcript as TranscriptModel
                 session.add(TranscriptModel(
                     video_id=self.video.id,
                     full_text=self.ctx.transcript_full,
                     words=self.ctx.transcript_words,
                 ))
-                await session.commit()
 
-        # 4. 保存摘要
-        if self.ctx.summary:
-            async with self.db_session_factory() as session:
+            # 摘要
+            if self.ctx.summary:
                 await save_video_artifacts(
                     session, self.video.id, summary=self.ctx.summary,
                 )
 
-        # 5. 写入检测与追踪数据
-        if self.ctx.frame_detections:
-            async with self.db_session_factory() as session:
+            # 检测 + 追踪
+            if self.ctx.frame_detections:
                 await bulk_insert_frame_detections(session, self.ctx.frame_detections)
                 await bulk_insert_tracks(session, self.ctx.tracks)
 
-        # 6. 写入 track 嵌入向量 (v0.10)
-        if self.ctx.track_embeddings:
-            async with self.db_session_factory() as session:
+            # track 嵌入
+            if self.ctx.track_embeddings:
                 await bulk_insert_track_embeddings(
                     session, self.video.id, self.ctx.track_embeddings,
                 )
+
+            await session.commit()
 
     async def _persist_summary_only(self) -> None:
         """仅写入摘要（增量用）。"""

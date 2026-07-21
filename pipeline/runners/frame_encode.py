@@ -44,6 +44,9 @@ class FrameEncodeRunner(OperationRunner):
                 batch_frames = [b[1] for b in batch]
                 batch_times = [b[0] for b in batch]
 
+                lock = getattr(pctx, "embedder_lock", None)
+                if lock:
+                    await lock.acquire()
                 try:
                     embs = await embedder.encode_images_batch(batch_frames)
                 except Exception:
@@ -54,6 +57,9 @@ class FrameEncodeRunner(OperationRunner):
                             embs.append(await embedder.encode_image(f))
                         except Exception:
                             embs.append(None)
+                finally:
+                    if lock:
+                        lock.release()
 
                 for j, (t, emb) in enumerate(zip(batch_times, embs)):
                     if not emb:

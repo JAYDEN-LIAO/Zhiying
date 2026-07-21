@@ -110,11 +110,13 @@ class DetectionRunner(OperationRunner):
                                 pctx, frame_detections, tracks_map, best_cache,
                             )
                             processed += len(batch_frames)
-                            await pctx.tracker.update(
-                                "detection",
-                                sub_progress=min(processed / total_samples, 0.98),
-                                description=f"检测追踪 {processed}/{total_samples} 帧",
-                            )
+                            # 进度写 DB 降到最低 (每 100 批 ~ 3 次/视频)
+                            if (processed // batch_size) % 100 == 0:
+                                await pctx.tracker.update(
+                                    "detection",
+                                    sub_progress=min(processed / total_samples, 0.98),
+                                    description=f"检测追踪 {processed}/{total_samples} 帧",
+                                )
                             batch_frames = []
                             batch_timestamps = []
                 frame_idx += 1

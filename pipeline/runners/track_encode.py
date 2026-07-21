@@ -19,7 +19,7 @@ from pipeline.runners.base import OperationRunner, PipelineContext
 logger = logging.getLogger(__name__)
 
 # ── 全局 ReID 常量 ──
-REID_COSINE_THRESHOLD = 0.65    # 余弦相似度最低要求 (Qwen3 embedding 分布适配)
+REID_COSINE_THRESHOLD = 0.55    # 余弦相似度 — 宽容尺度变化 (相机放大/缩小)
 CROP_EXPAND_RATIO = 1.3         # bbox 外扩比例 (每边 15%)
 HEAD_TAIL_CUT_RATIO = 0.15      # track 头尾淘汰比例
 
@@ -80,11 +80,21 @@ class TrackEncodeRunner(OperationRunner):
             logger.warning("[TrackEncodeRunner] No valid crops after filtering")
             return
 
-        # 批量编码 (优先 batch, 回退逐张)
-        if hasattr(embedder, "encode_images_batch"):
-            emb_vectors = await embedder.encode_images_batch(crops)
-        else:
-            emb_vectors = [await embedder.encode_image(c) for c in crops]
+        # 分批次编码 — 272 个 crop 一次性 batch 会撑爆显存
+        TRACK_BATCH = 32
+        emb_vectors: list = []
+        lock = getattr(pctx, "embedder_lock", None)
+        for bi in range(0, len(crops), TRACK_BATCH):
+            batch_crops = crops[bi:bi + TRACK_BATCH]
+            if lock: await lock.acquire()
+            try:
+                if hasattr(embedder, "encode_images_batch"):
+                    emb_vectors.extend(await embedder.encode_images_batch(batch_crops))
+                else:
+                    for c in batch_crops:
+                        emb_vectors.append(await embedder.encode_image(c))
+            finally:
+                if lock: lock.release()
 
         for meta, vec in zip(emb_metas, emb_vectors):
             meta["embedding"] = np.array(vec, dtype=np.float64)
@@ -149,7 +159,7 @@ class TrackEncodeRunner(OperationRunner):
 
     @staticmethod
     def _fallback_frame(file_path: str, trk: dict) -> np.ndarray | None:
-        """头尾帧回退 → 用 FFmpeg 抽 track 中间时间点。"""
+        """头尾帧回退 → cv2 seek 到 track 中间时间点。"""
         import cv2
         mid = trk["first_seen"] + (trk["last_seen"] - trk["first_seen"]) * 0.5
         cap = cv2.VideoCapture(file_path)
@@ -204,8 +214,16 @@ def _spatial_gate(t1: dict, t2: dict) -> bool:
     distance = np.sqrt((cx2 - cx1) ** 2 + (cy2 - cy1) ** 2)
     time_gap = max(t2["first_seen"] - t1["last_seen"], 0.01)
 
-    # 间隔越长, 允许的空间距离越小 (同一人不会瞬移太远)
+    # 基础距离上限
     max_allowed = min(0.5, 2.0 / max(time_gap, 1.0))
+
+    # 相机缩放容错: 中心很近 + bbox 尺寸变化大 → 很可能是缩放, 放宽
+    w1, h1 = b1["x2"] - b1["x1"], b1["y2"] - b1["y1"]
+    w2, h2 = b2["x2"] - b2["x1"], b2["y2"] - b2["y1"]
+    size_ratio = max(w1 * h1, w2 * h2) / max(min(w1 * h1, w2 * h2), 1e-6)
+    if distance < 0.15 and size_ratio > 2.0:
+        max_allowed = max(max_allowed, 0.4)  # 缩放场景放宽到 40% 画面
+
     return distance <= max_allowed
 
 

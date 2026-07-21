@@ -4,18 +4,18 @@
 tracker_type: botsort       # (str) tracker backend identifier (required)
 
 # Track life cycle
-track_high_thresh: 0.5      # first-stage match threshold
+track_high_thresh: 0.25     # first-stage match threshold (ultralytics default)
 track_low_thresh: 0.1       # second-stage threshold for low-score recovery
-new_track_thresh: 0.5       # threshold to start a new track
+new_track_thresh: 0.25      # threshold to start a new track (ultralytics default)
 track_buffer: 120            # frames to keep lost tracks alive (6s @ 20fps)
-match_thresh: 0.5           # association sim threshold (lowered for cls-model ReID)
+match_thresh: 0.7           # IoU 匹配门槛 — 太低会导致密集场景 ID 跳变
 
 # Motion
 gmc_method: sparseOptFlow   # global motion compensation method
 
 # ReID
-with_reid: true             # enable ReID appearance embedding (OSNet)
-proximity_thresh: 0.5       # min IoU to consider tracks proximate for ReID
-appearance_thresh: 0.25     # min appearance similarity for ReID match (lower = more willing to re-id)
-model: models/yolo26n-cls.pt  # PyTorch ReID via YOLO backbone (5.6MB, GPU)
+with_reid: false            # BoT-SORT 匹配够用, 在线 ReID 耗时+效果差, 关闭
+proximity_thresh: 0.5       # (unused, required by ultralytics init)
+appearance_thresh: 0.25     # (unused, required by ultralytics init)
+model: auto                 # (unused, required by ultralytics init)
 fuse_score: true            # fuse detection score with track confidence

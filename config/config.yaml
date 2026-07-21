@@ -27,8 +27,8 @@ plugins:
     model: models/yolo26s.pt
     confidence_threshold: 0.4
     iou_threshold: 0.5
-    batch_size: 8
-    detection_fps: 20
+    batch_size: 32
+    detection_fps: 15
 
   # ── OCR（Demo 跳过）──
   ocr:

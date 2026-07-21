@@ -41,7 +41,12 @@ class TextEncodeRunner(OperationRunner):
 
             if text_parts:
                 combined_text = " | ".join(text_parts)
-                text_emb = await embedder.encode_text(combined_text)
+                lock = getattr(pctx, "embedder_lock", None)
+                if lock: await lock.acquire()
+                try:
+                    text_emb = await embedder.encode_text(combined_text)
+                finally:
+                    if lock: lock.release()
                 if text_emb:
                     scene.text_embedding = text_emb
 

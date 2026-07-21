@@ -31,6 +31,7 @@ class PipelineContext:
     db_session_factory: async_sessionmaker[AsyncSession]
     shared_embedder: object | None = None
     prompt_loader: PromptLoader | None = None
+    embedder_lock: object | None = None  # asyncio.Lock — 防 embedder 并发竞争
 
 
 class OperationRunner(ABC):
