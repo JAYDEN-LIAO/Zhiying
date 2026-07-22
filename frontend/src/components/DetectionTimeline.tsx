@@ -84,7 +84,7 @@ export function DetectionTimeline({ videoRef, data, selectedTrackId, classFilter
   if (!data?.has_detection || filteredTracks.length === 0) {
     return (
       <div className="w-full shrink-0 mt-2 rounded-lg flex items-center justify-center"
-           style={{ height: TIMELINE_WRAPPER_H, background: "rgba(0,0,0,0.12)" }}>
+           style={{ height: TIMELINE_WRAPPER_H, background: "rgba(0,0,0,0.55)" }}>
         <span className="text-xs text-white/25">时间轴</span>
       </div>
     );
@@ -96,10 +96,10 @@ export function DetectionTimeline({ videoRef, data, selectedTrackId, classFilter
   for (let t = 0; t <= duration; t += tickInterval) rulerTicks.push(t);
 
   return (
-    <div className="w-full shrink-0 mt-2" style={{ height: TIMELINE_WRAPPER_H }}>
+    <div className="w-full shrink-0 mt-2 rounded-lg overflow-hidden" style={{ height: TIMELINE_WRAPPER_H }}>
       <div
-        className="relative w-full h-full rounded-lg overflow-hidden flex flex-col"
-        style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(3px)" }}
+        className="relative w-full h-full flex flex-col"
+        style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)" }}
       >
         {/* ── Time ruler ── */}
         <div className="relative shrink-0" style={{ height: RULER_H, background: "rgba(0,0,0,0.15)" }}>

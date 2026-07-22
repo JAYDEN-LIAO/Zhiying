@@ -62,6 +62,11 @@ class SearchResultItem(BaseModel):
     similarity: float | None = None
     thumbnail_url: str | None = None
 
+    # Track 搜索专用字段
+    track_id: int | None = None
+    class_name: str | None = None
+    bbox: dict | None = None
+
 
 class SearchResults(BaseModel):
     results: list[SearchResultItem]

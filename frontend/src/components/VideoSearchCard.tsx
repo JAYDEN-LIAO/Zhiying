@@ -12,9 +12,11 @@ import { formatSec } from "../utils/helpers";
 export function VideoSearchCard({
   video,
   onSeekTo,
+  onTrackResult,
 }: {
   video: VideoResponse | null;
   onSeekTo?: (start: number, end: number | null) => void;
+  onTrackResult?: (trackId: number, className: string, start: number) => void;
 }) {
   const currentVideoId = video?.id ?? null;
   const searchIndexEnabled = video?.search_index_enabled ?? false;
@@ -163,8 +165,8 @@ export function VideoSearchCard({
           <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-xs text-red-600">{error}</div>
         )}
 
-        {/* Empty results after search */}
-        {hasSearched && !error && results.length === 0 && (
+        {/* Empty results after search (排除加载间隙) */}
+        {hasSearched && !searching && !error && results.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 text-gray-400">
             <svg className="w-10 h-10 mb-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
               <circle cx="11" cy="11" r="8" />
@@ -176,13 +178,19 @@ export function VideoSearchCard({
         )}
 
         {/* Results list */}
-        {results.map((item, idx) => (
+        {results.map((item, idx) => {
+          const isTrack = item.precision_level === "track";
+          return (
           <div
-            key={item.scene_id || idx}
+            key={isTrack ? `track-${item.track_id}` : (item.scene_id || idx)}
             className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
             onClick={() => {
-              const ts = item.precise_start ?? item.scene_range_start;
-              if (onSeekTo && ts != null) onSeekTo(ts, item.precise_end ?? item.scene_range_end);
+              if (isTrack && item.track_id != null && item.precise_start != null) {
+                onTrackResult?.(item.track_id, item.class_name ?? "", item.precise_start);
+              } else {
+                const ts = item.precise_start ?? item.scene_range_start;
+                if (onSeekTo && ts != null) onSeekTo(ts, item.precise_end ?? item.scene_range_end);
+              }
             }}
           >
             <div className="flex items-start gap-3">
@@ -231,21 +239,29 @@ export function VideoSearchCard({
                   )}
 
                   {item.precision_level && item.precision_level !== "scene" && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-400 font-medium">
-                      {item.precision_level === "frame" ? "帧定位"
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                      isTrack ? "bg-amber-50 text-amber-500" : "bg-purple-50 text-purple-400"
+                    }`}>
+                      {isTrack ? "物体定位"
+                        : item.precision_level === "frame" ? "帧定位"
                         : item.precision_level === "chunk" ? "段落"
                         : item.precision_level}
                     </span>
                   )}
                 </div>
 
-                {item.caption && (
+                {isTrack && item.class_name ? (
+                  <p className="text-xs text-gray-800 font-semibold font-mono mt-1">
+                    {item.class_name} <span className="text-gray-400">#</span>{item.track_id}
+                  </p>
+                ) : item.caption ? (
                   <p className="text-xs text-gray-600 leading-relaxed line-clamp-2 mt-1">{item.caption}</p>
-                )}
+                ) : null}
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
 
         {/* Initial state — no search performed yet */}
         {!hasSearched && !searching && !error && (

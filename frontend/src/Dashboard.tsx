@@ -242,7 +242,7 @@ export default function Dashboard() {
         <div className="flex-1 flex min-h-0 z-10">
           {/* ── Main Column: video + timeline + pipeline ── */}
           <main className="flex-1 flex flex-col min-w-0">
-            <div className="flex-1 pt-[96px] pl-8 pr-2 pb-4 flex flex-col min-h-0 relative">
+            <div className="flex-1 pt-[96px] pl-8 pr-2 pb-4 flex flex-col min-h-0 relative overflow-hidden">
               {/* Stats bar — absolutely positioned, doesn't affect video alignment */}
               {currentVideo ? (
                 <div className="absolute top-[23px] right-4 flex items-center gap-2.5 z-10">
@@ -326,7 +326,8 @@ export default function Dashboard() {
           </main>
 
           {/* ── Objects Panel — always visible, same width in all states ── */}
-          <div className="pt-[96px] pb-4 pr-0 flex-shrink-0">
+          <div className="pt-[96px] pb-4 pr-0 flex-shrink-0 flex flex-col">
+            <div className="flex-1 min-h-0">
             <DetectionPanel
               video={currentVideo}
               data={detectionData}
@@ -335,12 +336,21 @@ export default function Dashboard() {
               onClassFilterChange={setClassFilter}
               onTrackSelect={handleTrackSelect}
             />
+            </div>
           </div>
 
           {/* ── Right Sidebar: Summary + Search ── */}
           <aside className="w-[460px] pr-4 pt-[96px] pb-4 pl-1 flex flex-col gap-1 flex-shrink-0 h-full">
             <div className="flex-1 min-h-0"><VideoSummaryCard video={currentVideo} /></div>
-            <div className="flex-1 min-h-0"><VideoSearchCard video={currentVideo} onSeekTo={(start: number, end: number | null) => setSeekTarget({ start, end })} /></div>
+            <div className="flex-1 min-h-0"><VideoSearchCard
+              video={currentVideo}
+              onSeekTo={(start: number, end: number | null) => setSeekTarget({ start, end })}
+              onTrackResult={(trackId: number, className: string, start: number) => {
+                setSeekTarget({ start, end: null });
+                setSelectedTrackId(trackId);
+                setTracked({ class_name: className, track_id: trackId });
+              }}
+            /></div>
           </aside>
         </div>
       ) : (

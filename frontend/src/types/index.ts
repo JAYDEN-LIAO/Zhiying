@@ -123,13 +123,16 @@ export interface SearchResultItem {
   scene_range_end: number;
   precise_start: number | null;
   precise_end: number | null;
-  precision_level: "frame" | "chunk" | "text" | "label" | "scene";
+  precision_level: "frame" | "chunk" | "text" | "label" | "track" | "scene";
   match_paths: string[];
   caption: string | null;
   ocr_text: string | null;
   aligned_transcript: string | null;
   similarity: number | null;
   thumbnail_url: string | null;
+  track_id?: number;
+  class_name?: string;
+  bbox?: { x1: number; y1: number; x2: number; y2: number };
 }
 
 export interface SearchResults {

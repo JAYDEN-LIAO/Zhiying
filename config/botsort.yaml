@@ -4,18 +4,18 @@
 tracker_type: botsort       # (str) tracker backend identifier (required)
 
 # Track life cycle
-track_high_thresh: 0.25     # first-stage match threshold (ultralytics default)
+track_high_thresh: 0.5      # 0.4-0.5 检测走二阶恢复, 不干扰主流匹配
 track_low_thresh: 0.1       # second-stage threshold for low-score recovery
-new_track_thresh: 0.25      # threshold to start a new track (ultralytics default)
+new_track_thresh: 0.5       # 新 track 需要较高置信度, 减少误创建
 track_buffer: 120            # frames to keep lost tracks alive (6s @ 20fps)
-match_thresh: 0.7           # IoU 匹配门槛 — 太低会导致密集场景 ID 跳变
+match_thresh: 0.5           # 匹配门槛 — 控制变量对齐参考版
 
 # Motion
 gmc_method: sparseOptFlow   # global motion compensation method
 
-# ReID
-with_reid: false            # BoT-SORT 匹配够用, 在线 ReID 耗时+效果差, 关闭
+# ReID — 关闭后降级为纯 IOU+Kalman（ByteTrack），消除 ReID 错误关联
+with_reid: false            # 在线 ReID — 控制变量对齐参考版
 proximity_thresh: 0.5       # (unused, required by ultralytics init)
 appearance_thresh: 0.25     # (unused, required by ultralytics init)
-model: auto                 # (unused, required by ultralytics init)
+# model: 未使用 (with_reid=false, 无在线ReID)  # 本地模型, 不触发下载
 fuse_score: true            # fuse detection score with track confidence

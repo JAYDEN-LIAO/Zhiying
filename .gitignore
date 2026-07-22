@@ -26,6 +26,9 @@ Thumbs.db
 # Debug scraps
 /tmp/
 
+# Ad-hoc query/analysis scripts
+_query_*.py
+
 # Test videos (too large for git)
 *.mp4
 *.mov

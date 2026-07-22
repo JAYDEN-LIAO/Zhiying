@@ -67,7 +67,7 @@ class SearchEngine:
 
         # 文本查询 → 向量编码（仅一次，三条路共享）
         vec = image_vec
-        needs_vec = ("frame" in search_types or "chunk" in search_types or "text" in search_types)
+        needs_vec = any(t in search_types for t in ("frame", "chunk", "text", "track"))
         if query and needs_vec and self.embedder:
             vec = await self.embedder.encode_text(query)
 
@@ -165,6 +165,13 @@ class SearchEngine:
     def _track_to_dict(track_emb, sim: float, track_map: dict | None = None) -> dict:
         key = (str(track_emb.video_id), track_emb.track_id)
         trk = track_map.get(key) if track_map else None
+        bbox = track_emb.bbox
+        # 构造 track crop 缩略图 URL（利用已有 detection/thumbnail 端点）
+        thumb = (
+            f"/api/v1/videos/{track_emb.video_id}/detection/thumbnail"
+            f"?timestamp={track_emb.timestamp_sec}"
+            f"&x1={bbox['x1']}&y1={bbox['y1']}&x2={bbox['x2']}&y2={bbox['y2']}"
+        ) if bbox else None
         return {
             "video_id": str(track_emb.video_id),
             "track_id": track_emb.track_id,
@@ -175,7 +182,8 @@ class SearchEngine:
             "precision_level": "track",
             "similarity": float(sim),
             "source": "track",
-            "bbox": track_emb.bbox,
+            "bbox": bbox,
+            "thumbnail_url": thumb,
         }
 
     async def _label_search(
@@ -217,11 +225,14 @@ class SearchEngine:
           3. 非重叠的 chunk/text 保留
         """
         frames: list[dict] = []
+        tracks: list[dict] = []
         others: list[dict] = []
         for ranked in ranked_lists:
             for item in ranked:
                 if item.get("source") == "frame":
                     frames.append(item)
+                elif item.get("source") == "track":
+                    tracks.append(item)
                 else:
                     others.append(item)
 
@@ -261,6 +272,14 @@ class SearchEngine:
                     return True
             return False
 
+        # ── Track 独立去重：每个 track 作为一个独立物体，(video_id, track_id) 唯一
+        track_map: dict[tuple[str, int], dict] = {}
+        for item in tracks:
+            key = (item["video_id"], item.get("track_id", 0))
+            if key not in track_map or item.get("similarity", 0) > track_map[key].get("similarity", 0):
+                track_map[key] = dict(item)
+                track_map[key]["match_paths"] = [item.get("source", "track")]
+
         # ── 非帧结果：去重叠 + 按 scene 合并 ──
         other_map: dict[tuple[str, int], dict] = {}
         for item in others:
@@ -278,7 +297,7 @@ class SearchEngine:
                 if src not in ex.get("match_paths", []):
                     ex.setdefault("match_paths", []).append(src)
 
-        merged = clusters + list(other_map.values())
+        merged = clusters + list(other_map.values()) + list(track_map.values())
         # 路径感知排序：校准后的分数 = 相似度 × 路径权重
         # frame 1.0 > text 0.85 > chunk 0.7，确保高精度结果优先
         merged.sort(
@@ -302,6 +321,8 @@ class SearchEngine:
             }
 
         for item in merged:
+            if item.get("source") == "track":
+                continue  # track 自有独立元数据，无需 scene 信息
             key = (item["video_id"], item["scene_index"])
             s = scenes_map.get(key)
             if s:

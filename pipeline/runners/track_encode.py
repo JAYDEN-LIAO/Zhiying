@@ -4,7 +4,7 @@ pipeline/runners/track_encode.py
 Track 语义编码 + 全局 ReID runner — v0.10 新增。
 
 阶段 1: 对每条 track 选最佳帧 → crop(扩 15%) → 批量跨模态嵌入
-阶段 2: 类内余弦比对 + 4 约束过滤 → 合并超时消失后重出现的同人/同车
+阶段 2: 类内余弦比对 + 5 约束过滤 → 合并超时消失后重出现的同人/同车
 
 依赖 detection runner 产出 (ctx.track_best_frames + ctx.tracks)
 与 text_encode 同批之后执行 (Batch 5)，确保 embedder 已释放。
@@ -19,9 +19,10 @@ from pipeline.runners.base import OperationRunner, PipelineContext
 logger = logging.getLogger(__name__)
 
 # ── 全局 ReID 常量 ──
-REID_COSINE_THRESHOLD = 0.55    # 余弦相似度 — 宽容尺度变化 (相机放大/缩小)
+REID_COSINE_THRESHOLD = 0.85    # 余弦相似度 — 2048 维空间中 0.85 足以阻隔绝大多数假阳性
 CROP_EXPAND_RATIO = 1.3         # bbox 外扩比例 (每边 15%)
 HEAD_TAIL_CUT_RATIO = 0.15      # track 头尾淘汰比例
+MAX_REID_TIME_GAP = 180.0       # 最大合并时间间隔 (秒) — 超时大概率是不同实例
 
 
 class TrackEncodeRunner(OperationRunner):
@@ -100,33 +101,42 @@ class TrackEncodeRunner(OperationRunner):
             meta["embedding"] = np.array(vec, dtype=np.float64)
 
         # ── Phase 2: 全局 ReID 合并 ──
+        # 利用 Qwen3-VL-Embedding-2B 的跨模态语义做离线 ReID：
+        # 同类别 + 时间不重叠 + cos≥0.85 + 空间门 + 时间间隔≤3min
+        # → 合并穿越遮挡/短暂出画后重出现的同人/同车
         embeddings_out, merged_tracks, merged_dets = _global_reid_merge(
             emb_metas, pctx.ctx.tracks, pctx.ctx.frame_detections or [],
         )
 
-        # 转为可序列化格式
+        # 用合并后的数据构建 track_embeddings
         track_embeddings = []
-        for e in embeddings_out:
-            emb = e["embedding"]
+        for meta in embeddings_out:
+            emb = meta["embedding"]
             if isinstance(emb, np.ndarray):
                 emb = emb.tolist()
             track_embeddings.append({
-                "track_id": e["track_id"],
-                "class_name": e["class_name"],
+                "track_id": meta["track_id"],
+                "class_name": meta["class_name"],
                 "embedding": emb,
-                "timestamp_sec": e["timestamp_sec"],
-                "bbox": e["bbox"],
+                "timestamp_sec": meta["timestamp_sec"],
+                "bbox": meta["bbox"],
             })
 
         pctx.ctx.track_embeddings = track_embeddings
         pctx.ctx.tracks = merged_tracks
         pctx.ctx.frame_detections = merged_dets
 
-        merged_count = sum(1 for t in merged_tracks if t.get("merged_into"))
-        logger.info(
-            "[TrackEncodeRunner] Done: %d embeddings, %d/%d tracks merged via ReID",
-            len(track_embeddings), merged_count, track_count,
-        )
+        merge_count = len(emb_metas) - len(embeddings_out)
+        if merge_count > 0:
+            logger.info(
+                "[TrackEncodeRunner] Done: %d embeddings (%d tracks merged via global ReID)",
+                len(track_embeddings), merge_count,
+            )
+        else:
+            logger.info(
+                "[TrackEncodeRunner] Done: %d embeddings (no ReID merges)",
+                len(track_embeddings),
+            )
 
     # ── 内部方法 ──
 
@@ -243,13 +253,14 @@ def _global_reid_merge(
     tracks: list[dict],
     frame_detections: list[dict],
 ) -> tuple[list[dict], list[dict], list[dict]]:
-    """全局 ReID —— 类内余弦比对 + 4 约束 → 合并穿越遮挡的同人/同车。
+    """全局 ReID —— 类内余弦比对 + 5 约束 → 合并穿越遮挡的同人/同车。
 
     约束:
       1. 同类别
       2. 时间不重叠
-      3. 余弦相似度 ≥ 0.85
-      4. 宽松空间门 (不瞬移)
+      3. 时间间隔 ≤ MAX_REID_TIME_GAP (3 min)
+      4. 余弦相似度 ≥ REID_COSINE_THRESHOLD (0.85)
+      5. 宽松空间门 (不瞬移)
     """
     n = len(emb_metas)
     if n < 2:
@@ -273,14 +284,23 @@ def _global_reid_merge(
                 continue
             if _time_overlap(t_i, t_j):                                    # 2
                 continue
-            if sim[i][j] < REID_COSINE_THRESHOLD:                          # 3
+
+            # 时间间隔门 — 太长间隔大概率不是同一物体                     # 3
+            gap = max(
+                t_j["first_seen"] - t_i["last_seen"],
+                t_i["first_seen"] - t_j["last_seen"],
+            )
+            if gap > MAX_REID_TIME_GAP:
+                continue
+
+            if sim[i][j] < REID_COSINE_THRESHOLD:                          # 4
                 continue
             if not _spatial_gate(
                 {"bbox": emb_metas[i]["bbox"], "last_bbox": emb_metas[i].get("last_bbox"),
                  "first_seen": t_i["first_seen"], "last_seen": t_i["last_seen"]},
                 {"bbox": emb_metas[j]["bbox"], "first_bbox": emb_metas[j].get("first_bbox"),
                  "first_seen": t_j["first_seen"], "last_seen": t_j["last_seen"]},
-            ):                                                               # 4
+            ):                                                               # 5
                 continue
             if tid_j not in best_match or sim[i][j] > best_match[tid_j][1]:
                 best_match[tid_j] = (tid_i, float(sim[i][j]))

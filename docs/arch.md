@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.8 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.10 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -38,16 +38,17 @@
            ▼
 ┌─────────────────────────────┐
 │  PipelineEngine             │
-│  Operation DAG executor      │
-│                             │
-│  Batch 0: [duration]        │
-│  Batch 1: [seg, transcribe]│
-│  Batch 2: [keyframes, align]│
-│  Batch 3: [detect, caption, frame_e]│
-│  Batch 4: [summary, text_e] │
-│  Persist: Write to DB       │
-│  3-path encoding runs in     │
-│  parallel with other ops     │
+│  EventDrivenScheduler (v0.10)│
+│  Each op awaits upstream     │
+│  ┌─ duration                │
+│  │  → seg + transcribe      │
+│  │    → keyframes + align   │
+│  │      → detect + caption  │
+│  │        + frame_encode    │
+│  │        (+ track_encode   │
+│  │         after detection) │
+│  │      → summary + text_e  │
+│  └─ Persist → DB            │
 └─────────────────────────────┘
            │
            ▼
@@ -58,6 +59,7 @@
 │  scenes (text_embedding, caption)│
 │  transcripts (full text)    │
 │  frame_embeddings (1fps)    │
+│  track_embeddings (crop)    │
 │  chunks (滑动窗口)           │
 └─────────────────────────────┘
 ```
@@ -79,11 +81,11 @@ L2: Perception Modules (6 switches, 1 grayed)
   ├─ audio_enabled    → transcription (grayed when plugin disabled)
   ├─ ocr_enabled      → text from frames (grayed when plugin disabled)
   ├─ caption_enabled  → VLM scene description
-  ├─ detection_enabled → YOLO11 + ByteTrack object detection (dual-gated: config + per-video)
+  ├─ detection_enabled → YOLO11 + BoT-SORT object detection (dual-gated: config + per-video)
   └─ grounding_enabled → Florence-2 grounding (always grayed, plugin not implemented)
 
 L3: Function Switches (2)
-  ├─ search_index_enabled → 3-path encoding for semantic search
+  ├─ search_index_enabled → 4-path encoding for semantic search (frame+chunk+text+track)
   └─ summary_enabled      → global structured summary
 
 L4: Advanced Params (6)
@@ -201,7 +203,7 @@ main.py
               ├─ services/video_service.py
               │     └─ pipeline/engine.py (DAG executor)
               │           ├─ pipeline/operations.py (ALL_OPERATIONS)
-              │           ├─ pipeline/runners/*.py (10 operation runners)
+              │           ├─ pipeline/runners/*.py (12 operation runners)
               │           ├─ utils/video_util.py          (keyframe extraction)
               │           └─ plugins/factory.py
               │                 ├─ plugins/captioner/qwen_api_captioner.py
@@ -211,6 +213,7 @@ main.py
               │                 ├─ plugins/segmenter/time_based.py
               │                 ├─ plugins/segmenter/transnet_v2.py
               │                 ├─ plugins/transcriber/faster_whisper.py
+│  │                 ├─ plugins/detector/yolo.py
               │                 └─ plugins/*/ (detector, ocr, grounding — stubs)
               └─ pipeline/search_engine.py
                     ├─ core/search.py
@@ -283,7 +286,7 @@ Semantic Search: POST /api/v1/search/semantic
     ↓
   SearchEngine (lazy init, cached in app.state._searcher)
     ├─ Embedder.encode_text() → 2048-dim vector (shared, 只编码一次)
-    ├─ 三路并行召回:
+    ├─ 五路并行召回:
     │   ├─ _frame_search()  → frame_embeddings 表, 1fps 帧级精确秒定位
     │   ├─ _chunk_search()  → chunks 表, 滑动窗口多帧原生编码
     │   ├─ _text_search()   → scenes.text_embedding, caption+ocr+transcript 语义
@@ -310,7 +313,7 @@ videos
   ├─ id (UUID PK), status, progress, error_message
   ├─ file_path, file_name, file_size, duration
   ├─ content_type, language
-  ├─ perception: audio/vision/ocr/grounding/caption/summary_enabled
+  ├─ perception: audio/vision/ocr/grounding/caption/detection_enabled, detection_classes
   ├─ function: search_index_enabled
   ├─ advanced: sample_fps, segment_threshold, caption_with_context, summary_detail
   ├─ summary (JSONB)
@@ -373,7 +376,8 @@ tracks
 | PUT | /api/v1/settings | 更新系统设置 (保存 API key) |
 | GET | /api/v1/pipeline/operations | 查询启用的操作列表 + 进度范围（前端 PipelineBar 用） |
 | GET | /api/v1/videos/{id}/detection/data | 获取检测框 + 追踪轨迹 JSON（前端 Canvas overlay 用） |
-| POST | /api/v1/search/semantic | 语义搜索 (四路并行召回：frame+chunk+text+label，按 scene 合并) |
+| GET | /api/v1/videos/{id}/detection/thumbnail | track crop 缩略图（支持 bbox 裁剪 + 120px 缩放） |
+| POST | /api/v1/search/semantic | 语义搜索 (五路并行召回：frame+chunk+text+label+track，track 独立去重) |
 
 ## Frontend Architecture
 
@@ -419,7 +423,7 @@ Vite 开发代理:
 | **Pure Python summarizer (default)** | native_video mode: aggregated from structured captions, no LLM API costs or latency |
 | **FFmpeg pipe → memory** | No frame files on disk, reduces I/O |
 | **TransNetV2 segmentation** | Neural scene boundary detection, superior to fixed-interval |
-| **1fps frame pool + 3 encoding paths** | Frame-level precision (主力) + text semantics + chunk (config-gated, 默认关闭) |
+| **1fps frame pool + 4 encoding paths** | Frame-level precision (主力) + text semantics + chunk (config-gated, 默认关闭) + track crop (物体级跨模态) |
 | **Adaptive chunk windows** | ≤5s scene: skip; 5-60s: half-duration window; >60s: 30s fixed window; stream copy + preprocessing |
 | **Enabled modules only** | pipeline checks each plugin; null = skip gracefully |
 | **React + Vite + Tailwind** | Fast dev experience, minimal config, fluid-blob background + card-surface panels |
@@ -427,29 +431,32 @@ Vite 开发代理:
 | **Shared embedder in app.state** | Avoids reloading 4GB model per video |
 | **4-level parameter hierarchy** | Scene type sets defaults for modules, which gate functions and advanced params |
 | **Incremental pipeline** | L3 switches (summary/search) can re-run independently on completed videos |
+| **Global offline ReID** | Qwen3-VL-Embedding cross-modal matching, 5 constraints (class+time+cos+gap+space), 0.85 threshold, 180s max gap |
 | **Decoupled upload/params** | Upload creates pending video; pipeline starts only after user configures params |
 
 ## Current Status
 
 | Module | Status | Note |
 |---|---|---|
-| Pipeline Core | ✅ | DAG-based: operations.py declares 10 ops with gates/deps → engine topo-sorts + parallel batches |
-| Semantic Search (3-path) | ✅ | frame + chunk + text 并行召回, scene-merge dedup, label 预留 |
+| Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 12 ops with gates/deps, events-driven |
+| Track Encoding + Global ReID | ✅ | runners/track_encode.py Phase 1: crop→embed; Phase 2: 全局离线 ReID 合并 (cos≥0.85, 时间门180s) |
+| Semantic Search (5-path) | ✅ | frame + chunk + text + label + track 并行召回, track 独立去重 |
 | Frame-level Encoding | ✅ | runners/frame_encode.py: batch encode 4 frames |
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
 | Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
-| API Routes | ✅ | 14 endpoints: CRUD, stream, thumbnail, status, params, reuse, settings, semantic search, pipeline/operations |
+| Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT/BoT-SORT, 15fps 独立帧率, dual-gate control |
+| API Routes | ✅ | 16 endpoints: CRUD, stream, thumbnail, status, params, reuse, settings, semantic search, pipeline/operations, detection/data, detection/thumbnail |
 | Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值，丝滑推进 |
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
 | Settings API + Keys | ✅ | core/settings_service.py, GET/PUT /api/v1/settings |
-| Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 8 extracted components, dynamic PipelineBar, auto-refresh history |
+| Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 11 components incl DetectionPanel/Timeline/Overlay, dynamic PipelineBar, auto-refresh history, track select→highlight flow |
 | Config Schema | ✅ | Pydantic v2 validation for config.yaml |
 | Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |
-| DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration |
+| DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration, 8 tables |
 | TransNetV2 Segmenter | ✅ | Neural scene boundary detection |
 | faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
-| Object Detection + Tracking | ✅ | YOLO11s + ByteTrack, dual-gate control, frontend canvas overlay |
+| BoT-SORT tracker config | ✅ | config/botsort.yaml: with_reid=false (motion-only), track_buffer=120 |
 | OCR | 📋 | PaddleOCR shell only |
 | Grounding | 📋 | Florence-2 shell only |
 | Export APIs | 📋 | export_routes.py / export_service.py shells |

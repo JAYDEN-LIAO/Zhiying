@@ -70,7 +70,10 @@ async def search_semantic(
             ocr_text=r.get("ocr_text"),
             aligned_transcript=r.get("aligned_transcript"),
             similarity=r.get("similarity"),
-            thumbnail_url=f"/api/v1/videos/{r['video_id']}/thumbnail/{r['scene_index']}",
+            thumbnail_url=r.get("thumbnail_url") or f"/api/v1/videos/{r['video_id']}/thumbnail/{r['scene_index']}",
+            track_id=r.get("track_id"),
+            class_name=r.get("class_name"),
+            bbox=r.get("bbox"),
         )
         for r in results
     ]
