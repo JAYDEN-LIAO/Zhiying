@@ -115,3 +115,52 @@ class ReuseRequest(BaseModel):
 
 class SettingsKeysRequest(BaseModel):
     api_keys: dict[str, str] = Field(default_factory=dict, description="API key 映射表: {id: value}")
+
+
+# ═══════════════════════════════════════════════════════════
+# 元数据 DTO
+# ═══════════════════════════════════════════════════════════
+
+class VideoMetadataResponse(BaseModel):
+    """视频文件技术元数据 — 编码/分辨率/GPS/设备信息等。"""
+    container: str | None = None
+    duration: float | None = None
+    file_size: int | None = None
+    overall_bitrate: int | None = None
+    video_streams: list[dict] = Field(default_factory=list)
+    audio_streams: list[dict] = Field(default_factory=list)
+    device: dict | None = None
+    timestamps: dict | None = None
+    raw: dict | None = None
+
+
+# ═══════════════════════════════════════════════════════════
+# 导出 DTO
+# ═══════════════════════════════════════════════════════════
+
+class ExportClipRequest(BaseModel):
+    """视频片段导出请求。"""
+    start_sec: float = Field(..., ge=0.0, description="起始时间(秒)")
+    end_sec: float = Field(..., gt=0.0, description="结束时间(秒)")
+    output_format: str = Field(default="mp4", pattern=r"^(mp4)$", description="输出格式")
+
+
+class ExportFramesRequest(BaseModel):
+    """帧序列导出请求。"""
+    timestamps: list[float] = Field(
+        ..., min_length=1, max_length=100,
+        description="导出时间点列表(秒)",
+    )
+    format: str = Field(default="jpg", pattern=r"^(jpg|png)$", description="图片格式")
+
+
+class ExportTrackRequest(BaseModel):
+    """追踪轨迹导出请求。"""
+    draw_bbox: bool = Field(default=True, description="是否在视频上绘制边界框")
+
+
+class ExportThumbnailsRequest(BaseModel):
+    """缩略图导出请求。"""
+    scene_indices: list[int] | None = Field(
+        default=None, description="场景序号列表；不传则导出全部",
+    )

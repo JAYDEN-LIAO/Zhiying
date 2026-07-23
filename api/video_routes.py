@@ -418,3 +418,23 @@ async def get_thumbnail(
         path=row.keyframe_path,
         media_type="image/jpeg",
     )
+
+
+@router.get("/videos/{video_id}/metadata")
+async def get_video_metadata(
+    video_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse:
+    """获取视频文件的技术元数据（编码、分辨率、GPS、设备信息等）。"""
+    result = await db.execute(
+        select(Video.file_path).where(Video.id == video_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    from utils.metadata import get_video_metadata as extract_metadata
+    from api.schemas import VideoMetadataResponse
+
+    meta = await extract_metadata(row.file_path)
+    return APIResponse(data=VideoMetadataResponse(**meta))

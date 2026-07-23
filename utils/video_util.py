@@ -190,3 +190,72 @@ async def get_video_duration(video_path: str) -> float:
         return float(data["format"]["duration"])
     except (KeyError, ValueError, json.JSONDecodeError) as e:
         raise PipelineError(f"Failed to parse ffprobe output: {e}") from e
+
+
+async def export_video_segment(
+    video_path: str,
+    start_sec: float,
+    end_sec: float,
+    output_path: str,
+    reencode: bool = False,
+    video_filters: str | None = None,
+) -> None:
+    """导出视频片段。
+
+    - reencode=False 且无 video_filters: 使用 -c copy 流复制（极速，无质量损失）
+    - reencode=True 或有 video_filters: 重编码为 libx264 (用于 bbox 叠加等场景)
+
+    Args:
+        video_path:   输入视频路径。
+        start_sec:    起始时间（秒）。
+        end_sec:      结束时间（秒）。
+        output_path:  输出文件路径。
+        reencode:     是否强制重编码。
+        video_filters: FFmpeg -vf 滤镜字符串（如 drawbox），设置后自动重编码。
+
+    Raises:
+        PipelineError: FFmpeg 执行失败。
+    """
+    do_reencode = reencode or video_filters is not None
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss", str(start_sec),
+        "-to", str(end_sec),
+        "-i", video_path,
+    ]
+
+    if do_reencode:
+        cmd += [
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+        ]
+        if video_filters:
+            cmd += ["-vf", video_filters]
+    else:
+        cmd += ["-c", "copy"]
+
+    cmd += [
+        "-avoid_negative_ts", "make_zero",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+
+    logger.info("[FFmpeg] export segment %.1f-%.1f → %s (reencode=%s)",
+                start_sec, end_sec, output_path, do_reencode)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        error_msg = stderr.decode(errors="replace")[:500]
+        raise PipelineError(
+            f"FFmpeg export segment failed (code {proc.returncode}): {error_msg}"
+        )
+    logger.info("[FFmpeg] Segment exported → %s", output_path)

@@ -22,3 +22,6 @@ python-multipart>=0.0.7
 
 # ── 物体检测与追踪 ──
 ultralytics>=8.3.0
+
+# ── 视频元数据提取 ──
+pymediainfo>=6.1.0
