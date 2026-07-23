@@ -3,28 +3,28 @@ api/export_routes.py
 ═══════════════════════════════════════════════════════════
 导出 API — 视频片段 / 帧序列 / 追踪轨迹 / 缩略图。
 
-所有导出端点挂在 /api/v1/videos/{video_id}/export/... 下。
+同时提供 POST (JSON body) 和 GET (query params) 两种入口。
+前端浏览器使用 GET 直接导航下载，避免 async 后浏览器屏蔽自动下载。
 """
 
 import os
 import uuid
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db
 from api.schemas import (
-    APIResponse,
     ExportClipRequest,
     ExportFramesRequest,
     ExportTrackRequest,
     ExportThumbnailsRequest,
 )
 from core.models import FrameDetection, Scene, Track, Video
-from services.export_service import ExportService
+from services.export_service import ExportService, format_ts, sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ router = APIRouter()
 
 
 # ═══════════════════════════════════════════════════════════
-# 片段导出
+# 视频片段导出 — POST (JSON) + GET (query params)
 # ═══════════════════════════════════════════════════════════
 
 @router.post("/{video_id}/export/clip")
@@ -43,68 +43,29 @@ async def export_clip(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> FileResponse:
-    """导出视频片段 — ffmpeg 流复制，不重编码，极速。
-
-    请求体::
-
-        {"start_sec": 0.0, "end_sec": 10.0}
-    """
-    result = await db.execute(
-        select(Video.file_path, Video.duration).where(Video.id == video_id)
-    )
-    row = result.one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Video not found")
-
-    file_path: str = row.file_path
-    duration: float | None = row.duration
-
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Video file not found on disk")
-
-    # 边界校验
-    if payload.start_sec >= payload.end_sec:
-        raise HTTPException(status_code=400, detail="start_sec must be less than end_sec")
-
-    if duration and duration > 0:
-        if payload.start_sec >= duration:
-            raise HTTPException(status_code=400, detail="start_sec exceeds video duration")
-        if payload.end_sec > duration:
-            payload.end_sec = duration
-
-    config: dict = request.app.state.config
-    service = ExportService(config)
-    output_path = await service.export_clip(
-        video_path=file_path,
-        start_sec=payload.start_sec,
-        end_sec=payload.end_sec,
-        output_format=payload.output_format,
-    )
-
-    background_tasks.add_task(_cleanup_file, output_path)
-    return _file_response(output_path, f"clip_{video_id}_{payload.start_sec}-{payload.end_sec}.mp4")
+    """POST 版 — JSON body: {"start_sec":0, "end_sec":10}"""
+    return await _handle_clip_export(video_id, payload.start_sec, payload.end_sec, request, background_tasks, db)
 
 
-# ═══════════════════════════════════════════════════════════
-# 帧导出
-# ═══════════════════════════════════════════════════════════
-
-@router.post("/{video_id}/export/frames")
-async def export_frames(
+@router.get("/{video_id}/export/clip")
+async def export_clip_get(
     video_id: uuid.UUID,
-    payload: ExportFramesRequest,
     request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    start_sec: float = Query(..., ge=0.0),
+    end_sec: float = Query(..., ge=0.0),
 ) -> FileResponse:
-    """导出指定时间点的帧图片（zip 打包）。
+    """GET 版 — 浏览器直接导航下载用。"""
+    return await _handle_clip_export(video_id, start_sec, end_sec, request, background_tasks, db)
 
-    请求体::
 
-        {"timestamps": [1.0, 5.0, 10.0], "format": "jpg"}
-    """
+async def _handle_clip_export(
+    video_id: uuid.UUID, start_sec: float, end_sec: float,
+    request: Request, background_tasks: BackgroundTasks, db: AsyncSession,
+) -> FileResponse:
     result = await db.execute(
-        select(Video.file_path, Video.duration).where(Video.id == video_id)
+        select(Video.file_path, Video.duration, Video.file_name).where(Video.id == video_id)
     )
     row = result.one_or_none()
     if row is None:
@@ -112,161 +73,225 @@ async def export_frames(
 
     file_path: str = row.file_path
     duration: float | None = row.duration
+    file_name: str = row.file_name
+    base_name = os.path.splitext(file_name)[0]
 
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Video file not found on disk")
 
-    # 边界校验
-    for ts in payload.timestamps:
-        if ts < 0:
-            raise HTTPException(status_code=400, detail=f"Negative timestamp: {ts}")
-        if duration and duration > 0 and ts > duration:
-            raise HTTPException(status_code=400, detail=f"Timestamp exceeds duration: {ts}s > {duration}s")
-
     config: dict = request.app.state.config
     service = ExportService(config)
-    zip_path = await service.export_frames(
-        video_path=file_path,
-        timestamps=payload.timestamps,
-        output_format=payload.format,
-    )
 
-    background_tasks.add_task(_cleanup_file, zip_path)
-    return _file_response(zip_path, f"frames_{video_id}.zip", "application/zip")
+    if start_sec == end_sec:
+        if start_sec < 0 or (duration and duration > 0 and start_sec > duration):
+            raise HTTPException(status_code=400, detail=f"Invalid timestamp: {start_sec}")
+        out_path = await service.export_single_frame(video_path=file_path, timestamp=start_sec)
+        background_tasks.add_task(_cleanup_file, out_path)
+        return _file_response(out_path, f"{sanitize_filename(base_name)}_{format_ts(start_sec)}.jpg", "image/jpeg")
+
+    if start_sec >= end_sec:
+        raise HTTPException(status_code=400, detail="start_sec must be less than end_sec for clip")
+
+    if duration and duration > 0:
+        if start_sec >= duration:
+            raise HTTPException(status_code=400, detail="start_sec exceeds video duration")
+        if end_sec > duration:
+            end_sec = duration
+
+    output_path = await service.export_clip(video_path=file_path, start_sec=start_sec, end_sec=end_sec)
+    background_tasks.add_task(_cleanup_file, output_path)
+    ts_start = format_ts(start_sec)
+    ts_end = format_ts(end_sec)
+    return _file_response(output_path, f"{sanitize_filename(base_name)}_{ts_start}_{ts_end}.mp4")
 
 
 # ═══════════════════════════════════════════════════════════
-# 追踪轨迹导出
+# 追踪轨迹导出 → zip — POST (JSON) + GET (query params)
 # ═══════════════════════════════════════════════════════════
 
 @router.post("/{video_id}/export/track/{track_id}")
-async def export_track_clip(
-    video_id: uuid.UUID,
-    track_id: int,
+async def export_track_zip(
+    video_id: uuid.UUID, track_id: int,
     payload: ExportTrackRequest,
-    request: Request,
-    background_tasks: BackgroundTasks,
+    request: Request, background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> FileResponse:
-    """导出追踪轨迹的视频片段，可选 bbox 叠加。
+    """POST 版 — JSON body: {"draw_bbox": true}"""
+    return await _handle_track_export(video_id, track_id, payload.draw_bbox, request, background_tasks, db)
 
-    请求体::
 
-        {"draw_bbox": true}
-    """
-    # 1. 查询视频文件路径
+@router.get("/{video_id}/export/track/{track_id}")
+async def export_track_zip_get(
+    video_id: uuid.UUID, track_id: int,
+    request: Request, background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    draw_bbox: bool = Query(default=True),
+) -> FileResponse:
+    """GET 版 — 浏览器直接导航下载用。"""
+    return await _handle_track_export(video_id, track_id, draw_bbox, request, background_tasks, db)
+
+
+async def _handle_track_export(
+    video_id: uuid.UUID, track_id: int, draw_bbox: bool,
+    request: Request, background_tasks: BackgroundTasks, db: AsyncSession,
+) -> FileResponse:
     result = await db.execute(
-        select(Video.file_path).where(Video.id == video_id)
+        select(Video.file_path, Video.file_name).where(Video.id == video_id)
     )
     row = result.one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Video not found")
-
     file_path: str = row.file_path
+    file_name: str = row.file_name
+    base_name = os.path.splitext(file_name)[0]
 
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Video file not found on disk")
 
-    # 2. 查询 track
     track_result = await db.execute(
-        select(Track).where(
-            Track.video_id == video_id,
-            Track.track_id == track_id,
-        )
+        select(Track).where(Track.video_id == video_id, Track.track_id == track_id)
     )
     track = track_result.scalar_one_or_none()
     if track is None:
         raise HTTPException(status_code=404, detail=f"Track {track_id} not found")
 
-    # 3. 查询 detections
-    dets_result = await db.execute(
+    segments = track.segments or [{"start": track.first_seen, "end": track.last_seen}]
+
+    all_dets_result = await db.execute(
         select(FrameDetection).where(
             FrameDetection.video_id == video_id,
             FrameDetection.track_id == track_id,
         ).order_by(FrameDetection.timestamp_sec)
     )
-    db_dets = list(dets_result.scalars().all())
+    all_dets = list(all_dets_result.scalars().all())
 
-    # 4. 获取视频分辨率（通过 metadata 模块）
+    per_seg_dets: list[list[dict]] = []
+    for seg in segments:
+        seg_start, seg_end = seg["start"], seg["end"]
+        filtered = [
+            {"timestamp_sec": d.timestamp_sec, "bbox": d.bbox}
+            for d in all_dets if seg_start - 0.5 <= d.timestamp_sec <= seg_end + 0.5
+        ]
+        per_seg_dets.append(filtered)
+
     from utils.metadata import get_video_metadata
     meta = await get_video_metadata(file_path)
     video_streams = meta.get("video_streams", [])
     if video_streams and video_streams[0].get("width") and video_streams[0].get("height"):
         resolution = (video_streams[0]["width"], video_streams[0]["height"])
     else:
-        resolution = (1920, 1080)  # fallback
+        resolution = (1920, 1080)
 
-    # 5. 导出
     config: dict = request.app.state.config
     service = ExportService(config)
-
-    track_data = {
-        "track_id": track.track_id,
-        "class_name": track.class_name,
-        "first_seen": track.first_seen,
-        "last_seen": track.last_seen,
-        "frame_count": track.frame_count,
-    }
-    detections_data = [
-        {
-            "timestamp_sec": d.timestamp_sec,
-            "bbox": d.bbox,
-        }
-        for d in db_dets
-    ]
-
-    output_path = await service.export_track_clip(
-        video_path=file_path,
-        track_data=track_data,
-        detections=detections_data,
-        video_resolution=resolution,
-        draw_bbox=payload.draw_bbox,
+    zip_path = await service.export_track_segments_zip(
+        video_path=file_path, video_name=base_name, track_id=track.track_id,
+        segments=segments, class_name=track.class_name,
+        per_segment_detections=per_seg_dets if draw_bbox else None,
+        video_resolution=resolution, draw_bbox=draw_bbox,
     )
 
-    background_tasks.add_task(_cleanup_file, output_path)
-    filename = f"track_{track.class_name}_{track_id}_{video_id}.mp4"
-    return _file_response(output_path, filename)
+    background_tasks.add_task(_cleanup_file, zip_path)
+    return _file_response(zip_path, f"{sanitize_filename(base_name)}_track{track_id}.zip", "application/zip")
 
 
 # ═══════════════════════════════════════════════════════════
-# 缩略图导出
+# 全部场景缩略图导出 — POST (JSON) + GET (直接下载)
 # ═══════════════════════════════════════════════════════════
 
 @router.post("/{video_id}/export/thumbnails")
 async def export_thumbnails(
-    video_id: uuid.UUID,
-    payload: ExportThumbnailsRequest,
-    request: Request,
-    background_tasks: BackgroundTasks,
+    video_id: uuid.UUID, payload: ExportThumbnailsRequest,
+    request: Request, background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> FileResponse:
-    """导出场景缩略图（zip 打包）。
+    """POST 版 — JSON body: {} 或 {"scene_indices": [0,2,5]}"""
+    return await _handle_thumbnail_export(video_id, payload.scene_indices, request, background_tasks, db)
 
-    请求体::
 
-        {}              # 导出全部场景
-        {"scene_indices": [0, 2, 5]}  # 仅导出指定场景
-    """
-    # 查询缩略图路径
+@router.get("/{video_id}/export/thumbnails")
+async def export_thumbnails_get(
+    video_id: uuid.UUID,
+    request: Request, background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """GET 版 — 浏览器直接导航下载全部场景缩略图。"""
+    return await _handle_thumbnail_export(video_id, None, request, background_tasks, db)
+
+
+async def _handle_thumbnail_export(
+    video_id: uuid.UUID, scene_indices: list[int] | None,
+    request: Request, background_tasks: BackgroundTasks, db: AsyncSession,
+) -> FileResponse:
+    result = await db.execute(select(Video.file_name).where(Video.id == video_id))
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    file_name: str = row.file_name
+    base_name = os.path.splitext(file_name)[0]
+
     stmt = select(Scene.keyframe_path).where(Scene.video_id == video_id)
-
-    if payload.scene_indices is not None:
-        stmt = stmt.where(Scene.scene_index.in_(payload.scene_indices))
-
+    if scene_indices is not None:
+        stmt = stmt.where(Scene.scene_index.in_(scene_indices))
     stmt = stmt.order_by(Scene.scene_index)
 
     result = await db.execute(stmt)
     paths = [row.keyframe_path for row in result.all() if row.keyframe_path]
-
     if not paths:
-        raise HTTPException(status_code=404, detail="No thumbnails found for this video")
+        raise HTTPException(status_code=404, detail="No thumbnails found")
 
     config: dict = request.app.state.config
     service = ExportService(config)
-    zip_path = await service.export_thumbnails(paths)
-
+    zip_path = await service.export_thumbnails(paths, video_name=base_name)
     background_tasks.add_task(_cleanup_file, zip_path)
-    return _file_response(zip_path, f"thumbnails_{video_id}.zip", "application/zip")
+    return _file_response(zip_path, f"{sanitize_filename(base_name)}_thumbnails.zip", "application/zip")
+
+
+# ═══════════════════════════════════════════════════════════
+# Track 物体缩略图导出（原本就是 GET，无需改动）
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/{video_id}/export/track/{track_id}/thumbnail")
+async def export_track_thumbnail(
+    video_id: uuid.UUID, track_id: int,
+    request: Request, db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """导出 track 物体的全尺寸裁剪图（JPEG 下载）。"""
+    result = await db.execute(
+        select(Video.file_path, Video.file_name).where(Video.id == video_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    file_path: str = row.file_path
+    file_name: str = row.file_name
+
+    track_result = await db.execute(
+        select(Track).where(Track.video_id == video_id, Track.track_id == track_id)
+    )
+    track = track_result.scalar_one_or_none()
+    if track is None:
+        raise HTTPException(status_code=404, detail=f"Track {track_id} not found")
+
+    thumb_ts = min(track.first_seen + 0.5, track.last_seen)
+    det_result = await db.execute(
+        select(FrameDetection).where(
+            FrameDetection.video_id == video_id,
+            FrameDetection.track_id == track_id,
+            FrameDetection.timestamp_sec.between(thumb_ts - 0.5, thumb_ts + 0.5),
+        ).order_by(FrameDetection.timestamp_sec).limit(1)
+    )
+    det = det_result.scalar_one_or_none()
+    if det is None:
+        raise HTTPException(status_code=404, detail="No detection data for thumbnail")
+
+    config: dict = request.app.state.config
+    service = ExportService(config)
+    out_path = await service.export_track_thumbnail(
+        video_path=file_path, timestamp=thumb_ts, bbox=det.bbox,
+    )
+    safe_name = sanitize_filename(os.path.splitext(file_name)[0])
+    return _file_response(out_path, f"{safe_name}_track{track_id}_{format_ts(thumb_ts)}.jpg", "image/jpeg")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -274,16 +299,10 @@ async def export_thumbnails(
 # ═══════════════════════════════════════════════════════════
 
 def _file_response(path: str, filename: str, media_type: str = "video/mp4") -> FileResponse:
-    """构建 FileResponse，统一文件名与媒体类型。"""
-    return FileResponse(
-        path=path,
-        media_type=media_type,
-        filename=filename,
-    )
+    return FileResponse(path=path, media_type=media_type, filename=filename)
 
 
 async def _cleanup_file(path: str) -> None:
-    """后台任务：清理导出临时文件。"""
     try:
         if os.path.exists(path):
             os.remove(path)

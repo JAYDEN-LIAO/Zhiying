@@ -8,7 +8,7 @@ import { api } from "./services/api";
 import type { VideoListItem, VideoResponse, DetectionData } from "./types";
 import type { PipelineSwitches } from "./mockData";
 import { fmtDuration } from "./utils/helpers";
-import { IconPlay, IconClose } from "./components/icons";
+import { IconPlay, IconClose, IconInfo, IconDownload } from "./components/icons";
 import { LeftSidebar, type PageView, type PanelType } from "./components/LeftSidebar";
 import { ParameterPanel } from "./components/ParameterPanel";
 import { PipelineBar } from "./components/PipelineBar";
@@ -19,6 +19,8 @@ import { SettingsPage } from "./components/SettingsPage";
 import { DetectionOverlay } from "./components/DetectionOverlay";
 import { DetectionPanel } from "./components/DetectionPanel";
 import { DetectionTimeline } from "./components/DetectionTimeline";
+import { MetadataPanel } from "./components/MetadataPanel";
+import { ExportMenu } from "./components/ExportMenu";
 
 export default function Dashboard() {
   const [currentPage, setCurrentPage] = useState<PageView>("dashboard");
@@ -31,6 +33,8 @@ export default function Dashboard() {
   const [isUploading, setIsUploading] = useState(false);
   const [seekTarget, setSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
   const [hasPendingParams, setHasPendingParams] = useState(false);
+  const [showMetadata, setShowMetadata] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   /* ── Shared detection state (lifted from DetectionOverlay) ── */
@@ -259,6 +263,26 @@ export default function Dashboard() {
                   <div>
                     <p className="text-sm font-medium text-gray-800">{statLabel}</p>
                     <p className="text-gray-500 text-sm font-mono">{statValue}</p>
+                  </div>
+                  {/* Metadata + Export buttons */}
+                  <div className="relative flex items-center gap-1">
+                    <button onClick={() => { setShowMetadata((v) => !v); setShowExport(false); }}
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                      title="视频信息"><IconInfo /></button>
+                    <button onClick={() => { setShowExport((v) => !v); setShowMetadata(false); }}
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                      title="导出"><IconDownload /></button>
+                  </div>
+                  {/* Dropdown overlays */}
+                  {(showMetadata || showExport) && (
+                    <div className="fixed inset-0 z-40" onClick={() => { setShowMetadata(false); setShowExport(false); }} />
+                  )}
+                  <div className="absolute right-0 top-full mt-1 z-50">
+                    {showMetadata && <MetadataPanel videoId={currentVideoId ?? ""} onClose={() => setShowMetadata(false)} />}
+                    {showExport && (
+                      <ExportMenu videoId={currentVideoId ?? ""}
+                        onClose={() => setShowExport(false)} />
+                    )}
                   </div>
                 </div>
               ) : (

@@ -11,6 +11,11 @@ import type {
   PipelineParams,
   SettingsData,
   DetectionData,
+  VideoMetadata,
+  ExportClipRequest,
+  ExportFramesRequest,
+  ExportTrackRequest,
+  ExportThumbnailsRequest,
 } from "../types";
 
 const BASE = "/api/v1";
@@ -146,7 +151,84 @@ export const api = {
       body: JSON.stringify({ api_keys }),
     });
   },
+
+  /* ── Video metadata ── */
+  fetchVideoMetadata(videoId: string) {
+    return request<VideoMetadata>(`${BASE}/videos/${videoId}/metadata`);
+  },
+
+  /* ── Export: video clip ── */
+  async exportClip(videoId: string, params: ExportClipRequest): Promise<Blob> {
+    return downloadBlob(`${BASE}/videos/${videoId}/export/clip`, params);
+  },
+
+  /* ── Export: frames ── */
+  async exportFrames(videoId: string, params: ExportFramesRequest): Promise<Blob> {
+    return downloadBlob(`${BASE}/videos/${videoId}/export/frames`, params);
+  },
+
+  /* ── Export: track clip ── */
+  async exportTrack(videoId: string, trackId: number, params: ExportTrackRequest): Promise<Blob> {
+    return downloadBlob(`${BASE}/videos/${videoId}/export/track/${trackId}`, params);
+  },
+
+  /* ── Export: thumbnails ── */
+  async exportThumbnails(videoId: string, params: ExportThumbnailsRequest): Promise<Blob> {
+    return downloadBlob(`${BASE}/videos/${videoId}/export/thumbnails`, params);
+  },
+
+  /* ── Export: track thumbnail (GET, returns JPEG blob) ── */
+  async exportTrackThumbnail(videoId: string, trackId: number): Promise<Blob> {
+    const res = await fetch(`${BASE}/videos/${videoId}/export/track/${trackId}/thumbnail`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${res.status}`);
+    }
+    return res.blob();
+  },
+
+  /* ── Export URL helpers (GET endpoints for browser direct navigation) ── */
+  getClipExportUrl(videoId: string, startSec: number, endSec: number): string {
+    return `${BASE}/videos/${videoId}/export/clip?start_sec=${startSec}&end_sec=${endSec}`;
+  },
+  getTrackExportUrl(videoId: string, trackId: number, drawBbox = true): string {
+    return `${BASE}/videos/${videoId}/export/track/${trackId}?draw_bbox=${drawBbox}`;
+  },
+  getTrackThumbnailUrl(videoId: string, trackId: number): string {
+    return `${BASE}/videos/${videoId}/export/track/${trackId}/thumbnail`;
+  },
+  getThumbnailsExportUrl(videoId: string): string {
+    return `${BASE}/videos/${videoId}/export/thumbnails`;
+  },
 };
+
+/* ── Binary download helper (POST → blob) ── */
+
+async function downloadBlob(url: string, body: unknown): Promise<Blob> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.detail || `HTTP ${res.status}`);
+  }
+  return res.blob();
+}
+
+/* ── Trigger browser file download from a Blob ── */
+
+export function downloadFile(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 /* ── Polling helper ── */
 

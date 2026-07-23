@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { DetectionData, Track, VideoResponse } from "../types";
+import { api, downloadFile } from "../services/api";
 
 /* ── Class colors ── */
 const CLASS_COLORS: Record<string, string> = {
@@ -45,6 +46,8 @@ const CONTAINER = "w-[170px] card-surface rounded-2xl p-3 border border-gray-200
 
 export function DetectionPanel({ video, data, selectedTrackId, classFilter, onClassFilterChange, onTrackSelect }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [trackDropdown, setTrackDropdown] = useState<number | null>(null);
+  const [downloadingTid, setDownloadingTid] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Scroll selected track into view
@@ -219,10 +222,62 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                 </div>
               </div>
               {isSel && <svg className="w-3 h-3 shrink-0" viewBox="0 0 12 12" fill={SELECTED}><path d="M4 3l4 3-4 3V3z" /></svg>}
+              {/* Download button */}
+              <div className="relative shrink-0">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setTrackDropdown(trackDropdown === t.track_id ? null : t.track_id); }}
+                  className="w-6 h-6 rounded-md flex items-center justify-center text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-all"
+                  title="导出"
+                >
+                  {downloadingTid === t.track_id ? (
+                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                  )}
+                </button>
+                {trackDropdown === t.track_id && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setTrackDropdown(null)} />
+                    <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden min-w-[140px]">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setTrackDropdown(null);
+                          window.open(api.getTrackThumbnailUrl(video.id, t.track_id), "_blank"); }}
+                        className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      >
+                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                        导出缩略图
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setTrackDropdown(null);
+                          window.open(api.getTrackExportUrl(video.id, t.track_id, true), "_blank"); }}
+                        className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      >
+                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                        导出track视频
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </button>
           );
         })}
       </div>
     </div>
   );
+}
+
+/* ── Timestamp formatting for filenames (mirrors backend format_ts) ── */
+function formatTs(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  return `${String(h).padStart(2, "0")}h${String(m).padStart(2, "0")}m${String(s).padStart(2, "0")}s`;
 }

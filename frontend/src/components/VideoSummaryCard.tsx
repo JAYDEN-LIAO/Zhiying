@@ -4,6 +4,7 @@
 
 import type { VideoResponse } from "../types";
 import { formatSec } from "../utils/helpers";
+import { api } from "../services/api";
 
 
 export function VideoSummaryCard({ video }: { video: VideoResponse | null }) {
@@ -32,7 +33,20 @@ export function VideoSummaryCard({ video }: { video: VideoResponse | null }) {
   if (summary) {
     return (
       <div className={containerClass}>
-        <h3 className="font-bold text-gray-900 text-lg mb-2 shrink-0">视频摘要</h3>
+        <div className="flex items-center justify-between mb-2 shrink-0">
+          <h3 className="font-bold text-gray-900 text-lg">视频摘要</h3>
+          <button
+            onClick={() => { window.open(api.getThumbnailsExportUrl(video.id), "_blank"); }}
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-all shrink-0"
+            title="导出全部缩略图"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </button>
+        </div>
 
         {/* One-liner */}
         <p className="text-gray-900 font-medium leading-relaxed mb-2 text-[13px] shrink-0">

@@ -196,3 +196,68 @@ export interface DetectionData {
   tracks: Track[];
   detections: Record<string, Detection[]>;  // key: integer timestamp string
 }
+
+/* ── Video Metadata (GET /api/v1/videos/{id}/metadata) ── */
+
+export interface VideoMetadata {
+  container: string | null;
+  duration: number | null;
+  file_size: number | null;
+  overall_bitrate: number | null;
+  video_streams: Array<{
+    codec: string | null;
+    codec_profile: string | null;
+    resolution: string | null;
+    width: number | null;
+    height: number | null;
+    fps: number | null;
+    bitrate: number | null;
+    pixel_format: string | null;
+    color_space: string | null;
+    bit_depth: number | null;
+    display_aspect_ratio: string | null;
+    rotation: number | null;
+  }>;
+  audio_streams: Array<{
+    codec: string | null;
+    channels: number | null;
+    channel_layout: string | null;
+    sample_rate: number | null;
+    bitrate: number | null;
+    language: string | null;
+  }>;
+  device: {
+    make?: string;
+    model?: string;
+    software?: string;
+    gps_latitude?: number;
+    gps_longitude?: number;
+    gps_altitude?: number;
+  } | null;
+  timestamps: {
+    created?: string;
+    modified?: string;
+  } | null;
+  raw: Record<string, unknown> | null;
+}
+
+/* ── Export (POST /api/v1/videos/{id}/export/*) ── */
+
+export interface ExportClipRequest {
+  start_sec: number;
+  end_sec: number;
+  output_format?: string;
+}
+
+export interface ExportFramesRequest {
+  timestamps: number[];
+  format?: string;
+}
+
+export interface ExportTrackRequest {
+  draw_bbox?: boolean;
+}
+
+export interface ExportThumbnailsRequest {
+  scene_indices?: number[] | null;
+}

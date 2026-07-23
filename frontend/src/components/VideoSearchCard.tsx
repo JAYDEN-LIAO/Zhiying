@@ -26,6 +26,7 @@ export function VideoSearchCard({
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dlTrackId, setDlTrackId] = useState<number | null>(null);
 
   /* ── 切换视频时清除搜索结果 ── */
   useEffect(() => {
@@ -257,6 +258,55 @@ export function VideoSearchCard({
                 ) : item.caption ? (
                   <p className="text-xs text-gray-600 leading-relaxed line-clamp-2 mt-1">{item.caption}</p>
                 ) : null}
+
+                {/* Download button */}
+                <div className="mt-1.5 flex items-center gap-1">
+                  {isTrack && item.track_id != null ? (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDlTrackId(dlTrackId === item.track_id ? null : item.track_id!); }}
+                      className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-blue-500 transition-colors px-1.5 py-0.5 rounded hover:bg-blue-50"
+                      title="导出"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                      导出
+                    </button>
+                  ) : null}
+                  {/* Frame result: download clip */}
+                  {!isTrack && item.precise_start != null && item.precise_end != null ? (
+                    <button
+                      onClick={(e) => { e.stopPropagation();
+                        window.open(api.getClipExportUrl(item.video_id, item.precise_start!, item.precise_end!), "_blank"); }}
+                      className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-blue-500 transition-colors px-1.5 py-0.5 rounded hover:bg-blue-50"
+                      title="导出视频段落"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                        <polyline points="9 3 9 7 15 7 15 3" />
+                      </svg>
+                      下载段落
+                    </button>
+                  ) : null}
+                </div>
+
+                {/* Track dropdown */}
+                {dlTrackId === item.track_id && isTrack && (
+                  <div className="mt-1 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => { setDlTrackId(null);
+                        window.open(api.getTrackThumbnailUrl(item.video_id, item.track_id!), "_blank"); }}
+                      className="flex-1 px-2 py-1 text-[10px] bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors text-center"
+                    >导出缩略图</button>
+                    <button
+                      onClick={() => { setDlTrackId(null);
+                        window.open(api.getTrackExportUrl(item.video_id, item.track_id!, true), "_blank"); }}
+                      className="flex-1 px-2 py-1 text-[10px] bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors text-center"
+                    >导出track视频</button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -277,4 +327,12 @@ export function VideoSearchCard({
       </div>
     </div>
   );
+}
+
+/* ── Timestamp formatting for filenames ── */
+function formatTs(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  return `${String(h).padStart(2, "0")}h${String(m).padStart(2, "0")}m${String(s).padStart(2, "0")}s`;
 }

@@ -139,9 +139,10 @@ class VideoMetadataResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════
 
 class ExportClipRequest(BaseModel):
-    """视频片段导出请求。"""
+    """视频片段导出请求。start_sec == end_sec 时视为单帧导出。"""
     start_sec: float = Field(..., ge=0.0, description="起始时间(秒)")
-    end_sec: float = Field(..., gt=0.0, description="结束时间(秒)")
+    end_sec: float = Field(..., ge=0.0, description="结束时间(秒)，与 start 相同则导出单帧")
+    output_format: str = Field(default="mp4", pattern=r"^(mp4)$", description="输出格式")
     output_format: str = Field(default="mp4", pattern=r"^(mp4)$", description="输出格式")
 
 
