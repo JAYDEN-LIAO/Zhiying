@@ -28,26 +28,40 @@ interface Props {
   onTrackSelect: (trackId: number, className: string, seekTo: number) => void;
 }
 
-function getThumbBbox(data: DetectionData, track: Track) {
-  // Delay 0.5s from first_seen — avoids capturing half-entered objects
-  const ts = Math.min(track.first_seen + 0.5, track.last_seen);
-  const tsKey = ts.toFixed(1);
-  const dets = data.detections[tsKey] ?? data.detections[track.first_seen.toFixed(1)];
-  if (!dets) return null;
-  const det = dets.find((d) => d.track_id === track.track_id);
-  return det?.bbox ?? null;
+function getThumbBbox(data: DetectionData, track: Track): { bbox: NonNullable<DetectionData["detections"][string][number]["bbox"]>; ts: number } | null {
+  // 遍历 track 所有检测帧，选 bbox 面积最大的（物体离镜头最近、最清晰）
+  let bestBbox: { x1: number; y1: number; x2: number; y2: number } | null = null;
+  let bestArea = 0;
+  let bestTs = track.first_seen;
+
+  for (const tsKey of Object.keys(data.detections)) {
+    const dets = data.detections[tsKey];
+    for (const det of dets) {
+      if (det.track_id === track.track_id) {
+        const area = (det.bbox.x2 - det.bbox.x1) * (det.bbox.y2 - det.bbox.y1);
+        if (area > bestArea) {
+          bestArea = area;
+          bestBbox = det.bbox;
+          bestTs = parseFloat(tsKey);
+        }
+      }
+    }
+  }
+
+  return bestBbox ? { bbox: bestBbox, ts: bestTs } : null;
 }
 
 function thumbUrl(videoId: string, ts: number, bbox: { x1: number; y1: number; x2: number; y2: number }) {
   return `/api/v1/videos/${videoId}/detection/thumbnail?timestamp=${ts}&x1=${bbox.x1}&y1=${bbox.y1}&x2=${bbox.x2}&y2=${bbox.y2}`;
 }
 
-const CONTAINER = "w-[170px] card-surface rounded-2xl p-3 border border-gray-200/60 flex flex-col h-full";
+const CONTAINER = "w-[220px] card-surface rounded-2xl p-3 border border-gray-200/60 flex flex-col h-full";
 
 export function DetectionPanel({ video, data, selectedTrackId, classFilter, onClassFilterChange, onTrackSelect }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [trackDropdown, setTrackDropdown] = useState<number | null>(null);
   const [downloadingTid, setDownloadingTid] = useState<number | null>(null);
+  const [hoverThumb, setHoverThumb] = useState<{ videoId: string; ts: number; bbox: { x1: number; y1: number; x2: number; y2: number }; x: number; y: number } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Scroll selected track into view
@@ -192,33 +206,36 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
         {filtered.map((t) => {
           const color = CLASS_COLORS[t.class_name] ?? CLASS_COLORS.default;
           const isSel = t.track_id === selectedTrackId;
-          const bbox = getThumbBbox(data, t);
-          const thumbTs = Math.min(t.first_seen + 0.5, t.last_seen);
+          const thumbResult = getThumbBbox(data, t);
+          const bbox = thumbResult?.bbox ?? null;
+          const thumbTs = thumbResult?.ts ?? Math.min(t.first_seen + 0.5, t.last_seen);
           return (
             <button
               key={t.track_id}
               data-track-id={t.track_id}
               onClick={() => onTrackSelect(t.track_id, t.class_name, t.first_seen)}
-              className="w-full flex items-center gap-2 px-3 py-3 text-left transition-colors hover:bg-gray-50/60 border-b border-gray-100/40 last:border-b-0"
-              style={{ background: isSel ? "rgba(255,215,0,0.12)" : undefined }}
+              className={`w-full flex items-center gap-2 px-3 py-3 text-left transition-colors hover:bg-gray-50/60 border-b border-gray-100/40 last:border-b-0 relative ${isSel ? "bg-amber-50" : ""}`}
+              style={isSel ? { boxShadow: "inset 3px 0 0 #FFD700" } : undefined}
             >
               {bbox ? (
-                <div className="w-14 h-14 rounded-md shrink-0 overflow-hidden bg-gray-100 flex items-center justify-center"
-                     style={{ border: isSel ? `1.5px solid ${SELECTED}` : "1px solid rgba(0,0,0,0.06)" }}>
+                <div className="w-16 h-16 rounded-md shrink-0 overflow-hidden bg-gray-100 flex items-center justify-center cursor-pointer"
+                     style={{ border: isSel ? `1.5px solid ${SELECTED}` : "1px solid rgba(0,0,0,0.06)" }}
+                     onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHoverThumb({ videoId: video.id, ts: thumbTs, bbox, x: r.right + 8, y: r.top - 40 }); }}
+                     onMouseLeave={() => setHoverThumb(null)}>
                   <img src={thumbUrl(video.id, thumbTs, bbox)} loading="lazy" className="w-full h-full object-contain" alt="" />
                 </div>
               ) : (
-                <span className="w-14 h-14 rounded-md shrink-0 flex items-center justify-center" style={{ background: `${color}15` }}>
-                  <span className="w-3 h-3 rounded-full" style={{ background: isSel ? SELECTED : color }} />
+                <span className="w-16 h-16 rounded-md shrink-0 flex items-center justify-center" style={{ background: `${color}15` }}>
+                  <span className="w-4 h-4 rounded-full" style={{ background: isSel ? SELECTED : color }} />
                 </span>
               )}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1">
-                  <span className="text-[11px] font-semibold text-gray-800 truncate">{t.class_name}</span>
-                  <span className="text-[10px] text-gray-400 shrink-0">#{t.track_id}</span>
+                  <span className={`text-[11px] truncate ${isSel ? "font-bold text-amber-800" : "font-semibold text-gray-800"}`}>{t.class_name}</span>
+                  <span className={`text-[10px] shrink-0 ${isSel ? "text-amber-600 font-medium" : "text-gray-400"}`}>#{t.track_id}</span>
                 </div>
                 <div className="mt-0.5">
-                  <span className="text-[10px] text-gray-400 font-mono">{t.first_seen.toFixed(1)}s–{t.last_seen.toFixed(1)}s</span>
+                  <span className={`text-[10px] font-mono ${isSel ? "text-amber-600" : "text-gray-400"}`}>{t.first_seen.toFixed(1)}s–{t.last_seen.toFixed(1)}s</span>
                 </div>
               </div>
               {isSel && <svg className="w-3 h-3 shrink-0" viewBox="0 0 12 12" fill={SELECTED}><path d="M4 3l4 3-4 3V3z" /></svg>}
@@ -270,6 +287,20 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
           );
         })}
       </div>
+
+      {/* Hover thumbnail preview */}
+      {hoverThumb && (
+        <div
+          className="fixed z-[60] pointer-events-none rounded-xl overflow-hidden bg-transparent"
+          style={{ left: hoverThumb.x, top: hoverThumb.y, width: 240, height: 240 }}
+        >
+          <img
+            src={thumbUrl(hoverThumb.videoId, hoverThumb.ts, hoverThumb.bbox)}
+            className="w-full h-full object-contain"
+            alt=""
+          />
+        </div>
+      )}
     </div>
   );
 }

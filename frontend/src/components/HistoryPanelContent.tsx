@@ -25,6 +25,7 @@ export function HistoryPanelContent({
   onDelete: (id: string) => void;
 }) {
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
 
   const handleDelete = async (id: string) => {
     setDeletingIds((prev) => new Set(prev).add(id));
@@ -40,8 +41,40 @@ export function HistoryPanelContent({
     }
   };
 
+  const filteredVideos = searchQuery.trim()
+    ? videos.filter((v) => v.file_name.toLowerCase().includes(searchQuery.toLowerCase()))
+    : videos;
+
   return (
-    <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-2">
+    <div className="flex-1 flex flex-col min-h-0">
+      {/* Search input */}
+      <div className="px-4 pt-3 pb-2 shrink-0">
+        <div className="relative">
+          <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜索视频文件名..."
+            className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-300 transition-all placeholder:text-gray-400"
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto custom-scrollbar px-4 pb-4 space-y-2">
+        {searchQuery && (
+          <p className="text-[10px] text-gray-400">
+            找到 {filteredVideos.length} 条
+          </p>
+        )}
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
@@ -51,12 +84,12 @@ export function HistoryPanelContent({
             </div>
           ))}
         </div>
-      ) : videos.length === 0 ? (
+      ) : filteredVideos.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-sm text-gray-400 mt-2">暂无视频</p>
+          <p className="text-sm text-gray-400 mt-2">{searchQuery ? "无匹配视频" : "暂无视频"}</p>
         </div>
       ) : (
-        videos.map((item) => {
+        filteredVideos.map((item) => {
           const shortName = item.file_name.length > 10 ? item.file_name.slice(0, 10) + "…" : item.file_name;
           const fnParts: string[] = [];
           if (item.search_index_enabled) fnParts.push("搜索");
@@ -124,6 +157,7 @@ export function HistoryPanelContent({
           );
         })
       )}
+    </div>
     </div>
   );
 }

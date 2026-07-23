@@ -135,15 +135,15 @@ async def get_detection_thumbnail(
         if px2 > px1 and py2 > py1:
             frame = frame[py1:py2, px1:px2]
 
-    # 缩放到 120px 宽
+    # 缩放到 200px 宽（原 120px，增大后支持前端 hover 大图预览）
     img = Image.fromarray(frame)
-    thumb_w = 120
+    thumb_w = 200
     ratio = thumb_w / img.width
     thumb_h = max(1, int(img.height * ratio))
     img = img.resize((thumb_w, thumb_h), Image.LANCZOS)
 
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=65)
+    img.save(buf, format="JPEG", quality=85)
     buf.seek(0)
 
     return Response(content=buf.getvalue(), media_type="image/jpeg",

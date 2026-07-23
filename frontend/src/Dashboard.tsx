@@ -249,35 +249,39 @@ export default function Dashboard() {
             <div className="flex-1 pt-[96px] pl-8 pr-2 pb-4 flex flex-col min-h-0 relative overflow-hidden">
               {/* Stats bar — absolutely positioned, doesn't affect video alignment */}
               {currentVideo ? (
-                <div className="absolute top-[23px] right-4 flex items-center gap-2.5 z-10">
-                  <span className="font-semibold text-xs text-gray-700">{ctLabel[currentVideo.content_type] || currentVideo.content_type}</span>
-                  <span className="text-gray-300 text-xs">·</span>
-                  <span className="text-xs text-gray-600">{currentVideo.summary_enabled ? (currentVideo.summary_mode === "vlm_llm" ? "VLM+LLM" : "原生") : ""}{currentVideo.search_index_enabled ? (currentVideo.summary_enabled ? " + 搜索" : "搜索") : (currentVideo.summary_enabled ? "摘要" : "")}</span>
-                  <span className="text-gray-300 text-xs">·</span>
-                  <span className="text-xs text-gray-600">{langLabel[currentVideo.language] || currentVideo.language}</span>
-                  <span className="text-gray-300 text-xs">·</span>
-                  <span className="text-xs text-gray-600">{currentVideo.sample_fps.toFixed(1)}fps</span>
-                  <span className="text-gray-300 text-xs">·</span>
-                  <span className="text-xs text-gray-600">阈值 {(currentVideo.segment_threshold ?? 0.5).toFixed(1)}</span>
-                  <div className="w-0.5 h-8 mx-1 bg-gray-300 rounded-full flex-shrink-0" />
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">{statLabel}</p>
-                    <p className="text-gray-500 text-sm font-mono">{statValue}</p>
+                <div className="absolute top-[18px] right-4 z-10 flex flex-col items-end gap-0.5">
+                  {/* Top row: filename + duration + action buttons */}
+                  <div className="flex items-center gap-2">
+                    <div className="text-right">
+                      <p className="text-sm font-semibold text-gray-800 leading-tight">{statLabel}</p>
+                      <p className="text-gray-500 text-xs font-mono leading-tight">{statValue}</p>
+                    </div>
+                    <div className="flex items-center gap-0.5 ml-1">
+                      <button onClick={() => { setShowMetadata((v) => !v); setShowExport(false); }}
+                        className="w-6 h-6 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                        title="视频信息"><IconInfo /></button>
+                      <button onClick={() => { setShowExport((v) => !v); setShowMetadata(false); }}
+                        className="w-6 h-6 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                        title="导出"><IconDownload /></button>
+                    </div>
                   </div>
-                  {/* Metadata + Export buttons */}
-                  <div className="relative flex items-center gap-1">
-                    <button onClick={() => { setShowMetadata((v) => !v); setShowExport(false); }}
-                      className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
-                      title="视频信息"><IconInfo /></button>
-                    <button onClick={() => { setShowExport((v) => !v); setShowMetadata(false); }}
-                      className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
-                      title="导出"><IconDownload /></button>
+                  {/* Bottom row: tech params */}
+                  <div className="flex items-center gap-1.5 text-[10px] text-gray-500">
+                    <span className="font-medium text-gray-600">{ctLabel[currentVideo.content_type] || currentVideo.content_type}</span>
+                    <span className="text-gray-300">·</span>
+                    <span>{currentVideo.summary_enabled ? (currentVideo.summary_mode === "vlm_llm" ? "VLM+LLM" : "原生") : ""}{currentVideo.search_index_enabled ? (currentVideo.summary_enabled ? "+搜索" : "搜索") : (currentVideo.summary_enabled ? "摘要" : "")}</span>
+                    <span className="text-gray-300">·</span>
+                    <span>{langLabel[currentVideo.language] || currentVideo.language}</span>
+                    <span className="text-gray-300">·</span>
+                    <span>{currentVideo.sample_fps.toFixed(1)}fps</span>
+                    <span className="text-gray-300">·</span>
+                    <span>阈值 {(currentVideo.segment_threshold ?? 0.5).toFixed(1)}</span>
                   </div>
                   {/* Dropdown overlays */}
                   {(showMetadata || showExport) && (
                     <div className="fixed inset-0 z-40" onClick={() => { setShowMetadata(false); setShowExport(false); }} />
                   )}
-                  <div className="absolute right-0 top-full mt-1 z-50">
+                  <div className="relative">
                     {showMetadata && <MetadataPanel videoId={currentVideoId ?? ""} onClose={() => setShowMetadata(false)} />}
                     {showExport && (
                       <ExportMenu videoId={currentVideoId ?? ""}
@@ -286,7 +290,7 @@ export default function Dashboard() {
                   </div>
                 </div>
               ) : (
-                <div className="absolute top-[23px] right-4 z-10">
+                <div className="absolute top-[18px] right-4 z-10">
                   <div className="flex items-start gap-3">
                     <div className="w-0.5 h-8 mt-0.5 bg-gray-300 rounded-full flex-shrink-0" />
                     <div><p className="text-sm font-medium text-gray-800">等待选择</p><p className="text-gray-500 text-sm font-mono">—</p></div>
@@ -364,7 +368,7 @@ export default function Dashboard() {
           </div>
 
           {/* ── Right Sidebar: Summary + Search ── */}
-          <aside className="w-[460px] pr-4 pt-[96px] pb-4 pl-1 flex flex-col gap-1 flex-shrink-0 h-full">
+          <aside className="w-[420px] pr-4 pt-[96px] pb-4 pl-1 flex flex-col gap-1 flex-shrink-0 h-full">
             <div className="flex-1 min-h-0"><VideoSummaryCard video={currentVideo} /></div>
             <div className="flex-1 min-h-0"><VideoSearchCard
               video={currentVideo}
