@@ -145,28 +145,6 @@ body {
 .custom-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
-/* ── 蓝色拖动条 ── */
-input[type="range"].range-blue::-webkit-slider-runnable-track {
-  background: #e5e7eb;
-  border-radius: 9999px;
-  height: 6px;
-}
-input[type="range"].range-blue::-moz-range-track {
-  background: #e5e7eb;
-  border-radius: 9999px;
-  height: 6px;
-}
-input[type="range"].range-blue::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #1a65e1;
-  cursor: pointer;
-  margin-top: -5px;
-}
-
 .custom-scrollbar::-webkit-scrollbar-thumb {
   background: #d0d5dd;
   border-radius: 2px;

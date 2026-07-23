@@ -12,13 +12,11 @@ export function LeftSidebar({
   activePanel,
   onNavigate,
   onTogglePanel,
-  onUpload,
 }: {
   currentPage: PageView;
   activePanel: PanelType | null;
   onNavigate: (page: PageView) => void;
   onTogglePanel: (panel: PanelType) => void;
-  onUpload: () => void;
 }) {
   return (
     <aside

@@ -184,7 +184,7 @@ export function ParameterPanel({
     if (sceneType === "custom") {
       saveCustomParams({ sceneType, modules, functions, advanced, summaryMode, detectionClasses });
     }
-  }, [sceneType, modules, functions, advanced, detectionClasses]);
+  }, [sceneType, modules, functions, advanced, detectionClasses, summaryMode]);
 
   /* ── L1 场景类型变更 → 重设 L2/L3 默认值 ── */
   const handleSceneTypeChange = (ct: ContentType) => {
@@ -283,6 +283,7 @@ export function ParameterPanel({
         input.accept = ".mp4,.mov,.avi,.mkv,.webm";
         input.onchange = async () => {
           const file = input.files?.[0];
+          ac.abort();  // 取消 focus 监听
           if (!file) { setSubmitting(false); return; }
           try {
             const result = await api.upload(file, buildParams());
@@ -298,8 +299,8 @@ export function ParameterPanel({
             setSubmitting(false);
           }
         };
-        const onBlur = () => setTimeout(() => setSubmitting(false), 500);
-        window.addEventListener("focus", onBlur, { once: true });
+        const ac = new AbortController();
+        window.addEventListener("focus", () => setTimeout(() => setSubmitting(false), 500), { signal: ac.signal, once: true });
         input.click();
       } else {
         // 已有视频 → 直接更新参数

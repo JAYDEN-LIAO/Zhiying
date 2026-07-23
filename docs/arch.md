@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.10 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.11 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -10,22 +10,23 @@
 │                     Client (CLI/Browser / React Frontend)                        │
 └──────────────────┬────────────────────────────┬──────────────────┬───────────────┘
                    │ POST /videos/upload        │ POST /search/semantic │ GET /videos/
-                   │ + PUT /videos/{id}/params  │                       │
+                   │ + PUT /videos/{id}/params  │ GET /videos/{id}/meta │
                    ▼                            ▼                        ▼
 ┌─────────────────────────────┐  ┌─────────────────────────────┐  ┌──────────────────┐
 │     FastAPI (main.py)       │  │   SearchEngine              │  │  React Dashboard │
 │                             │  │   ┌─ frame (1fps 精确)     │  │  ┌── video player │
-│  ┌─ api/routes.py ────────┐ │  │   ├─ chunk (滑动窗口)      │  │  ├── pipeline UI  │
-│  │ upload_video()         │ │  │   ├─ text (caption 语义)    │  │  ├── search panel │
-│  │ register_video()       │ │  │   ├─ label (JSONB 精确)     │  │  └── history list │
-│  │ get_video()            │ │  │   └─ 按 scene 合并 + 去重   │  └──────────────────┘
-│  │ list_videos()          │ │  └──────────┬──────────────────┘
-│  │ delete_video()         │ │             │
-│  │ stream_video()         │ │  ┌──────────▼──────────────────┐
-│  │ get_thumbnail()        │ │  │   Embedder (local GPU)      │
-│  │ get_video_status()     │ │  │   encode_text("query")      │
-│  │ search_semantic()      │ │  │   encode_image(frame)       │
-│  └───────────┬───────────┘ │  └──────────────────────────────┘
+│  ┌─ api/video_routes.py ──┐ │  │   ├─ chunk (滑动窗口)      │  │  ├── pipeline UI  │
+│  │ upload/register/params  │ │  │   ├─ text (caption 语义)    │  │  ├── search panel │
+│  │ stream/thumbnail/status │ │  │   ├─ label (JSONB 精确)     │  │  ├── history list │
+│  │ delete/metadata        │ │  │   └─ track (crop 跨模态)    │  │  ├── det panel    │
+│  └─────────────────────────┘ │  └──────────┬──────────────────┘  │  └── export btn   │
+│  ┌─ api/export_routes.py ──┐ │             │                      └──────────────────┘
+│  │ clip / frames / track   │ │  ┌──────────▼──────────────────┐
+│  │ thumbnails (GET+POST)   │ │  │   Embedder (local GPU)      │
+│  └─────────────────────────┘ │  │   encode_text("query")      │
+│  ┌─ api/detection_routes.py │  │   encode_image(frame)       │
+│  │ detection/data + thumb   │  └──────────────────────────────┘
+│  └───────────┬──────────────┘
 └──────────────┬─────────────┘
                │
                ▼
@@ -125,7 +126,7 @@ Keyframe Extraction (Phase 1→4 间)
   ├─ 中点帧 → scene.keyframe（缩略图用）
   ├─ vlm_llm 模式: 均匀选 3-7 帧 → scene.caption_frames（API captioner 用）
   │   native_video 模式: 跳过（模型直接读视频，不需要代表帧）
-  └─ 三条消费链路复用同一批帧（chunk 路由 config pipeline.chunk_encoding 控制）：
+  └─ 四条消费链路复用同一批帧（chunk 路由 config pipeline.chunk_encoding 控制）：
       ① 帧级路 → encode_image → frame_embeddings 表
       ② Chunk 路 → encode_video(clip) → chunks 表（默认关闭）
       ③ 文本路 → encode_text(caption+ocr+transcript) → scenes.text_embedding
@@ -191,40 +192,45 @@ main.py
   ├─ core/db.py              (engine, AsyncSessionLocal, init_db)
   ├─ core/config_loader.py   (YAML + .env 加载)
   └─ api/router.py
-        ├─ api/video_routes.py  (视频管理: upload/register/params/stream/thumbnail)
+        ├─ api/video_routes.py  (视频管理: upload/register/params/stream/thumbnail/metadata)
         ├─ api/search_routes.py (语义搜索 + pipeline/operations)
         ├─ api/settings_routes.py (系统设置: API key 管理)
+        ├─ api/detection_routes.py (检测数据 + track crop 缩略图)
+        ├─ api/export_routes.py (导出: clip/frames/track/thumbnails, GET+POST)
         ├─ api/schemas.py       (共享 API DTO)
         ├─ api/deps.py          (FastAPI 依赖: get_db)
-              ├─ core/models.py      (ORM: Video, Scene, Transcript, FrameEmbedding, Chunk)
-              ├─ core/schemas.py     (Pydantic DTOs)
-              ├─ core/repository.py  (DB 数据访问层 + 批量写入)
-              ├─ core/search.py      (3 种检索函数: frame/chunk/text，混合/全文/模糊已移除)
-              ├─ services/video_service.py
-              │     └─ pipeline/engine.py (DAG executor)
-              │           ├─ pipeline/operations.py (ALL_OPERATIONS)
-              │           ├─ pipeline/runners/*.py (12 operation runners)
-              │           ├─ utils/video_util.py          (keyframe extraction)
-              │           └─ plugins/factory.py
-              │                 ├─ plugins/captioner/qwen_api_captioner.py
-              │                 ├─ plugins/captioner/qwen25_vl_captioner.py
-              │                 ├─ plugins/embedder/qwen_vl_embedder.py
-              │                 ├─ plugins/summarizer/vllm_summarizer.py
-              │                 ├─ plugins/segmenter/time_based.py
-              │                 ├─ plugins/segmenter/transnet_v2.py
-              │                 ├─ plugins/transcriber/faster_whisper.py
-│  │                 ├─ plugins/detector/yolo.py
-              │                 └─ plugins/*/ (detector, ocr, grounding — stubs)
-              └─ pipeline/search_engine.py
-                    ├─ core/search.py
-                    └─ plugins/embedder/qwen_vl_embedder.py
+        │     ├─ core/models.py      (ORM: Video, Scene, Transcript, FrameEmbedding, Chunk, ...)
+        │     ├─ core/schemas.py     (Pydantic DTOs)
+        │     ├─ core/repository.py  (DB 数据访问层 + 批量写入)
+        │     ├─ core/search.py      (4 种检索函数: frame/chunk/text/track)
+        │     ├─ services/video_service.py
+        │     │     └─ pipeline/engine.py (DAG executor)
+        │     │           ├─ pipeline/operations.py (ALL_OPERATIONS)
+        │     │           ├─ pipeline/runners/*.py (12 operation runners)
+        │     │           ├─ utils/video_util.py          (keyframe extraction, clip export)
+        │     │           ├─ utils/metadata.py            (video metadata extraction)
+        │     │           └─ plugins/factory.py
+        │     │                 ├─ plugins/captioner/qwen_api_captioner.py
+        │     │                 ├─ plugins/captioner/qwen25_vl_captioner.py
+        │     │                 ├─ plugins/embedder/qwen_vl_embedder.py
+        │     │                 ├─ plugins/summarizer/vllm_summarizer.py
+        │     │                 ├─ plugins/segmenter/time_based.py
+        │     │                 ├─ plugins/segmenter/transnet_v2.py
+        │     │                 ├─ plugins/transcriber/faster_whisper.py
+        │     │                 ├─ plugins/detector/yolo.py
+        │     │                 └─ plugins/*/ (ocr, grounding — stubs)
+        │     └─ pipeline/search_engine.py
+        │           ├─ core/search.py
+        │           └─ plugins/embedder/qwen_vl_embedder.py
+        └─ services/export_service.py
+              └─ utils/video_util.py
 
 core/
   ├─ interfaces.py         ← 8 个插件 ABC
-  ├─ models.py             ← ORM: Video, Scene, Transcript, FrameEmbedding, Chunk
+  ├─ models.py             ← ORM: Video, Scene, Transcript, FrameEmbedding, Chunk, TrackEmbedding, ...
   ├─ schemas.py            ← Pydantic v2 DTOs + JSONB 校验模型
-  ├─ repository.py         ← DB 数据访问层 + bulk_insert_frames/chunks
-  ├─ search.py             ← 3 种检索: frame/chunk/text（混合/全文/模糊已移除）
+  ├─ repository.py         ← DB 数据访问层 + bulk_insert_frames/chunks/tracks
+  ├─ search.py             ← 4 种检索: frame/chunk/text/track
   ├─ db.py                 ← 异步引擎/Session 工厂/表初始化/触发器
   ├─ config_loader.py      ← YAML + .env 加载
   ├─ prompt_loader.py      ← Prompt 模板加载
@@ -242,13 +248,34 @@ frontend/
   │   ├─ Dashboard.tsx     ← 主工作台: 视频播放器/Pipeline 进度条/搜索面板/历史面板
   │   ├─ main.tsx          ← React DOM 挂载
   │   ├─ index.css         ← 全局样式 + Tailwind
-  │   ├─ mockData.ts       ← Pipeline 阶段定义 + fetchPipelineStages API
+  │   ├─ mockData.ts       ← Pipeline 阶段定义 + computePipelineStages()
   │   ├─ services/api.ts   ← API 调用封装 + 轮询工具函数
   │   ├─ types/index.ts    ← TypeScript 类型定义 (镜像 backend schemas)
-  │   └─ components/       ← 子组件目录 (LeftSidebar/ParameterPanel/PipelineBar/VideoSearchCard 等)
+  │   └─ components/       ← 子组件目录
+  │       ├─ LeftSidebar        ← 深蓝导航栏: 页面切换 + 面板开关
+  │       ├─ ParameterPanel     ← 侧滑参数面板: 四级联动
+  │       ├─ PipelineBar        ← 动态阶段进度条 (根据开关渲染对应节点)
+  │       ├─ VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮
+  │       ├─ VideoSearchCard    ← 语义搜索面板 (索引未开启时置灰)
+  │       ├─ HistoryPanelContent← 历史记录列表 (搜索+自动刷新+缩略图)
+  │       ├─ SettingsPage       ← 系统设置: 存储路径 + API 密钥管理
+  │       ├─ DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+交互)
+  │       ├─ DetectionPanel     ← 物体列表 (分类筛选+缩略图+导出按钮)
+  │       ├─ DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
+  │       ├─ MetadataPanel      ← 视频元数据信息卡片
+  │       ├─ ExportMenu         ← 导出菜单 (视频片段或节点)
+  │       └─ icons.tsx          ← 18+ SVG 图标
   ├─ package.json          ← React 19, Vite 6, Tailwind 4
   ├─ vite.config.ts        ← Vite 配置 + /api 代理到 localhost:8000
   └─ tsconfig.json
+
+utils/
+  ├─ video_util.py         ← FFmpeg 工具函数 (音频提取/关键帧/时长/视频片段导出)
+  └─ metadata.py           ← 视频元数据提取 (pymediainfo + exiftool + ffprobe 三级)
+
+services/
+  ├─ video_service.py      ← Pipeline 调用与后台调度
+  └─ export_service.py     ← 导出业务逻辑 (clip/frames/track/thumbnails zip)
 ```
 
 ## Plugin System
@@ -290,20 +317,24 @@ Semantic Search: POST /api/v1/search/semantic
     │   ├─ _frame_search()  → frame_embeddings 表, 1fps 帧级精确秒定位
     │   ├─ _chunk_search()  → chunks 表, 滑动窗口多帧原生编码
     │   ├─ _text_search()   → scenes.text_embedding, caption+ocr+transcript 语义
-    │   └─ _label_search()  → JSONB @> entities.label (YOLO 激活后, 预留)
+    │   ├─ _label_search()  → JSONB @> entities.label (YOLO 激活后用)
+    │   └─ _track_search()  → track_embeddings 表, crop 跨模态嵌入, 返回具体物体
     └─ 按 scene 合并 + 去重:
         ├─ 帧结果按时间聚类 (间隔 ≤ 4s)
         ├─ chunk/text 结果与帧簇重叠 → 丢弃 (帧精度更高)
-        └─ 非重叠 chunk/text 保留, 同 scene 取最高分
+        ├─ 非重叠 chunk/text 保留, 同 scene 取最高分
+        └─ track 独立按 (video_id, track_id) 去重
 
   返回格式: {scene_id, video_id, scene_index, precise_start/end,
-             precision_level (frame|chunk|text|label),
-             match_paths, caption, similarity, thumbnail_url}
+             precision_level (frame|chunk|text|label|track),
+             match_paths, caption, similarity, thumbnail_url,
+             track_id?, class_name?, bbox?}
 
-core/search.py 提供的 3 种检索函数 (废弃的全文/混合/模糊检索已移除):
+core/search.py 提供的 4 种检索函数:
   1. frame_vector_search      — 帧级精确搜索 (frame_embeddings)
   2. chunk_vector_search      — 窗口过程语义搜索 (chunks)
   3. text_vector_search       — 文本语义搜索 (scenes.text_embedding, 含 caption+ocr+transcript)
+  4. track_vector_search      — track crop 跨模态搜索 (track_embeddings)
 ```
 
 ## Database Schema
@@ -314,10 +345,10 @@ videos
   ├─ file_path, file_name, file_size, duration
   ├─ content_type, language
   ├─ perception: audio/vision/ocr/grounding/caption/detection_enabled, detection_classes
-  ├─ function: search_index_enabled
+  ├─ function: search_index_enabled, summary_enabled, summary_mode
   ├─ advanced: sample_fps, segment_threshold, caption_with_context, summary_detail
   ├─ summary (JSONB)
-  ├─ status_detail (管道实时操作描述, 如"正在编码第 5/23 个场景的帧向量")
+  ├─ status_detail (管道实时操作描述)
   └─ created_at, updated_at
 
 scenes
@@ -355,6 +386,13 @@ frame_detections
 tracks
   ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
   ├─ track_id, class_name, first_seen, last_seen, frame_count
+  ├─ segments (JSONB, [{start, end}, ...]) — ReID 合并后的多段时间片段
+  └─ created_at
+
+track_embeddings
+  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
+  ├─ track_id, class_name, embedding (Vector 2048)
+  ├─ timestamp_sec, bbox (JSONB)
   └─ created_at
 ```
 
@@ -371,13 +409,22 @@ tracks
 | GET | /api/v1/videos/{id}/status | 轻量进度查询 |
 | GET | /api/v1/videos/{id}/stream | 视频流式播放 (支持 Range) |
 | GET | /api/v1/videos/{id}/thumbnail/{scene_index} | 场景缩略图 |
-| DELETE | /api/v1/videos/{id} | 删除视频 (CASCADE scenes/transcript/frames/chunks) |
+| DELETE | /api/v1/videos/{id} | 删除视频 (CASCADE) |
+| GET | /api/v1/videos/{id}/metadata | 视频元数据 (编码/GPS/设备信息) |
 | GET | /api/v1/settings | 获取系统设置 (API key 状态) |
 | PUT | /api/v1/settings | 更新系统设置 (保存 API key) |
-| GET | /api/v1/pipeline/operations | 查询启用的操作列表 + 进度范围（前端 PipelineBar 用） |
-| GET | /api/v1/videos/{id}/detection/data | 获取检测框 + 追踪轨迹 JSON（前端 Canvas overlay 用） |
-| GET | /api/v1/videos/{id}/detection/thumbnail | track crop 缩略图（支持 bbox 裁剪 + 120px 缩放） |
-| POST | /api/v1/search/semantic | 语义搜索 (五路并行召回：frame+chunk+text+label+track，track 独立去重) |
+| GET | /api/v1/pipeline/operations | 查询启用的操作列表 + 进度范围 |
+| GET | /api/v1/videos/{id}/detection/data | 逐帧检测框 + 追踪轨迹 JSON |
+| GET | /api/v1/videos/{id}/detection/thumbnail | track crop 缩略图 (bbox 裁剪) |
+| POST | /api/v1/search/semantic | 语义搜索 (五路并行：frame+chunk+text+label+track) |
+| POST | /api/v1/videos/{id}/export/clip | 导出视频片段 (JSON) |
+| GET | /api/v1/videos/{id}/export/clip | 导出视频片段/单帧 (query params) |
+| POST | /api/v1/videos/{id}/export/frames | 导出帧 zip (兼容) |
+| POST | /api/v1/videos/{id}/export/track/{tid} | 导出 track 分段视频 zip (JSON) |
+| GET | /api/v1/videos/{id}/export/track/{tid} | 导出 track 分段视频 zip (query params) |
+| GET | /api/v1/videos/{id}/export/track/{tid}/thumbnail | 导出 track 物体全尺寸裁剪图 |
+| POST | /api/v1/videos/{id}/export/thumbnails | 导出场景缩略图 zip (JSON) |
+| GET | /api/v1/videos/{id}/export/thumbnails | 导出场景缩略图 zip (直接下载) |
 
 ## Frontend Architecture
 
@@ -385,18 +432,23 @@ tracks
 React 19 + Vite 6 + Tailwind CSS 4
   │
   ├── App.tsx                ← 根组件
-  ├── Dashboard.tsx          ← 主工作台 (~380 行, 状态编排 + render)
+  ├── Dashboard.tsx          ← 主工作台 (~400 行, 状态编排 + render)
   ├── components/
   │   ├── LeftSidebar        ← 深蓝导航栏: 页面切换 + 面板开关
   │   ├── ParameterPanel     ← 侧滑参数面板: 四级联动 (L1场景/L2感知/L3功能/L4高级)
   │   ├── PipelineBar        ← 动态阶段进度条 (根据开关渲染对应节点)
-  │   ├── VideoSummaryCard   ← 视频摘要展示
+  │   ├── VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮
   │   ├── VideoSearchCard    ← 语义搜索面板 (索引未开启时置灰)
-  │   ├── HistoryPanelContent← 历史记录列表 (自动刷新 + 缩略图 + 参数摘要)
-  │   ├── SettingsPage       ← 系统设置: 存储路径 + API 密钥管理 (真实连接后端)
-  │   └── icons.tsx          ← 18 个 SVG 图标
+  │   ├── HistoryPanelContent← 历史记录列表 (搜索+自动刷新+缩略图+参数摘要)
+  │   ├── SettingsPage       ← 系统设置: 存储路径 + API 密钥管理
+  │   ├── DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+选中)
+  │   ├── DetectionPanel     ← 物体列表 (分类筛选+缩略图 hover+导出按钮)
+  │   ├── DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
+  │   ├── MetadataPanel      ← 视频元数据信息卡片
+  │   ├── ExportMenu         ← 导出菜单 (视频片段或节点)
+  │   └── icons.tsx          ← 20+ SVG 图标
   ├── utils/helpers.ts       ← fmtDuration, fmtDate, formatSec
-  ├── services/api.ts        ← API 封装 + 轮询工具函数
+  ├── services/api.ts        ← API 封装 + 轮询工具函数 + 下载辅助
   ├── types/index.ts         ← TypeScript 类型定义
   └── mockData.ts            ← Pipeline 阶段定义 + computePipelineStages()
 
@@ -407,6 +459,8 @@ React 19 + Vite 6 + Tailwind CSS 4
   选择视频 → GET /api/v1/videos/{id} 每 3s 轮询, 同步更新历史列表状态
   增量修改 → PUT /videos/{id}/params (仅 summary/search_index) → run_incremental()
   搜索 → POST /api/v1/search/semantic → 结果卡片 (切换视频时自动清空)
+  信息 → GET /videos/{id}/metadata → MetadataPanel 弹出卡片
+  导出 → window.open(GET /videos/{id}/export/...) → 浏览器直接下载
 
 Vite 开发代理:
   /api → http://localhost:8000 (dev)
@@ -433,6 +487,9 @@ Vite 开发代理:
 | **Incremental pipeline** | L3 switches (summary/search) can re-run independently on completed videos |
 | **Global offline ReID** | Qwen3-VL-Embedding cross-modal matching, 5 constraints (class+time+cos+gap+space), 0.85 threshold, 180s max gap |
 | **Decoupled upload/params** | Upload creates pending video; pipeline starts only after user configures params |
+| **GET + POST dual export endpoints** | POST for programmatic API calls (curl), GET with query params for browser direct download → avoids async download blocking |
+| **Three-tier metadata extraction** | pymediainfo (full tech) → exiftool (GPS/device) → ffprobe (fallback), graceful degradation |
+| **Class-local track numbering** | Display shows sequential class-local IDs (person 1, car 2) while API uses raw track_id internally |
 
 ## Current Status
 
@@ -444,20 +501,24 @@ Vite 开发代理:
 | Frame-level Encoding | ✅ | runners/frame_encode.py: batch encode 4 frames |
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
 | Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
-| Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT/BoT-SORT, 15fps 独立帧率, dual-gate control |
-| API Routes | ✅ | 16 endpoints: CRUD, stream, thumbnail, status, params, reuse, settings, semantic search, pipeline/operations, detection/data, detection/thumbnail |
-| Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值，丝滑推进 |
+| Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT, 15fps 独立帧率, dual-gate control |
+| Video Metadata Extraction | ✅ | utils/metadata.py: 三级提取 (pymediainfo→exiftool→ffprobe) |
+| Clip Export | ✅ | services/export_service.py: 流复制 (-c copy) 极速导出 |
+| Frames Export | ✅ | 指定时间戳帧序列 → zip 打包 |
+| Track Segments Export | ✅ | 读 segments 字段按段导出 → zip |
+| Track Thumbnail Download | ✅ | 全尺寸物体裁剪图下载 |
+| Scene Thumbnails Export | ✅ | 全部/指定场景缩略图 → zip |
+| API Routes | ✅ | 23 endpoints: CRUD + stream + metadata + export (8) + detection + search + settings |
+| Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值 |
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
 | Settings API + Keys | ✅ | core/settings_service.py, GET/PUT /api/v1/settings |
-| Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 11 components incl DetectionPanel/Timeline/Overlay, dynamic PipelineBar, auto-refresh history, track select→highlight flow |
+| Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 15 components incl Detection/Timeline/Metadata/Export |
 | Config Schema | ✅ | Pydantic v2 validation for config.yaml |
 | Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |
 | DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration, 8 tables |
 | TransNetV2 Segmenter | ✅ | Neural scene boundary detection |
 | faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
-| BoT-SORT tracker config | ✅ | config/botsort.yaml: with_reid=false (motion-only), track_buffer=120 |
 | OCR | 📋 | PaddleOCR shell only |
 | Grounding | 📋 | Florence-2 shell only |
-| Export APIs | 📋 | export_routes.py / export_service.py shells |
 | Health / Reindex | 📋 | maintenance_routes.py shell |

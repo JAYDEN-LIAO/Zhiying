@@ -16,7 +16,7 @@ api/router.py              — Assembles sub-routers under /api/v1 prefix
 api/deps.py                — FastAPI dependency injection (get_db)
 api/schemas.py             — Shared API DTOs (APIResponse, search/status models)
 api/detection_routes.py    — Detection data API endpoint (GET /videos/{id}/detection/data)
-api/export_routes.py       — (stub) planned export endpoints
+api/export_routes.py       — Export endpoints: clip/frames/track/thumbnails (7 endpoints, GET+POST)
 api/maintenance_routes.py  — (stub) planned health/reindex endpoints
 core/models.py             — ORM: Video, Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding (8 tables)
 core/schemas.py            — Pydantic v2 DTOs + JSONB validation models
@@ -50,10 +50,11 @@ plugins/detector/yolo.py   — YOLO11s detector (batch GPU inference, asyncio.to
 config/config.yaml         — Main config: server/db/storage/plugins/pipeline
 config/config_schema.py    — Pydantic config validation
 config/prompts.yaml        — Caption/Summarizer/Grounding prompt templates
-frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~380 lines)
+frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~400 lines)
 frontend/src/components/    — Split components: icons, LeftSidebar, ParameterPanel, PipelineBar,
                               VideoSummaryCard, VideoSearchCard, HistoryPanelContent, SettingsPage,
-                              DetectionOverlay, DetectionPanel, DetectionTimeline
+                              DetectionOverlay, DetectionPanel, DetectionTimeline,
+                              MetadataPanel, ExportMenu
 frontend/src/utils/helpers.ts — Shared helpers (fmtDuration, fmtDate, formatSec)
 frontend/src/services/api.ts — API wrapper + polling helper
 frontend/src/types/index.ts — TypeScript types (mirrors backend schemas)
@@ -157,13 +158,17 @@ Search (5-path parallel, v0.10):
 | Parameter system (4-level) | ✅ Done | core/schemas.py PipelineParams + model_validator; config/presets.yaml; frontend ParameterPanel with cascade |
 | Incremental processing | ✅ Done | pipeline/engine.py run_incremental(); services/video_service.py incremental_process() |
 | Settings API + API key mgmt | ✅ Done | core/settings_service.py; GET/PUT /api/v1/settings |
-| Frontend dashboard | ✅ Done | Dashboard.tsx + DetectionOverlay + DetectionPanel + DetectionTimeline + 8 extracted components in components/ (React 19 + Tailwind 4) — 参数面板四级联动, 动态 PipelineBar, 系统设置页, 历史记录自动刷新, Canvas bbox 渲染, 物体列表+时间轴 |
+| Frontend dashboard | ✅ Done | Dashboard.tsx + 15 components (React 19 + Tailwind 4) — 参数面板四级联动, 动态 PipelineBar, 系统设置页, 历史记录搜索, Canvas bbox 渲染, 物体列表+时间轴, 元数据卡片, 导出菜单 |
 | Object Detection (YOLO) | ✅ Done | plugins/detector/yolo.py — YOLO11s + ByteTrack/BoT-SORT, dual-gate control, frontend DetectionOverlay |
 | Global ReID merge | ✅ Done | runners/track_encode.py — Qwen3-VL-Embedding cross-modal merge (0.85 cos threshold, 180s time gate, 5 constraints) |
 | Track search path | ✅ Done | core/search.py track_vector_search + search_engine.py _track_search — encode_text(query) vs track crop embeddings, 返回具体物体 |
+| Video Metadata Extraction | ✅ Done | utils/metadata.py — 三级提取 (pymediainfo → exiftool → ffprobe), GPS/device/codec |
+| Clip Export | ✅ Done | services/export_service.py + api/export_routes.py — 流复制视频片段导出 |
+| Frames/Thumbnails Export | ✅ Done | 帧序列 zip / 全部场景缩略图 zip 导出 |
+| Track Segments Export | ✅ Done | 按 segments 字段分段导出 track 视频 → zip |
+| Track Thumbnail Download | ✅ Done | 全尺寸物体裁剪图下载 |
 | OCR | ⬜ Shell only | plugins/ocr/ |
 | Grounding | ⬜ Shell only | plugins/grounding/ |
-| Export APIs | ⬜ Shell only | api/export_routes.py, services/export_service.py |
 | Health/Reindex | ⬜ Shell only | api/maintenance_routes.py |
 
 ## Agent Instructions
@@ -172,7 +177,7 @@ Search (5-path parallel, v0.10):
 
 1. **Don't modify `.env`** — it contains API keys and is gitignored.
 2. **Don't delete empty `__init__.py` files** — they're intentional package markers.
-3. **Don't delete empty route/service files** (`api/export_routes.py`, `api/maintenance_routes.py`) — they're planned stubs for future endpoints. `api/video_routes.py` and `api/search_routes.py` are active route files, NOT stubs.
+3. **Don't delete empty route/service files** (`api/maintenance_routes.py`) — it's a planned stub for future endpoints. `api/export_routes.py` was a stub but is now active (7 endpoints for clip/frames/track/thumbnails). `api/video_routes.py` and `api/search_routes.py` are active route files, NOT stubs.
 4. **Config-driven design + operation registration**: when adding a new perception module, write a runner class in `pipeline/runners/`, add one `Operation(...)` entry to `pipeline/operations.py` `ALL_OPERATIONS`. For new plugin backends, register in `plugins/factory.py` `CATEGORY_MAP` / `_MODULE_OVERRIDES` / `_CLASS_OVERRIDES`. No hardcoded model references in business logic.
 5. **Sync vs Async**: all `core/interfaces.py` methods are `async def`. If your plugin runs synchronous model inference, wrap it with `asyncio.to_thread()`. Never call `model.predict()` directly in an async function.
 6. **Search paths**: `config_loader.py` and `prompt_loader.py` use `Path(__file__).resolve().parent.parent` to locate the project root. Keep this convention.
@@ -180,7 +185,7 @@ Search (5-path parallel, v0.10):
 8. **Four encoding paths**: Frame (encode_image), Chunk (config-gated, default disabled, -c copy + encode_video), Text (encode_text). All three reuse the shared embedder.
 9. **When adding new dependencies**: add to `requirements.txt` AND to `Dockerfile`.
 10. **Search result format**: All results include `precision_level` (frame/chunk/text/label), `precise_start/end` (text 也有 scene 起止作为锚点), `match_paths`, and `thumbnail_url`. Merge 时帧簇优先，text 与非重叠帧的 text 按路径权重排序。
-11. **Frontend**: Dashboard.tsx (~380 lines) orchestrates all state and renders imported components from `components/`. Component files: icons, LeftSidebar, ParameterPanel, PipelineBar, VideoSummaryCard, VideoSearchCard, DetectionPanel, DetectionTimeline, HistoryPanelContent, SettingsPage, DetectionOverlay. Utility functions in `utils/helpers.ts`. TypeScript types in `types/index.ts` mirror backend Pydantic schemas.
+11. **Frontend**: Dashboard.tsx (~400 lines) orchestrates all state and renders imported components from `components/`. Component files: icons, LeftSidebar, ParameterPanel, PipelineBar, VideoSummaryCard, VideoSearchCard, DetectionPanel, DetectionTimeline, HistoryPanelContent, SettingsPage, DetectionOverlay, MetadataPanel, ExportMenu. Utility functions in `utils/helpers.ts`. TypeScript types in `types/index.ts` mirror backend Pydantic schemas.
 12. **Detection gate pattern**: New perception modules that are optional should follow the dual-gate pattern: config-level enable/disable (`plugins.{name}.backend: yolo` vs `null`) AND per-video toggle (`detection_enabled` in PipelineParams). Gate function checks both. This allows server-wide opt-out while letting users control per-video.
 13. **Canvas overlay pattern**: The DetectionOverlay uses a `canvas` with `pointerEvents: "none"` for pure rendering, with click/mousemove handlers attached via native `addEventListener` to the parent container. This allows clicks to pass through to video controls while still enabling bbox interaction.
 

@@ -105,18 +105,4 @@ export function SettingsPage() {
   );
 }
 
-/* ════════════════════════════════════════════════════════════
-   PipelineBar — 动态阶段进度卡
-   ════════════════════════════════════════════════════════════ */
-
-const stageColorMap: Record<string, string> = {
-  qc:       "#4785f0",
-  segment:  "#4f93ed",
-  keyframe: "#5799e9",
-  audio:    "#5ca8e8",
-  align:    "#63b4e0",
-  caption:  "#67c4c0",
-  embed:    "#60c9a8",
-  summary:  "#55c890",
-};
 

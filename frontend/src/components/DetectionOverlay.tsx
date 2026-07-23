@@ -42,8 +42,7 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
-    if (!canvas || !video || !data?.has_detection) {
-      rafRef.current = requestAnimationFrame(draw);
+    if (!canvas || !video || !enabled || !data?.has_detection) {
       return;
     }
     const ctx = canvas.getContext("2d");
@@ -51,7 +50,6 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
 
     const rect = video.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) {
-      rafRef.current = requestAnimationFrame(draw);
       return;
     }
     const dpr = window.devicePixelRatio || 1;

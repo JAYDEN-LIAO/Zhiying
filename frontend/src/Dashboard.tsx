@@ -208,7 +208,7 @@ export default function Dashboard() {
       {/* ── Left Sidebar + Slide-out Panels ── */}
       <div className="relative flex-shrink-0 z-20 ml-4 my-4">
         <div className="relative z-10 h-full">
-          <LeftSidebar currentPage={currentPage} activePanel={activePanel} onNavigate={handleNavigate} onTogglePanel={handleTogglePanel} onUpload={handleUpload} />
+          <LeftSidebar currentPage={currentPage} activePanel={activePanel} onNavigate={handleNavigate} onTogglePanel={handleTogglePanel} />
         </div>
 
         {/* Parameter Panel */}

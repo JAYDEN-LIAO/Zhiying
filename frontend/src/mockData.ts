@@ -14,29 +14,6 @@ export interface PipelineStage {
   progressEnd: number;
 }
 
-/* ── v0.8: 从后端 API 获取（推荐）── */
-
-export interface PipelineOperation {
-  name: string;
-  label: string;
-  description: string;
-  progress_start: number;
-  progress_end: number;
-}
-
-export async function fetchPipelineStages(videoId: string): Promise<PipelineStage[]> {
-  const res = await fetch(`/api/v1/pipeline/operations?video_id=${videoId}`);
-  const json = await res.json();
-  const ops: PipelineOperation[] = json.data ?? [];
-  return ops.map((op) => ({
-    id: op.name,
-    label: op.label,
-    description: op.description,
-    progressStart: op.progress_start,
-    progressEnd: op.progress_end,
-  }));
-}
-
 /* ── 根据参数动态计算阶段列表 + 进度区间 ── */
 
 export interface PipelineSwitches {
@@ -100,21 +77,3 @@ export function computePipelineStages(switches: PipelineSwitches): PipelineStage
   return stages;
 }
 
-/* ── 根据 total_progress 计算当前阶段索引 ── */
-
-export function getCurrentStageIndex(stages: PipelineStage[], progress: number): number {
-  for (let i = stages.length - 1; i >= 0; i--) {
-    if (progress >= stages[i].progressStart) {
-      return i;
-    }
-  }
-  return 0;
-}
-
-/* ── 计算阶段内进度（0~1） ── */
-
-export function getStageInternalProgress(progress: number, stage: PipelineStage): number {
-  if (progress <= stage.progressStart) return 0;
-  if (progress >= stage.progressEnd) return 1;
-  return (progress - stage.progressStart) / (stage.progressEnd - stage.progressStart);
-}
