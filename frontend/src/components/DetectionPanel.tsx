@@ -3,7 +3,7 @@
    状态同 VideoSummaryCard：空/未开启/处理中/有数据/无数据
    ════════════════════════════════════════════════════════════ */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import type { DetectionData, Track, VideoResponse } from "../types";
 import { api, downloadFile } from "../services/api";
 
@@ -70,6 +70,22 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     const el = listRef.current.querySelector(`[data-track-id="${selectedTrackId}"]`);
     if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [selectedTrackId]);
+
+  // 类内序号：必须在所有条件 return 之前
+  const classLocalIds = useMemo(() => {
+    const map = new Map<number, number>();
+    const allTracks = data?.tracks ?? [];
+    const groups = new Map<string, Array<{ track_id: number; first_seen: number }>>();
+    for (const t of allTracks) {
+      if (!groups.has(t.class_name)) groups.set(t.class_name, []);
+      groups.get(t.class_name)!.push({ track_id: t.track_id, first_seen: t.first_seen });
+    }
+    for (const [, items] of groups) {
+      items.sort((a, b) => a.first_seen - b.first_seen);
+      items.forEach((item, idx) => map.set(item.track_id, idx + 1));
+    }
+    return map;
+  }, [data?.tracks]);
 
   // ── No video ──
   if (!video) {
@@ -232,7 +248,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1">
                   <span className={`text-[11px] truncate ${isSel ? "font-bold text-amber-800" : "font-semibold text-gray-800"}`}>{t.class_name}</span>
-                  <span className={`text-[10px] shrink-0 ${isSel ? "text-amber-600 font-medium" : "text-gray-400"}`}>#{t.track_id}</span>
+                  <span className={`text-[10px] shrink-0 ${isSel ? "text-amber-600 font-medium" : "text-gray-400"}`}>{classLocalIds.get(t.track_id) ?? t.track_id}</span>
                 </div>
                 <div className="mt-0.5">
                   <span className={`text-[10px] font-mono ${isSel ? "text-amber-600" : "text-gray-400"}`}>{t.first_seen.toFixed(1)}s–{t.last_seen.toFixed(1)}s</span>
@@ -265,7 +281,8 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                     <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden min-w-[140px]">
                       <button
                         onClick={(e) => { e.stopPropagation(); setTrackDropdown(null);
-                          window.open(api.getTrackThumbnailUrl(video.id, t.track_id), "_blank"); }}
+                          const displayId = classLocalIds.get(t.track_id);
+                          window.open(api.getTrackThumbnailUrl(video.id, t.track_id, displayId), "_blank"); }}
                         className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                       >
                         <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
@@ -273,7 +290,8 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); setTrackDropdown(null);
-                          window.open(api.getTrackExportUrl(video.id, t.track_id, true), "_blank"); }}
+                          const displayId = classLocalIds.get(t.track_id);
+                          window.open(api.getTrackExportUrl(video.id, t.track_id, true, displayId), "_blank"); }}
                         className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                       >
                         <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>

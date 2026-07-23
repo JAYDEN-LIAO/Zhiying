@@ -126,14 +126,16 @@ async def export_track_zip_get(
     request: Request, background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     draw_bbox: bool = Query(default=True),
+    display_id: int = Query(default=None, description="前端类内序号，用于文件名"),
 ) -> FileResponse:
     """GET 版 — 浏览器直接导航下载用。"""
-    return await _handle_track_export(video_id, track_id, draw_bbox, request, background_tasks, db)
+    return await _handle_track_export(video_id, track_id, draw_bbox, request, background_tasks, db, display_id=display_id)
 
 
 async def _handle_track_export(
     video_id: uuid.UUID, track_id: int, draw_bbox: bool,
     request: Request, background_tasks: BackgroundTasks, db: AsyncSession,
+    display_id: int | None = None,
 ) -> FileResponse:
     result = await db.execute(
         select(Video.file_path, Video.file_name).where(Video.id == video_id)
@@ -192,7 +194,9 @@ async def _handle_track_export(
     )
 
     background_tasks.add_task(_cleanup_file, zip_path)
-    return _file_response(zip_path, f"{sanitize_filename(base_name)}_track{track_id}.zip", "application/zip")
+    label = display_id or track_id
+    cls = track.class_name
+    return _file_response(zip_path, f"{sanitize_filename(base_name)}_{cls}_{label}.zip", "application/zip")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -255,6 +259,7 @@ async def _handle_thumbnail_export(
 async def export_track_thumbnail(
     video_id: uuid.UUID, track_id: int,
     request: Request, db: AsyncSession = Depends(get_db),
+    display_id: int = Query(default=None, description="前端类内序号，用于文件名"),
 ) -> FileResponse:
     """导出 track 物体的全尺寸裁剪图（JPEG 下载）。"""
     result = await db.execute(
@@ -291,7 +296,9 @@ async def export_track_thumbnail(
         video_path=file_path, timestamp=thumb_ts, bbox=det.bbox,
     )
     safe_name = sanitize_filename(os.path.splitext(file_name)[0])
-    return _file_response(out_path, f"{safe_name}_track{track_id}_{format_ts(thumb_ts)}.jpg", "image/jpeg")
+    label = display_id or track_id
+    cls = track.class_name
+    return _file_response(out_path, f"{safe_name}_{cls}_{label}_{format_ts(thumb_ts)}.jpg", "image/jpeg")
 
 
 # ═══════════════════════════════════════════════════════════

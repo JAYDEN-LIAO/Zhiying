@@ -191,11 +191,13 @@ export const api = {
   getClipExportUrl(videoId: string, startSec: number, endSec: number): string {
     return `${BASE}/videos/${videoId}/export/clip?start_sec=${startSec}&end_sec=${endSec}`;
   },
-  getTrackExportUrl(videoId: string, trackId: number, drawBbox = true): string {
-    return `${BASE}/videos/${videoId}/export/track/${trackId}?draw_bbox=${drawBbox}`;
+  getTrackExportUrl(videoId: string, trackId: number, drawBbox = true, displayId?: number): string {
+    const url = `${BASE}/videos/${videoId}/export/track/${trackId}?draw_bbox=${drawBbox}`;
+    return displayId ? `${url}&display_id=${displayId}` : url;
   },
-  getTrackThumbnailUrl(videoId: string, trackId: number): string {
-    return `${BASE}/videos/${videoId}/export/track/${trackId}/thumbnail`;
+  getTrackThumbnailUrl(videoId: string, trackId: number, displayId?: number): string {
+    const url = `${BASE}/videos/${videoId}/export/track/${trackId}/thumbnail`;
+    return displayId ? `${url}?display_id=${displayId}` : url;
   },
   getThumbnailsExportUrl(videoId: string): string {
     return `${BASE}/videos/${videoId}/export/thumbnails`;

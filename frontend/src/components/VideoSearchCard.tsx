@@ -3,7 +3,7 @@
    ════════════════════════════════════════════════════════════ */
 
 import { IconSearch } from "./icons";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "../services/api";
 import type { SearchResultItem, VideoResponse } from "../types";
 import { formatSec } from "../utils/helpers";
@@ -27,6 +27,22 @@ export function VideoSearchCard({
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dlTrackId, setDlTrackId] = useState<number | null>(null);
+
+  /* ── Class-local track numbering ── */
+  const classLocalMap = useMemo(() => {
+    const trackItems = results.filter((r) => r.precision_level === "track" && r.track_id != null);
+    const groups = new Map<string, number[]>();
+    for (const r of trackItems) {
+      if (!groups.has(r.class_name!)) groups.set(r.class_name!, []);
+      groups.get(r.class_name!)!.push(r.track_id!);
+    }
+    const map = new Map<number, number>();
+    for (const [, ids] of groups) {
+      ids.sort((a, b) => a - b);
+      ids.forEach((id, idx) => map.set(id, idx + 1));
+    }
+    return map;
+  }, [results]);
 
   /* ── 切换视频时清除搜索结果 ── */
   useEffect(() => {
@@ -253,7 +269,7 @@ export function VideoSearchCard({
 
                 {isTrack && item.class_name ? (
                   <p className="text-xs text-gray-800 font-semibold font-mono mt-1">
-                    {item.class_name} <span className="text-gray-400">#</span>{item.track_id}
+                    {item.class_name} {classLocalMap.get(item.track_id!) ?? item.track_id}
                   </p>
                 ) : item.caption ? (
                   <p className="text-xs text-gray-600 leading-relaxed line-clamp-2 mt-1">{item.caption}</p>
@@ -297,12 +313,14 @@ export function VideoSearchCard({
                   <div className="mt-1 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={() => { setDlTrackId(null);
-                        window.open(api.getTrackThumbnailUrl(item.video_id, item.track_id!), "_blank"); }}
+                        const did = classLocalMap.get(item.track_id!);
+                        window.open(api.getTrackThumbnailUrl(item.video_id, item.track_id!, did), "_blank"); }}
                       className="flex-1 px-2 py-1 text-[10px] bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors text-center"
                     >导出缩略图</button>
                     <button
                       onClick={() => { setDlTrackId(null);
-                        window.open(api.getTrackExportUrl(item.video_id, item.track_id!, true), "_blank"); }}
+                        const did = classLocalMap.get(item.track_id!);
+                        window.open(api.getTrackExportUrl(item.video_id, item.track_id!, true, did), "_blank"); }}
                       className="flex-1 px-2 py-1 text-[10px] bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors text-center"
                     >导出track视频</button>
                   </div>
