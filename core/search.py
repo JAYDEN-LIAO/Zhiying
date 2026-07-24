@@ -15,7 +15,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.models import Scene, FrameEmbedding, Chunk, TrackEmbedding
+from core.models import Scene, FrameEmbedding, Chunk, TrackEmbedding, PlateDetection, FaceIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -123,3 +123,61 @@ async def track_vector_search(
         stmt = stmt.where(TrackEmbedding.video_id.in_(video_ids))
     result = await session.execute(stmt)
     return [(row.TrackEmbedding, row.sim) for row in result]
+
+
+# ═══════════════════════════════════════════════════════════
+# 5. 车牌文本搜索（精确/模糊匹配）
+# ═══════════════════════════════════════════════════════════
+
+async def plate_text_search(
+    session: AsyncSession,
+    query: str,
+    limit: int = 20,
+    video_ids: list[str] | None = None,
+) -> list[tuple[PlateDetection, float]]:
+    """车牌文本搜索 — ILIKE 模糊匹配 plate_text。
+
+    匹配度: 精确匹配 = 1.0，模糊匹配基于 similarity() 函数。
+    """
+    from sqlalchemy import func as sa_func
+
+    similarity = sa_func.similarity(PlateDetection.plate_text, query).label("sim")
+    stmt = (
+        select(PlateDetection, similarity)
+        .where(PlateDetection.plate_text.ilike(f"%{query}%"))
+        .order_by(similarity.desc())
+        .limit(limit)
+    )
+    if video_ids:
+        stmt = stmt.where(PlateDetection.video_id.in_(video_ids))
+    result = await session.execute(stmt)
+    return [(row.PlateDetection, row.sim) for row in result]
+
+
+# ═══════════════════════════════════════════════════════════
+# 6. 人脸身份向量搜索（图片搜人脸 — ArcFace 512d）
+# ═══════════════════════════════════════════════════════════
+
+async def face_identity_search(
+    session: AsyncSession,
+    query_embedding: list[float],
+    limit: int = 20,
+    video_ids: list[str] | None = None,
+    min_similarity: float = 0.35,
+) -> list[tuple[FaceIdentity, float]]:
+    """人脸身份搜索 — ArcFace 512d 查询向量 vs face_identities 表。
+
+    similarity = 1 - cosine_distance，范围 (0, 1]。
+    """
+    similarity = (1.0 - FaceIdentity.face_embedding.cosine_distance(query_embedding)).label("sim")
+    stmt = (
+        select(FaceIdentity, similarity)
+        .where(FaceIdentity.face_embedding.isnot(None))
+        .where((1.0 - FaceIdentity.face_embedding.cosine_distance(query_embedding)) >= min_similarity)
+        .order_by(similarity.desc())
+        .limit(limit)
+    )
+    if video_ids:
+        stmt = stmt.where(FaceIdentity.video_id.in_(video_ids))
+    result = await session.execute(stmt)
+    return [(row.FaceIdentity, row.sim) for row in result]

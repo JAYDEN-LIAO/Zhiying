@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { api } from "./services/api";
-import type { VideoListItem, VideoResponse, DetectionData } from "./types";
+import type { VideoListItem, VideoResponse, DetectionData, FaceData, PlateData } from "./types";
 import type { PipelineSwitches } from "./mockData";
 import { fmtDuration } from "./utils/helpers";
 import { IconPlay, IconClose, IconInfo, IconDownload } from "./components/icons";
@@ -42,6 +42,8 @@ export default function Dashboard() {
   const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
   const [tracked, setTracked] = useState<{ class_name: string; track_id: number } | null>(null);
   const [classFilter, setClassFilter] = useState<string | null>(null);
+  const [faceData, setFaceData] = useState<FaceData | null>(null);
+  const [plateData, setPlateData] = useState<PlateData | null>(null);
 
   const handleTrackSelect = useCallback((trackId: number, className: string, seekTo?: number) => {
     if (trackId < 0) {
@@ -80,13 +82,30 @@ export default function Dashboard() {
       setSelectedTrackId(null);
       setTracked(null);
       setClassFilter(null);
+      setFaceData(null);
+      setPlateData(null);
       return;
     }
     setClassFilter(null);  // new video → reset to "全部"
     api.fetchDetectionData(currentVideoId)
       .then((d) => setDetectionData(d))
       .catch(() => setDetectionData(null));
-  }, [currentVideoId, showDetection]);
+    // face/plate data
+    if (currentVideo?.face_enabled) {
+      api.fetchFaceData(currentVideoId)
+        .then((d) => setFaceData(d))
+        .catch(() => setFaceData(null));
+    } else {
+      setFaceData(null);
+    }
+    if (currentVideo?.plate_enabled) {
+      api.fetchPlateData(currentVideoId)
+        .then((d) => setPlateData(d))
+        .catch(() => setPlateData(null));
+    } else {
+      setPlateData(null);
+    }
+  }, [currentVideoId, showDetection, currentVideo?.face_enabled, currentVideo?.plate_enabled]);
 
   /* ── Fetch video list ── */
   useEffect(() => {
@@ -344,6 +363,8 @@ export default function Dashboard() {
                 classFilter={classFilter}
                 onTrackSelect={handleTrackSelect}
                 data={detectionData}
+                faceData={faceData}
+                plateData={plateData}
               />
 
               {/* ── Pipeline Bar (pushed to bottom, aligns with objects panel bottom) ── */}
@@ -363,6 +384,8 @@ export default function Dashboard() {
               classFilter={classFilter}
               onClassFilterChange={setClassFilter}
               onTrackSelect={handleTrackSelect}
+              faceData={faceData}
+              plateData={plateData}
             />
             </div>
           </div>

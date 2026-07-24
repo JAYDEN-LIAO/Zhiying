@@ -49,6 +49,15 @@ async def lifespan(app: FastAPI):
     app.state.embedder = await _load_embedder(config, "embedder")
     logger.info("Embedder loaded, GPU ready")
 
+    # 人脸识别器 — 搜索端点用（图片搜人脸）
+    logger.info("Loading face recognizer ...")
+    from plugins.factory import load_plugin as _load_face
+    app.state.face_recognizer = await _load_face(config, "face")
+    if app.state.face_recognizer is not None:
+        logger.info("Face recognizer loaded")
+    else:
+        logger.info("Face recognizer disabled (backend is null)")
+
     # SearchEngine 不在此处预初始化——embedder 按需加载，首次搜索时自动创建
 
     yield

@@ -17,5 +17,5 @@ gmc_method: sparseOptFlow   # global motion compensation method
 with_reid: false            # 在线 ReID — 控制变量对齐参考版
 proximity_thresh: 0.5       # (unused, required by ultralytics init)
 appearance_thresh: 0.25     # (unused, required by ultralytics init)
-# model: 未使用 (with_reid=false, 无在线ReID)  # 本地模型, 不触发下载
+model: null                   # ultralytics 新版强制要求此字段存在，即使 with_reid=false
 fuse_score: true            # fuse detection score with track confidence

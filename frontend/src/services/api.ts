@@ -11,6 +11,9 @@ import type {
   PipelineParams,
   SettingsData,
   DetectionData,
+  FaceData,
+  PlateData,
+  FaceSearchResult,
   VideoMetadata,
   ExportClipRequest,
   ExportFramesRequest,
@@ -137,6 +140,32 @@ export const api = {
   /* ── Detection data ── */
   fetchDetectionData(videoId: string) {
     return request<DetectionData>(`${BASE}/videos/${videoId}/detection/data`);
+  },
+
+  /* ── Face search ── */
+  async searchFace(file: File, videoIds?: string[], topK?: number): Promise<FaceSearchResult[]> {
+    const form = new FormData();
+    form.append("file", file);
+    if (videoIds?.length) form.append("video_ids", videoIds.join(","));
+    if (topK != null) form.append("top_k", String(topK));
+    const res = await fetch(`${BASE}/search/face`, { method: "POST", body: form });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${res.status}`);
+    }
+    const json = await res.json();
+    if (json.code !== 0) throw new Error(json.message || "API error");
+    return json.data ?? [];
+  },
+
+  /* ── Face data ── */
+  fetchFaceData(videoId: string) {
+    return request<FaceData>(`${BASE}/videos/${videoId}/face/data`);
+  },
+
+  /* ── Plate data ── */
+  fetchPlateData(videoId: string) {
+    return request<PlateData>(`${BASE}/videos/${videoId}/plate/data`);
   },
 
   /* ── Settings ── */

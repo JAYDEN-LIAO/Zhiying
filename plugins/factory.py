@@ -31,6 +31,8 @@ CATEGORY_MAP: dict[str, str] = {
     "embedder":     "plugins.embedder",
     "summarizer":   "plugins.summarizer",
     "grounding":    "plugins.grounding",
+    "face":         "plugins.face",
+    "plate":        "plugins.plate",
 }
 
 # 类别 → 预期实现类名
@@ -43,6 +45,8 @@ IMPL_CLASS_MAP: dict[str, str] = {
     "embedder":     "QwenVLEmbedder",
     "summarizer":   "VLLMSummarizer",
     "grounding":    "Florence2Grounding",
+    "face":         "InsightFaceRecognizer",
+    "plate":        "PaddlePlateRecognizer",
 }
 
 # 后端标识 → 实际模块文件名覆盖
@@ -54,6 +58,8 @@ _MODULE_OVERRIDES: dict[tuple[str, str], str] = {
     ("embedder", "qwen3_vl_embedding"): "qwen_vl_embedder",
     ("summarizer", "vllm"): "vllm_summarizer",
     ("detector", "yolo"): "yolo",
+    ("face", "insightface"): "insightface_face",
+    ("plate", "paddle"): "paddle_plate",
 }
 
 # 后端标识 → 实现类名覆盖
@@ -63,6 +69,8 @@ _CLASS_OVERRIDES: dict[tuple[str, str], str] = {
     ("captioner", "qwen25_vl"): "Qwen25VLCaptioner",
     ("segmenter", "time_based"): "TimeBasedSegmenter",
     ("detector", "yolo"): "YoloDetector",
+    ("face", "insightface"): "InsightFaceRecognizer",
+    ("plate", "paddle"): "PaddlePlateRecognizer",
 }
 
 

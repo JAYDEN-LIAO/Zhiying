@@ -3,9 +3,9 @@
    ════════════════════════════════════════════════════════════ */
 
 import { IconSearch } from "./icons";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api } from "../services/api";
-import type { SearchResultItem, VideoResponse } from "../types";
+import type { SearchResultItem, VideoResponse, FaceSearchResult } from "../types";
 import { formatSec } from "../utils/helpers";
 
 
@@ -27,6 +27,9 @@ export function VideoSearchCard({
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dlTrackId, setDlTrackId] = useState<number | null>(null);
+  const [faceSearching, setFaceSearching] = useState(false);
+  const [faceResults, setFaceResults] = useState<FaceSearchResult[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   /* ── Class-local track numbering ── */
   const classLocalMap = useMemo(() => {
@@ -51,6 +54,25 @@ export function VideoSearchCard({
     setSearching(false);
     setHasSearched(false);
     setError(null);
+    setFaceResults([]);
+  }, [currentVideoId]);
+
+  /* ── 人脸图片搜索 ── */
+  const handleFaceFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFaceSearching(true);
+    setError(null);
+    try {
+      const data = await api.searchFace(file, currentVideoId ? [currentVideoId] : undefined);
+      setFaceResults(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "人脸搜索失败");
+    } finally {
+      setFaceSearching(false);
+    }
+    // Reset input so same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }, [currentVideoId]);
 
   const handleSearch = useCallback(async () => {
@@ -173,6 +195,31 @@ export function VideoSearchCard({
             </span>
           ) : "搜索"}
         </button>
+        {/* Face image upload button */}
+        <input
+          ref={fileInputRef}
+          type="file" accept="image/jpeg,image/png,image/webp"
+          onChange={handleFaceFile}
+          className="hidden"
+        />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={faceSearching}
+          title="上传人脸照片搜索"
+          className="absolute right-[76px] top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-lg
+                     bg-purple-50 text-purple-500 hover:bg-purple-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+        >
+          {faceSearching ? (
+            <span className="inline-block w-3.5 h-3.5 border-2 border-purple-300 border-t-purple-500 rounded-full animate-spin" />
+          ) : (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round">
+              <circle cx="9" cy="9" r="3" />
+              <path d="M1 20v-1a6 6 0 0112 0v1" />
+              <circle cx="19" cy="8" r="2" />
+              <path d="M15 20v-1a6 6 0 013-5.2" />
+            </svg>
+          )}
+        </button>
       </div>
 
       {/* Results Area */}
@@ -182,8 +229,59 @@ export function VideoSearchCard({
           <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-xs text-red-600">{error}</div>
         )}
 
+        {/* ── Face search results ── */}
+        {faceResults.length > 0 && (
+          <div className="mb-3">
+            <div className="flex items-center gap-1 mb-2">
+              <svg className="w-3 h-3 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                <circle cx="9" cy="9" r="3" /><path d="M1 20v-1a6 6 0 0112 0v1" />
+              </svg>
+              <span className="text-[10px] font-medium text-purple-500 uppercase tracking-wider">人脸匹配 · {faceResults.length} 人</span>
+            </div>
+            {faceResults.map((fr) => (
+              <button
+                key={`${fr.video_id}-${fr.identity_id}`}
+                onClick={() => {
+                  if (fr.best_face_timestamp != null) {
+                    onSeekTo?.(fr.best_face_timestamp, null);
+                  }
+                }}
+                className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-purple-50/60 transition-colors text-left mb-1"
+              >
+                {fr.thumbnail_url ? (
+                  <div className="w-10 h-10 rounded-md overflow-hidden bg-gray-100 shrink-0 border border-purple-200">
+                    <img src={fr.thumbnail_url} className="w-full h-full object-cover" alt="" />
+                  </div>
+                ) : (
+                  <span className="w-10 h-10 rounded-md bg-purple-50 shrink-0 flex items-center justify-center text-lg">👤</span>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs font-semibold text-gray-800">{fr.identity_label}</span>
+                    <span className="text-[10px] text-purple-500 font-mono">{fr.similarity.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px] text-gray-400">
+                    <span>出现 {fr.face_count} 次</span>
+                    <span>·</span>
+                    <span className="font-mono">{fr.first_seen.toFixed(1)}s–{fr.last_seen.toFixed(1)}s</span>
+                  </div>
+                </div>
+              </button>
+            ))}
+            <div className="h-px bg-gray-100 my-2" />
+          </div>
+        )}
+
+        {/* Face search empty result */}
+        {faceSearching && (
+          <div className="flex items-center justify-center py-4 text-purple-400 text-xs gap-2">
+            <span className="inline-block w-3 h-3 border-2 border-purple-300 border-t-purple-500 rounded-full animate-spin" />
+            人脸搜索中...
+          </div>
+        )}
+
         {/* Empty results after search (排除加载间隙) */}
-        {hasSearched && !searching && !error && results.length === 0 && (
+        {hasSearched && !searching && !error && results.length === 0 && faceResults.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 text-gray-400">
             <svg className="w-10 h-10 mb-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5">
               <circle cx="11" cy="11" r="8" />

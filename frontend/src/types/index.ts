@@ -29,6 +29,9 @@ export interface VideoListItem {
   audio_enabled: boolean;
   caption_enabled: boolean;
   detection_enabled: boolean;
+  detection_classes: string[] | null;
+  face_enabled: boolean;
+  plate_enabled: boolean;
   summary_enabled: boolean;
   summary_mode: string;
   search_index_enabled: boolean;
@@ -87,6 +90,9 @@ export interface VideoResponse {
   grounding_enabled: boolean;
   caption_enabled: boolean;
   detection_enabled: boolean;
+  detection_classes: string[] | null;
+  face_enabled: boolean;
+  plate_enabled: boolean;
   summary_enabled: boolean;
   summary_mode: string;
   search_index_enabled: boolean;
@@ -123,7 +129,7 @@ export interface SearchResultItem {
   scene_range_end: number;
   precise_start: number | null;
   precise_end: number | null;
-  precision_level: "frame" | "chunk" | "text" | "label" | "track" | "scene";
+  precision_level: "frame" | "chunk" | "text" | "label" | "track" | "plate" | "scene";
   match_paths: string[];
   caption: string | null;
   ocr_text: string | null;
@@ -133,6 +139,24 @@ export interface SearchResultItem {
   track_id?: number;
   class_name?: string;
   bbox?: { x1: number; y1: number; x2: number; y2: number };
+  plate_text?: string;
+  plate_type?: string;
+  char_confidences?: number[];
+
+/* ── Face search result (POST /api/v1/search/face) ── */
+
+export interface FaceSearchResult {
+  identity_id: number;
+  video_id: string;
+  identity_label: string;
+  face_count: number;
+  first_seen: number;
+  last_seen: number;
+  avg_quality: number;
+  similarity: number;
+  best_face_timestamp: number | null;
+  best_face_bbox: { x1: number; y1: number; x2: number; y2: number } | null;
+  thumbnail_url: string | null;
 }
 
 export interface SearchResults {
@@ -151,6 +175,8 @@ export interface PipelineParams {
   caption_enabled: boolean;
   detection_enabled: boolean;
   detection_classes: string[] | null;
+  face_enabled: boolean;
+  plate_enabled: boolean;
   search_index_enabled: boolean;
   summary_enabled: boolean;
   summary_mode: string;
@@ -195,6 +221,54 @@ export interface DetectionData {
   has_detection: boolean;
   tracks: Track[];
   detections: Record<string, Detection[]>;  // key: integer timestamp string
+}
+
+/* ── Face Recognition ── */
+
+export interface FaceIdentity {
+  id: number;
+  label: string;            // "人物 A", "人物 B", ...
+  face_count: number;
+  first_seen: number;
+  last_seen: number;
+  avg_quality: number;
+  best_face_timestamp: number | null;
+  best_face_bbox: { x1: number; y1: number; x2: number; y2: number } | null;
+  best_thumbnail_url: string | null;
+}
+
+export interface FaceDetectionItem {
+  identity_id: number | null;
+  track_id: number;
+  bbox: { x1: number; y1: number; x2: number; y2: number };
+  quality: number;
+  thumbnail_url: string | null;
+}
+
+export interface FaceData {
+  has_face: boolean;
+  identities: FaceIdentity[];
+  detections: Record<string, FaceDetectionItem[]>;  // key: timestamp string
+}
+
+/* ── License Plate Recognition ── */
+
+export interface PlateDetectionItem {
+  id: number;
+  track_id: number;
+  class_name: string;
+  timestamp_sec: number;
+  plate_text: string;
+  plate_type: string;        // blue / yellow / green / white / black
+  char_confidences: number[] | null;
+  bbox: { x1: number; y1: number; x2: number; y2: number };
+  confidence: number;
+  thumbnail_url: string | null;
+}
+
+export interface PlateData {
+  has_plate: boolean;
+  detections: PlateDetectionItem[];
 }
 
 /* ── Video Metadata (GET /api/v1/videos/{id}/metadata) ── */

@@ -131,6 +131,95 @@ async def init_db():
             ON track_embeddings (video_id, track_id)
         """))
 
+        # ── 增量迁移 v0.11: 人脸/车牌开关 ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS face_enabled boolean
+                DEFAULT false NOT NULL
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS plate_enabled boolean
+                DEFAULT false NOT NULL
+        """))
+
+        # ── 增量迁移 v0.11: 人脸身份聚类表 ──
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS face_identities (
+                id SERIAL PRIMARY KEY,
+                video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                identity_label VARCHAR(64) NOT NULL,
+                face_count INTEGER NOT NULL DEFAULT 1,
+                first_seen DOUBLE PRECISION NOT NULL,
+                last_seen DOUBLE PRECISION NOT NULL,
+                avg_quality DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                face_embedding vector(512),
+                best_face_timestamp DOUBLE PRECISION,
+                best_face_bbox JSONB,
+                best_face_path VARCHAR(1024),
+                created_at TIMESTAMPTZ DEFAULT now(),
+                UNIQUE(video_id, identity_label)
+            )
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_face_identities_video
+            ON face_identities (video_id)
+        """))
+
+        # ── 增量迁移 v0.11: 逐帧人脸检测表 ──
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS face_detections (
+                id SERIAL PRIMARY KEY,
+                video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                identity_id INTEGER REFERENCES face_identities(id) ON DELETE SET NULL,
+                track_id INTEGER NOT NULL,
+                timestamp_sec DOUBLE PRECISION NOT NULL,
+                bbox JSONB NOT NULL,
+                quality_score DOUBLE PRECISION NOT NULL,
+                face_embedding vector(512),
+                thumbnail_path VARCHAR(1024),
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_face_dets_video_ts
+            ON face_detections (video_id, timestamp_sec)
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_face_dets_track
+            ON face_detections (video_id, track_id)
+        """))
+
+        # ── 增量迁移 v0.11: 车牌检测表 ──
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS plate_detections (
+                id SERIAL PRIMARY KEY,
+                video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                track_id INTEGER NOT NULL,
+                class_name VARCHAR(64) NOT NULL,
+                timestamp_sec DOUBLE PRECISION NOT NULL,
+                plate_text VARCHAR(32) NOT NULL,
+                plate_type VARCHAR(16) NOT NULL DEFAULT 'blue',
+                char_confidences JSONB,
+                bbox JSONB NOT NULL,
+                detection_confidence DOUBLE PRECISION NOT NULL,
+                thumbnail_path VARCHAR(1024),
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_plate_dets_video_ts
+            ON plate_detections (video_id, timestamp_sec)
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_plate_dets_text
+            ON plate_detections (video_id, plate_text)
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_plate_dets_track
+            ON plate_detections (video_id, track_id)
+        """))
+
         # ── 清理：删除废弃的列、枚举类型、触发器 ──
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS preset

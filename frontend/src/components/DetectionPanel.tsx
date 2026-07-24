@@ -26,6 +26,9 @@ interface Props {
   classFilter: string | null;
   onClassFilterChange: (cls: string | null) => void;
   onTrackSelect: (trackId: number, className: string, seekTo: number) => void;
+  /* ── Face & Plate ── */
+  faceData: import("../types").FaceData | null;
+  plateData: import("../types").PlateData | null;
 }
 
 function getThumbBbox(data: DetectionData, track: Track): { bbox: NonNullable<DetectionData["detections"][string][number]["bbox"]>; ts: number } | null {
@@ -57,12 +60,20 @@ function thumbUrl(videoId: string, ts: number, bbox: { x1: number; y1: number; x
 
 const CONTAINER = "w-[220px] card-surface rounded-2xl p-3 border border-gray-200/60 flex flex-col h-full";
 
-export function DetectionPanel({ video, data, selectedTrackId, classFilter, onClassFilterChange, onTrackSelect }: Props) {
+type TabId = "objects" | "face" | "plate";
+
+export function DetectionPanel({ video, data, selectedTrackId, classFilter, onClassFilterChange, onTrackSelect, faceData, plateData }: Props) {
+  const [activeTab, setActiveTab] = useState<TabId>("objects");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [trackDropdown, setTrackDropdown] = useState<number | null>(null);
   const [downloadingTid, setDownloadingTid] = useState<number | null>(null);
   const [hoverThumb, setHoverThumb] = useState<{ videoId: string; ts: number; bbox: { x1: number; y1: number; x2: number; y2: number }; x: number; y: number } | null>(null);
+  const [expandedFaceId, setExpandedFaceId] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  const showTabs = !!(video?.face_enabled || video?.plate_enabled);
+  const showFaceTab = !!video?.face_enabled;
+  const showPlateTab = !!video?.plate_enabled;
 
   // Scroll selected track into view
   useEffect(() => {
@@ -156,7 +167,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     );
   }
 
-  // ── Has data: full panel ──
+  // ── Has data: full panel with tabs ──
   const tracks = data.tracks;
   const classCounts: Record<string, number> = {};
   for (const t of tracks) classCounts[t.class_name] = (classCounts[t.class_name] || 0) + 1;
@@ -167,144 +178,278 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
   const activeClass = isAll ? null : classFilter;
   const activeColor = activeClass ? (CLASS_COLORS[activeClass] ?? CLASS_COLORS.default) : "#6B7280";
 
+  // Auto-set active tab based on available features
+  const availableTabs: TabId[] = ["objects"];
+  if (showFaceTab) availableTabs.push("face");
+  if (showPlateTab) availableTabs.push("plate");
+  // Ensure activeTab is valid
+  const safeTab: TabId = availableTabs.includes(activeTab) ? activeTab : "objects";
+
+  const tabLabel: Record<TabId, string> = { objects: "物体", face: "人脸", plate: "车牌" };
+
   return (
     <div className={CONTAINER} style={{ padding: 0 }}>
-      {/* Header */}
-      <div className="px-3 pt-3 pb-2 border-b border-gray-100/60 shrink-0">
-        <h3 className="font-bold text-gray-900 text-lg mb-2">物体检测</h3>
-        {/* Dropdown — skip when only 1 class */}
-        {classEntries.length > 1 ? (
-        <div className="relative">
-          <button
-            onClick={() => setDropdownOpen(!dropdownOpen)}
-            className="w-full flex items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium rounded-md transition-colors hover:bg-white/40"
-            style={isAll
-              ? { background: "rgba(107,114,128,0.08)", color: "#6B7280", border: "1px solid rgba(107,114,128,0.2)" }
-              : { background: `${activeColor}15`, color: "#1F2937", border: `1px solid ${activeColor}30` }}
-          >
-            {isAll ? null : <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: activeColor! }} />}
-            <span className="flex-1 text-left truncate">{isAll ? `全部 · ${tracks.length}` : `${activeClass} × ${classCounts[activeClass!] || 0}`}</span>
-            <svg className={`w-3 h-3 shrink-0 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="currentColor">
-              <path d="M3 5l3 3 3-3" />
-            </svg>
-          </button>
-          {dropdownOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setDropdownOpen(false)} />
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden">
-                <button onClick={() => { onClassFilterChange(null); setDropdownOpen(false); }}
-                  className={`w-full text-left px-2.5 py-1.5 text-[11px] hover:bg-gray-50 ${isAll ? "font-semibold text-gray-800 bg-gray-50" : "text-gray-600"}`}>
-                  全部 ({tracks.length})
-                </button>
-                {classEntries.map(([cls, count]) => {
-                  const c = CLASS_COLORS[cls] ?? CLASS_COLORS.default;
-                  return (
-                    <button key={cls} onClick={() => { onClassFilterChange(cls); setDropdownOpen(false); }}
-                      className={`w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] hover:bg-gray-50 ${classFilter === cls ? "font-semibold bg-gray-50" : "text-gray-600"}`}>
-                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: c }} />{cls} × {count}
-                    </button>
-                  );
-                })}
-              </div>
-            </>
+      {/* Tab bar */}
+      {availableTabs.length > 1 && (
+        <div className="px-3 pt-3 pb-0 shrink-0">
+          <h3 className="font-bold text-gray-900 text-lg mb-2">物体检测</h3>
+          <div className="flex gap-1 pb-2 border-b border-gray-100/60">
+            {availableTabs.map((tid) => (
+              <button
+                key={tid}
+                onClick={() => setActiveTab(tid)}
+                className={`px-3 py-1 text-[11px] font-medium rounded-md transition-all ${
+                  safeTab === tid
+                    ? "bg-[#1a65e1] text-white shadow-sm"
+                    : "text-gray-500 hover:bg-gray-100"
+                }`}
+              >
+                {tabLabel[tid]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Single tab header (no tab bar needed) */}
+      {availableTabs.length <= 1 && (
+        <div className="px-3 pt-3 pb-2 border-b border-gray-100/60 shrink-0">
+          <h3 className="font-bold text-gray-900 text-lg mb-2">物体检测</h3>
+          {/* Class filter dropdown — skip when only 1 class */}
+          {classEntries.length > 1 ? (
+          <div className="relative">
+            <button
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              className="w-full flex items-center gap-1.5 px-2 py-1.5 text-[11px] font-medium rounded-md transition-colors hover:bg-white/40"
+              style={isAll
+                ? { background: "rgba(107,114,128,0.08)", color: "#6B7280", border: "1px solid rgba(107,114,128,0.2)" }
+                : { background: `${activeColor}15`, color: "#1F2937", border: `1px solid ${activeColor}30` }}
+            >
+              {isAll ? null : <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: activeColor! }} />}
+              <span className="flex-1 text-left truncate">{isAll ? `全部 · ${tracks.length}` : `${activeClass} × ${classCounts[activeClass!] || 0}`}</span>
+              <svg className={`w-3 h-3 shrink-0 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="currentColor">
+                <path d="M3 5l3 3 3-3" />
+              </svg>
+            </button>
+            {dropdownOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setDropdownOpen(false)} />
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden">
+                  <button onClick={() => { onClassFilterChange(null); setDropdownOpen(false); }}
+                    className={`w-full text-left px-2.5 py-1.5 text-[11px] hover:bg-gray-50 ${isAll ? "font-semibold text-gray-800 bg-gray-50" : "text-gray-600"}`}>
+                    全部 ({tracks.length})
+                  </button>
+                  {classEntries.map(([cls, count]) => {
+                    const c = CLASS_COLORS[cls] ?? CLASS_COLORS.default;
+                    return (
+                      <button key={cls} onClick={() => { onClassFilterChange(cls); setDropdownOpen(false); }}
+                        className={`w-full flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] hover:bg-gray-50 ${classFilter === cls ? "font-semibold bg-gray-50" : "text-gray-600"}`}>
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: c }} />{cls} × {count}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+          ) : (
+            <span className="text-[11px] font-medium"
+                  style={{ color: CLASS_COLORS[classEntries[0][0]] ?? CLASS_COLORS.default }}>
+              {classEntries[0][0]} × {classEntries[0][1]}
+            </span>
           )}
         </div>
-        ) : (
-          <span className="text-[11px] font-medium"
-                style={{ color: CLASS_COLORS[classEntries[0][0]] ?? CLASS_COLORS.default }}>
-            {classEntries[0][0]} × {classEntries[0][1]}
-          </span>
-        )}
-      </div>
+      )}
 
-      {/* Track list */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar" ref={listRef}>
-        {filtered.map((t) => {
-          const color = CLASS_COLORS[t.class_name] ?? CLASS_COLORS.default;
-          const isSel = t.track_id === selectedTrackId;
-          const thumbResult = getThumbBbox(data, t);
-          const bbox = thumbResult?.bbox ?? null;
-          const thumbTs = thumbResult?.ts ?? Math.min(t.first_seen + 0.5, t.last_seen);
-          return (
-            <button
-              key={t.track_id}
-              data-track-id={t.track_id}
-              onClick={() => onTrackSelect(t.track_id, t.class_name, t.first_seen)}
-              className={`w-full flex items-center gap-2 px-3 py-3 text-left transition-colors hover:bg-gray-50/60 border-b border-gray-100/40 last:border-b-0 relative ${isSel ? "bg-amber-50" : ""}`}
-              style={isSel ? { boxShadow: "inset 3px 0 0 #FFD700" } : undefined}
-            >
-              {bbox ? (
-                <div className="w-16 h-16 rounded-md shrink-0 overflow-hidden bg-gray-100 flex items-center justify-center cursor-pointer"
-                     style={{ border: isSel ? `1.5px solid ${SELECTED}` : "1px solid rgba(0,0,0,0.06)" }}
-                     onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHoverThumb({ videoId: video.id, ts: thumbTs, bbox, x: r.right + 8, y: r.top - 40 }); }}
-                     onMouseLeave={() => setHoverThumb(null)}>
-                  <img src={thumbUrl(video.id, thumbTs, bbox)} loading="lazy" className="w-full h-full object-contain" alt="" />
-                </div>
-              ) : (
-                <span className="w-16 h-16 rounded-md shrink-0 flex items-center justify-center" style={{ background: `${color}15` }}>
-                  <span className="w-4 h-4 rounded-full" style={{ background: isSel ? SELECTED : color }} />
-                </span>
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1">
-                  <span className={`text-[11px] truncate ${isSel ? "font-bold text-amber-800" : "font-semibold text-gray-800"}`}>{t.class_name}</span>
-                  <span className={`text-[10px] shrink-0 ${isSel ? "text-amber-600 font-medium" : "text-gray-400"}`}>{classLocalIds.get(t.track_id) ?? t.track_id}</span>
-                </div>
-                <div className="mt-0.5">
-                  <span className={`text-[10px] font-mono ${isSel ? "text-amber-600" : "text-gray-400"}`}>{t.first_seen.toFixed(1)}s–{t.last_seen.toFixed(1)}s</span>
-                </div>
-              </div>
-              {isSel && <svg className="w-3 h-3 shrink-0" viewBox="0 0 12 12" fill={SELECTED}><path d="M4 3l4 3-4 3V3z" /></svg>}
-              {/* Download button */}
-              <div className="relative shrink-0">
-                <button
-                  onClick={(e) => { e.stopPropagation(); setTrackDropdown(trackDropdown === t.track_id ? null : t.track_id); }}
-                  className="w-6 h-6 rounded-md flex items-center justify-center text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-all"
-                  title="导出"
-                >
-                  {downloadingTid === t.track_id ? (
-                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                  ) : (
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                  )}
-                </button>
-                {trackDropdown === t.track_id && (
-                  <>
-                    <div className="fixed inset-0 z-10" onClick={() => setTrackDropdown(null)} />
-                    <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden min-w-[140px]">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setTrackDropdown(null);
-                          const displayId = classLocalIds.get(t.track_id);
-                          window.open(api.getTrackThumbnailUrl(video.id, t.track_id, displayId), "_blank"); }}
-                        className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                      >
-                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                        导出缩略图
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setTrackDropdown(null);
-                          const displayId = classLocalIds.get(t.track_id);
-                          window.open(api.getTrackExportUrl(video.id, t.track_id, true, displayId), "_blank"); }}
-                        className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                      >
-                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-                        导出track视频
-                      </button>
-                    </div>
-                  </>
+      {/* ── Objects Tab Content ── */}
+      {safeTab === "objects" && (
+        <div className="flex-1 overflow-y-auto custom-scrollbar" ref={listRef}>
+          {filtered.map((t) => {
+            const color = CLASS_COLORS[t.class_name] ?? CLASS_COLORS.default;
+            const isSel = t.track_id === selectedTrackId;
+            const thumbResult = getThumbBbox(data, t);
+            const bbox = thumbResult?.bbox ?? null;
+            const thumbTs = thumbResult?.ts ?? Math.min(t.first_seen + 0.5, t.last_seen);
+            const hasFace = showFaceTab && t.class_name === "person" && faceData?.has_face;
+            const hasPlate = showPlateTab && ["car", "truck", "bus", "motorcycle"].includes(t.class_name) && plateData?.has_plate;
+            return (
+              <button
+                key={t.track_id}
+                data-track-id={t.track_id}
+                onClick={() => onTrackSelect(t.track_id, t.class_name, t.first_seen)}
+                className={`w-full flex items-center gap-2 px-3 py-3 text-left transition-colors hover:bg-gray-50/60 border-b border-gray-100/40 last:border-b-0 relative ${isSel ? "bg-amber-50" : ""}`}
+                style={isSel ? { boxShadow: "inset 3px 0 0 #FFD700" } : undefined}
+              >
+                {bbox ? (
+                  <div className="w-16 h-16 rounded-md shrink-0 overflow-hidden bg-gray-100 flex items-center justify-center cursor-pointer"
+                       style={{ border: isSel ? `1.5px solid ${SELECTED}` : "1px solid rgba(0,0,0,0.06)" }}
+                       onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHoverThumb({ videoId: video.id, ts: thumbTs, bbox, x: r.right + 8, y: r.top - 40 }); }}
+                       onMouseLeave={() => setHoverThumb(null)}>
+                    <img src={thumbUrl(video.id, thumbTs, bbox)} loading="lazy" className="w-full h-full object-contain" alt="" />
+                  </div>
+                ) : (
+                  <span className="w-16 h-16 rounded-md shrink-0 flex items-center justify-center" style={{ background: `${color}15` }}>
+                    <span className="w-4 h-4 rounded-full" style={{ background: isSel ? SELECTED : color }} />
+                  </span>
                 )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1">
+                    <span className={`text-[11px] truncate ${isSel ? "font-bold text-amber-800" : "font-semibold text-gray-800"}`}>{t.class_name}</span>
+                    <span className={`text-[10px] shrink-0 ${isSel ? "text-amber-600 font-medium" : "text-gray-400"}`}>{classLocalIds.get(t.track_id) ?? t.track_id}</span>
+                    {hasFace && <span className="text-[9px] text-purple-400 shrink-0" title="有人脸数据">👤</span>}
+                    {hasPlate && <span className="text-[9px] text-green-400 shrink-0" title="有车牌数据">🏷</span>}
+                  </div>
+                  <div className="mt-0.5">
+                    <span className={`text-[10px] font-mono ${isSel ? "text-amber-600" : "text-gray-400"}`}>{t.first_seen.toFixed(1)}s–{t.last_seen.toFixed(1)}s</span>
+                  </div>
+                </div>
+                {isSel && <svg className="w-3 h-3 shrink-0" viewBox="0 0 12 12" fill={SELECTED}><path d="M4 3l4 3-4 3V3z" /></svg>}
+                {/* Download button */}
+                <div className="relative shrink-0">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setTrackDropdown(trackDropdown === t.track_id ? null : t.track_id); }}
+                    className="w-6 h-6 rounded-md flex items-center justify-center text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-all"
+                    title="导出"
+                  >
+                    {downloadingTid === t.track_id ? (
+                      <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                    )}
+                  </button>
+                  {trackDropdown === t.track_id && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setTrackDropdown(null)} />
+                      <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden min-w-[140px]">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setTrackDropdown(null);
+                            const displayId = classLocalIds.get(t.track_id);
+                            window.open(api.getTrackThumbnailUrl(video.id, t.track_id, displayId), "_blank"); }}
+                          className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                        >
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                          导出缩略图
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setTrackDropdown(null);
+                            const displayId = classLocalIds.get(t.track_id);
+                            window.open(api.getTrackExportUrl(video.id, t.track_id, true, displayId), "_blank"); }}
+                          className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                        >
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                          导出track视频
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Face Tab Content ── */}
+      {safeTab === "face" && faceData?.has_face && (
+        <div className="flex-1 overflow-y-auto custom-scrollbar" ref={listRef}>
+          {faceData.identities.map((ident) => (
+            <div key={ident.id} className="border-b border-gray-100/40 last:border-b-0">
+              <button
+                onClick={() => { setExpandedFaceId(expandedFaceId === ident.id ? null : ident.id); }}
+                className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-gray-50/60 transition-colors"
+              >
+                {ident.best_thumbnail_url ? (
+                  <div className="w-12 h-12 rounded-md shrink-0 overflow-hidden bg-gray-100 flex items-center justify-center border border-gray-200/60">
+                    <img src={ident.best_thumbnail_url} loading="lazy" className="w-full h-full object-contain" alt="" />
+                  </div>
+                ) : (
+                  <span className="w-12 h-12 rounded-md shrink-0 flex items-center justify-center bg-purple-50">
+                    <span className="text-lg">👤</span>
+                  </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] font-semibold text-gray-800">{ident.label}</span>
+                    <span className="text-[10px] text-gray-400">×{ident.face_count}</span>
+                  </div>
+                  <div className="text-[10px] font-mono text-gray-400">{ident.first_seen.toFixed(1)}s–{ident.last_seen.toFixed(1)}s</div>
+                  <div className="flex items-center gap-0.5 mt-0.5">
+                    {[0, 1, 2].map((i) => (
+                      <span key={i} className={`w-1.5 h-1.5 rounded-full ${i < Math.round(ident.avg_quality * 3) ? "bg-purple-400" : "bg-gray-200"}`} />
+                    ))}
+                  </div>
+                </div>
+                <svg className={`w-3 h-3 shrink-0 text-gray-400 transition-transform ${expandedFaceId === ident.id ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="currentColor">
+                  <path d="M3 5l3 3 3-3" />
+                </svg>
+              </button>
+              {/* Expanded: face appearances */}
+              {expandedFaceId === ident.id && (
+                <div className="bg-gray-50/50 border-t border-gray-100/40">
+                  <p className="px-3 py-1 text-[10px] text-gray-400">
+                    出现 {ident.face_count} 次 · 平均质量 {ident.avg_quality.toFixed(2)}
+                  </p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {safeTab === "face" && !faceData?.has_face && (
+        <div className="flex-1 flex items-center justify-center">
+          <span className="text-gray-400 text-sm">暂无人脸数据</span>
+        </div>
+      )}
+
+      {/* ── Plate Tab Content ── */}
+      {safeTab === "plate" && plateData?.has_plate && (
+        <div className="flex-1 overflow-y-auto custom-scrollbar" ref={listRef}>
+          {plateData.detections.map((p, idx) => (
+            <button
+              key={p.id ?? idx}
+              onClick={() => onTrackSelect(p.track_id, p.class_name, p.timestamp_sec)}
+              className="w-full flex flex-col gap-1 px-3 py-2.5 text-left hover:bg-gray-50/60 transition-colors border-b border-gray-100/40 last:border-b-0"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold font-mono text-gray-900 tracking-wider">{p.plate_text}</span>
+                <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                  p.plate_type === "blue" ? "bg-blue-100 text-blue-700" :
+                  p.plate_type === "yellow" ? "bg-yellow-100 text-yellow-700" :
+                  p.plate_type === "green" ? "bg-green-100 text-green-700" :
+                  "bg-gray-100 text-gray-600"
+                }`}>{p.plate_type === "blue" ? "蓝牌" : p.plate_type === "yellow" ? "黄牌" : p.plate_type === "green" ? "绿牌" : p.plate_type}</span>
+              </div>
+              {/* Confidence bar */}
+              {p.char_confidences && p.char_confidences.length > 0 && (
+                <div className="flex gap-0.5">
+                  {p.char_confidences.map((c, ci) => (
+                    <div key={ci} className="flex-1 h-1 rounded-full" style={{ background: c > 0.8 ? "#22c55e" : c > 0.5 ? "#f59e0b" : "#ef4444" }} />
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2 text-[10px] text-gray-400">
+                <span>{p.class_name} #{p.track_id}</span>
+                <span>·</span>
+                <span className="font-mono">{p.timestamp_sec.toFixed(1)}s</span>
+                <span>·</span>
+                <span>置信度 {(p.confidence * 100).toFixed(0)}%</span>
               </div>
             </button>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      )}
+      {safeTab === "plate" && !plateData?.has_plate && (
+        <div className="flex-1 flex items-center justify-center">
+          <span className="text-gray-400 text-sm">暂无车牌数据</span>
+        </div>
+      )}
 
       {/* Hover thumbnail preview */}
       {hoverThumb && (

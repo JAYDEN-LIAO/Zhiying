@@ -127,6 +127,14 @@ class Video(Base):
         JSONB, nullable=True,
         comment="目标检测类别列表，如 ['person', 'car']；NULL = 所有 80 类",
     )
+    face_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False,
+        comment="人脸识别开关（SCRFD + ArcFace，依赖 detection_enabled）",
+    )
+    plate_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False,
+        comment="车牌识别开关（PaddleOCR，依赖 detection_enabled）",
+    )
     summary_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False,
         comment="摘要生成开关",
@@ -198,6 +206,15 @@ class Video(Base):
     )
     tracks_video: Mapped[list["Track"]] = relationship(
         "Track", back_populates="video", cascade="all, delete-orphan",
+    )
+    face_identities: Mapped[list["FaceIdentity"]] = relationship(
+        "FaceIdentity", back_populates="video", cascade="all, delete-orphan",
+    )
+    face_detections: Mapped[list["FaceDetection"]] = relationship(
+        "FaceDetection", back_populates="video", cascade="all, delete-orphan",
+    )
+    plate_detections: Mapped[list["PlateDetection"]] = relationship(
+        "PlateDetection", back_populates="video", cascade="all, delete-orphan",
     )
 
     __table_args__ = (
@@ -588,4 +605,189 @@ class TrackEmbedding(Base):
     __table_args__ = (
         Index("ix_track_emb_video_track", "video_id", "track_id"),
         {"comment": "Track 语义嵌入表 — crop 跨模态编码，track 路搜索 + 全局 ReID"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# FaceIdentity — 人脸身份聚类结果
+# ═══════════════════════════════════════════════════════════
+
+class FaceIdentity(Base):
+    """人脸身份聚类表 — 每条记录代表一个自动识别的人脸身份。
+
+    通过 ArcFace 余弦聚类自动分组，标注为"人物 A"、"人物 B"等。
+    """
+
+    __tablename__ = "face_identities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    identity_label: Mapped[str] = mapped_column(
+        String(64), nullable=False,
+        comment="自动标签，如 '人物 A', '人物 B'",
+    )
+    face_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1,
+        comment="该身份的检出次数",
+    )
+    first_seen: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="首次出现时间戳(秒)",
+    )
+    last_seen: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="最后出现时间戳(秒)",
+    )
+    avg_quality: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0,
+        comment="平均人脸质量分数 (0~1)",
+    )
+    face_embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(512), nullable=True,
+        comment="代表性嵌入向量 — 最优帧的 ArcFace R50 512 维向量",
+    )
+    best_face_timestamp: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="最优人脸帧的时间戳",
+    )
+    best_face_bbox: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="最优人脸帧的归一化 bbox {x1,y1,x2,y2}",
+    )
+    best_face_path: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, comment="最佳人脸缩略图路径",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+    )
+
+    video: Mapped["Video"] = relationship("Video", back_populates="face_identities")
+
+    __table_args__ = (
+        Index("ix_face_identities_video", "video_id"),
+        UniqueConstraint("video_id", "identity_label", name="uq_face_identity_label"),
+        {"comment": "人脸身份聚类表 — 自动标注，ArcFace 512 维向量"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# FaceDetection — 逐次人脸出现记录
+# ═══════════════════════════════════════════════════════════
+
+class FaceDetection(Base):
+    """逐帧人脸检测结果表 — 每检测到的人脸一行。
+
+    关联到 YOLO person track 和 FaceIdentity。
+    """
+
+    __tablename__ = "face_detections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    identity_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("face_identities.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+        comment="聚类后的人脸身份 ID",
+    )
+    track_id: Mapped[int] = mapped_column(
+        Integer, nullable=False, index=True,
+        comment="对应的 YOLO person track ID",
+    )
+    timestamp_sec: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="视频时间戳(秒)",
+    )
+    bbox: Mapped[dict] = mapped_column(
+        JSONB, nullable=False,
+        comment="人脸边界框 {x1,y1,x2,y2}，归一化 0-1",
+    )
+    quality_score: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="SCRFD 检测质量分数 (0~1)",
+    )
+    face_embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(512), nullable=True,
+        comment="ArcFace R50 512 维嵌入向量",
+    )
+    thumbnail_path: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, comment="人脸缩略图路径",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+    )
+
+    video: Mapped["Video"] = relationship("Video", back_populates="face_detections")
+
+    __table_args__ = (
+        Index("ix_face_dets_video_ts", "video_id", "timestamp_sec"),
+        Index("ix_face_dets_track", "video_id", "track_id"),
+        {"comment": "逐帧人脸检测结果表 — 关联 YOLO person track + 人脸身份"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# PlateDetection — 车牌识别结果
+# ═══════════════════════════════════════════════════════════
+
+class PlateDetection(Base):
+    """车牌检测结果表 — 每块检测到的车牌一行。"""
+
+    __tablename__ = "plate_detections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    track_id: Mapped[int] = mapped_column(
+        Integer, nullable=False, index=True,
+        comment="对应的 YOLO vehicle track ID",
+    )
+    class_name: Mapped[str] = mapped_column(
+        String(64), nullable=False,
+        comment="车辆 COCO 类别名 (car/truck/bus/motorcycle)",
+    )
+    timestamp_sec: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="视频时间戳(秒)",
+    )
+    plate_text: Mapped[str] = mapped_column(
+        String(32), nullable=False, comment="识别出的车牌号文本",
+    )
+    plate_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="blue",
+        comment="牌照类型: blue/yellow/green/white/black/unknown",
+    )
+    char_confidences: Mapped[list[float] | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="逐字符识别置信度数组",
+    )
+    bbox: Mapped[dict] = mapped_column(
+        JSONB, nullable=False,
+        comment="车牌边界框 {x1,y1,x2,y2}，归一化 0-1",
+    )
+    detection_confidence: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="整体检测置信度 (0~1)",
+    )
+    thumbnail_path: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, comment="车牌缩略图路径",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+    )
+
+    video: Mapped["Video"] = relationship("Video", back_populates="plate_detections")
+
+    __table_args__ = (
+        Index("ix_plate_dets_video_ts", "video_id", "timestamp_sec"),
+        Index("ix_plate_dets_text", "video_id", "plate_text"),
+        Index("ix_plate_dets_track", "video_id", "track_id"),
+        {"comment": "车牌检测结果表 — PaddleOCR 检测 + 识别，支持文本搜索"},
     )

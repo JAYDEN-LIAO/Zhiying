@@ -39,6 +39,8 @@ async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video:
         caption_enabled=video_dto.caption_enabled,
         detection_enabled=video_dto.detection_enabled,
         detection_classes=video_dto.detection_classes,
+        face_enabled=video_dto.face_enabled,
+        plate_enabled=video_dto.plate_enabled,
         summary_enabled=video_dto.summary_enabled,
         summary_mode=video_dto.summary_mode,
         search_index_enabled=video_dto.search_index_enabled,
@@ -352,4 +354,80 @@ async def bulk_insert_track_embeddings(
     except Exception:
         await session.rollback()
         logger.exception("[Repo] Failed to bulk insert track embeddings")
+        raise
+
+
+# ═══════════════════════════════════════════════════════════
+# 人脸识别 & 车牌识别写入
+# ═══════════════════════════════════════════════════════════
+
+async def bulk_insert_face_identities(
+    session: AsyncSession,
+    rows: list[dict],
+) -> None:
+    """批量写入人脸身份聚类结果 — FaceRunner 产出。"""
+    if not rows:
+        return
+    try:
+        from core.models import FaceIdentity
+        session.add_all([
+            FaceIdentity(
+                video_id=r["video_id"],
+                identity_label=r["identity_label"],
+                face_count=r["face_count"],
+                first_seen=r["first_seen"],
+                last_seen=r["last_seen"],
+                avg_quality=r.get("avg_quality", 0.0),
+                face_embedding=r.get("face_embedding"),
+                best_face_timestamp=r.get("best_face_timestamp"),
+                best_face_bbox=r.get("best_face_bbox"),
+                best_face_path=r.get("best_face_path"),
+            )
+            for r in rows
+        ])
+        await session.commit()
+        logger.info("[Repo] Bulk inserted %d face identities", len(rows))
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to bulk insert face identities")
+        raise
+
+
+async def bulk_insert_face_detections(
+    session: AsyncSession,
+    rows: list[dict],
+) -> None:
+    """批量写入逐帧人脸检测结果 — FaceRunner 产出。"""
+    if not rows:
+        return
+    try:
+        from core.models import FaceDetection
+        from sqlalchemy import insert
+        stmt = insert(FaceDetection.__table__)
+        await session.execute(stmt, rows)
+        await session.commit()
+        logger.info("[Repo] Bulk inserted %d face detections", len(rows))
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to bulk insert face detections")
+        raise
+
+
+async def bulk_insert_plate_detections(
+    session: AsyncSession,
+    rows: list[dict],
+) -> None:
+    """批量写入车牌检测结果 — PlateRunner 产出。"""
+    if not rows:
+        return
+    try:
+        from core.models import PlateDetection
+        from sqlalchemy import insert
+        stmt = insert(PlateDetection.__table__)
+        await session.execute(stmt, rows)
+        await session.commit()
+        logger.info("[Repo] Bulk inserted %d plate detections", len(rows))
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to bulk insert plate detections")
         raise

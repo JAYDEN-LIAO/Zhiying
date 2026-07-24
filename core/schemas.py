@@ -84,6 +84,8 @@ class VideoCreate(BaseModel):
     caption_enabled: bool   = Field(default=True)
     detection_enabled: bool = Field(default=False)
     detection_classes: list[str] | None = Field(default=None)
+    face_enabled: bool      = Field(default=False)
+    plate_enabled: bool     = Field(default=False)
     summary_enabled: bool   = Field(default=True)
     summary_mode: str       = Field(default="native_video", pattern=r"^(native_video|vlm_llm)$")
 
@@ -110,6 +112,8 @@ class PipelineParams(BaseModel):
     caption_enabled: bool   = Field(default=True)
     detection_enabled: bool = Field(default=False)
     detection_classes: list[str] | None = Field(default=None, description="目标类别列表，如 ['person', 'car']；None=全部")
+    face_enabled: bool      = Field(default=False, description="人脸识别开关（依赖 detection_enabled）")
+    plate_enabled: bool     = Field(default=False, description="车牌识别开关（依赖 detection_enabled）")
 
     # L3: 功能开关
     search_index_enabled: bool = Field(default=True)
@@ -134,6 +138,12 @@ class PipelineParams(BaseModel):
                 raise ValueError("视觉分析已关闭，画面描述必须同时关闭")
             if self.detection_enabled:
                 raise ValueError("视觉分析已关闭，物体检测必须同时关闭")
+
+        # face / plate → detection 必须开启
+        if self.face_enabled and not self.detection_enabled:
+            raise ValueError("物体检测已关闭，人脸识别必须同时关闭")
+        if self.plate_enabled and not self.detection_enabled:
+            raise ValueError("物体检测已关闭，车牌识别必须同时关闭")
 
         # caption 关闭 → summary 必须为 false
         if not self.caption_enabled and self.summary_enabled:
@@ -178,6 +188,8 @@ class VideoResponse(BaseModel):
     caption_enabled: bool
     detection_enabled: bool
     detection_classes: list[str] | None = None
+    face_enabled: bool
+    plate_enabled: bool
     summary_enabled: bool
     summary_mode: str
 
@@ -213,6 +225,8 @@ class VideoListItem(BaseModel):
     caption_enabled: bool          = True
     detection_enabled: bool        = False
     detection_classes: list[str] | None = None
+    face_enabled: bool             = False
+    plate_enabled: bool            = False
     summary_enabled: bool          = True
     summary_mode: str              = "native_video"
     search_index_enabled: bool     = True

@@ -22,6 +22,8 @@ from core.repository import (
     bulk_insert_scenes, save_video_artifacts,
     bulk_insert_frame_detections, bulk_insert_tracks,
     bulk_insert_track_embeddings,
+    bulk_insert_face_identities, bulk_insert_face_detections,
+    bulk_insert_plate_detections,
 )
 from plugins.factory import load_plugin
 from pipeline.operations import ALL_OPERATIONS
@@ -363,6 +365,16 @@ class PipelineEngine:
                 await bulk_insert_track_embeddings(
                     session, self.video.id, self.ctx.track_embeddings,
                 )
+
+            # 人脸识别
+            if self.ctx.face_identities:
+                await bulk_insert_face_identities(session, self.ctx.face_identities)
+            if self.ctx.face_detections:
+                await bulk_insert_face_detections(session, self.ctx.face_detections)
+
+            # 车牌识别
+            if self.ctx.plate_detections:
+                await bulk_insert_plate_detections(session, self.ctx.plate_detections)
 
             await session.commit()
 

@@ -12,6 +12,8 @@ const SCENE_PRESETS: Record<string, {
   desc: string;
   modules: { vision: boolean; audio: boolean; ocr: boolean; caption: boolean; detection: boolean };
   functions: { searchIndex: boolean; summary: boolean };
+  faceEnabled?: boolean;
+  plateEnabled?: boolean;
 }> = {
   general: {
     label: "通用",
@@ -30,6 +32,8 @@ const SCENE_PRESETS: Record<string, {
     desc: "固定机位，无音频轨道，纯视觉分析",
     modules: { vision: true, audio: false, ocr: false, caption: true, detection: true },
     functions: { searchIndex: true, summary: false },
+    faceEnabled: true,
+    plateEnabled: true,
   },
   text_recognition: {
     label: "文字识别",
@@ -59,6 +63,8 @@ const MODULE_AVAILABLE: Record<string, boolean> = {
   audio: false,
   ocr: false,
   detection: true,
+  face: true,
+  plate: true,
 };
 
 /* ── COCO 80 类（YOLO11 完整列表）── */
@@ -156,6 +162,14 @@ export function ParameterPanel({
     const saved = loadCustomParams();
     return (saved?.detectionClasses as string[] | null) ?? null;
   });
+  const [faceEnabled, setFaceEnabled] = useState<boolean>(() => {
+    const saved = loadCustomParams();
+    return (saved?.faceEnabled as boolean) ?? false;
+  });
+  const [plateEnabled, setPlateEnabled] = useState<boolean>(() => {
+    const saved = loadCustomParams();
+    return (saved?.plateEnabled as boolean) ?? false;
+  });
   const [classSearch, setClassSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -182,9 +196,9 @@ export function ParameterPanel({
   /* ── 自定义参数自动保存 ── */
   useEffect(() => {
     if (sceneType === "custom") {
-      saveCustomParams({ sceneType, modules, functions, advanced, summaryMode, detectionClasses });
+      saveCustomParams({ sceneType, modules, functions, advanced, summaryMode, detectionClasses, faceEnabled, plateEnabled });
     }
-  }, [sceneType, modules, functions, advanced, detectionClasses, summaryMode]);
+  }, [sceneType, modules, functions, advanced, detectionClasses, summaryMode, faceEnabled, plateEnabled]);
 
   /* ── L1 场景类型变更 → 重设 L2/L3 默认值 ── */
   const handleSceneTypeChange = (ct: ContentType) => {
@@ -202,6 +216,8 @@ export function ParameterPanel({
     if (preset) {
       setModules({ ...preset.modules });
       setFunctions({ ...preset.functions });
+      setFaceEnabled(preset.faceEnabled ?? false);
+      setPlateEnabled(preset.plateEnabled ?? false);
     }
   };
 
@@ -262,6 +278,8 @@ export function ParameterPanel({
       caption_enabled: modules.caption,
       detection_enabled: modules.detection,
       detection_classes: modules.detection ? detectionClasses : null,
+      face_enabled: modules.detection ? faceEnabled : false,
+      plate_enabled: modules.detection ? plateEnabled : false,
       search_index_enabled: functions.searchIndex,
       summary_enabled: functions.summary,
       summary_mode: summaryMode,
@@ -311,7 +329,7 @@ export function ParameterPanel({
 
       // 持久化自定义参数
       if (sceneType === "custom") {
-        saveCustomParams({ sceneType, modules, functions, advanced, summaryMode });
+        saveCustomParams({ sceneType, modules, functions, advanced, summaryMode, detectionClasses, faceEnabled, plateEnabled });
       } else {
         localStorage.removeItem(CUSTOM_PARAMS_KEY);
       }
@@ -521,6 +539,52 @@ export function ParameterPanel({
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* 人脸识别子开关 — 检测开启时显示 */}
+          {modules.detection && (
+            <div className={`mt-2 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
+              !MODULE_AVAILABLE.face ? "border-gray-150 bg-gray-50/30 opacity-40" : "border-purple-300 bg-purple-50/30"
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex-1 min-w-0">
+                  <span className={`text-[11px] font-medium block ${!MODULE_AVAILABLE.face ? "text-gray-350" : "text-gray-500"}`}>
+                    人脸识别
+                  </span>
+                  <span className="text-[10px] text-gray-400 truncate block">
+                    {MODULE_AVAILABLE.face ? "SCRFD 检测 + ArcFace 身份聚类" : "插件未启用"}
+                  </span>
+                </div>
+                <Toggle
+                  checked={faceEnabled}
+                  onChange={() => { setFaceEnabled(!faceEnabled); setSceneType("custom"); }}
+                  disabled={!MODULE_AVAILABLE.face}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* 车牌识别子开关 — 检测开启时显示 */}
+          {modules.detection && (
+            <div className={`mt-1.5 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
+              !MODULE_AVAILABLE.plate ? "border-gray-150 bg-gray-50/30 opacity-40" : "border-green-300 bg-green-50/30"
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex-1 min-w-0">
+                  <span className={`text-[11px] font-medium block ${!MODULE_AVAILABLE.plate ? "text-gray-350" : "text-gray-500"}`}>
+                    车牌识别
+                  </span>
+                  <span className="text-[10px] text-gray-400 truncate block">
+                    {MODULE_AVAILABLE.plate ? "PaddleOCR 车牌检测与文字识别" : "插件未启用"}
+                  </span>
+                </div>
+                <Toggle
+                  checked={plateEnabled}
+                  onChange={() => { setPlateEnabled(!plateEnabled); setSceneType("custom"); }}
+                  disabled={!MODULE_AVAILABLE.plate}
+                />
+              </div>
             </div>
           )}
         </section>

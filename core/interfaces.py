@@ -90,6 +90,9 @@ class VideoContext:
     tracks: list[dict] | None = None              # detection runner 产出
     track_best_frames: dict | None = None          # {track_id: {frame, bbox, timestamp, conf}}
     track_embeddings: list[dict] | None = None     # track_encode runner 产出
+    face_identities: list[dict] | None = None      # face runner 产出 — 聚类后的人脸身份
+    face_detections: list[dict] | None = None      # face runner 产出 — 逐次人脸检出记录
+    plate_detections: list[dict] | None = None     # plate runner 产出 — 车牌识别结果
 
     # 异步进度回调: async def cb(progress: float, phase: str, desc: str)
     progress_callback: Callable[[float, str, str], Awaitable[None]] | None = None
@@ -179,6 +182,64 @@ class BaseDetector(ABC):
                         "bbox": [x1, y1, x2, y2],   # 归一化 0-1 坐标
                         "confidence": float,         # 置信度 (0~1)
                         "class_name": str,          # COCO 类别名
+                    },
+                ]
+        """
+        ...
+
+
+class BaseFaceRecognizer(ABC):
+    """人脸检测与识别 — SCRFD 检测 + ArcFace R50 嵌入 (512-dim)。
+
+    GPU 推理密集，实现必须通过 asyncio.to_thread 包裹同步调用。
+    接受 person crop 图像列表，返回人脸 bbox + embedding。
+    """
+
+    @abstractmethod
+    async def extract(self, crops: list[np.ndarray]) -> list[list[dict]]:
+        """批量处理 person crops，检测人脸并提取 512 维嵌入向量。
+
+        Args:
+            crops: person crop 图像列表 (H, W, 3) uint8。
+
+        Returns:
+            与 crops 等长的列表。每个元素是该 crop 中检测到的所有人脸::
+
+                [
+                    {
+                        "bbox": {"x1": float, "y1": float, "x2": float, "y2": float},
+                        "quality": float,       # 人脸质量分数 (0~1)
+                        "embedding": [float],   # ArcFace R50 512 维归一化向量
+                    },
+                ]
+        """
+        ...
+
+
+class BasePlateRecognizer(ABC):
+    """车牌检测与识别 — PaddleOCR 检测车牌区域 + 字符识别。
+
+    GPU 推理密集，实现必须通过 asyncio.to_thread 包裹同步调用。
+    接受 vehicle crop 图像列表，返回车牌文本 + 元数据。
+    """
+
+    @abstractmethod
+    async def recognize(self, crops: list[np.ndarray]) -> list[list[dict]]:
+        """批量处理 vehicle crops，检测并识别车牌。
+
+        Args:
+            crops: vehicle crop 图像列表 (H, W, 3) uint8。
+
+        Returns:
+            与 crops 等长的列表。每个元素是该 crop 中检测到的所有车牌::
+
+                [
+                    {
+                        "plate_text": str,              # 车牌号文本
+                        "plate_type": str,              # blue/yellow/green/white
+                        "char_confidences": [float],    # 逐字符置信度
+                        "bbox": {"x1": float, "y1": float, "x2": float, "y2": float},
+                        "confidence": float,            # 整体检测置信度
                     },
                 ]
         """

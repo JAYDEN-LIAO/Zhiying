@@ -71,6 +71,21 @@ plugins:
   grounding:
     backend: null
 
+  # ── 人脸识别（SCRFD + ArcFace R50 via insightface）──
+  face:
+    backend: null                     # 设为 "insightface" 启用
+    # params:
+    #   det_thresh: 0.5              # SCRFD 检测阈值
+    #   rec_thresh: 0.4              # ArcFace 识别阈值（内部用，聚类由 FaceRunner 做）
+
+  # ── 车牌识别（PaddleOCR）──
+  plate:
+    backend: null                     # 设为 "paddle" 启用
+    # params:
+    #   lang: "ch"                   # OCR 语言
+    #   det_db_thresh: 0.3           # 文字检测阈值
+    #   rec_thresh: 0.5              # 文字识别阈值
+
 pipeline:
   sample_fps: 1.0
   scene_min_duration: 1.0

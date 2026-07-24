@@ -4,11 +4,15 @@ api/search_routes.py
 搜索端点 — 语义搜索 + Pipeline 操作查询。
 """
 
+import io
 import time
 import uuid
 import logging
 
-from fastapi import APIRouter, Depends, Request
+import numpy as np
+from PIL import Image
+
+from fastapi import APIRouter, Depends, Request, UploadFile, File, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +20,7 @@ from api.deps import get_db
 from api.schemas import APIResponse, SemanticSearchRequest, SearchResultItem, SearchResults
 from core.models import Video
 from core.config_loader import load_config
+from core.search import face_identity_search
 from pipeline.operations import ALL_OPERATIONS
 
 logger = logging.getLogger(__name__)
@@ -79,6 +84,79 @@ async def search_semantic(
     ]
 
     return APIResponse(data=SearchResults(results=items, total=len(items), query_time_ms=elapsed))
+
+
+# ═══════════════════════════════════════════════════════════
+# 人脸图片搜索
+# ═══════════════════════════════════════════════════════════
+
+@router.post("/search/face")
+async def search_face(
+    file: UploadFile = File(...),
+    video_ids: str | None = None,
+    top_k: int = 20,
+    request: Request = None,
+) -> APIResponse[list[dict]]:
+    """上传人脸图片 → ArcFace R50 512d embedding → 比对 face_identities 表。
+
+    Args:
+        file:      人脸照片（JPEG/PNG，单张）
+        video_ids: 逗号分隔的 video UUID 列表，可选
+        top_k:     返回结果数量上限
+    """
+    t0 = time.monotonic()
+
+    face_recognizer = getattr(request.app.state, "face_recognizer", None)
+    if face_recognizer is None:
+        raise HTTPException(status_code=503, detail="Face recognizer not configured (set plugins.face.backend)")
+
+    # 读取图片 → numpy array
+    try:
+        contents = await file.read()
+        img = Image.open(io.BytesIO(contents)).convert("RGB")
+        image = np.array(img)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
+
+    # ArcFace R50 提取 512d embedding
+    query_emb = await face_recognizer.extract_best_embedding(image)
+    if query_emb is None:
+        return APIResponse(data=[], message="No face detected in uploaded image")
+
+    # 解析 video_ids
+    vid_list: list[str] | None = None
+    if video_ids:
+        vid_list = [v.strip() for v in video_ids.split(",") if v.strip()]
+
+    # 搜索
+    async with request.app.state.db_session_factory() as session:
+        results = await face_identity_search(
+            session, query_emb, limit=top_k, video_ids=vid_list,
+        )
+
+    elapsed = (time.monotonic() - t0) * 1000
+
+    items: list[dict] = []
+    for identity, sim in results:
+        items.append({
+            "identity_id": identity.id,
+            "video_id": str(identity.video_id),
+            "identity_label": identity.identity_label,
+            "face_count": identity.face_count,
+            "first_seen": identity.first_seen,
+            "last_seen": identity.last_seen,
+            "avg_quality": identity.avg_quality,
+            "similarity": round(float(sim), 4),
+            "best_face_timestamp": identity.best_face_timestamp,
+            "best_face_bbox": identity.best_face_bbox,
+            "thumbnail_url": (
+                f"/api/v1/videos/{identity.video_id}/face/thumbnail"
+                f"?identity_id={identity.id}"
+            ),
+            "query_time_ms": elapsed,
+        })
+
+    return APIResponse(data=items)
 
 
 # ═══════════════════════════════════════════════════════════

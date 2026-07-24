@@ -20,13 +20,14 @@ from core.models import Scene, FrameEmbedding, Chunk
 from core.search import (
     frame_vector_search, chunk_vector_search,
     text_vector_search, track_vector_search,
+    plate_text_search,
 )
 
 logger = logging.getLogger(__name__)
 
-_PRECISION_ORDER = {"frame": 0, "chunk": 1, "text": 2, "label": 3, "track": 2}
+_PRECISION_ORDER = {"frame": 0, "chunk": 1, "text": 2, "label": 3, "track": 2, "plate": 4}
 _CLUSTER_GAP = 4.0  # 帧聚类最大间隔（秒）
-_PATH_WEIGHT = {"frame": 1.0, "chunk": 0.7, "text": 0.85, "label": 1.0, "track": 0.9}
+_PATH_WEIGHT = {"frame": 1.0, "chunk": 0.7, "text": 0.85, "label": 1.0, "track": 0.9, "plate": 0.95}
 
 
 class SearchEngine:
@@ -83,6 +84,8 @@ class SearchEngine:
             tasks.append(self._label_search(query, video_ids, top_k * 2))
         if "track" in search_types and vec is not None:
             tasks.append(self._track_search(vec, video_ids, top_k * 2))
+        if "plate" in search_types and query:
+            tasks.append(self._plate_search(query, video_ids, top_k * 2))
 
         if not tasks:
             return []
@@ -182,6 +185,44 @@ class SearchEngine:
             "precision_level": "track",
             "similarity": float(sim),
             "source": "track",
+            "bbox": bbox,
+            "thumbnail_url": thumb,
+        }
+
+    async def _plate_search(
+        self,
+        query: str,
+        video_ids: list[str] | None,
+        limit: int,
+    ) -> list[dict]:
+        """车牌文本搜索 — ILIKE / trigram 相似度匹配。"""
+        async with self.db_session_factory() as session:
+            results = await plate_text_search(
+                session, query, limit=limit, video_ids=video_ids,
+            )
+        return [self._plate_to_dict(p, sim) for p, sim in results]
+
+    @staticmethod
+    def _plate_to_dict(plate, sim: float) -> dict:
+        bbox = plate.bbox
+        thumb = (
+            f"/api/v1/videos/{plate.video_id}/plate/thumbnail"
+            f"?timestamp={plate.timestamp_sec}"
+            f"&x1={bbox['x1']}&y1={bbox['y1']}&x2={bbox['x2']}&y2={bbox['y2']}"
+        ) if bbox else None
+        return {
+            "video_id": str(plate.video_id),
+            "track_id": plate.track_id,
+            "class_name": plate.class_name,
+            "scene_index": 0,
+            "precise_start": plate.timestamp_sec,
+            "precise_end": None,
+            "precision_level": "plate",
+            "similarity": float(sim),
+            "source": "plate",
+            "plate_text": plate.plate_text,
+            "plate_type": plate.plate_type,
+            "char_confidences": plate.char_confidences,
             "bbox": bbox,
             "thumbnail_url": thumb,
         }

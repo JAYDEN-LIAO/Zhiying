@@ -22,6 +22,8 @@ from pipeline.runners.chunk_encode import ChunkEncodeRunner
 from pipeline.runners.text_encode import TextEncodeRunner
 from pipeline.runners.detection import DetectionRunner
 from pipeline.runners.track_encode import TrackEncodeRunner
+from pipeline.runners.face import FaceRunner
+from pipeline.runners.plate import PlateRunner
 
 ALL_OPERATIONS: list[Operation] = [
     Operation(
@@ -134,6 +136,32 @@ ALL_OPERATIONS: list[Operation] = [
         ),
         required_plugins=["embedder"],
         label="物体语义编码", description="Track 跨模态嵌入 + 全局重识别",
+        progress_weight=0.03,
+    ),
+
+    Operation(
+        name="face", runner=FaceRunner(),
+        depends_on=["detection"],
+        gate=lambda v, cfg: (
+            cfg.get("plugins", {}).get("face", {}).get("backend") is not None
+            and getattr(v, "detection_enabled", False)
+            and getattr(v, "face_enabled", False)
+        ),
+        required_plugins=["face"],
+        label="人脸识别", description="SCRFD 人脸检测 + ArcFace 身份聚类",
+        progress_weight=0.03,
+    ),
+
+    Operation(
+        name="plate", runner=PlateRunner(),
+        depends_on=["detection"],
+        gate=lambda v, cfg: (
+            cfg.get("plugins", {}).get("plate", {}).get("backend") is not None
+            and getattr(v, "detection_enabled", False)
+            and getattr(v, "plate_enabled", False)
+        ),
+        required_plugins=["plate"],
+        label="车牌识别", description="PaddleOCR 车牌检测与文字识别",
         progress_weight=0.03,
     ),
 ]
