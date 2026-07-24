@@ -49,12 +49,16 @@ curl -X POST -H "Content-Type: application/json" \
 | Video Metadata | `GET /api/v1/videos/{id}/metadata` | ✅ |
 | Semantic Search (5-path: frame+chunk+text+label+track) | `POST /api/v1/search/semantic` | ✅ |
 | Object Detection + Tracking | YOLO11s + BoT-SORT + Canvas overlay | ✅ |
+| Face Recognition | SCRFD + ArcFace R50 (512d) identity clustering | ✅ |
+| License Plate Recognition | PaddleOCR detection + text recognition | ✅ |
+| Face Image Search | `POST /api/v1/search/face` (upload image → ArcFace 512d) | ✅ |
+| Plate Text Search | `POST /api/v1/search/semantic` (plate path, ILIKE) | ✅ |
 | Track Thumbnail Download | `GET /api/v1/videos/{id}/export/track/{tid}/thumbnail` | ✅ |
 | Track Video Export (zip) | `GET/POST /api/v1/videos/{id}/export/track/{tid}` | ✅ |
 | Video Clip Export | `GET/POST /api/v1/videos/{id}/export/clip` | ✅ |
 | Scene Thumbnails Export (zip) | `GET/POST /api/v1/videos/{id}/export/thumbnails` | ✅ |
 | System Settings (API keys) | `GET/PUT /api/v1/settings` | ✅ |
-| Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 | ✅ |
+| Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 (3-tab detection panel) | ✅ |
 | Track Encoding + Global ReID | `POST /api/v1/search/semantic` (track path) | ✅ |
 | Incremental Processing | summary/search re-run on completed videos | ✅ |
 
@@ -70,20 +74,25 @@ Upload → Pipeline (DAG) → DB → Search → Frontend
          ├─ Captioning — 双模式 (runners/caption.py 内部策略):
          │    ├─ native_video (默认): Qwen2.5-VL-7B 本地 GPU 直接观看视频 → 结构化 JSON
          │    └─ vlm_llm (备选): Qwen-VL-Max API 看图说话 → 自然语言描述
-         ├─ Embedding — 3 encoding paths:
+         ├─ Embedding — 4 encoding paths:
          │    ├─ Frame-level: encode_image (1fps, per-frame)
          │    ├─ Chunk-level: encode_video (sliding window, 默认关闭)
-         │    └─ Text-level: encode_text(caption+ocr+transcript)
+         │    ├─ Text-level: encode_text(caption+ocr+transcript)
+         │    └─ Track-level: encode_image(crop) (cross-modal, track search)
+         ├─ Face Recognition (可选 — 双门控: config + per-video face_enabled):
+         │    └─ Person crop → SCRFD detect → ArcFace R50 512d embed → identity clustering
+         ├─ License Plate (可选 — 双门控: config + per-video plate_enabled):
+         │    └─ Vehicle crop → PaddleOCR detect → text recognition → plate text
          └─ Summarization — 双模式 (runners/summary.py 内部策略):
               ├─ native_video (默认): 纯 Python 聚合器 (Counter 频率统计, 去重)
               └─ vlm_llm (备选): DeepSeek API LLM 拼凑摘要
 ```
 
-- **Declarative pipeline** orchestrated by `PipelineEngine` (DAG executor), with 4-path frame/chunk/text/track encoding
-- **8 abstract plugin interfaces** with dynamic factory loading
-- **PostgreSQL + pgvector** with 8 tables: videos, scenes, transcripts, frame_embeddings, chunks, frame_detections, tracks, track_embeddings
-- **5-path parallel semantic search**: frame (1fps precision) + chunk (process semantics) + text (caption+ocr+transcript semantics) + label (JSONB @> entities) + track (crop cross-modal embedding, 返回具体物体)
-- **4-level parameter system**: Scene Type → Perception Modules → Function Switches → Advanced Params, with cross-field validation
+- **Declarative pipeline** orchestrated by `PipelineEngine` (DAG executor), with 4-path frame/chunk/text/track encoding + face recognition + license plate recognition (14 operations total)
+- **10 abstract plugin interfaces** with dynamic factory loading
+- **PostgreSQL + pgvector** with 11 tables: videos, scenes, transcripts, frame_embeddings, chunks, frame_detections, tracks, track_embeddings, face_identities, face_detections, plate_detections
+- **6-path parallel semantic search**: frame (1fps precision) + chunk (process semantics) + text (caption+ocr+transcript semantics) + label (JSONB @> entities) + track (crop cross-modal embedding) + plate (ILIKE text match); **face image search**: POST /search/face (upload image → ArcFace 512d identity matching)
+- **4-level parameter system**: Scene Type → Perception Modules → Function Switches → Advanced Params, with face/plate sub-switches under detection
 - **Config-driven**: switch models or API providers via `config.yaml`; switch summary mode via frontend parameter panel (`summary_mode` field)
 - **Pipeline real-time status** — each phase writes human-readable progress descriptions (`status_detail`) to the database, displayed in the frontend in real time
 - **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, parameter panel, summary mode selector, and settings page
@@ -193,7 +202,7 @@ cerno/
 
 ## Development Status
 
-- **v0.11 — Metadata extraction + Export API**: Video metadata extraction (pymediainfo + exiftool + ffprobe three-tier). Export API: clip (stream copy), frames (zip), multi-segment track export (zip with per-segment videos), track thumbnail download, all scene thumbnails (zip). Frontend: MetadataPanel (ℹ️ info card), ExportMenu (simplified single-form), DetectionPanel/VideoSearchCard export buttons. GET endpoint alternatives for browser download compatibility. Class-local track numbering. Backend: utils/metadata.py, services/export_service.py filled, api/export_routes.py 7 endpoints.
+- **v0.12 — Face + License Plate Recognition**: SCRFD + ArcFace R50 (512d) face identity clustering, PaddleOCR license plate text recognition, face image search (POST /search/face), plate text search (ILIKE), frontend 3-tab DetectionPanel (objects/face/plate), canvas overlay face/plate bboxes, timeline markers, parameter panel sub-switches. 14 operations, 11 DB tables, 10 plugin ABCs.
 - **v0.10 — Track encoding + Global ReID**: TrackEncodeRunner (最佳帧 crop + Qwen3-VL-Embedding 2048-dim). 全局离线 ReID 合并 (5 约束: 同类 + 时间不重叠 + 间隔≤180s + cos≥0.85 + 空间门). 5-path semantic search (frame+chunk+text+label+track). track 搜索独立去重, 返回具体物体 (class_name#id + crop 缩略图). EventDrivenScheduler: 异步事件驱动替代拓扑分批.
 - **v0.9 — YOLO detection + tracking**: YOLO11s + BoT-SORT (15fps 独立帧率, dual-gate). 前端 DetectionOverlay (Canvas bbox + 插值 + 拖尾) + DetectionPanel (物体列表 + 分类筛选) + DetectionTimeline (时间轴 + 播放头 + 选中滚动). demo 验证通过.
 - **v0.8 — DAG architecture refactor**: 声明式操作 DAG 引擎 (11 operations + gate-driven orchestration). 操作注册表 (pipeline/operations.py) + runners 目录. StatusTracker 动态权重. API 路由拆分. QC 模块移除.

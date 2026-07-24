@@ -2,7 +2,7 @@
 
 ## One-Line Summary
 
-Cerno is a **video analytics engine** (v0.10) that ingests videos, runs a **declarative operation DAG** (12 operations with event-driven orchestration), generates **4-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics + track-level crop embeddings), runs **YOLO11 object detection + BoT-SORT tracking** as an optional add-on with **global ReID merge** (Qwen3-VL-Embedding cross-modal matching), enables **5-path parallel semantic search** (frame + chunk + text + label + track, chunk 配置关闭默认不启用), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
+Cerno is a **video analytics engine** (v0.12) that ingests videos, runs a **declarative operation DAG** (14 operations with event-driven orchestration), generates **4-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics + track-level crop embeddings), runs **YOLO11 object detection + BoT-SORT tracking** as an optional add-on with **global ReID merge** (Qwen3-VL-Embedding cross-modal matching), adds **face recognition** (SCRFD + ArcFace R50 identity clustering) and **license plate recognition** (PaddleOCR) as optional perception modules, enables **6-path parallel semantic search** (frame + chunk + text + label + track + plate, chunk 配置关闭默认不启用) + **face image search** (POST /search/face, ArcFace 512d), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
 
 ## Quick File Map
 
@@ -17,10 +17,12 @@ api/deps.py                — FastAPI dependency injection (get_db)
 api/schemas.py             — Shared API DTOs (APIResponse, search/status models)
 api/detection_routes.py    — Detection data API endpoint (GET /videos/{id}/detection/data)
 api/export_routes.py       — Export endpoints: clip/frames/track/thumbnails (7 endpoints, GET+POST)
+api/face_routes.py          — Face data API (GET face/data + face/thumbnail)
+api/plate_routes.py         — Plate data API (GET plate/data + plate/thumbnail)
 api/maintenance_routes.py  — (stub) planned health/reindex endpoints
-core/models.py             — ORM: Video, Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding (8 tables)
+core/models.py             — ORM: Video, Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection (11 tables)
 core/schemas.py            — Pydantic v2 DTOs + JSONB validation models
-core/interfaces.py         — 8 abstract base classes (ABCs) + Scene/VideoContext dataclasses
+core/interfaces.py         — 10 abstract base classes (ABCs) + Scene/VideoContext dataclasses
 core/search.py             — 4 search functions: frame/chunk/text/track
 core/repository.py         — Data access layer + bulk_insert_frames/chunks
 core/db.py                 — Async engine, init_db(), incremental migration (pgvector, text_embedding)
@@ -44,9 +46,13 @@ pipeline/runners/          — 12 operation runners (one per processing unit):
   runners/text_encode.py     — Text semantic encoding → scenes.text_embedding
   runners/detection.py       — YOLO11 object detection + BoT-SORT tracking + scene entity aggregation
   runners/track_encode.py    — Track crop cross-modal embedding + global ReID merge
+  runners/face.py            — SCRFD face detection + ArcFace R50 embedding + identity clustering
+  runners/plate.py           — PaddleOCR license plate detection + text recognition
 pipeline/search_engine.py  — 5-path parallel recall (frame/chunk/text/label/track) + scene-merge dedup
 plugins/factory.py         — Dynamic plugin loader (CATEGORY_MAP, _MODULE_OVERRIDES, _CLASS_OVERRIDES)
 plugins/detector/yolo.py   — YOLO11s detector (batch GPU inference, asyncio.to_thread)
+plugins/face/insightface_face.py  — InsightFace SCRFD + ArcFace R50 recognizer
+plugins/plate/paddle_plate.py    — PaddleOCR license plate detector + recognizer
 config/config.yaml         — Main config: server/db/storage/plugins/pipeline
 config/config_schema.py    — Pydantic config validation
 config/prompts.yaml        — Caption/Summarizer/Grounding prompt templates
@@ -83,6 +89,7 @@ PipelineEngine.run() (DAG-based, gate-driven from L2/L3 params):
         → detection + caption + frame_encode (parallel, chunk_encode gated by config)
           → summary + text_encode (parallel)
             → track_encode (depends on detection + frame_encode)
+              → face + plate (parallel, both depend on detection, dual-gated per-video)
   → _persist() → mark_completed()
 
 Each operation declared in pipeline/operations.py with:
@@ -97,15 +104,17 @@ Adding a new perception module (e.g. YOLO detector):
   3. Add column to Video model + field to PipelineParams (unavoidable)
   → engine.py needs ZERO changes.
 
-Search (5-path parallel, v0.10):
+Search (6-path parallel, v0.12):
   text query → embedder.encode_text() → 2048-dim vector (shared, once)
-  → 5 parallel tasks:
+  → 6 parallel tasks:
     _frame_search()  → frame_embeddings table, 1fps per-frame precision
     _chunk_search()  → chunks table, sliding window process semantics
     _text_search()   → scenes.text_embedding, caption+ocr+transcript 语义
     _label_search()  → JSONB @> entities.label (精确匹配场景内物体标签)
     _track_search()  → track_embeddings table, crop跨模态嵌入, 返回具体物体
-  → merge: frame clusters (≤4s gap), chunk/text去重叠, track独立按 (video_id, track_id) 去重
+    _plate_search()  → plate_detections table, ILIKE 模糊匹配车牌号
+  → Face image search: POST /search/face (multipart image → ArcFace 512d → face_identities 表)
+  → merge: frame clusters (≤4s gap), chunk/text去重叠, track/plate 独立去重
   → enrich with scene metadata → return results with precision_level
 ```
 
@@ -124,7 +133,7 @@ Search (5-path parallel, v0.10):
 - **Summary dual-mode (v0.10)**: `summary_mode` 控制 caption+summary 路径。`native_video`（默认）→ CaptionRunner 内部路由到 Qwen2.5-VL-7B 本地 GPU，SummaryRunner 内部路由到纯 Python 聚合器。`vlm_llm` → CaptionRunner 动态切换为 Qwen-VL-Max API captioner，SummaryRunner 内部路由到 DeepSeek API。双模式切换完全封装在 runner 内部，engine.py 不感知。Summary mode 变更需新建视频记录（不可增量）。
 - **Incremental processing**: Completed videos can re-run summary or search index independently via `run_incremental()`. Non-L3 param changes (including summary_mode) require creating a new video record (reuse file via `POST /videos/reuse`).
 
-## Database Tables (8)
+## Database Tables (11)
 
 | Table | Key Columns | Purpose |
 |---|---|---|
@@ -136,6 +145,9 @@ Search (5-path parallel, v0.10):
 | `frame_detections` | id, video_id(FK), track_id, timestamp_sec, class_name, confidence, bbox(JSONB) | Per-frame YOLO detection results (15fps, indexed by timestamp) |
 | `tracks` | id, video_id(FK), track_id, class_name, first_seen, last_seen, frame_count, segments(JSONB) | BoT-SORT cross-frame track summaries |
 | `track_embeddings` | id, video_id(FK), track_id, class_name, embedding(Vector2048), timestamp_sec, bbox(JSONB) | Track crop cross-modal vectors, for track-path search + global ReID |
+| `face_identities` | id, video_id(FK), identity_label, face_embedding(Vector512), face_count, first_seen, last_seen, avg_quality, best_face_bbox(JSONB) | Clustered face identities (ArcFace R50 512d), "人物 A/B/C..." |
+| `face_detections` | id, video_id(FK), identity_id(FK), track_id, timestamp_sec, bbox(JSONB), quality_score, face_embedding(Vector512) | Per-frame face detections, linked to YOLO person tracks |
+| `plate_detections` | id, video_id(FK), track_id, class_name, timestamp_sec, plate_text, plate_type, char_confidences(JSONB), bbox(JSONB), detection_confidence | PaddleOCR license plate recognition results |
 
 ## Current Implementation Status
 
@@ -158,10 +170,14 @@ Search (5-path parallel, v0.10):
 | Parameter system (4-level) | ✅ Done | core/schemas.py PipelineParams + model_validator; config/presets.yaml; frontend ParameterPanel with cascade |
 | Incremental processing | ✅ Done | pipeline/engine.py run_incremental(); services/video_service.py incremental_process() |
 | Settings API + API key mgmt | ✅ Done | core/settings_service.py; GET/PUT /api/v1/settings |
-| Frontend dashboard | ✅ Done | Dashboard.tsx + 15 components (React 19 + Tailwind 4) — 参数面板四级联动, 动态 PipelineBar, 系统设置页, 历史记录搜索, Canvas bbox 渲染, 物体列表+时间轴, 元数据卡片, 导出菜单 |
+| Frontend dashboard | ✅ Done | Dashboard.tsx + 15 components (React 19 + Tailwind 4) — 参数面板四级联动+人脸/车牌子开关, 动态 PipelineBar, 检测面板三Tab(物体/人脸/车牌), Canvas bbox 渲染(人脸虚线+车牌双线), 时间轴人脸/车牌标记点, 人脸图片搜索(👤按钮), 系统设置页, 历史记录搜索, 元数据卡片, 导出菜单 |
 | Object Detection (YOLO) | ✅ Done | plugins/detector/yolo.py — YOLO11s + ByteTrack/BoT-SORT, dual-gate control, frontend DetectionOverlay |
 | Global ReID merge | ✅ Done | runners/track_encode.py — Qwen3-VL-Embedding cross-modal merge (0.85 cos threshold, 180s time gate, 5 constraints) |
 | Track search path | ✅ Done | core/search.py track_vector_search + search_engine.py _track_search — encode_text(query) vs track crop embeddings, 返回具体物体 |
+| Face Recognition | ✅ Done | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
+| License Plate Recognition | ✅ Done | plugins/plate/paddle_plate.py — PaddleOCR detection + text recognition, PlateRunner |
+| Face Image Search | ✅ Done | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
+| Plate Text Search | ✅ Done | core/search.py plate_text_search — ILIKE fuzzy match via pg_trgm |
 | Video Metadata Extraction | ✅ Done | utils/metadata.py — 三级提取 (pymediainfo → exiftool → ffprobe), GPS/device/codec |
 | Clip Export | ✅ Done | services/export_service.py + api/export_routes.py — 流复制视频片段导出 |
 | Frames/Thumbnails Export | ✅ Done | 帧序列 zip / 全部场景缩略图 zip 导出 |

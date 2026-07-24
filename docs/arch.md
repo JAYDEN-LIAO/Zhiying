@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.11 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.12 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -47,6 +47,8 @@
 │  │      → detect + caption  │
 │  │        + frame_encode    │
 │  │        (+ track_encode   │
+│  │         after detection) │
+│  │        (+ face + plate   │
 │  │         after detection) │
 │  │      → summary + text_e  │
 │  └─ Persist → DB            │
@@ -313,12 +315,15 @@ Semantic Search: POST /api/v1/search/semantic
     ↓
   SearchEngine (lazy init, cached in app.state._searcher)
     ├─ Embedder.encode_text() → 2048-dim vector (shared, 只编码一次)
-    ├─ 五路并行召回:
+    ├─ 六路并行召回:
     │   ├─ _frame_search()  → frame_embeddings 表, 1fps 帧级精确秒定位
     │   ├─ _chunk_search()  → chunks 表, 滑动窗口多帧原生编码
     │   ├─ _text_search()   → scenes.text_embedding, caption+ocr+transcript 语义
     │   ├─ _label_search()  → JSONB @> entities.label (YOLO 激活后用)
-    │   └─ _track_search()  → track_embeddings 表, crop 跨模态嵌入, 返回具体物体
+    │   ├─ _track_search()  → track_embeddings 表, crop 跨模态嵌入, 返回具体物体
+    │   └─ _plate_search()  → plate_detections 表, ILIKE 模糊匹配车牌号
+    └─ Face image search: POST /search/face
+        └─ image → ArcFace R50 512d → face_identities.face_embedding cosine match
     └─ 按 scene 合并 + 去重:
         ├─ 帧结果按时间聚类 (间隔 ≤ 4s)
         ├─ chunk/text 结果与帧簇重叠 → 丢弃 (帧精度更高)
@@ -394,6 +399,28 @@ track_embeddings
   ├─ track_id, class_name, embedding (Vector 2048)
   ├─ timestamp_sec, bbox (JSONB)
   └─ created_at
+
+face_identities
+  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
+  ├─ identity_label (String, "人物 A/B/C..."), face_count
+  ├─ face_embedding (Vector 512 — ArcFace R50 output)
+  ├─ first_seen, last_seen, avg_quality
+  ├─ best_face_timestamp, best_face_bbox (JSONB)
+  └─ created_at
+
+face_detections
+  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
+  ├─ identity_id (FK → face_identities.id, SET NULL)
+  ├─ track_id, timestamp_sec
+  ├─ bbox (JSONB), quality_score, face_embedding (Vector 512)
+  └─ created_at
+
+plate_detections
+  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
+  ├─ track_id, class_name, timestamp_sec
+  ├─ plate_text, plate_type (blue/yellow/green/white)
+  ├─ char_confidences (JSONB), bbox (JSONB), detection_confidence
+  └─ created_at
 ```
 
 ## API Endpoints
@@ -416,7 +443,10 @@ track_embeddings
 | GET | /api/v1/pipeline/operations | 查询启用的操作列表 + 进度范围 |
 | GET | /api/v1/videos/{id}/detection/data | 逐帧检测框 + 追踪轨迹 JSON |
 | GET | /api/v1/videos/{id}/detection/thumbnail | track crop 缩略图 (bbox 裁剪) |
-| POST | /api/v1/search/semantic | 语义搜索 (五路并行：frame+chunk+text+label+track) |
+| GET | /api/v1/videos/{id}/plate/data | 车牌识别数据 |
+| GET | /api/v1/videos/{id}/plate/thumbnail | 车牌缩略图 |
+| POST | /api/v1/search/semantic | 语义搜索 (六路并行：frame+chunk+text+label+track+plate) |
+| POST | /api/v1/search/face | 人脸图片搜索 (multipart image → ArcFace 512d) |
 | POST | /api/v1/videos/{id}/export/clip | 导出视频片段 (JSON) |
 | GET | /api/v1/videos/{id}/export/clip | 导出视频片段/单帧 (query params) |
 | POST | /api/v1/videos/{id}/export/frames | 导出帧 zip (兼容) |
@@ -490,6 +520,9 @@ Vite 开发代理:
 | **GET + POST dual export endpoints** | POST for programmatic API calls (curl), GET with query params for browser direct download → avoids async download blocking |
 | **Three-tier metadata extraction** | pymediainfo (full tech) → exiftool (GPS/device) → ffprobe (fallback), graceful degradation |
 | **Class-local track numbering** | Display shows sequential class-local IDs (person 1, car 2) while API uses raw track_id internally |
+| **Per-video face/plate toggles** | Sub-switches under detection_enabled in parameter panel. Surveillance preset defaults both ON. Three-level gate: config backend + detection_enabled + face_enabled/plate_enabled |
+| **Face image search (ArcFace 512d)** | Separate search endpoint (POST /search/face) using ArcFace R50 512-dim vectors, not the shared Qwen3-VL 2048-dim embedder. Image-to-identity matching, not text-to-face |
+| **Plate text search (ILIKE)** | Text-based, not vector. Uses PostgreSQL pg_trgm trigram similarity for fuzzy matching. Independent search path with precision_level="plate" |
 
 ## Current Status
 
@@ -497,7 +530,11 @@ Vite 开发代理:
 |---|---|---|
 | Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 12 ops with gates/deps, events-driven |
 | Track Encoding + Global ReID | ✅ | runners/track_encode.py Phase 1: crop→embed; Phase 2: 全局离线 ReID 合并 (cos≥0.85, 时间门180s) |
-| Semantic Search (5-path) | ✅ | frame + chunk + text + label + track 并行召回, track 独立去重 |
+| Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
+| License Plate Recognition | ✅ | plugins/plate/paddle_plate.py — PaddleOCR detection + text recognition, PlateRunner |
+| Face Image Search | ✅ | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
+| Plate Text Search | ✅ | core/search.py plate_text_search — ILIKE fuzzy match via pg_trgm |
+| Semantic Search (6-path) | ✅ | frame + chunk + text + label + track + plate 并行召回, plate 独立 ILIKE |
 | Frame-level Encoding | ✅ | runners/frame_encode.py: batch encode 4 frames |
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
 | Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
