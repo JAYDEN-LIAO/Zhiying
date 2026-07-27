@@ -28,7 +28,7 @@ plugins:
     confidence_threshold: 0.4
     iou_threshold: 0.5
     batch_size: 128
-    detection_fps: 8
+    detection_fps: 15
 
   # ── OCR（Demo 跳过）──
   ocr:
@@ -91,3 +91,8 @@ pipeline:
   # chunk 编码：默认关闭（8GB GPU 上帧+文本路已足够）
   # 开启需要较好 GPU（≥12GB VRAM），并确认 encode_video 不 OOM
   chunk_encoding: false
+  # 帧编码批大小 — 按 GPU VRAM 调整: 24GB→128, 48GB→256
+  encode_batch_size: 256
+  # NVDEC 硬解 — 长视频（1h+）收益明显，短视频反而有子进程开销
+  # 需要 NVIDIA GPU + FFmpeg 编译 CUDA 支持
+  use_nvdec: false

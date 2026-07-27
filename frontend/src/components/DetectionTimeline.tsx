@@ -21,7 +21,7 @@ const LANE_H = 10;
 const LANE_GAP = 2;
 const RULER_H = 14;
 const PAD = 6;
-const TIMELINE_WRAPPER_H = 160; // fixed outer height — never changes
+const TIMELINE_MIN_H = 140; // min outer height — expands via flex-1 to fill gap
 
 interface Props {
   videoId: string;
@@ -81,11 +81,11 @@ export function DetectionTimeline({ videoRef, data, selectedTrackId, classFilter
     return () => cancelAnimationFrame(rafRef.current);
   }, [videoRef]);
 
-  // Empty placeholder — same fixed height as the real timeline
+  // Empty placeholder — flex-1 to fill available space
   if (!data?.has_detection || filteredTracks.length === 0) {
     return (
-      <div className="w-full shrink-0 mt-2 rounded-lg flex items-center justify-center"
-           style={{ height: TIMELINE_WRAPPER_H, background: "rgba(0,0,0,0.55)" }}>
+      <div className="w-full flex-1 min-h-[140px] mt-2 rounded-lg flex items-center justify-center"
+           style={{ background: "rgba(0,0,0,0.55)" }}>
         <span className="text-xs text-white/25">时间轴</span>
       </div>
     );
@@ -97,7 +97,7 @@ export function DetectionTimeline({ videoRef, data, selectedTrackId, classFilter
   for (let t = 0; t <= duration; t += tickInterval) rulerTicks.push(t);
 
   return (
-    <div className="w-full shrink-0 mt-2 rounded-lg overflow-hidden" style={{ height: TIMELINE_WRAPPER_H }}>
+    <div className="w-full flex-1 min-h-[140px] mt-2 rounded-lg overflow-hidden">
       <div
         className="relative w-full h-full flex flex-col"
         style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)" }}
@@ -118,7 +118,7 @@ export function DetectionTimeline({ videoRef, data, selectedTrackId, classFilter
           className="flex-1 overflow-y-auto timeline-scroll"
           style={{ minHeight: 0 }}
         >
-          <div style={{ height: Math.max(contentH, TIMELINE_WRAPPER_H - RULER_H), position: "relative" }}>
+          <div style={{ height: Math.max(contentH, 0), minHeight: "100%", position: "relative" }}>
             {lanes.map(({ track, lane }) => {
               const segs = track.segments?.length
                 ? track.segments

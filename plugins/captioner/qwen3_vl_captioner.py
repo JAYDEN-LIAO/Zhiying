@@ -93,12 +93,15 @@ class Qwen3VLCaptioner(BaseCaptioner):
         temp_dir = tempfile.mkdtemp(prefix="qwen3vl_")
         clip_path = os.path.join(temp_dir, f"clip_{uuid.uuid4().hex}.mp4")
         try:
+            # -ss 在 -i 之前: 输入级 seek，精准到帧；-c copy 降级到最近关键帧时
+            # -avoid_negative_ts 保证输出时间戳从 0 开始，避免播放器兼容问题
             proc = await asyncio.create_subprocess_exec(
                 "ffmpeg", "-y",
                 "-ss", str(start),
                 "-i", self.video_path,
                 "-t", str(clip_dur),
                 "-c", "copy",
+                "-avoid_negative_ts", "make_zero",
                 clip_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

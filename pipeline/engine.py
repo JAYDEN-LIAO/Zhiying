@@ -113,7 +113,10 @@ def topological_batches(ops: list) -> list[list]:
     while remaining:
         ready = {
             name for name in remaining
-            if all(dep in completed for dep in name_to_op[name].depends_on)
+            if all(
+                dep in completed or dep not in name_to_op
+                for dep in name_to_op[name].depends_on
+            )
         }
         if not ready:
             raise ValueError(f"循环依赖: {remaining}")
@@ -238,9 +241,14 @@ class PipelineEngine:
             if need_summary and v.caption_enabled:
                 op_names.update(["caption", "summary"])
             if need_search and v.vision_enabled:
-                op_names.update(["keyframes", "frame_encode", "text_encode"])
-                if self.config.get("pipeline", {}).get("chunk_encoding", False):
-                    op_names.add("chunk_encode")
+                if v.summary_enabled:
+                    # 摘要路径: keyframes → frame_encode + text_encode
+                    op_names.update(["keyframes", "frame_encode", "text_encode"])
+                    if self.config.get("pipeline", {}).get("chunk_encoding", False):
+                        op_names.add("chunk_encode")
+                else:
+                    # 纯搜索路径: search_encode（自抽帧+编码，不依赖 scene）
+                    op_names.add("search_encode")
 
             enabled = [op for op in ALL_OPERATIONS if op.name in op_names]
 
@@ -255,15 +263,17 @@ class PipelineEngine:
                     await session.execute(
                         sa_delete(Chunk).where(Chunk.video_id == v.id)
                     )
-                    await session.execute(
-                        update(Scene)
-                        .where(Scene.video_id == v.id)
-                        .values(text_embedding=None)
-                    )
+                    if v.summary_enabled:
+                        await session.execute(
+                            update(Scene)
+                            .where(Scene.video_id == v.id)
+                            .values(text_embedding=None)
+                        )
                     await session.commit()
 
-            # 从 DB 加载已有场景
-            await self._load_scenes_from_db()
+            # 从 DB 加载已有场景（仅摘要路径需要）
+            if v.summary_enabled and need_search:
+                await self._load_scenes_from_db()
 
             await self._load_plugins(enabled)
             if self._shared_captioner is not None:

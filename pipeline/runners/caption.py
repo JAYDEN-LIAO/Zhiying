@@ -76,10 +76,6 @@ class CaptionRunner(OperationRunner):
         else:
             await self._run_native_video(pctx, captioner, scenes)
 
-        # 释放 caption 模型显存，为 embedder 腾出空间
-        if hasattr(captioner, "unload"):
-            captioner.unload()
-
         captioned = sum(1 for s in scenes if s.caption)
         logger.info("[CaptionRunner] Captioned %d/%d scenes", captioned, len(scenes))
 

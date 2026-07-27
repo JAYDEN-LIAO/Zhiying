@@ -29,7 +29,7 @@ class FrameEncodeRunner(OperationRunner):
         await pctx.tracker.update("frame_encode", sub_progress=0.0)
         logger.info("[FrameEncodeRunner] Encoding frame embeddings ...")
 
-        _BATCH_SIZE = 64  # 119GB VRAM, 一批走完 46 帧，一次前向
+        _BATCH_SIZE = pctx.config.get("pipeline", {}).get("encode_batch_size", 64)
 
         all_frame_rows: list[dict] = []
 

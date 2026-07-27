@@ -304,7 +304,11 @@ export function VideoSearchCard({
               if (isTrack && item.track_id != null && item.precise_start != null) {
                 onTrackResult?.(item.track_id, item.class_name ?? "", item.precise_start);
               } else if (isPlate && item.precise_start != null) {
-                if (onSeekTo) onSeekTo(item.precise_start, null);
+                if (item.track_id != null) {
+                  onTrackResult?.(item.track_id, item.class_name ?? "", item.precise_start);
+                } else {
+                  if (onSeekTo) onSeekTo(item.precise_start, null);
+                }
               } else {
                 const ts = item.precise_start ?? item.scene_range_start;
                 if (onSeekTo && ts != null) onSeekTo(ts, item.precise_end ?? item.scene_range_end);

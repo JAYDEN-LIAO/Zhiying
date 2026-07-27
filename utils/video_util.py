@@ -263,6 +263,243 @@ async def export_video_segment(
 
 
 # ═══════════════════════════════════════════════════════════
+# NVDEC 硬件解码帧流
+# ═══════════════════════════════════════════════════════════
+
+
+def _nv12_frame_size(width: int, height: int) -> int:
+    """NV12 单帧字节数: Y (w*h) + UV (w*h/2)。"""
+    return width * height * 3 // 2
+
+
+def _nv12_to_rgb_cv2(data: bytes, width: int, height: int) -> 'np.ndarray':
+    """NV12 → RGB uint8 (H, W, 3) via cv2。"""
+    import cv2
+    import numpy as np
+    yuv = np.frombuffer(data, dtype=np.uint8).reshape(height * 3 // 2, width)
+    return cv2.cvtColor(yuv, cv2.COLOR_YUV2RGB_NV12)
+
+
+async def stream_frames_nvdec(
+    video_path: str,
+    fps: float = 1.0,
+    output_width: int | None = None,
+    output_height: int | None = None,
+):
+    """NVDEC 硬解 → 异步 RGB 帧生成器。
+
+    GPU 解码 + 缩放（scale_cuda），CPU 仅做 NV12→RGB 颜色转换。
+    FFmpeg/NVDEC 不可用时自动 fallback 到 cv2。
+
+    Args:
+        video_path: 视频文件路径。
+        fps: 采样帧率。
+        output_width / output_height: 输出分辨率。未指定时使用原始分辨率（需先 probe）。
+
+    Yields:
+        (H, W, 3) uint8 numpy RGB 帧数组。
+    """
+    import cv2
+    import numpy as np
+
+    # ── 构建 FFmpeg NVDEC 命令 ──
+    scale_filter = ""
+    if output_width is not None and output_height is not None:
+        scale_filter = f",scale_cuda={output_width}:{output_height}"
+
+    cmd = [
+        "ffmpeg",
+        "-loglevel", "error",
+        "-hwaccel", "cuda",
+        "-hwaccel_output_format", "cuda",
+        "-i", video_path,
+        "-vf", f"fps={fps}{scale_filter},hwdownload,format=nv12",
+        "-f", "rawvideo",
+        "-pix_fmt", "nv12",
+        "pipe:1",
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+
+    # ── 探测实际输出分辨率 ──
+    # 从 FFmpeg stderr 解析 stream 信息，或使用已知参数
+    out_w = output_width
+    out_h = output_height
+    if out_w is None or out_h is None:
+        # 懒 probe via cv2 (仅一次，<100ms)
+        cap = cv2.VideoCapture(video_path)
+        out_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
+        out_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+        cap.release()
+        logger.debug("[NVDEC] probed resolution: %dx%d", out_w, out_h)
+
+    frame_bytes = _nv12_frame_size(out_w, out_h)
+    logger.info("[NVDEC] Streaming %dx%d @ %.1f fps via NVDEC", out_w, out_h, fps)
+
+    try:
+        while True:
+            data = await proc.stdout.read(frame_bytes)
+            if not data or len(data) < frame_bytes:
+                break
+            try:
+                rgb = _nv12_to_rgb_cv2(data, out_w, out_h)
+                yield rgb
+            except Exception:
+                logger.warning("[NVDEC] NV12→RGB failed for one frame, skipping")
+                continue
+    finally:
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        await proc.wait()
+
+
+async def stream_frames_cv2(
+    video_path: str,
+    fps: float = 1.0,
+    target_width: int | None = None,
+    target_height: int | None = None,
+    total_frames: int | None = None,
+):
+    """cv2 软件解码 → 异步 RGB 帧生成器（CPU decode，NVDEC 的 fallback）。
+
+    与 stream_frames_nvdec 接口完全一致，可直接互换。
+    使用线程 + Queue 实现真正的流式输出，内存上限 = _Q_SIZE 帧，
+    而非全部帧常驻内存。
+
+    Args:
+        total_frames: 需要抽取的总帧数。传入时使用计数驱动（准确，推荐）；
+                      未传入时回退到时长驱动（依赖 CAP_PROP_FRAME_COUNT，不可靠）。
+    """
+    import asyncio
+    import queue
+    import threading
+    import cv2
+
+    _Q_SIZE = 256       # 缓冲区帧数上限，约 1.5GB @ 1080p
+    _SENTINEL = None    # 帧始终是 np.ndarray，None 可安全用作结束信号
+
+    q: queue.Queue = queue.Queue(maxsize=_Q_SIZE)
+    reader_error: list[Exception] = []
+
+    def _read() -> None:
+        """在线程中运行 — cv2 读帧 → queue，不阻塞事件循环。"""
+        cap = None
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                return
+            source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            frame_idx = 0
+            collected = 0
+            next_ts = 0.0
+            do_resize = target_width is not None and target_height is not None
+
+            if total_frames is not None:
+                # ── 计数驱动（准确，不依赖 CAP_PROP_FRAME_COUNT）──
+                while collected < total_frames:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    ts = frame_idx / source_fps
+                    if ts >= next_ts - 0.001:
+                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        if do_resize:
+                            rgb = cv2.resize(
+                                rgb, (target_width, target_height),
+                                interpolation=cv2.INTER_LINEAR,
+                            )
+                        q.put(rgb)          # 队列满时阻塞，提供反压
+                        collected += 1
+                        next_ts += 1.0 / fps
+                    frame_idx += 1
+            else:
+                # ── 时长驱动（legacy fallback）──
+                duration = float(cap.get(cv2.CAP_PROP_FRAME_COUNT)) / source_fps
+                while next_ts <= duration:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    ts = frame_idx / source_fps
+                    if ts >= next_ts - 0.001:
+                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        if do_resize:
+                            rgb = cv2.resize(
+                                rgb, (target_width, target_height),
+                                interpolation=cv2.INTER_LINEAR,
+                            )
+                        q.put(rgb)
+                        next_ts += 1.0 / fps
+                    frame_idx += 1
+        except Exception as e:
+            reader_error.append(e)
+        finally:
+            if cap is not None:
+                cap.release()
+            q.put(_SENTINEL)
+
+    thread = threading.Thread(target=_read, daemon=True)
+    thread.start()
+
+    while True:
+        frame = await asyncio.to_thread(q.get)
+        if frame is _SENTINEL:
+            break
+        yield frame
+
+    thread.join()
+    if reader_error:
+        raise reader_error[0]
+
+
+async def stream_frames(
+    video_path: str,
+    fps: float = 1.0,
+    output_width: int | None = None,
+    output_height: int | None = None,
+    use_nvdec: bool = True,
+    total_frames: int | None = None,
+):
+    """统一帧流接口 — 优先 NVDEC，不可用时自动 fallback 到 cv2。
+
+    Args:
+        video_path: 视频文件路径。
+        fps: 采样帧率。
+        output_width / output_height: 输出分辨率。None 为原始分辨率。
+        use_nvdec: 是否尝试 NVDEC 硬解。
+        total_frames: 需要抽取的总帧数（传入时使用计数驱动，准确可靠）。
+
+    Yields:
+        (H, W, 3) uint8 numpy RGB 帧数组。
+    """
+    if use_nvdec:
+        try:
+            async for frame in stream_frames_nvdec(
+                video_path, fps, output_width, output_height,
+            ):
+                yield frame
+            return
+        except (FileNotFoundError, Exception) as e:
+            logger.warning(
+                "[stream_frames] NVDEC unavailable (%s), falling back to cv2", e,
+            )
+
+    async for frame in stream_frames_cv2(
+        video_path, fps, output_width, output_height, total_frames,
+    ):
+        yield frame
+
+
+# ═══════════════════════════════════════════════════════════
 # 杂项工具
 # ═══════════════════════════════════════════════════════════
 

@@ -46,6 +46,7 @@ async def init_db():
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "vector"'))
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pg_trgm"'))
+        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "fuzzystrmatch"'))
 
         # ── 创建所有表 ──
         await conn.run_sync(Base.metadata.create_all)

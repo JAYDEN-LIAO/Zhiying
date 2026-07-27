@@ -464,8 +464,8 @@ export default function Dashboard() {
                 faceData={faceData}
               />
 
-              {/* ── Pipeline Bar (pushed to bottom, aligns with objects panel bottom) ── */}
-              <div className="shrink-0 mt-auto">
+              {/* ── Pipeline Bar (aligned with objects panel bottom) ── */}
+              <div className="shrink-0">
                 <PipelineBar progress={currentVideo?.progress ?? 0} statusDetail={currentVideo?.status_detail} switches={pipelineSwitches} subtitle={currentVideo?.status === "pending" ? "等待参数配置..." : null} />
               </div>
             </div>

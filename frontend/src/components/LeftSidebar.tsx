@@ -2,7 +2,7 @@
    LeftSidebar — extracted from Dashboard.tsx (lines 196-285)
    ════════════════════════════════════════════════════════════ */
 
-import { IconEye, IconDashboard, IconSliders, IconHistory, IconGear } from "./icons";
+import { IconDashboard, IconSliders, IconHistory, IconGear } from "./icons";
 
 export type PageView = "dashboard" | "settings";
 export type PanelType = "params" | "history";
@@ -22,12 +22,6 @@ export function LeftSidebar({
     <aside
       className="w-16 bg-[#1a65e1] rounded-t-[32px] rounded-b-[32px] flex flex-col items-center pt-6 pb-4 z-10 flex-shrink-0 h-full shadow-[2px_0_16px_rgba(0,0,0,0.15)]"
     >
-      <div className="mb-8">
-        <div className="w-8 h-8 flex items-center justify-center text-white/80">
-          <IconEye />
-        </div>
-      </div>
-
       {/* ── Page Navigation (blue) + Panel Toggles (green) ── */}
       <nav className="flex-1 flex flex-col gap-4 w-full px-2">
         {/* 工作台 — blue page nav */}

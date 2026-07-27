@@ -56,9 +56,18 @@ async def lifespan(app: FastAPI):
     app.state.embedder = await _load_embedder(config, "embedder")
     logger.info("Embedder loaded, GPU ready")
 
-    # 预加载 captioner — 暂时跳过以加速启动（近期不用视觉识别）
+    # 预加载 captioner — 暂时关闭以节省显存，按需开启
     # GB10 128GB 统一内存：embedder(8B) ~16GB + captioner(8B) ~16GB = ~32GB
-    logger.info("Captioner preload: SKIPPED (disabled for fast startup)")
+    # logger.info("Loading shared captioner ...")
+    # from plugins.factory import load_plugin as _load_captioner
+    # app.state.captioner = await _load_captioner(config, "captioner")
+    # if app.state.captioner is not None:
+    #     if hasattr(app.state.captioner, "preload"):
+    #         await app.state.captioner.preload()
+    #     logger.info("Captioner loaded, GPU ready")
+    # else:
+    #     logger.info("Captioner disabled (backend is null)")
+    logger.info("Captioner preload: SKIPPED")
     app.state.captioner = None
 
     # 人脸识别器 — 搜索端点用（图片搜人脸）

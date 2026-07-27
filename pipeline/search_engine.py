@@ -195,28 +195,33 @@ class SearchEngine:
         video_ids: list[str] | None,
         limit: int,
     ) -> list[dict]:
-        """车牌文本搜索 — ILIKE / trigram 相似度匹配。"""
+        """车牌文本搜索 — ILIKE / trigram 相似度匹配，结果含车辆 track 时间段。"""
         async with self.db_session_factory() as session:
             results = await plate_text_search(
                 session, query, limit=limit, video_ids=video_ids,
             )
-        return [self._plate_to_dict(p, sim) for p, sim in results]
+            # 批量取 track 生命周期，车牌定位到车辆 track 的时间段而非单帧
+            track_keys = [(str(r.video_id), r.track_id) for r, _ in results]
+            track_map = await _load_track_ranges(session, track_keys)
+        return [self._plate_to_dict(p, sim, track_map) for p, sim in results]
 
     @staticmethod
-    def _plate_to_dict(plate, sim: float) -> dict:
+    def _plate_to_dict(plate, sim: float, track_map: dict | None = None) -> dict:
         bbox = plate.bbox
         thumb = (
             f"/api/v1/videos/{plate.video_id}/plate/thumbnail"
             f"?timestamp={plate.timestamp_sec}"
             f"&x1={bbox['x1']}&y1={bbox['y1']}&x2={bbox['x2']}&y2={bbox['y2']}"
         ) if bbox else None
+        key = (str(plate.video_id), plate.track_id)
+        trk = track_map.get(key) if track_map else None
         return {
             "video_id": str(plate.video_id),
             "track_id": plate.track_id,
             "class_name": plate.class_name,
             "scene_index": 0,
-            "precise_start": plate.timestamp_sec,
-            "precise_end": None,
+            "precise_start": trk["first_seen"] if trk else plate.timestamp_sec,
+            "precise_end": trk["last_seen"] if trk else None,
             "precision_level": "plate",
             "similarity": float(sim),
             "source": "plate",

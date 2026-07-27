@@ -135,17 +135,23 @@ async def plate_text_search(
     limit: int = 20,
     video_ids: list[str] | None = None,
 ) -> list[tuple[PlateDetection, float]]:
-    """车牌文本搜索 — ILIKE 模糊匹配 plate_text。
+    """车牌文本搜索 — Levenshtein 编辑距离。
 
-    匹配度: 精确匹配 = 1.0，模糊匹配基于 similarity() 函数。
+    编辑距离 ≤ 2 的视为匹配，按距离升序排列（越近越靠前）。
+    同时保留 ILIKE 子串匹配作为快速路径（距离 = 0，排最前）。
     """
-    from sqlalchemy import func as sa_func
+    from sqlalchemy import func as sa_func, or_, case
 
-    similarity = sa_func.similarity(PlateDetection.plate_text, query).label("sim")
+    dist = sa_func.levenshtein(PlateDetection.plate_text, query).label("dist")
+    # 相似度 = 1 / (1 + 编辑距离)，距离 0=1.0，距离 1=0.5，距离 2=0.33
+    similarity = (1.0 / (1.0 + dist)).label("sim")
     stmt = (
         select(PlateDetection, similarity)
-        .where(PlateDetection.plate_text.ilike(f"%{query}%"))
-        .order_by(similarity.desc())
+        .where(or_(
+            PlateDetection.plate_text.ilike(f"%{query}%"),
+            dist <= 2,
+        ))
+        .order_by(dist.asc())
         .limit(limit)
     )
     if video_ids:

@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.13 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.14 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -19,7 +19,7 @@
 │  │ upload/register/params  │ │  │   ├─ text (caption 语义)    │  │  ├── search panel │
 │  │ stream (hevc_ok 路由)   │ │  │   ├─ label (JSONB 精确)     │  │  ├── history list │
 │  │ proxy-status/thumbnail  │ │  │   └─ track (crop 跨模态)    │  │  ├── det panel    │
-│  │ delete/metadata        │ │  │   └─ plate (ILIKE 模糊)     │  │  └── export btn   │
+│  │ delete/metadata        │ │  │   └─ plate (Levenshtein)   │  │  └── export btn   │
 │  └─────────────────────────┘ │  └──────────┬──────────────────┘  └──────────────────┘
 │  ┌─ api/export_routes.py ──┐ │             │
 │  │ clip / frames / track   │ │  ┌──────────▼──────────────────┐
@@ -47,15 +47,16 @@
 │  EventDrivenScheduler (v0.10)│
 │  Each op awaits upstream     │
 │  ┌─ duration                │
+│  │  → search_encode (∥)     │
 │  │  → seg + transcribe      │
 │  │    → keyframes + align   │
-│  │      → detect + caption  │
-│  │        + frame_encode    │
-│  │        (+ track_encode   │
-│  │         after detection) │
-│  │        (+ face + plate   │
-│  │         after detection) │
-│  │      → summary + text_e  │
+│  │      → caption           │
+│  │      → frame_encode      │
+│  │      → text_encode       │
+│  │  → detect                │
+│  │    → track_encode        │
+│  │    → face + plate        │
+│  │      → summary           │
 │  └─ Persist → DB            │
 └─────────────────────────────┘
            │
@@ -115,6 +116,11 @@ Incremental: Only L3 switches can be toggled on completed videos
 ## Pipeline Detail
 
 ```
+Phase 0: 搜索路径（search_encode, 并行于 Phase 1-5）
+  搜索功能开启时，search_encode 与下方摘要管线完全并行
+  ├─ depends_on=["duration"]，不等任何人
+  └─ 自抽帧 1fps + 批量编码 → frame_embeddings 表
+
 Phase 1 (DAG: duration → segmentation, transcription)
   ├─ duration (ffprobe) → ctx.duration
   ├─ Audio Extraction (optional, FFmpeg) → audio_path
@@ -159,7 +165,7 @@ Phase 3 (Alignment, 可选)
   │    状态: "正在描述第 X/Y 个场景"
   └─ Embed (Qwen3-VL-Embedding, 本地 GPU) → 编码在 Encode Frames 阶段完成
       (scene.embedding 已废弃，帧级编码统一在 _encode_frames 中处理)
-      (embedder 在 lifespan 启动时预加载到 app.state.embedder，全局共享)
+      (embedder 在 lifespan 启动时预加载到 app.state.embedder；captioner 按需加载，用完释放)
 
   ↓
 
@@ -213,7 +219,7 @@ main.py
         │     ├─ services/video_service.py
         │     │     └─ pipeline/engine.py (DAG executor)
         │     │           ├─ pipeline/operations.py (ALL_OPERATIONS)
-        │     │           ├─ pipeline/runners/*.py (14 operation runners)
+        │     │           ├─ pipeline/runners/*.py (15 operation runners)
         │     │           ├─ utils/video_util.py          (keyframe extraction, clip export)
         │     │           ├─ utils/metadata.py            (video metadata extraction)
         │     │           └─ plugins/factory.py
@@ -330,7 +336,7 @@ Semantic Search: POST /api/v1/search/semantic
     │   ├─ _text_search()   → scenes.text_embedding, caption+ocr+transcript 语义
     │   ├─ _label_search()  → JSONB @> entities.label (YOLO 激活后用)
     │   ├─ _track_search()  → track_embeddings 表, crop 跨模态嵌入, 返回具体物体
-    │   └─ _plate_search()  → plate_detections 表, ILIKE 模糊匹配车牌号
+    │   └─ _plate_search()  → plate_detections 表, Levenshtein 编辑距离 + ILIKE
     └─ Face image search: POST /search/face
         └─ image → ArcFace R50 512d → face_identities.face_embedding cosine match
     └─ 按 scene 合并 + 去重:
@@ -349,7 +355,7 @@ core/search.py 提供的 6 种检索函数:
   2. chunk_vector_search      — 窗口过程语义搜索 (chunks)
   3. text_vector_search       — 文本语义搜索 (scenes.text_embedding, 含 caption+ocr+transcript)
   4. track_vector_search      — track crop 跨模态搜索 (track_embeddings)
-  5. plate_text_search        — 车牌文本模糊匹配 (plate_detections, ILIKE + pg_trgm)
+  5. plate_text_search        — 车牌文本模糊匹配 (plate_detections, Levenshtein + ILIKE)
   6. face_identity_search     — 人脸身份向量匹配 (face_identities, ArcFace 512d cosine)
 ```
 
@@ -527,6 +533,8 @@ Vite 开发代理:
 | **4-level parameter hierarchy** | Scene type sets defaults for modules, which gate functions and advanced params |
 | **Incremental pipeline** | L3 switches (summary/search) can re-run independently on completed videos |
 | **Global offline ReID** | Qwen3-VL-Embedding cross-modal matching, 5 constraints (class+time+cos+gap+space), 0.85 threshold, 180s max gap |
+| **Search/summary path decoupling** | search_encode (depends duration) runs parallel to summary pipeline; frame search ready without waiting for caption/summary |
+| **Plate Levenshtein search** | Levenshtein 编辑距离（≤2）+ ILIKE 子串匹配；替换 pg_trgm 相似度，天然处理错位/增减 |
 | **Decoupled upload/params** | Upload creates pending video; pipeline starts only after user configures params |
 | **Two-layer format compatibility** | Container remux (-c copy, instant) + codec proxy (NVENC H.264, lazy on-demand). Probe sync (<100ms), remux/proxy async. HEVC browser detection via canPlayType + hevc_ok routing. |
 | **Lazy proxy generation** | Proxy only generated when non-HEVC client first requests video — never eager. Saves GPU time and disk for HEVC-capable browsers (Safari/Electron). |
@@ -536,18 +544,18 @@ Vite 开发代理:
 | **Class-local track numbering** | Display shows sequential class-local IDs (person 1, car 2) while API uses raw track_id internally |
 | **Per-video face/plate toggles** | Sub-switches under detection_enabled in parameter panel. Surveillance preset defaults both ON. Three-level gate: config backend + detection_enabled + face_enabled/plate_enabled |
 | **Face image search (ArcFace 512d)** | Separate search endpoint (POST /search/face) using ArcFace R50 512-dim vectors, not the shared Qwen3-VL 2048-dim embedder. Image-to-identity matching, not text-to-face |
-| **Plate text search (ILIKE)** | Text-based, not vector. Uses PostgreSQL pg_trgm trigram similarity for fuzzy matching. Independent search path with precision_level="plate" |
+| **Plate text search (Levenshtein)** | Text-based, not vector. Uses PostgreSQL fuzzystrmatch Levenshtein distance (≤2 edits) + ILIKE substring. Independent search path with precision_level="plate" |
 
 ## Current Status
 
 | Module | Status | Note |
 |---|---|---|
-| Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 14 ops with gates/deps, events-driven |
+| Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 15 ops, search/summary decoupled, gates/deps, events-driven |
 | Track Encoding + Global ReID | ✅ | runners/track_encode.py Phase 1: crop→embed; Phase 2: 全局离线 ReID 合并 (cos≥0.85, 时间门180s) |
 | Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
 | License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
-| Plate Text Search | ✅ | core/search.py plate_text_search — ILIKE fuzzy match via pg_trgm |
+| Plate Text Search | ✅ | core/search.py plate_text_search — Levenshtein edit distance + ILIKE substring |
 | Semantic Search (6-path) | ✅ | frame + chunk + text + label + track + plate 并行召回, plate 独立 ILIKE |
 | Frame-level Encoding | ✅ | runners/frame_encode.py: batch encode 4 frames |
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
@@ -560,7 +568,7 @@ Vite 开发代理:
 | Track Thumbnail Download | ✅ | 全尺寸物体裁剪图下载 |
 | Scene Thumbnails Export | ✅ | 全部/指定场景缩略图 → zip |
 | Multi-Format Support | ✅ | 两层: remux (-c copy) + proxy (NVENC H.264, 按需) |
-| Performance Optimizations | ✅ | embedder@336×224, detection@640px/8fps/batch128, >30min time-based seg, DAG parallel fixes |
+| Performance Optimizations | ✅ | embedder@336×224, detection@640px/15fps/batch128, >30min time-based seg, search/summary parallel, NVDEC opt-in |
 | API Routes | ✅ | 25 endpoints: +proxy-status +stream hevc_ok 路由 |
 | Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值 |
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |

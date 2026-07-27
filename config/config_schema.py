@@ -41,6 +41,8 @@ class PipelineConfig(BaseModel):
     sample_fps: float = Field(default=1.0, gt=0.0)
     scene_min_duration: float = Field(default=1.0, ge=0.0)
     chunk_encoding: bool = Field(default=False, description="chunk 编码开关（需较好 GPU）")
+    encode_batch_size: int = Field(default=64, ge=1, description="帧编码批大小（按 GPU VRAM 调整）")
+    use_nvdec: bool = Field(default=False, description="NVDEC 硬件解码（需 NVIDIA GPU + FFmpeg CUDA）")
 
 
 # ═══════════════════════════════════════════════════════════

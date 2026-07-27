@@ -2,12 +2,13 @@
 
 ## One-Line Summary
 
-Cerno is a **video analytics engine** (v0.13) that ingests videos, runs a **declarative operation DAG** (14 operations with event-driven orchestration), generates **4-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics + track-level crop embeddings), runs **YOLO11 object detection + BoT-SORT tracking** as an optional add-on with **global ReID merge** (Qwen3-VL-Embedding cross-modal matching), adds **face recognition** (SCRFD + ArcFace R50 identity clustering) and **license plate recognition** (HyperLPR3, with PaddleOCR alternative) as optional perception modules, enables **6-path parallel semantic search** (frame + chunk + text + label + track + plate, chunk 配置关闭默认不启用) + **face image search** (POST /search/face, ArcFace 512d), provides **multi-format video compatibility** (容器 remux + 编码 proxy, 按需生成, 零浪费), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
+Cerno is a **video analytics engine** (v0.14) that ingests videos, runs a **declarative operation DAG** (15 operations with event-driven orchestration), generates **4-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics + track-level crop embeddings), runs **YOLO11 object detection + BoT-SORT tracking** as an optional add-on with **global ReID merge** (Qwen3-VL-Embedding cross-modal matching), adds **face recognition** (SCRFD + ArcFace R50 identity clustering) and **license plate recognition** (HyperLPR3, with PaddleOCR alternative) as optional perception modules, enables **6-path parallel semantic search** (frame + chunk + text + label + track + plate, chunk 配置关闭默认不启用) + **face image search** (POST /search/face, ArcFace 512d), provides **multi-format video compatibility** (容器 remux + 编码 proxy, 按需生成, 零浪费), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
 
 ## Quick File Map
 
 ```
-main.py                    — FastAPI app, lifespan, exception handlers, shared embedder + detector
+main.py                    — FastAPI app, lifespan, exception handlers, shared embedder (captioner on-demand)
+api/routes.py              — Transitional re-export (endpoints split into sub-routers)
 api/routes.py              — Transitional re-export (endpoints split into sub-routers)
 api/video_routes.py        — Video CRUD + upload (probe同步+异步remux/proxy) + stream (hevc_ok智能路由) + proxy-status + thumbnail
 api/search_routes.py       — Semantic search + pipeline/operations endpoints
@@ -25,14 +26,14 @@ core/schemas.py            — Pydantic v2 DTOs + JSONB validation models + Form
 core/interfaces.py         — 10 abstract base classes (ABCs) + Scene/VideoContext dataclasses
 core/search.py             — 6 search functions: frame/chunk/text/track/plate/face
 core/repository.py         — Data access layer + bulk_insert_frames/chunks
-core/db.py                 — Async engine, init_db(), incremental migration (pgvector, text_embedding, format fields v0.13)
+core/db.py                 — Async engine, init_db(), incremental migration (extensions: pgvector, pg_trgm, fuzzystrmatch)
 core/config_loader.py      — Loads config.yaml, merges .env secrets via _ENV_OVERRIDES
 core/prompt_loader.py      — Prompt template loader (config/prompts.yaml)
 core/status_tracker.py     — Pipeline progress + dynamic operation-based weight calculation
 core/exceptions.py         — Custom exceptions
 pipeline/engine.py         — DAG executor: EventDrivenScheduler (event-driven, ~200 lines), reads remuxed_path
-pipeline/operations.py     — Operation registry: ALL_OPERATIONS with gates/deps/labels (v0.13 gate fixes)
-pipeline/runners/          — 14 operation runners (one per processing unit):
+pipeline/operations.py     — Operation registry: ALL_OPERATIONS with gates/deps/labels (v0.14 gate fixes)
+pipeline/runners/          — 15 operation runners (one per processing unit):
   runners/base.py            — OperationRunner ABC + PipelineContext + Operation dataclass
   runners/duration.py        — ffprobe duration detection
   runners/segmentation.py    — TransNetV2 (≤30min) / time-based (>30min) 自适应
@@ -44,10 +45,11 @@ pipeline/runners/          — 14 operation runners (one per processing unit):
   runners/frame_encode.py    — 1fps batch image encoding (embedder @336×224) → frame_embeddings
   runners/chunk_encode.py    — Sliding window video encoding → chunks (config-gated)
   runners/text_encode.py     — Text semantic encoding (gated: 有文本源才跑)
-  runners/detection.py       — YOLO11 + BoT-SORT (8fps/128batch/640px), 独立抽帧, 不依赖scene
+  runners/detection.py       — YOLO11 + BoT-SORT (15fps/128batch/640px), 独立抽帧, 不依赖scene
   runners/track_encode.py    — Track crop embedding + global ReID merge
   runners/face.py            — SCRFD face detection + ArcFace R50 embedding + identity clustering
   runners/plate.py           — HyperLPR3 license plate detection + text recognition
+  runners/search_encode.py   — 纯搜索路径：自抽帧 1fps + 批量编码，不依赖 segmentation/keyframes
 pipeline/search_engine.py  — 6-path parallel recall (frame/chunk/text/label/track/plate) + scene-merge dedup
 plugins/factory.py         — Dynamic plugin loader (CATEGORY_MAP, _MODULE_OVERRIDES, _CLASS_OVERRIDES)
 plugins/detector/yolo.py   — YOLO11s detector (batch GPU inference, asyncio.to_thread)
@@ -60,7 +62,7 @@ services/format_service.py — 格式兼容: probe(ffprobe) / remux(容器标准
 services/export_service.py — 导出业务逻辑 (clip/frames/track/thumbnails zip)
 utils/video_util.py        — FFmpeg 工具函数 + suppress_ffmpeg_stderr() + stream_frames() NVDEC管道
 utils/metadata.py          — 视频元数据提取 (pymediainfo → exiftool → ffprobe 三级)
-config/config.yaml         — Main config: server/db/storage/plugins/pipeline (detection_fps:8, batch:128)
+config/config.yaml         — Main config: server/db/storage/plugins/pipeline (detection_fps:15, batch:128)
 config/config_schema.py    — Pydantic config validation
 config/prompts.yaml        — Caption/Summarizer/Grounding prompt templates
 frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~400 lines, hevcOk探测+proxy轮询+streamReady)
@@ -90,24 +92,30 @@ PUT /videos/{id}/params (after user configures)
   → background task: PipelineEngine.run()   (for pending videos)
   → background task: PipelineEngine.run_incremental()   (for completed videos, only summary/search_index)
 
-PipelineEngine.run() (DAG-based, gate-driven from L2/L3 params, v0.13):
+PipelineEngine.run() (DAG-based, gate-driven from L2/L3 params, v0.14):
   Gate Filter → EventDrivenScheduler
     Each operation runs as its own asyncio task, awaits upstream done events:
     duration (0.1s)
+      ├─ search_encode (depends duration, 搜索始终并行) ───→ frame_embeddings
       ├─ detection (depends duration, 独立抽帧, parallel)
-      └─ segmentation → keyframes (cv2 asyncio.to_thread, parallel to detection)
+      └─ segmentation → keyframes (cv2 asyncio.to_thread)
             ├─ caption (gated by summary_enabled) → summary
-            └─ frame_encode (embedder @336×224) + text_encode (gated: 有文本源)
+            └─ frame_encode (only when summary on) + text_encode (gated by summary)
                 └─ track_encode (depends detection + frame_encode)
                     └─ face + plate (parallel, depends detection)
   → _persist() → mark_completed()
 
-Key v0.13 DAG changes:
-  - detection depends_on=["duration"] (not segmentation) → 与 keyframes 真正并行
-  - caption gate: vision + caption_enabled + summary_enabled
-  - text_encode gate: search_index + vision + (summary|audio|ocr) — 有文本源才跑
-  - keyframes gate: vision + (search_index|summary) — 搜索/摘要都不用就跳过
-  - segmentation: >30min 自动走 time-based (60s/段), ≤30min TransNetV2
+Key v0.14 DAG changes:
+  - search_encode (NEW): 纯搜索自抽帧+编码，depends_on=["duration"]，与摘要管线完全并行
+  - segmentation gate: summary_enabled（仅摘要需要场景分割）
+  - keyframes gate: vision + summary（仅摘要需要关键帧池）
+  - frame_encode gate: search_index + vision + summary（摘要路径帧编码）
+  - text_encode gate: search_index + vision + summary（依赖 caption 文本）
+  - chunk_encode gate: + summary_enabled
+  - captioner 按需加载（预加载已注释关闭），pipeline 用完释放显存
+  - detection_fps: 8 → 15
+  - encode_batch_size 可配置（pipeline config，默认 256）
+  - topological_batches 处理依赖不在 enabled 集合的情况
 
 GET /videos/{id}/stream?hevc_ok={bool} (v0.13):
   FormatService.get_stream_target() 智能路由:
@@ -136,7 +144,7 @@ Search (6-path parallel, v0.12):
     _text_search()   → scenes.text_embedding, caption+ocr+transcript 语义
     _label_search()  → JSONB @> entities.label (精确匹配场景内物体标签)
     _track_search()  → track_embeddings table, crop跨模态嵌入, 返回具体物体
-    _plate_search()  → plate_detections table, ILIKE 模糊匹配车牌号
+    _plate_search()  → plate_detections table, Levenshtein 编辑距离 ≤ 2 模糊匹配
   → Face image search: POST /search/face (multipart image → ArcFace 512d → face_identities 表)
   → merge: frame clusters (≤4s gap), chunk/text去重叠, track/plate 独立去重
   → enrich with scene metadata → return results with precision_level
@@ -149,14 +157,14 @@ Search (6-path parallel, v0.12):
 - **API keys never in code**. Use `.env` file (gitignored) or environment variables. See `core/config_loader.py` `_ENV_OVERRIDES`.
 - **Vector dim**: 2048 (Qwen3-VL-Embedding-8B output). No pgvector HNSW index (exceeds 2000-dim limit; exact scan <1ms at demo scale).
 - **Trigger**: ~~`scenes.search_vector`~~ 已移除（tsvector 全文检索已废弃）
-- **Shared embedder**: Embedder is loaded once in `app.state.embedder` during lifespan startup. Pipeline and SearchEngine both reuse this instance — never call `load_plugin("embedder")` directly in business logic.
+- **Shared embedder**: Embedder is loaded once during lifespan startup (`app.state.embedder`). Pipeline and SearchEngine reuse this shared instance — never call `load_plugin("embedder")` directly in business logic. Captioner preload is disabled by default (commented out in main.py for faster startup); pipeline loads it on-demand when summary is enabled.
 - **Incremental migration**: `init_db()` uses `ALTER TABLE ADD COLUMN IF NOT EXISTS` for schema evolution (e.g., `text_embedding`, `status_detail` columns).
 - **Four encoding paths exist**: Frame (1fps per-frame), Chunk (config-gated, default disabled, `-c copy` + 480p 5fps preprocessing + encode_video), Text (caption+ocr+transcript 语义), Track (crop cross-modal embedding). All four reuse the shared embedder.
 - **Parameter system (v0.12)**: 4-level hierarchy — L1=Scene Type (general/meeting/surveillance/text_recognition/custom), L2=Perception Modules (vision/audio/ocr/caption/detection + face/plate sub-switches under detection), L3=Function Switches (search_index/summary + summary_mode[native_video/vlm_llm]), L4=Advanced Params (language/sample_fps/segment_threshold/caption_with_context/summary_detail). Detection uses dual-gating: server-level (config.yaml backend: yolo/null) AND per-video (detection_enabled toggle). Face/plate use three-level gate: config backend + detection_enabled + face_enabled/plate_enabled. Upper levels set defaults for lower levels. Pipeline uses `PipelineParams` Pydantic model with cross-field validation.
-- **Operation DAG (v0.13)**: Pipeline uses EventDrivenScheduler — 14 operations declared in `pipeline/operations.py` with gate conditions, dependencies, and labels. Each operation runs as its own asyncio task, awaiting upstream `asyncio.Event` signals. Engine filters by gate → spawns ready tasks → event-driven execution (no static batches). Detection depends on duration (not segmentation), enabling true parallelism with keyframes. Caption/text_encode/keyframes gates updated to skip when downstream consumers are disabled. Adding a new perception module only requires a new runner + one Operation entry — engine.py is never touched.
-- **Summary dual-mode (v0.10)**: `summary_mode` 控制 caption+summary 路径。`native_video`（默认）→ CaptionRunner 内部路由到 Qwen3-VL-8B 本地 GPU，SummaryRunner 内部路由到纯 Python 聚合器。`vlm_llm` → CaptionRunner 动态切换为 Qwen-VL-Max API captioner，SummaryRunner 内部路由到 DeepSeek API。双模式切换完全封装在 runner 内部，engine.py 不感知。Summary mode 变更需新建视频记录（不可增量）。
+- **Operation DAG (v0.14)**: Pipeline uses EventDrivenScheduler — 15 operations declared in `pipeline/operations.py` with gate conditions, dependencies, and labels. Each operation runs as its own asyncio task, awaiting upstream `asyncio.Event` signals. Engine filters by gate → spawns ready tasks → event-driven execution (no static batches). `topological_batches` handles missing deps gracefully (ops with deps not in enabled set proceed immediately). Search and summary paths are fully decoupled: `search_encode` (depends duration) runs parallel to `segmentation → keyframes → caption → summary`. Adding a new perception module only requires a new runner + one Operation entry — engine.py is never touched.
+- **Summary dual-mode (v0.10)**: `summary_mode` 控制 caption+summary 路径。`native_video`（默认）→ CaptionRunner 内部路由到 Qwen3-VL-8B 本地 GPU（按需加载，用完释放），SummaryRunner 内部路由到纯 Python 聚合器。`vlm_llm` → CaptionRunner 动态切换为 Qwen-VL-Max API captioner，SummaryRunner 内部路由到 DeepSeek API。双模式切换完全封装在 runner 内部，engine.py 不感知。native_video 使用 ffmpeg 输入级 seek（-ss 在 -i 之前）精确切段，避免场景重复描述。Summary mode 变更需新建视频记录（不可增量）。
 - **Multi-format support (v0.13)**: 两层处理 — remux (容器标准化, -c copy 流复制, 音频转 AAC 如需) + proxy (编码兼容, NVENC h264, 按需生成)。前端 canPlayType() 探测 HEVC 能力, 服务端 hevc_ok 智能路由。所有 format 处理异步执行不阻塞上传。Pipeline 优先读 remuxed MP4 (更好的 demux 性能)。
-- **Performance optimizations (v0.13)**: Embedder 编码缩放到 336×224 (视觉 token ~70/帧, ~10x 加速)。Detection 帧缩放到 640×384 (cv2 resize before YOLO)。Detection fps 15→8, batch_size 64→128。Long video (>30min) 自动 time-based 分段。Frame encode batch_size 16→64。captioner 启动时跳过预加载。
+- **Performance optimizations (v0.14)**: Embedder 编码缩放到 336×224 (视觉 token ~70/帧, ~10x 加速)。Detection 帧缩放到 640×384 (cv2 resize before YOLO)。Detection fps 15, batch_size 128。Long video (>30min) 自动 time-based 分段。Frame encode batch_size 可配置（pipeline.encode_batch_size，默认 256）。Captioner 按需加载（预加载已注释关闭）。NVDEC 硬件解码可选（pipeline.use_nvdec，默认关闭；长视频收益明显）。
 - **Incremental processing**: Completed videos can re-run summary or search index independently via `run_incremental()`. Non-L3 param changes (including summary_mode) require creating a new video record (reuse file via `POST /videos/reuse`).
 
 ## Database Tables (11)
@@ -179,7 +187,7 @@ Search (6-path parallel, v0.12):
 
 | Area | Status | Files |
 |---|---|---|
-| Pipeline core (DAG) | ✅ Complete (EventDrivenScheduler v0.10) | engine.py, operations.py, runners/* (14 ops) |
+| Pipeline core (DAG) | ✅ Complete (EventDrivenScheduler v0.10) | engine.py, operations.py, runners/* (15 ops) |
 | Frame/Chunk/Text encoding | ✅ Complete | runners/frame_encode, chunk_encode, text_encode |
 | Object Detection + Tracking | ✅ Complete | plugins/detector/yolo.py, runners/detection.py, api/detection_routes.py, DetectionOverlay.tsx |
 | Track Encoding + Global ReID | ✅ Complete | runners/track_encode.py (Phase 1: crop embedding, Phase 2: global offline ReID merge) |
@@ -203,14 +211,14 @@ Search (6-path parallel, v0.12):
 | Face Recognition | ✅ Done | plugins/face/insightface_face.py — InsightFace SCRFD + ArcFace R50 (512d), FaceRunner identity clustering with label→DB ID mapping |
 | License Plate Recognition | ✅ Done | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ Done | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
-| Plate Text Search | ✅ Done | core/search.py plate_text_search — ILIKE fuzzy match via pg_trgm |
+| Plate Text Search | ✅ Done | core/search.py plate_text_search — Levenshtein 编辑距离 + ILIKE 子串匹配 |
 | Video Metadata Extraction | ✅ Done | utils/metadata.py — 三级提取 (pymediainfo → exiftool → ffprobe), GPS/device/codec |
 | Clip Export | ✅ Done | services/export_service.py + api/export_routes.py — 流复制视频片段导出 |
 | Frames/Thumbnails Export | ✅ Done | 帧序列 zip / 全部场景缩略图 zip 导出 |
 | Track Segments Export | ✅ Done | 按 segments 字段分段导出 track 视频 → zip |
 | Track Thumbnail Download | ✅ Done | 全尺寸物体裁剪图下载 |
 | Multi-format Support (v0.13) | ✅ Done | services/format_service.py — remux + lazy proxy; api/video_routes.py — stream智能路由 + proxy-status; frontend — hevcOk探测 + streamReady |
-| Performance Optimizations (v0.13) | ✅ Done | embedder 336×224; detection 640px/8fps/batch128; long video time-based seg; DAG parallelism fixes |
+| Performance Optimizations (v0.14) | ✅ Done | embedder 336×224; detection 640px/15fps/batch128; long video time-based seg; search/summary parallel; encode_batch_size configurable |
 | OCR | ⬜ Shell only | plugins/ocr/ |
 | Grounding | ⬜ Shell only | plugins/grounding/ |
 | Health/Reindex | ⬜ Shell only | api/maintenance_routes.py |
@@ -225,7 +233,7 @@ Search (6-path parallel, v0.12):
 4. **Config-driven design + operation registration**: when adding a new perception module, write a runner class in `pipeline/runners/`, add one `Operation(...)` entry to `pipeline/operations.py` `ALL_OPERATIONS`. For new plugin backends, register in `plugins/factory.py` `CATEGORY_MAP` / `_MODULE_OVERRIDES` / `_CLASS_OVERRIDES`. No hardcoded model references in business logic.
 5. **Sync vs Async**: all `core/interfaces.py` methods are `async def`. If your plugin runs synchronous model inference, wrap it with `asyncio.to_thread()`. Never call `model.predict()` directly in an async function.
 6. **Search paths**: `config_loader.py` and `prompt_loader.py` use `Path(__file__).resolve().parent.parent` to locate the project root. Keep this convention.
-7. **Vector dimension**: 2048. All vector columns (scenes.text_embedding, frame_embeddings.embedding, chunks.embedding, track_embeddings.embedding) use `Vector(2048)`. No pgvector HNSW/IVFFlat index (2048 > 2000 limit, but full scan is fine for demo scale).
+7. **Vector dimension**: 2048. All vector columns (scenes.text_embedding, frame_embeddings.embedding, chunks.embedding, track_embeddings.embedding) use `Vector(2048)`. Face embeddings use `Vector(512)` (ArcFace R50). No pgvector HNSW/IVFFlat index (2048 > 2000 limit, but full scan is fine for demo scale).
 8. **Four encoding paths**: Frame (encode_image), Chunk (config-gated, default disabled, -c copy + encode_video), Text (encode_text). All three reuse the shared embedder.
 9. **When adding new dependencies**: add to `requirements.txt` AND to `Dockerfile`.
 10. **Search result format**: All results include `precision_level` (frame/chunk/text/label), `precise_start/end` (text 也有 scene 起止作为锚点), `match_paths`, and `thumbnail_url`. Merge 时帧簇优先，text 与非重叠帧的 text 按路径权重排序。

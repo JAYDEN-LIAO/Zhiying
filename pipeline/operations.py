@@ -24,6 +24,7 @@ from pipeline.runners.detection import DetectionRunner
 from pipeline.runners.track_encode import TrackEncodeRunner
 from pipeline.runners.face import FaceRunner
 from pipeline.runners.plate import PlateRunner
+from pipeline.runners.search_encode import SearchEncodeRunner
 
 ALL_OPERATIONS: list[Operation] = [
     Operation(
@@ -35,6 +36,7 @@ ALL_OPERATIONS: list[Operation] = [
     Operation(
         name="segmentation", runner=SegmentRunner(),
         depends_on=["duration"],
+        gate=lambda v, _: v.summary_enabled,
         required_plugins=["segmenter"],
         label="场景分割", description="镜头边界检测中",
         progress_weight=0.15,
@@ -52,7 +54,7 @@ ALL_OPERATIONS: list[Operation] = [
     Operation(
         name="keyframes", runner=KeyframeRunner(),
         depends_on=["segmentation"],
-        gate=lambda v, _: v.vision_enabled and (v.search_index_enabled or v.summary_enabled),
+        gate=lambda v, _: v.vision_enabled and v.summary_enabled,
         label="关键帧抽取", description="1fps 帧池提取中",
         progress_weight=0.15,
     ),
@@ -98,7 +100,7 @@ ALL_OPERATIONS: list[Operation] = [
     Operation(
         name="frame_encode", runner=FrameEncodeRunner(),
         depends_on=["keyframes"],
-        gate=lambda v, _: v.search_index_enabled and v.vision_enabled,
+        gate=lambda v, _: v.search_index_enabled and v.vision_enabled and v.summary_enabled,
         required_plugins=["embedder"],
         label="帧级编码", description="逐帧向量编码中",
         progress_weight=0.08,
@@ -109,6 +111,7 @@ ALL_OPERATIONS: list[Operation] = [
         depends_on=["keyframes"],
         gate=lambda v, cfg: (
             v.search_index_enabled and v.vision_enabled
+            and v.summary_enabled
             and cfg.get("pipeline", {}).get("chunk_encoding", False)
         ),
         required_plugins=["embedder"],
@@ -121,11 +124,23 @@ ALL_OPERATIONS: list[Operation] = [
         depends_on=["keyframes"],
         gate=lambda v, _: (
             v.search_index_enabled and v.vision_enabled
-            and (v.summary_enabled or v.audio_enabled or v.ocr_enabled)
-        ),  # 有文本源才编码 — caption(summary) / transcript(audio) / OCR
+            and v.summary_enabled
+        ),  # 依赖 caption 产出的 text → 需要 summary 路径
         required_plugins=["embedder"],
         label="文本语义编码", description="文本向量编码中",
         progress_weight=0.07,
+    ),
+
+    Operation(
+        name="search_encode", runner=SearchEncodeRunner(),
+        depends_on=["duration"],
+        gate=lambda v, _: (
+            v.search_index_enabled
+            and v.vision_enabled
+        ),  # 始终与摘要路径并行，不依赖 segmentation/keyframes
+        required_plugins=["embedder"],
+        label="搜索索引构建", description="1fps 抽帧 + 批量编码中",
+        progress_weight=0.23,
     ),
 
     Operation(
