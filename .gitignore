@@ -57,6 +57,9 @@ config/secrets.yaml
 .env
 *.log
 
+# ── Local reference docs (not part of the project) ──
+*.docx
+
 # ── Frontend ──
 frontend/node_modules/
 frontend/dist/

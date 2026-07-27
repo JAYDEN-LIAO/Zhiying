@@ -2,68 +2,75 @@
 
 ## One-Line Summary
 
-Cerno is a **video analytics engine** (v0.12) that ingests videos, runs a **declarative operation DAG** (14 operations with event-driven orchestration), generates **4-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics + track-level crop embeddings), runs **YOLO11 object detection + BoT-SORT tracking** as an optional add-on with **global ReID merge** (Qwen3-VL-Embedding cross-modal matching), adds **face recognition** (SCRFD + ArcFace R50 identity clustering) and **license plate recognition** (PaddleOCR) as optional perception modules, enables **6-path parallel semantic search** (frame + chunk + text + label + track + plate, chunk 配置关闭默认不启用) + **face image search** (POST /search/face, ArcFace 512d), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
+Cerno is a **video analytics engine** (v0.13) that ingests videos, runs a **declarative operation DAG** (14 operations with event-driven orchestration), generates **4-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics + track-level crop embeddings), runs **YOLO11 object detection + BoT-SORT tracking** as an optional add-on with **global ReID merge** (Qwen3-VL-Embedding cross-modal matching), adds **face recognition** (SCRFD + ArcFace R50 identity clustering) and **license plate recognition** (HyperLPR3, with PaddleOCR alternative) as optional perception modules, enables **6-path parallel semantic search** (frame + chunk + text + label + track + plate, chunk 配置关闭默认不启用) + **face image search** (POST /search/face, ArcFace 512d), provides **multi-format video compatibility** (容器 remux + 编码 proxy, 按需生成, 零浪费), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
 
 ## Quick File Map
 
 ```
-main.py                    — FastAPI app, lifespan, exception handlers, shared embedder
+main.py                    — FastAPI app, lifespan, exception handlers, shared embedder + detector
 api/routes.py              — Transitional re-export (endpoints split into sub-routers)
-api/video_routes.py        — Video CRUD + upload + stream + thumbnail endpoints
+api/video_routes.py        — Video CRUD + upload (probe同步+异步remux/proxy) + stream (hevc_ok智能路由) + proxy-status + thumbnail
 api/search_routes.py       — Semantic search + pipeline/operations endpoints
 api/settings_routes.py     — System settings (API keys) endpoints
 api/router.py              — Assembles sub-routers under /api/v1 prefix
 api/deps.py                — FastAPI dependency injection (get_db)
-api/schemas.py             — Shared API DTOs (APIResponse, search/status models)
+api/schemas.py             — Shared API DTOs (APIResponse, search/status models, ProxyStatusResponse)
 api/detection_routes.py    — Detection data API endpoint (GET /videos/{id}/detection/data)
 api/export_routes.py       — Export endpoints: clip/frames/track/thumbnails (7 endpoints, GET+POST)
 api/face_routes.py          — Face data API (GET face/data + face/thumbnail)
 api/plate_routes.py         — Plate data API (GET plate/data + plate/thumbnail)
 api/maintenance_routes.py  — (stub) planned health/reindex endpoints
-core/models.py             — ORM: Video, Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection (11 tables)
-core/schemas.py            — Pydantic v2 DTOs + JSONB validation models
+core/models.py             — ORM: Video (+8 format fields), Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection (11 tables)
+core/schemas.py            — Pydantic v2 DTOs + JSONB validation models + FormatInfo/ProxyStatus
 core/interfaces.py         — 10 abstract base classes (ABCs) + Scene/VideoContext dataclasses
-core/search.py             — 4 search functions: frame/chunk/text/track
+core/search.py             — 6 search functions: frame/chunk/text/track/plate/face
 core/repository.py         — Data access layer + bulk_insert_frames/chunks
-core/db.py                 — Async engine, init_db(), incremental migration (pgvector, text_embedding)
+core/db.py                 — Async engine, init_db(), incremental migration (pgvector, text_embedding, format fields v0.13)
 core/config_loader.py      — Loads config.yaml, merges .env secrets via _ENV_OVERRIDES
 core/prompt_loader.py      — Prompt template loader (config/prompts.yaml)
 core/status_tracker.py     — Pipeline progress + dynamic operation-based weight calculation
 core/exceptions.py         — Custom exceptions
-pipeline/engine.py         — DAG executor: EventDrivenScheduler (event-driven, ~200 lines)
-pipeline/operations.py     — Operation registry: ALL_OPERATIONS declaration with gates/deps/labels
-pipeline/runners/          — 12 operation runners (one per processing unit):
+pipeline/engine.py         — DAG executor: EventDrivenScheduler (event-driven, ~200 lines), reads remuxed_path
+pipeline/operations.py     — Operation registry: ALL_OPERATIONS with gates/deps/labels (v0.13 gate fixes)
+pipeline/runners/          — 14 operation runners (one per processing unit):
   runners/base.py            — OperationRunner ABC + PipelineContext + Operation dataclass
   runners/duration.py        — ffprobe duration detection
-  runners/segmentation.py    — TransNetV2 scene segmentation
+  runners/segmentation.py    — TransNetV2 (≤30min) / time-based (>30min) 自适应
   runners/transcription.py   — Audio extraction + faster-whisper transcription
-  runners/keyframe.py        — 1fps frame pool extraction + thumbnails
+  runners/keyframe.py        — 1fps frame pool extraction + thumbnails (cv2 + asyncio.to_thread)
   runners/alignment.py       — Transcript word-to-scene alignment
-  runners/caption.py         — Dual-mode: native_video (Qwen2.5-VL GPU) / vlm_llm (Qwen API)
+  runners/caption.py         — Dual-mode: native_video / vlm_llm (gated by summary_enabled)
   runners/summary.py         — Dual-mode: Python aggregator / DeepSeek API LLM
-  runners/frame_encode.py    — 1fps batch image encoding → frame_embeddings
+  runners/frame_encode.py    — 1fps batch image encoding (embedder @336×224) → frame_embeddings
   runners/chunk_encode.py    — Sliding window video encoding → chunks (config-gated)
-  runners/text_encode.py     — Text semantic encoding → scenes.text_embedding
-  runners/detection.py       — YOLO11 object detection + BoT-SORT tracking + scene entity aggregation
-  runners/track_encode.py    — Track crop cross-modal embedding + global ReID merge
+  runners/text_encode.py     — Text semantic encoding (gated: 有文本源才跑)
+  runners/detection.py       — YOLO11 + BoT-SORT (8fps/128batch/640px), 独立抽帧, 不依赖scene
+  runners/track_encode.py    — Track crop embedding + global ReID merge
   runners/face.py            — SCRFD face detection + ArcFace R50 embedding + identity clustering
-  runners/plate.py           — PaddleOCR license plate detection + text recognition
-pipeline/search_engine.py  — 5-path parallel recall (frame/chunk/text/label/track) + scene-merge dedup
+  runners/plate.py           — HyperLPR3 license plate detection + text recognition
+pipeline/search_engine.py  — 6-path parallel recall (frame/chunk/text/label/track/plate) + scene-merge dedup
 plugins/factory.py         — Dynamic plugin loader (CATEGORY_MAP, _MODULE_OVERRIDES, _CLASS_OVERRIDES)
 plugins/detector/yolo.py   — YOLO11s detector (batch GPU inference, asyncio.to_thread)
 plugins/face/insightface_face.py  — InsightFace SCRFD + ArcFace R50 recognizer
-plugins/plate/paddle_plate.py    — PaddleOCR license plate detector + recognizer
-config/config.yaml         — Main config: server/db/storage/plugins/pipeline
+plugins/plate/hyperlpr_plate.py  — HyperLPR3 license plate detector + recognizer (primary)
+plugins/plate/paddle_plate.py    — PaddleOCR license plate detector (alternative)
+plugins/embedder/qwen_vl_embedder.py — Qwen3-VL-Embedding (336×224 encode, 内存路径, 零磁盘I/O)
+services/video_service.py  — Pipeline 调用与后台调度
+services/format_service.py — 格式兼容: probe(ffprobe) / remux(容器标准化, -c copy) / proxy(按需h264_nvenc)
+services/export_service.py — 导出业务逻辑 (clip/frames/track/thumbnails zip)
+utils/video_util.py        — FFmpeg 工具函数 + suppress_ffmpeg_stderr() + stream_frames() NVDEC管道
+utils/metadata.py          — 视频元数据提取 (pymediainfo → exiftool → ffprobe 三级)
+config/config.yaml         — Main config: server/db/storage/plugins/pipeline (detection_fps:8, batch:128)
 config/config_schema.py    — Pydantic config validation
 config/prompts.yaml        — Caption/Summarizer/Grounding prompt templates
-frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~400 lines)
+frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~400 lines, hevcOk探测+proxy轮询+streamReady)
 frontend/src/components/    — Split components: icons, LeftSidebar, ParameterPanel, PipelineBar,
                               VideoSummaryCard, VideoSearchCard, HistoryPanelContent, SettingsPage,
                               DetectionOverlay, DetectionPanel, DetectionTimeline,
                               MetadataPanel, ExportMenu
 frontend/src/utils/helpers.ts — Shared helpers (fmtDuration, fmtDate, formatSec)
-frontend/src/services/api.ts — API wrapper + polling helper
-frontend/src/types/index.ts — TypeScript types (mirrors backend schemas)
+frontend/src/services/api.ts — API wrapper + polling helper (getVideoStreamUrl hevc_ok, getProxyStatus)
+frontend/src/types/index.ts — TypeScript types (mirrors backend schemas + ProxyStatus)
 frontend/src/mockData.ts   — Pipeline stage definitions + computePipelineStages() dynamic function
 ```
 
@@ -72,7 +79,9 @@ frontend/src/mockData.ts   — Pipeline stage definitions + computePipelineStage
 ```
 POST /videos/upload (multipart file)
   → save to disk
+  → sync probe (ffprobe, <100ms) → save format_info to DB
   → create Video record (status=pending, default params)
+  → async: remux (容器标准化, -c copy) + proxy (按需, 非HEVC浏览器请求时触发)
   → parameter panel auto-opens in frontend
 
 PUT /videos/{id}/params (after user configures)
@@ -81,16 +90,31 @@ PUT /videos/{id}/params (after user configures)
   → background task: PipelineEngine.run()   (for pending videos)
   → background task: PipelineEngine.run_incremental()   (for completed videos, only summary/search_index)
 
-PipelineEngine.run() (DAG-based, gate-driven from L2/L3 params):
-  Gate Filter → EventDrivenScheduler (v0.10)
+PipelineEngine.run() (DAG-based, gate-driven from L2/L3 params, v0.13):
+  Gate Filter → EventDrivenScheduler
     Each operation runs as its own asyncio task, awaits upstream done events:
-    duration → segmentation + transcription (parallel)
-      → keyframes + alignment (parallel)
-        → detection + caption + frame_encode (parallel, chunk_encode gated by config)
-          → summary + text_encode (parallel)
-            → track_encode (depends on detection + frame_encode)
-              → face + plate (parallel, both depend on detection, dual-gated per-video)
+    duration (0.1s)
+      ├─ detection (depends duration, 独立抽帧, parallel)
+      └─ segmentation → keyframes (cv2 asyncio.to_thread, parallel to detection)
+            ├─ caption (gated by summary_enabled) → summary
+            └─ frame_encode (embedder @336×224) + text_encode (gated: 有文本源)
+                └─ track_encode (depends detection + frame_encode)
+                    └─ face + plate (parallel, depends detection)
   → _persist() → mark_completed()
+
+Key v0.13 DAG changes:
+  - detection depends_on=["duration"] (not segmentation) → 与 keyframes 真正并行
+  - caption gate: vision + caption_enabled + summary_enabled
+  - text_encode gate: search_index + vision + (summary|audio|ocr) — 有文本源才跑
+  - keyframes gate: vision + (search_index|summary) — 搜索/摘要都不用就跳过
+  - segmentation: >30min 自动走 time-based (60s/段), ≤30min TransNetV2
+
+GET /videos/{id}/stream?hevc_ok={bool} (v0.13):
+  FormatService.get_stream_target() 智能路由:
+    H.264 → 原文件直出
+    HEVC + hevcOk=true → remuxed (MP4容器) 或原文件 (MP4/HEVC)
+    HEVC + hevcOk=false → proxy (H.264代理), 无则按需触发+返回202
+    浏览器原生格式 (WebM/VP9 etc.) → 直出, 零处理
 
 Each operation declared in pipeline/operations.py with:
   - gate: lambda video, config → bool (parameter-driven enable/disable)
@@ -123,21 +147,23 @@ Search (6-path parallel, v0.12):
 - **All plugin interfaces are async**. Sync model inference MUST use `asyncio.to_thread()` — never call sync code directly in async methods.
 - **Plugin config is YAML-driven**. `config/config.yaml` `plugins.{name}.backend` selects the implementation. `null` means the module is disabled.
 - **API keys never in code**. Use `.env` file (gitignored) or environment variables. See `core/config_loader.py` `_ENV_OVERRIDES`.
-- **Vector dim**: 2048 (Qwen3-VL-Embedding-2B output). No pgvector HNSW index (exceeds 2000-dim limit; exact scan <1ms at demo scale).
+- **Vector dim**: 2048 (Qwen3-VL-Embedding-8B output). No pgvector HNSW index (exceeds 2000-dim limit; exact scan <1ms at demo scale).
 - **Trigger**: ~~`scenes.search_vector`~~ 已移除（tsvector 全文检索已废弃）
 - **Shared embedder**: Embedder is loaded once in `app.state.embedder` during lifespan startup. Pipeline and SearchEngine both reuse this instance — never call `load_plugin("embedder")` directly in business logic.
 - **Incremental migration**: `init_db()` uses `ALTER TABLE ADD COLUMN IF NOT EXISTS` for schema evolution (e.g., `text_embedding`, `status_detail` columns).
 - **Four encoding paths exist**: Frame (1fps per-frame), Chunk (config-gated, default disabled, `-c copy` + 480p 5fps preprocessing + encode_video), Text (caption+ocr+transcript 语义), Track (crop cross-modal embedding). All four reuse the shared embedder.
-- **Parameter system (v0.10)**: 4-level hierarchy — L1=Scene Type (general/meeting/surveillance/text_recognition/custom), L2=Perception Modules (vision/audio/ocr/caption/detection, plus detection-grayed), L3=Function Switches (search_index/summary + summary_mode[native_video/vlm_llm]), L4=Advanced Params (language/sample_fps/segment_threshold/caption_with_context/summary_detail). Detection uses dual-gating: server-level (config.yaml backend: yolo/null) AND per-video (detection_enabled toggle). Upper levels set defaults for lower levels. Pipeline uses `PipelineParams` Pydantic model with cross-field validation.
-- **Operation DAG (v0.10)**: Pipeline uses EventDrivenScheduler — 12 operations declared in `pipeline/operations.py` with gate conditions, dependencies, and labels. Each operation runs as its own asyncio task, awaiting upstream `asyncio.Event` signals. Engine filters by gate → spawns ready tasks → event-driven execution (no static batches). Detection operation uses dual-gate pattern (config AND video.detection_enabled). Adding a new perception module only requires a new runner + one Operation entry — engine.py is never touched.
-- **Summary dual-mode (v0.10)**: `summary_mode` 控制 caption+summary 路径。`native_video`（默认）→ CaptionRunner 内部路由到 Qwen2.5-VL-7B 本地 GPU，SummaryRunner 内部路由到纯 Python 聚合器。`vlm_llm` → CaptionRunner 动态切换为 Qwen-VL-Max API captioner，SummaryRunner 内部路由到 DeepSeek API。双模式切换完全封装在 runner 内部，engine.py 不感知。Summary mode 变更需新建视频记录（不可增量）。
+- **Parameter system (v0.12)**: 4-level hierarchy — L1=Scene Type (general/meeting/surveillance/text_recognition/custom), L2=Perception Modules (vision/audio/ocr/caption/detection + face/plate sub-switches under detection), L3=Function Switches (search_index/summary + summary_mode[native_video/vlm_llm]), L4=Advanced Params (language/sample_fps/segment_threshold/caption_with_context/summary_detail). Detection uses dual-gating: server-level (config.yaml backend: yolo/null) AND per-video (detection_enabled toggle). Face/plate use three-level gate: config backend + detection_enabled + face_enabled/plate_enabled. Upper levels set defaults for lower levels. Pipeline uses `PipelineParams` Pydantic model with cross-field validation.
+- **Operation DAG (v0.13)**: Pipeline uses EventDrivenScheduler — 14 operations declared in `pipeline/operations.py` with gate conditions, dependencies, and labels. Each operation runs as its own asyncio task, awaiting upstream `asyncio.Event` signals. Engine filters by gate → spawns ready tasks → event-driven execution (no static batches). Detection depends on duration (not segmentation), enabling true parallelism with keyframes. Caption/text_encode/keyframes gates updated to skip when downstream consumers are disabled. Adding a new perception module only requires a new runner + one Operation entry — engine.py is never touched.
+- **Summary dual-mode (v0.10)**: `summary_mode` 控制 caption+summary 路径。`native_video`（默认）→ CaptionRunner 内部路由到 Qwen3-VL-8B 本地 GPU，SummaryRunner 内部路由到纯 Python 聚合器。`vlm_llm` → CaptionRunner 动态切换为 Qwen-VL-Max API captioner，SummaryRunner 内部路由到 DeepSeek API。双模式切换完全封装在 runner 内部，engine.py 不感知。Summary mode 变更需新建视频记录（不可增量）。
+- **Multi-format support (v0.13)**: 两层处理 — remux (容器标准化, -c copy 流复制, 音频转 AAC 如需) + proxy (编码兼容, NVENC h264, 按需生成)。前端 canPlayType() 探测 HEVC 能力, 服务端 hevc_ok 智能路由。所有 format 处理异步执行不阻塞上传。Pipeline 优先读 remuxed MP4 (更好的 demux 性能)。
+- **Performance optimizations (v0.13)**: Embedder 编码缩放到 336×224 (视觉 token ~70/帧, ~10x 加速)。Detection 帧缩放到 640×384 (cv2 resize before YOLO)。Detection fps 15→8, batch_size 64→128。Long video (>30min) 自动 time-based 分段。Frame encode batch_size 16→64。captioner 启动时跳过预加载。
 - **Incremental processing**: Completed videos can re-run summary or search index independently via `run_incremental()`. Non-L3 param changes (including summary_mode) require creating a new video record (reuse file via `POST /videos/reuse`).
 
 ## Database Tables (11)
 
 | Table | Key Columns | Purpose |
 |---|---|---|
-| `videos` | id, status, progress, status_detail, summary(JSONB), content_type, summary_mode (native_video/vlm_llm), perception switches (vision/audio/ocr/grounding/caption/detection_enabled/summary_enabled), function switches (search_index_enabled), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail), language | Video master |
+| `videos` | id, status, progress, status_detail, summary(JSONB), content_type, summary_mode (native_video/vlm_llm), perception switches (vision/audio/ocr/grounding/caption/detection_enabled/summary_enabled), function switches (search_index_enabled), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail), language, format fields (container_format, video_codec, audio_codec, has_audio, remuxed_path, proxy_path, proxy_status, proxy_progress) | Video master |
 | `scenes` | id, video_id(FK), scene_index, text_embedding(Vector2048), caption, ocr_text, aligned_transcript, entities(JSONB) | Core search grain (text_embedding = caption+ocr+transcript 语义) |
 | `transcripts` | id, video_id(FK, UNIQUE), full_text, words(JSONB) | Speech transcripts |
 | `frame_embeddings` | id, video_id(FK), timestamp_sec, embedding(Vector2048), is_keyframe | 1fps frame vectors |
@@ -147,17 +173,17 @@ Search (6-path parallel, v0.12):
 | `track_embeddings` | id, video_id(FK), track_id, class_name, embedding(Vector2048), timestamp_sec, bbox(JSONB) | Track crop cross-modal vectors, for track-path search + global ReID |
 | `face_identities` | id, video_id(FK), identity_label, face_embedding(Vector512), face_count, first_seen, last_seen, avg_quality, best_face_bbox(JSONB) | Clustered face identities (ArcFace R50 512d), "人物 A/B/C..." |
 | `face_detections` | id, video_id(FK), identity_id(FK), track_id, timestamp_sec, bbox(JSONB), quality_score, face_embedding(Vector512) | Per-frame face detections, linked to YOLO person tracks |
-| `plate_detections` | id, video_id(FK), track_id, class_name, timestamp_sec, plate_text, plate_type, char_confidences(JSONB), bbox(JSONB), detection_confidence | PaddleOCR license plate recognition results |
+| `plate_detections` | id, video_id(FK), track_id, class_name, timestamp_sec, plate_text, plate_type, char_confidences(JSONB), bbox(JSONB), detection_confidence | HyperLPR3 license plate recognition results (per-vehicle-track, pre-ReID merge) |
 
 ## Current Implementation Status
 
 | Area | Status | Files |
 |---|---|---|
-| Pipeline core (DAG) | ✅ Complete (EventDrivenScheduler v0.10) | engine.py, operations.py, runners/* (12 ops) |
+| Pipeline core (DAG) | ✅ Complete (EventDrivenScheduler v0.10) | engine.py, operations.py, runners/* (14 ops) |
 | Frame/Chunk/Text encoding | ✅ Complete | runners/frame_encode, chunk_encode, text_encode |
 | Object Detection + Tracking | ✅ Complete | plugins/detector/yolo.py, runners/detection.py, api/detection_routes.py, DetectionOverlay.tsx |
 | Track Encoding + Global ReID | ✅ Complete | runners/track_encode.py (Phase 1: crop embedding, Phase 2: global offline ReID merge) |
-| Semantic search (5-path + label) | ✅ Verified | search_engine.py + api/search_routes.py (frame+chunk+text+label+track) |
+| Semantic search (6-path) | ✅ Verified | search_engine.py + api/search_routes.py (frame+chunk+text+label+track+plate) |
 | Captioner (local GPU + API) | ✅ Verified | plugins/captioner/qwen25_vl_captioner.py + qwen_api_captioner.py |
 | Embedder (local GPU) | ✅ Verified | plugins/embedder/qwen_vl_embedder.py — preloaded at startup, shared via app.state.embedder |
 | Summarizer (aggregator + API) | ✅ Verified | runners/summary.py dual-path: Python aggregator (default) + vllm_summarizer.py (vlm_llm fallback) |
@@ -170,12 +196,12 @@ Search (6-path parallel, v0.12):
 | Parameter system (4-level) | ✅ Done | core/schemas.py PipelineParams + model_validator; config/presets.yaml; frontend ParameterPanel with cascade |
 | Incremental processing | ✅ Done | pipeline/engine.py run_incremental(); services/video_service.py incremental_process() |
 | Settings API + API key mgmt | ✅ Done | core/settings_service.py; GET/PUT /api/v1/settings |
-| Frontend dashboard | ✅ Done | Dashboard.tsx + 15 components (React 19 + Tailwind 4) — 参数面板四级联动+人脸/车牌子开关, 动态 PipelineBar, 检测面板三Tab(物体/人脸/车牌), Canvas bbox 渲染(人脸虚线+车牌双线), 时间轴人脸/车牌标记点, 人脸图片搜索(👤按钮), 系统设置页, 历史记录搜索, 元数据卡片, 导出菜单 |
+| Frontend dashboard | ✅ Done | Dashboard.tsx + 15 components (React 19 + Tailwind 4) — 参数面板四级联动+人脸/车牌子开关, 动态 PipelineBar, 检测面板统一物体列表(车辆内联车牌)+人脸切换, Canvas bbox 渲染(物体框+人脸虚线), 时间轴人脸标记点, 人脸图片搜索(👤按钮), 系统设置页, 历史记录搜索, 元数据卡片, 导出菜单 |
 | Object Detection (YOLO) | ✅ Done | plugins/detector/yolo.py — YOLO11s + ByteTrack/BoT-SORT, dual-gate control, frontend DetectionOverlay |
 | Global ReID merge | ✅ Done | runners/track_encode.py — Qwen3-VL-Embedding cross-modal merge (0.85 cos threshold, 180s time gate, 5 constraints) |
 | Track search path | ✅ Done | core/search.py track_vector_search + search_engine.py _track_search — encode_text(query) vs track crop embeddings, 返回具体物体 |
-| Face Recognition | ✅ Done | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
-| License Plate Recognition | ✅ Done | plugins/plate/paddle_plate.py — PaddleOCR detection + text recognition, PlateRunner |
+| Face Recognition | ✅ Done | plugins/face/insightface_face.py — InsightFace SCRFD + ArcFace R50 (512d), FaceRunner identity clustering with label→DB ID mapping |
+| License Plate Recognition | ✅ Done | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ Done | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
 | Plate Text Search | ✅ Done | core/search.py plate_text_search — ILIKE fuzzy match via pg_trgm |
 | Video Metadata Extraction | ✅ Done | utils/metadata.py — 三级提取 (pymediainfo → exiftool → ffprobe), GPS/device/codec |
@@ -183,6 +209,8 @@ Search (6-path parallel, v0.12):
 | Frames/Thumbnails Export | ✅ Done | 帧序列 zip / 全部场景缩略图 zip 导出 |
 | Track Segments Export | ✅ Done | 按 segments 字段分段导出 track 视频 → zip |
 | Track Thumbnail Download | ✅ Done | 全尺寸物体裁剪图下载 |
+| Multi-format Support (v0.13) | ✅ Done | services/format_service.py — remux + lazy proxy; api/video_routes.py — stream智能路由 + proxy-status; frontend — hevcOk探测 + streamReady |
+| Performance Optimizations (v0.13) | ✅ Done | embedder 336×224; detection 640px/8fps/batch128; long video time-based seg; DAG parallelism fixes |
 | OCR | ⬜ Shell only | plugins/ocr/ |
 | Grounding | ⬜ Shell only | plugins/grounding/ |
 | Health/Reindex | ⬜ Shell only | api/maintenance_routes.py |
@@ -204,10 +232,13 @@ Search (6-path parallel, v0.12):
 11. **Frontend**: Dashboard.tsx (~400 lines) orchestrates all state and renders imported components from `components/`. Component files: icons, LeftSidebar, ParameterPanel, PipelineBar, VideoSummaryCard, VideoSearchCard, DetectionPanel, DetectionTimeline, HistoryPanelContent, SettingsPage, DetectionOverlay, MetadataPanel, ExportMenu. Utility functions in `utils/helpers.ts`. TypeScript types in `types/index.ts` mirror backend Pydantic schemas.
 12. **Detection gate pattern**: New perception modules that are optional should follow the dual-gate pattern: config-level enable/disable (`plugins.{name}.backend: yolo` vs `null`) AND per-video toggle (`detection_enabled` in PipelineParams). Gate function checks both. This allows server-wide opt-out while letting users control per-video.
 13. **Canvas overlay pattern**: The DetectionOverlay uses a `canvas` with `pointerEvents: "none"` for pure rendering, with click/mousemove handlers attached via native `addEventListener` to the parent container. This allows clicks to pass through to video controls while still enabling bbox interaction.
+14. **Video format handling (v0.13)**: Video format processing is TWO-LAYER — remux (container standardization, `-c copy` stream copy, audio → AAC if needed) and proxy (codec compatibility, NVENC H.264, lazy on-demand). Probe is synchronous during upload (<100ms). Remux and proxy are async (asyncio.create_task). Stream endpoint routes via `FormatService.get_stream_target(video_id, hevc_ok)`. Frontend detects HEVC support via `canPlayType()` and passes `hevc_ok` query param. Proxy is NEVER eager-generated — only triggered when a non-HEVC client requests the video.
+15. **cv2/sync C calls MUST use asyncio.to_thread()**: All cv2 operations (VideoCapture.read, cvtColor, etc.) and other synchronous C calls that take >1ms MUST be wrapped in `asyncio.to_thread()`. This prevents event loop blocking and ensures other asyncio tasks can be scheduled. The keyframe runner's cv2 read loop is the canonical example.
+16. **Embedder encode at 336×224**: Frame encoding resizes images to 336×224 before the embedder (reducing vision tokens from ~880 to ~70 per frame, ~10x speedup). This is applied in `_sync_encode_images_batch` via PIL.Image.resize. Search quality is preserved for semantic queries.
 
 ## Python Environment
 
-- Python 3.12
+- Python 3.13
 - FastAPI, SQLAlchemy async, asyncpg, pgvector
 - transformers, torch (CUDA 12.4), modelscope, qwen-vl-utils
 - openai, httpx, Pillow

@@ -65,6 +65,30 @@ class WordTimestamp(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════
+# 格式信息 (v0.13)
+# ═══════════════════════════════════════════════════════════
+
+class FormatInfo(BaseModel):
+    """ffprobe 探测结果 — 结构化格式信息。"""
+    container_format: str
+    video_codec: str
+    audio_codec: str | None = None
+    has_audio: bool = False
+    width: int | None = None
+    height: int | None = None
+    duration: float | None = None
+    bit_rate: int | None = None
+    frame_rate: float | None = None
+
+
+class ProxyStatus(BaseModel):
+    """代理转码状态。"""
+    status: str = "none"       # none / processing / ready / failed
+    progress: float = 0.0      # 0.0 ~ 1.0
+    proxy_path: str | None = None
+
+
+# ═══════════════════════════════════════════════════════════
 # 请求 DTO
 # ═══════════════════════════════════════════════════════════
 
@@ -203,6 +227,16 @@ class VideoResponse(BaseModel):
 
     summary: VideoSummary | None   = None
 
+    # ── 格式信息 (v0.13) ──
+    container_format: str | None        = None
+    video_codec: str | None             = None
+    audio_codec: str | None             = None
+    has_audio: bool                     = False
+    remuxed_path: str | None            = None
+    proxy_path: str | None              = None
+    proxy_status: str                   = "none"
+    proxy_progress: float               = 0.0
+
     created_at: datetime
     updated_at: datetime
 
@@ -232,6 +266,11 @@ class VideoListItem(BaseModel):
     search_index_enabled: bool     = True
     sample_fps: float              = 1.0
     language: str                  = "auto"
+
+    # ── 格式信息 (v0.13) ──
+    container_format: str | None        = None
+    video_codec: str | None             = None
+    proxy_status: str                   = "none"
 
     created_at: datetime
     updated_at: datetime

@@ -364,13 +364,17 @@ async def bulk_insert_track_embeddings(
 async def bulk_insert_face_identities(
     session: AsyncSession,
     rows: list[dict],
-) -> None:
-    """批量写入人脸身份聚类结果 — FaceRunner 产出。"""
+) -> dict[str, int]:
+    """批量写入人脸身份聚类结果 — FaceRunner 产出。
+
+    Returns:
+        {identity_label: db_id} 映射，用于 face_detections 的 identity_id 回填。
+    """
     if not rows:
-        return
+        return {}
     try:
         from core.models import FaceIdentity
-        session.add_all([
+        objs = [
             FaceIdentity(
                 video_id=r["video_id"],
                 identity_label=r["identity_label"],
@@ -384,9 +388,12 @@ async def bulk_insert_face_identities(
                 best_face_path=r.get("best_face_path"),
             )
             for r in rows
-        ])
-        await session.commit()
+        ]
+        session.add_all(objs)
+        await session.flush()  # 获取 DB 自增 ID（不提交事务）
+        label_to_id = {obj.identity_label: obj.id for obj in objs}
         logger.info("[Repo] Bulk inserted %d face identities", len(rows))
+        return label_to_id
     except Exception:
         await session.rollback()
         logger.exception("[Repo] Failed to bulk insert face identities")

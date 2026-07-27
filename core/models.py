@@ -178,6 +178,40 @@ class Video(Base):
         comment="管道实时操作描述, 如'正在对齐第 12/23 个场景'",
     )
 
+    # ── 格式信息 (v0.13) ──
+    container_format: Mapped[str | None] = mapped_column(
+        String(32), nullable=True,
+        comment="真实容器格式: mp4/mkv/mpeg_ps/mpeg_ts/mov/avi/flv/wmv/webm/raw",
+    )
+    video_codec: Mapped[str | None] = mapped_column(
+        String(32), nullable=True,
+        comment="视频编码: h264/hevc/av1/vp9/mpeg4/wmv3/prores/raw",
+    )
+    audio_codec: Mapped[str | None] = mapped_column(
+        String(32), nullable=True,
+        comment="音频编码: aac/mp3/ac3/opus/vorbis/wma/none",
+    )
+    has_audio: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False,
+        comment="是否含音频流",
+    )
+    remuxed_path: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True,
+        comment="Remux 后 MP4 文件路径（容器标准化 + 音频 AAC）",
+    )
+    proxy_path: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True,
+        comment="H.264 代理文件路径（编码兼容）",
+    )
+    proxy_status: Mapped[str] = mapped_column(
+        String(16), default="none", nullable=False,
+        comment="代理转码状态: none/processing/ready/failed",
+    )
+    proxy_progress: Mapped[float] = mapped_column(
+        Float, default=0.0, nullable=False,
+        comment="代理转码进度 0.0 ~ 1.0",
+    )
+
     # ── 时间戳 ──
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False,
@@ -258,12 +292,12 @@ class Scene(Base):
     # ── 向量 (pgvector) ──
     # DEPRECATED (v0.8): 不再由 Pipeline 写入，仅兼容旧数据读取。搜索请用 text_embedding。
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(2048),
+        Vector(4096),
         nullable=True,
         comment="关键帧图像编码向量(Qwen3-VL-Embedding-2B输出2048维) — DEPRECATED",
     )
     text_embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(2048),
+        Vector(4096),
         nullable=True,
         comment="caption 文本语义向量, encode_text(caption) 输出, 用于文本语义搜索",
     )
@@ -388,7 +422,7 @@ class FrameEmbedding(Base):
         Float, nullable=False, comment="精确时间戳(秒)",
     )
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(2048), nullable=True,
+        Vector(4096), nullable=True,
         comment="encode_image(单帧) 编码, 2048 维",
     )
     thumbnail_path: Mapped[str | None] = mapped_column(
@@ -440,7 +474,7 @@ class Chunk(Base):
         Float, nullable=False, comment="窗口结束时间(秒)",
     )
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(2048), nullable=True,
+        Vector(4096), nullable=True,
         comment="encode_video(窗口内全部帧) 原生编码, 2048 维",
     )
     thumbnail_path: Mapped[str | None] = mapped_column(
@@ -587,7 +621,7 @@ class TrackEmbedding(Base):
         String(64), nullable=False, comment="COCO 类别名",
     )
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(2048), nullable=True,
+        Vector(4096), nullable=True,
         comment="crop 跨模态嵌入, encode_image(best_frame_crop) 输出",
     )
     timestamp_sec: Mapped[float] = mapped_column(

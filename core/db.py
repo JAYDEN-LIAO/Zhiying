@@ -53,7 +53,7 @@ async def init_db():
         # ── 增量迁移：为已有表补充新列（create_all 对已有表无效） ──
         await conn.execute(text("""
             ALTER TABLE scenes
-            ADD COLUMN IF NOT EXISTS text_embedding vector(2048)
+            ADD COLUMN IF NOT EXISTS text_embedding vector(4096)
         """))
 
         # ── 增量迁移：videos 表新增 status_detail 列 ──
@@ -120,7 +120,7 @@ async def init_db():
                 video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
                 track_id INTEGER NOT NULL,
                 class_name VARCHAR(64) NOT NULL,
-                embedding vector(2048),
+                embedding vector(4096),
                 timestamp_sec DOUBLE PRECISION NOT NULL,
                 bbox JSONB NOT NULL,
                 created_at TIMESTAMPTZ DEFAULT now()
@@ -218,6 +218,40 @@ async def init_db():
         await conn.execute(text("""
             CREATE INDEX IF NOT EXISTS ix_plate_dets_track
             ON plate_detections (video_id, track_id)
+        """))
+
+        # ── 增量迁移 v0.13: 视频格式兼容字段 ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS container_format VARCHAR(32)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS video_codec VARCHAR(32)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS audio_codec VARCHAR(32)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS has_audio boolean DEFAULT false NOT NULL
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS remuxed_path VARCHAR(1024)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS proxy_path VARCHAR(1024)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS proxy_status VARCHAR(16) DEFAULT 'none' NOT NULL
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS proxy_progress float DEFAULT 0.0 NOT NULL
         """))
 
         # ── 清理：删除废弃的列、枚举类型、触发器 ──

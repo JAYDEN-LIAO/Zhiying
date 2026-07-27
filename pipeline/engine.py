@@ -78,12 +78,14 @@ class EventDrivenScheduler:
             if event is not None:
                 await event.wait()
 
-        logger.debug("[Scheduler] Starting: %s", name)
+        import time as _time
+        _t0 = _time.time()
+        logger.info("[Scheduler] START %s", name)
         try:
             await op.runner.run(self._pctx)
         finally:
             self._done[name].set()
-            logger.debug("[Scheduler] Completed: %s", name)
+            logger.info("[Scheduler] DONE  %s in %.1fs", name, _time.time() - _t0)
 
 
 # ── 保留：增量处理仍需拓扑分批（逻辑简单，不改）──
@@ -137,15 +139,20 @@ class PipelineEngine:
         db_session_factory: async_sessionmaker[AsyncSession],
         video: Video,
         shared_embedder=None,
+        shared_captioner=None,
     ):
         self.config = config
         self.db_session_factory = db_session_factory
         self.video = video
         self._shared_embedder = shared_embedder
+        self._shared_captioner = shared_captioner
 
+        # v0.13: 优先使用 remuxed MP4（容器 demux 效率远高于 PS/TS/AVI）
+        # ASSUMPTION: remuxed 文件的帧数/时长/时间戳与原始文件一致（_c copy 流复制保证）
+        pipeline_source = video.remuxed_path or video.file_path
         self.ctx = VideoContext(
             video_id=str(video.id),
-            file_path=video.file_path,
+            file_path=pipeline_source,
         )
         self.prompt_loader = get_prompt_loader()
         self.plugins: dict[str, object] = {}
@@ -167,6 +174,9 @@ class PipelineEngine:
 
             # 3. 加载所需插件（从 enabled operations 的 required_plugins 推导）
             await self._load_plugins(enabled)
+            # 注入共享实例（已在 lifespan 预加载，避免重复加载）
+            if self._shared_captioner is not None:
+                self.plugins["captioner"] = self._shared_captioner
 
             # 4. 创建 tracker（动态进度权重）和 context
             tracker = StatusTracker(
@@ -193,10 +203,11 @@ class PipelineEngine:
             # 6. 持久化
             await self._persist()
 
-            # 6. 卸载 captioner（释放 GPU 显存）
-            cap = self.plugins.get("captioner")
-            if cap is not None and hasattr(cap, "unload"):
-                cap.unload()
+            # 卸载 captioner（仅当不是共享实例时才释放 GPU 显存）
+            if self._shared_captioner is None:
+                cap = self.plugins.get("captioner")
+                if cap is not None and hasattr(cap, "unload"):
+                    cap.unload()
 
             await tracker.mark_completed()
             logger.info("[Pipeline] video %s completed", self.video.id)
@@ -255,6 +266,8 @@ class PipelineEngine:
             await self._load_scenes_from_db()
 
             await self._load_plugins(enabled)
+            if self._shared_captioner is not None:
+                self.plugins["captioner"] = self._shared_captioner
 
             batches = topological_batches(enabled)
             tracker = StatusTracker(
@@ -309,6 +322,8 @@ class PipelineEngine:
         # 共享实例优先 — 已在 lifespan 预加载到 GPU，runner 通过 PipelineContext 注入
         if self._shared_embedder is not None:
             needed.discard("embedder")
+        if self._shared_captioner is not None:
+            needed.discard("captioner")
 
         for cat in needed:
             self.plugins[cat] = await load_plugin(self.config, cat)
@@ -366,10 +381,16 @@ class PipelineEngine:
                     session, self.video.id, self.ctx.track_embeddings,
                 )
 
-            # 人脸识别
+            # 人脸识别 — 先插入 identities 获取 DB ID 映射，再回填 detections
             if self.ctx.face_identities:
-                await bulk_insert_face_identities(session, self.ctx.face_identities)
-            if self.ctx.face_detections:
+                label_to_id = await bulk_insert_face_identities(session, self.ctx.face_identities)
+                if self.ctx.face_detections and label_to_id:
+                    for fd in self.ctx.face_detections:
+                        db_id = label_to_id.get(fd.pop("_label", ""))
+                        if db_id is not None:
+                            fd["identity_id"] = db_id
+                await bulk_insert_face_detections(session, self.ctx.face_detections)
+            elif self.ctx.face_detections:
                 await bulk_insert_face_detections(session, self.ctx.face_detections)
 
             # 车牌识别

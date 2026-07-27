@@ -82,7 +82,7 @@ class TrackEncodeRunner(OperationRunner):
             return
 
         # 分批次编码 — 272 个 crop 一次性 batch 会撑爆显存
-        TRACK_BATCH = 32
+        TRACK_BATCH = 64  # GB10 128GB 统一内存
         emb_vectors: list = []
         lock = getattr(pctx, "embedder_lock", None)
         for bi in range(0, len(crops), TRACK_BATCH):
@@ -171,15 +171,18 @@ class TrackEncodeRunner(OperationRunner):
     def _fallback_frame(file_path: str, trk: dict) -> np.ndarray | None:
         """头尾帧回退 → cv2 seek 到 track 中间时间点。"""
         import cv2
+        from utils.video_util import suppress_ffmpeg_stderr
+
         mid = trk["first_seen"] + (trk["last_seen"] - trk["first_seen"]) * 0.5
-        cap = cv2.VideoCapture(file_path)
-        try:
-            cap.set(cv2.CAP_PROP_POS_MSEC, mid * 1000)
-            ret, frame = cap.read()
-            if ret:
-                return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        finally:
-            cap.release()
+        with suppress_ffmpeg_stderr():
+            cap = cv2.VideoCapture(file_path)
+            try:
+                cap.set(cv2.CAP_PROP_POS_MSEC, mid * 1000)
+                ret, frame = cap.read()
+                if ret:
+                    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            finally:
+                cap.release()
         return None
 
 

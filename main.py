@@ -10,6 +10,7 @@ FastAPI 应用入口 — Cerno Video Analytics Core Engine
 """
 
 import logging
+import os
 
 from contextlib import asynccontextmanager
 
@@ -37,6 +38,12 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化 DB，关闭时释放连接池。"""
     logger.info("Starting Cerno engine ...")
+
+    # 清理 socks 代理（httpx/openai 不支持 socks scheme）
+    for _key in ("ALL_PROXY", "all_proxy"):
+        if os.environ.pop(_key, None) is not None:
+            logger.info("Unset %s (httpx incompatible)", _key)
+
     config = load_config()
     app.state.config = config
     app.state.db_session_factory = AsyncSessionLocal
@@ -49,6 +56,11 @@ async def lifespan(app: FastAPI):
     app.state.embedder = await _load_embedder(config, "embedder")
     logger.info("Embedder loaded, GPU ready")
 
+    # 预加载 captioner — 暂时跳过以加速启动（近期不用视觉识别）
+    # GB10 128GB 统一内存：embedder(8B) ~16GB + captioner(8B) ~16GB = ~32GB
+    logger.info("Captioner preload: SKIPPED (disabled for fast startup)")
+    app.state.captioner = None
+
     # 人脸识别器 — 搜索端点用（图片搜人脸）
     logger.info("Loading face recognizer ...")
     from plugins.factory import load_plugin as _load_face
@@ -58,7 +70,15 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Face recognizer disabled (backend is null)")
 
+    # 物体检测器 — 不预加载，Pipeline execution 时按需加载（YOLO11s 加载 < 1s）
+    # 一个 Pipeline 只加载一次，不存在重复实例化
+
     # SearchEngine 不在此处预初始化——embedder 按需加载，首次搜索时自动创建
+
+    # 格式兼容服务 — 容器标准化 + 编码代理转码
+    from services.format_service import FormatService
+    app.state.format_service = FormatService(config, AsyncSessionLocal)
+    logger.info("FormatService ready")
 
     yield
     await engine.dispose()

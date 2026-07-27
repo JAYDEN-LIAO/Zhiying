@@ -58,12 +58,10 @@ function thumbUrl(videoId: string, ts: number, bbox: { x1: number; y1: number; x
   return `/api/v1/videos/${videoId}/detection/thumbnail?timestamp=${ts}&x1=${bbox.x1}&y1=${bbox.y1}&x2=${bbox.x2}&y2=${bbox.y2}`;
 }
 
-const CONTAINER = "w-[220px] card-surface rounded-2xl p-3 border border-gray-200/60 flex flex-col h-full";
-
-type TabId = "objects" | "face" | "plate";
+const CONTAINER = "w-[418px] card-surface rounded-2xl p-3 border border-gray-200/60 flex flex-col h-full";
 
 export function DetectionPanel({ video, data, selectedTrackId, classFilter, onClassFilterChange, onTrackSelect, faceData, plateData }: Props) {
-  const [activeTab, setActiveTab] = useState<TabId>("objects");
+  const [showFaces, setShowFaces] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [trackDropdown, setTrackDropdown] = useState<number | null>(null);
   const [downloadingTid, setDownloadingTid] = useState<number | null>(null);
@@ -71,9 +69,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
   const [expandedFaceId, setExpandedFaceId] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const showTabs = !!(video?.face_enabled || video?.plate_enabled);
-  const showFaceTab = !!video?.face_enabled;
-  const showPlateTab = !!video?.plate_enabled;
+  const showFaceBtn = !!(video?.face_enabled && faceData?.has_face);
 
   // Scroll selected track into view
   useEffect(() => {
@@ -97,6 +93,19 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     }
     return map;
   }, [data?.tracks]);
+
+  const plateByTrack = useMemo(() => {
+    const map = new Map<number, import("../types").PlateDetectionItem>();
+    if (plateData?.detections) {
+      for (const p of plateData.detections) {
+        const existing = map.get(p.track_id);
+        if (!existing || p.confidence > existing.confidence) {
+          map.set(p.track_id, p);
+        }
+      }
+    }
+    return map;
+  }, [plateData]);
 
   // ── No video ──
   if (!video) {
@@ -178,45 +187,25 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
   const activeClass = isAll ? null : classFilter;
   const activeColor = activeClass ? (CLASS_COLORS[activeClass] ?? CLASS_COLORS.default) : "#6B7280";
 
-  // Auto-set active tab based on available features
-  const availableTabs: TabId[] = ["objects"];
-  if (showFaceTab) availableTabs.push("face");
-  if (showPlateTab) availableTabs.push("plate");
-  // Ensure activeTab is valid
-  const safeTab: TabId = availableTabs.includes(activeTab) ? activeTab : "objects";
-
-  const tabLabel: Record<TabId, string> = { objects: "物体", face: "人脸", plate: "车牌" };
-
   return (
     <div className={CONTAINER} style={{ padding: 0 }}>
-      {/* Tab bar */}
-      {availableTabs.length > 1 && (
-        <div className="px-3 pt-3 pb-0 shrink-0">
-          <h3 className="font-bold text-gray-900 text-lg mb-2">物体检测</h3>
-          <div className="flex gap-1 pb-2 border-b border-gray-100/60">
-            {availableTabs.map((tid) => (
-              <button
-                key={tid}
-                onClick={() => setActiveTab(tid)}
-                className={`px-3 py-1 text-[11px] font-medium rounded-md transition-all ${
-                  safeTab === tid
-                    ? "bg-[#1a65e1] text-white shadow-sm"
-                    : "text-gray-500 hover:bg-gray-100"
-                }`}
-              >
-                {tabLabel[tid]}
-              </button>
-            ))}
-          </div>
+      {/* Unified header: class filter dropdown + optional face toggle */}
+      <div className="px-3 pt-3 pb-2 border-b border-gray-100/60 shrink-0">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="font-bold text-gray-900 text-lg">{showFaces ? "人脸" : "物体检测"}</h3>
+          {showFaceBtn && (
+            <button
+              onClick={() => setShowFaces(!showFaces)}
+              className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-all ${
+                showFaces ? "bg-purple-100 text-purple-700" : "text-gray-400 hover:text-purple-600 hover:bg-purple-50"
+              }`}
+            >
+              👤 人脸
+            </button>
+          )}
         </div>
-      )}
-
-      {/* Single tab header (no tab bar needed) */}
-      {availableTabs.length <= 1 && (
-        <div className="px-3 pt-3 pb-2 border-b border-gray-100/60 shrink-0">
-          <h3 className="font-bold text-gray-900 text-lg mb-2">物体检测</h3>
-          {/* Class filter dropdown — skip when only 1 class */}
-          {classEntries.length > 1 ? (
+        {/* Class filter dropdown (only in objects mode) */}
+        {!showFaces && classEntries.length > 1 && (
           <div className="relative">
             <button
               onClick={() => setDropdownOpen(!dropdownOpen)}
@@ -252,17 +241,17 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
               </>
             )}
           </div>
-          ) : (
-            <span className="text-[11px] font-medium"
-                  style={{ color: CLASS_COLORS[classEntries[0][0]] ?? CLASS_COLORS.default }}>
-              {classEntries[0][0]} × {classEntries[0][1]}
-            </span>
-          )}
-        </div>
-      )}
+        )}
+        {!showFaces && classEntries.length <= 1 && classEntries.length > 0 && (
+          <span className="text-[11px] font-medium"
+                style={{ color: CLASS_COLORS[classEntries[0][0]] ?? CLASS_COLORS.default }}>
+            {classEntries[0][0]} × {classEntries[0][1]}
+          </span>
+        )}
+      </div>
 
       {/* ── Objects Tab Content ── */}
-      {safeTab === "objects" && (
+      {!showFaces && (
         <div className="flex-1 overflow-y-auto custom-scrollbar" ref={listRef}>
           {filtered.map((t) => {
             const color = CLASS_COLORS[t.class_name] ?? CLASS_COLORS.default;
@@ -270,8 +259,10 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
             const thumbResult = getThumbBbox(data, t);
             const bbox = thumbResult?.bbox ?? null;
             const thumbTs = thumbResult?.ts ?? Math.min(t.first_seen + 0.5, t.last_seen);
-            const hasFace = showFaceTab && t.class_name === "person" && faceData?.has_face;
-            const hasPlate = showPlateTab && ["car", "truck", "bus", "motorcycle"].includes(t.class_name) && plateData?.has_plate;
+            const hasFace = !!(video?.face_enabled && t.class_name === "person" && faceData?.has_face);
+            const isVehicle = ["car", "truck", "bus", "motorcycle"].includes(t.class_name);
+            const plate = isVehicle ? plateByTrack.get(t.track_id) : undefined;
+            const hasPlate = !!(plate);
             return (
               <button
                 key={t.track_id}
@@ -292,17 +283,39 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                     <span className="w-4 h-4 rounded-full" style={{ background: isSel ? SELECTED : color }} />
                   </span>
                 )}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1">
-                    <span className={`text-[11px] truncate ${isSel ? "font-bold text-amber-800" : "font-semibold text-gray-800"}`}>{t.class_name}</span>
-                    <span className={`text-[10px] shrink-0 ${isSel ? "text-amber-600 font-medium" : "text-gray-400"}`}>{classLocalIds.get(t.track_id) ?? t.track_id}</span>
-                    {hasFace && <span className="text-[9px] text-purple-400 shrink-0" title="有人脸数据">👤</span>}
-                    {hasPlate && <span className="text-[9px] text-green-400 shrink-0" title="有车牌数据">🏷</span>}
+                {hasPlate && plate ? (
+                  /* Vehicle with plate: 4:6 split */
+                  <div className="min-w-0 flex-1 flex items-center gap-3">
+                    <div className="flex flex-col shrink-0" style={{ width: "38%" }}>
+                      <span className={`text-sm font-semibold truncate ${isSel ? "text-amber-800" : "text-gray-800"}`}>
+                        {t.class_name} <span className={`text-xs font-medium ${isSel ? "text-amber-600" : "text-gray-400"}`}>#{classLocalIds.get(t.track_id) ?? t.track_id}</span>
+                      </span>
+                      <span className={`text-[11px] font-mono mt-0.5 ${isSel ? "text-amber-600" : "text-gray-400"}`}>{t.first_seen.toFixed(1)}s–{t.last_seen.toFixed(1)}s</span>
+                    </div>
+                    <div className="flex-1 flex items-center gap-2 min-w-0">
+                      <span className="text-sm font-bold font-mono text-gray-900 tracking-wide truncate">{plate.plate_text}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold shrink-0 ${
+                        plate.plate_type === "blue" ? "bg-blue-100 text-blue-700" :
+                        plate.plate_type === "yellow" ? "bg-yellow-100 text-yellow-700" :
+                        plate.plate_type === "green" ? "bg-green-100 text-green-700" :
+                        "bg-gray-100 text-gray-600"
+                      }`}>{plate.plate_type === "blue" ? "蓝" : plate.plate_type === "yellow" ? "黄" : plate.plate_type === "green" ? "绿" : plate.plate_type}</span>
+                      <span className={`text-[11px] font-mono shrink-0 ${isSel ? "text-amber-600" : "text-gray-400"}`}>{(plate.confidence * 100).toFixed(0)}%</span>
+                    </div>
                   </div>
-                  <div className="mt-0.5">
-                    <span className={`text-[10px] font-mono ${isSel ? "text-amber-600" : "text-gray-400"}`}>{t.first_seen.toFixed(1)}s–{t.last_seen.toFixed(1)}s</span>
+                ) : (
+                  /* Non-vehicle or no plate: full-width */
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1">
+                      <span className={`text-sm font-semibold truncate ${isSel ? "text-amber-800" : "text-gray-800"}`}>{t.class_name}</span>
+                      <span className={`text-xs font-medium shrink-0 ${isSel ? "text-amber-600" : "text-gray-400"}`}>#{classLocalIds.get(t.track_id) ?? t.track_id}</span>
+                      {hasFace && <span className="text-[9px] text-purple-400 shrink-0" title="有人脸数据">👤</span>}
+                    </div>
+                    <div className="mt-0.5">
+                      <span className={`text-[11px] font-mono ${isSel ? "text-amber-600" : "text-gray-400"}`}>{t.first_seen.toFixed(1)}s–{t.last_seen.toFixed(1)}s</span>
+                    </div>
                   </div>
-                </div>
+                )}
                 {isSel && <svg className="w-3 h-3 shrink-0" viewBox="0 0 12 12" fill={SELECTED}><path d="M4 3l4 3-4 3V3z" /></svg>}
                 {/* Download button */}
                 <div className="relative shrink-0">
@@ -357,7 +370,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
       )}
 
       {/* ── Face Tab Content ── */}
-      {safeTab === "face" && faceData?.has_face && (
+      {showFaces && faceData?.has_face && (
         <div className="flex-1 overflow-y-auto custom-scrollbar" ref={listRef}>
           {faceData.identities.map((ident) => (
             <div key={ident.id} className="border-b border-gray-100/40 last:border-b-0">
@@ -402,52 +415,9 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
           ))}
         </div>
       )}
-      {safeTab === "face" && !faceData?.has_face && (
+      {showFaces && !faceData?.has_face && (
         <div className="flex-1 flex items-center justify-center">
           <span className="text-gray-400 text-sm">暂无人脸数据</span>
-        </div>
-      )}
-
-      {/* ── Plate Tab Content ── */}
-      {safeTab === "plate" && plateData?.has_plate && (
-        <div className="flex-1 overflow-y-auto custom-scrollbar" ref={listRef}>
-          {plateData.detections.map((p, idx) => (
-            <button
-              key={p.id ?? idx}
-              onClick={() => onTrackSelect(p.track_id, p.class_name, p.timestamp_sec)}
-              className="w-full flex flex-col gap-1 px-3 py-2.5 text-left hover:bg-gray-50/60 transition-colors border-b border-gray-100/40 last:border-b-0"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-bold font-mono text-gray-900 tracking-wider">{p.plate_text}</span>
-                <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                  p.plate_type === "blue" ? "bg-blue-100 text-blue-700" :
-                  p.plate_type === "yellow" ? "bg-yellow-100 text-yellow-700" :
-                  p.plate_type === "green" ? "bg-green-100 text-green-700" :
-                  "bg-gray-100 text-gray-600"
-                }`}>{p.plate_type === "blue" ? "蓝牌" : p.plate_type === "yellow" ? "黄牌" : p.plate_type === "green" ? "绿牌" : p.plate_type}</span>
-              </div>
-              {/* Confidence bar */}
-              {p.char_confidences && p.char_confidences.length > 0 && (
-                <div className="flex gap-0.5">
-                  {p.char_confidences.map((c, ci) => (
-                    <div key={ci} className="flex-1 h-1 rounded-full" style={{ background: c > 0.8 ? "#22c55e" : c > 0.5 ? "#f59e0b" : "#ef4444" }} />
-                  ))}
-                </div>
-              )}
-              <div className="flex items-center gap-2 text-[10px] text-gray-400">
-                <span>{p.class_name} #{p.track_id}</span>
-                <span>·</span>
-                <span className="font-mono">{p.timestamp_sec.toFixed(1)}s</span>
-                <span>·</span>
-                <span>置信度 {(p.confidence * 100).toFixed(0)}%</span>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-      {safeTab === "plate" && !plateData?.has_plate && (
-        <div className="flex-1 flex items-center justify-center">
-          <span className="text-gray-400 text-sm">暂无车牌数据</span>
         </div>
       )}
 

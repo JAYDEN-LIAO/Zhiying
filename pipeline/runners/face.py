@@ -74,7 +74,7 @@ class FaceRunner(OperationRunner):
                 "track_id": tid,
                 "timestamp": ts,
                 "person_bbox": b,
-                "crop_offset": (px1, py1, w, h),  # for converting face bbox back to frame coords
+                "crop_offset": (px1, py1, px2, py2, w, h),  # crop pixel coords + full-frame dims
             })
             crops.append(person_crop)
 
@@ -93,15 +93,17 @@ class FaceRunner(OperationRunner):
         # ── Phase 3: 转换到帧坐标 + 收集 embedding ──
         face_records: list[dict] = []  # [{track_id, timestamp, bbox(frame), quality, embedding}, ...]
         for meta, face_list in zip(person_metas, all_face_dets):
-            px1, py1, fw, fh = meta["crop_offset"]
+            px1, py1, px2, py2, fw, fh = meta["crop_offset"]
+            crop_w = px2 - px1
+            crop_h = py2 - py1
             for face in face_list:
                 fb = face["bbox"]
-                # 人脸 bbox 从 person crop 坐标 → 全帧归一化坐标
+                # 人脸 bbox 从 person crop 归一化坐标 → 全帧归一化坐标
                 frame_bbox = {
-                    "x1": (px1 + fb["x1"] * (meta["person_bbox"]["x2"] - meta["person_bbox"]["x1"]) * fw) / fw,
-                    "y1": (py1 + fb["y1"] * (meta["person_bbox"]["y2"] - meta["person_bbox"]["y1"]) * fh) / fh,
-                    "x2": (px1 + fb["x2"] * (meta["person_bbox"]["x2"] - meta["person_bbox"]["x1"]) * fw) / fw,
-                    "y2": (py1 + fb["y2"] * (meta["person_bbox"]["y2"] - meta["person_bbox"]["y1"]) * fh) / fh,
+                    "x1": (px1 + fb["x1"] * crop_w) / fw,
+                    "y1": (py1 + fb["y1"] * crop_h) / fh,
+                    "x2": (px1 + fb["x2"] * crop_w) / fw,
+                    "y2": (py1 + fb["y2"] * crop_h) / fh,
                 }
                 # clamp
                 for k in frame_bbox:
@@ -201,7 +203,8 @@ class FaceRunner(OperationRunner):
             {
                 "video_id": video_id,
                 "track_id": fr["track_id"],
-                "identity_id": fr["identity_id"],
+                "identity_id": fr["identity_id"],  # runner internal ID, engine 会用 _label 映射到 DB ID
+                "_label": id_to_label.get(fr["identity_id"], ""),  # 供 engine 映射用
                 "timestamp_sec": fr["timestamp"],
                 "bbox": fr["bbox"],
                 "quality_score": fr["quality"],

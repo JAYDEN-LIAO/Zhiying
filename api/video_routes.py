@@ -4,6 +4,7 @@ api/video_routes.py
 视频管理端点 — 上传 / 注册 / 参数 / 流式播放 / 缩略图等。
 """
 
+import asyncio
 import os
 import uuid
 import logging
@@ -35,10 +36,17 @@ router = APIRouter()
 @router.post("/videos", status_code=201)
 async def register_video(
     payload: VideoCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[VideoResponse]:
     """注册视频处理任务，初始状态为 pending。"""
     video = await create_video(db, payload)
+
+    # 同步探测 + 异步 remux/proxy
+    format_service = request.app.state.format_service
+    await format_service.probe_and_save(video.id, payload.file_path)
+    asyncio.create_task(format_service.process_format(video.id, payload.file_path))
+
     return APIResponse(data=VideoResponse.model_validate(video))
 
 
@@ -55,6 +63,8 @@ async def upload_video(
     caption_enabled: bool = Form(True),
     detection_enabled: bool = Form(False),
     detection_classes: str | None = Form(None),
+    face_enabled: bool = Form(False),
+    plate_enabled: bool = Form(False),
     summary_enabled: bool = Form(True),
     summary_mode: str = Form("native_video"),
     search_index_enabled: bool = Form(True),
@@ -101,6 +111,8 @@ async def upload_video(
         caption_enabled=caption_enabled,
         detection_enabled=detection_enabled,
         detection_classes=detection_classes_list,
+        face_enabled=face_enabled,
+        plate_enabled=plate_enabled,
         summary_enabled=summary_enabled,
         summary_mode=summary_mode,
         search_index_enabled=search_index_enabled,
@@ -112,6 +124,13 @@ async def upload_video(
 
     video = await create_video(db, dto)
     logger.info("[Upload] video=%s file=%s size=%d (pending, await params)", video.id, file.filename, file_size)
+
+    # 同步探测格式（<100ms），异步执行 remux + proxy
+    format_service = request.app.state.format_service
+    await format_service.probe_and_save(video.id, dest_path)
+    # 重操作异步执行
+    asyncio.create_task(format_service.process_format(video.id, dest_path))
+
     return APIResponse(data=VideoResponse.model_validate(video))
 
 
@@ -143,6 +162,8 @@ async def reuse_video(
         caption_enabled=payload.caption_enabled,
         detection_enabled=payload.detection_enabled,
         detection_classes=payload.detection_classes,
+        face_enabled=payload.face_enabled,
+        plate_enabled=payload.plate_enabled,
         summary_enabled=payload.summary_enabled,
         summary_mode=payload.summary_mode,
         search_index_enabled=payload.search_index_enabled,
@@ -159,6 +180,7 @@ async def reuse_video(
         config=config,
         db_session_factory=db_session_factory,
         embedder=request.app.state.embedder,
+        captioner=getattr(request.app.state, "captioner", None),
     )
     background_tasks.add_task(service.process_video, video.id)
 
@@ -196,6 +218,8 @@ async def update_video_params(
                 caption_enabled=payload.caption_enabled,
                 detection_enabled=payload.detection_enabled,
                 detection_classes=payload.detection_classes,
+                face_enabled=payload.face_enabled,
+                plate_enabled=payload.plate_enabled,
                 summary_enabled=payload.summary_enabled,
                 summary_mode=payload.summary_mode,
                 search_index_enabled=payload.search_index_enabled,
@@ -215,6 +239,7 @@ async def update_video_params(
             config=config,
             db_session_factory=db_session_factory,
             embedder=request.app.state.embedder,
+            captioner=getattr(request.app.state, "captioner", None),
         )
         background_tasks.add_task(service.process_video, video.id)
         logger.info("[Params] video=%s full pipeline starting", video_id)
@@ -229,6 +254,8 @@ async def update_video_params(
             "caption_enabled": video.caption_enabled,
             "detection_enabled": video.detection_enabled,
             "detection_classes": video.detection_classes,
+            "face_enabled": video.face_enabled,
+            "plate_enabled": video.plate_enabled,
             "language": video.language,
             "sample_fps": video.sample_fps,
             "segment_threshold": video.segment_threshold,
@@ -247,6 +274,8 @@ async def update_video_params(
             "caption_enabled": payload.caption_enabled,
             "detection_enabled": payload.detection_enabled,
             "detection_classes": payload.detection_classes,
+            "face_enabled": payload.face_enabled,
+            "plate_enabled": payload.plate_enabled,
             "language": payload.language,
             "sample_fps": payload.sample_fps,
             "segment_threshold": payload.segment_threshold,
@@ -259,6 +288,7 @@ async def update_video_params(
 
         non_l3_keys = {"content_type", "vision_enabled", "audio_enabled", "ocr_enabled",
                        "caption_enabled", "detection_enabled", "detection_classes",
+                       "face_enabled", "plate_enabled",
                        "language", "sample_fps",
                        "segment_threshold", "caption_with_context", "summary_detail",
                        "summary_mode"}
@@ -294,6 +324,7 @@ async def update_video_params(
             config=config,
             db_session_factory=db_session_factory,
             embedder=request.app.state.embedder,
+            captioner=getattr(request.app.state, "captioner", None),
         )
         background_tasks.add_task(service.incremental_process, video.id, l3_turned_on)
 
@@ -370,27 +401,74 @@ async def get_video_status(
 async def stream_video(
     video_id: uuid.UUID,
     request: Request,
+    hevc_ok: bool = False,  # 前端上报 HEVC 能力
     db: AsyncSession = Depends(get_db),
 ) -> FileResponse:
-    """流式传输原始视频文件，支持 HTTP Range 请求（视频拖动跳转）。"""
+    """流式传输视频，根据客户端能力智能选择最佳可播文件。
+
+    - hevc_ok=false (Firefox/Chrome): HEVC 源返回 proxy，未就绪时返回 202
+    - hevc_ok=true (Safari/Electron): HEVC 源直接返回 remuxed 文件
+    """
     result = await db.execute(
-        select(Video.file_path, Video.file_name)
-        .where(Video.id == video_id)
+        select(Video.file_name, Video.file_path).where(Video.id == video_id)
     )
     row = result.one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    file_path = row.file_path
-    if not os.path.exists(file_path):
+    file_name = row.file_name
+
+    # 使用 FormatService 智能路由
+    format_service = request.app.state.format_service
+    target = await format_service.get_stream_target(video_id, hevc_ok)
+
+    if target is None:
+        # proxy 未就绪，返回进度信息
+        raise HTTPException(
+            status_code=202,
+            detail="Proxy transcode in progress",
+            headers={"X-Proxy-Status": "processing"},
+        )
+
+    if not os.path.exists(target.file_path):
         raise HTTPException(status_code=404, detail="Video file not found on disk")
 
     return FileResponse(
-        path=file_path,
-        media_type="video/mp4",
-        filename=row.file_name,
+        path=target.file_path,
+        media_type=target.media_type,
+        filename=file_name,
         content_disposition_type="inline",
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "private, no-cache",
+        },
     )
+
+
+@router.get("/videos/{video_id}/proxy-status")
+async def get_proxy_status(
+    video_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse:
+    """查询代理转码进度。"""
+    from core.schemas import ProxyStatus as ProxyStatusSchema
+
+    result = await db.execute(
+        select(
+            Video.proxy_status,
+            Video.proxy_progress,
+            Video.proxy_path,
+        ).where(Video.id == video_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    return APIResponse(data=ProxyStatusSchema(
+        status=row.proxy_status or "none",
+        progress=float(row.proxy_progress or 0.0),
+        proxy_path=row.proxy_path,
+    ).model_dump())
 
 
 @router.get("/videos/{video_id}/thumbnail/{scene_index}")

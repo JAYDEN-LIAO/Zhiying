@@ -52,7 +52,7 @@ ALL_OPERATIONS: list[Operation] = [
     Operation(
         name="keyframes", runner=KeyframeRunner(),
         depends_on=["segmentation"],
-        gate=lambda v, _: v.vision_enabled,
+        gate=lambda v, _: v.vision_enabled and (v.search_index_enabled or v.summary_enabled),
         label="关键帧抽取", description="1fps 帧池提取中",
         progress_weight=0.15,
     ),
@@ -67,7 +67,7 @@ ALL_OPERATIONS: list[Operation] = [
 
     Operation(
         name="detection", runner=DetectionRunner(),
-        depends_on=["segmentation"],
+        depends_on=["duration"],  # 仅需时长，不依赖分割；场景聚合在结束时自动有 scenes
         gate=lambda v, cfg: (
             cfg.get("plugins", {}).get("detector", {}).get("backend") is not None
             and getattr(v, "detection_enabled", False)
@@ -80,7 +80,7 @@ ALL_OPERATIONS: list[Operation] = [
     Operation(
         name="caption", runner=CaptionRunner(),
         depends_on=["keyframes"],
-        gate=lambda v, _: v.vision_enabled and v.caption_enabled,
+        gate=lambda v, _: v.vision_enabled and v.caption_enabled and v.summary_enabled,
         required_plugins=["captioner"],
         label="画面描述", description="VLM 画面描述中",
         progress_weight=0.20,
@@ -118,8 +118,11 @@ ALL_OPERATIONS: list[Operation] = [
 
     Operation(
         name="text_encode", runner=TextEncodeRunner(),
-        depends_on=["caption"],
-        gate=lambda v, _: v.search_index_enabled and v.vision_enabled and v.caption_enabled,
+        depends_on=["keyframes"],
+        gate=lambda v, _: (
+            v.search_index_enabled and v.vision_enabled
+            and (v.summary_enabled or v.audio_enabled or v.ocr_enabled)
+        ),  # 有文本源才编码 — caption(summary) / transcript(audio) / OCR
         required_plugins=["embedder"],
         label="文本语义编码", description="文本向量编码中",
         progress_weight=0.07,

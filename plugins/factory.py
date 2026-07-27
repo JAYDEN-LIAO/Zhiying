@@ -55,11 +55,14 @@ _MODULE_OVERRIDES: dict[tuple[str, str], str] = {
     ("segmenter", "transnetv2"): "transnet_v2",
     ("captioner", "qwen_api"): "qwen_api_captioner",
     ("captioner", "qwen25_vl"): "qwen25_vl_captioner",
+    ("captioner", "qwen3_vl"): "qwen3_vl_captioner",
     ("embedder", "qwen3_vl_embedding"): "qwen_vl_embedder",
+    ("embedder", "qwen3_vl_embedding_8b"): "qwen_vl_embedder",
     ("summarizer", "vllm"): "vllm_summarizer",
     ("detector", "yolo"): "yolo",
     ("face", "insightface"): "insightface_face",
     ("plate", "paddle"): "paddle_plate",
+    ("plate", "hyperlpr"): "hyperlpr_plate",
 }
 
 # 后端标识 → 实现类名覆盖
@@ -67,10 +70,12 @@ _MODULE_OVERRIDES: dict[tuple[str, str], str] = {
 _CLASS_OVERRIDES: dict[tuple[str, str], str] = {
     ("captioner", "qwen_api"): "QwenAPICaptioner",
     ("captioner", "qwen25_vl"): "Qwen25VLCaptioner",
+    ("captioner", "qwen3_vl"): "Qwen3VLCaptioner",
     ("segmenter", "time_based"): "TimeBasedSegmenter",
     ("detector", "yolo"): "YoloDetector",
     ("face", "insightface"): "InsightFaceRecognizer",
     ("plate", "paddle"): "PaddlePlateRecognizer",
+    ("plate", "hyperlpr"): "HyperLPRPlateRecognizer",
 }
 
 

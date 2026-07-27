@@ -27,18 +27,18 @@ plugins:
     model: models/yolo26s.pt
     confidence_threshold: 0.4
     iou_threshold: 0.5
-    batch_size: 32
-    detection_fps: 15
+    batch_size: 128
+    detection_fps: 8
 
   # ── OCR（Demo 跳过）──
   ocr:
     backend: null
 
-  # ── 画面描述 via Qwen2.5-VL 本地视频理解 ──
+  # ── 画面描述 via Qwen3-VL 8B 本地视频理解 ──
   captioner:
-    backend: "qwen25_vl"
+    backend: "qwen3_vl"
     params:
-      model_name: "models/models/Qwen--Qwen2.5-VL-7B-Instruct/snapshots/master"
+      model_name: "models/Qwen/Qwen3-VL-8B-Instruct"
       max_new_tokens: 2048
       min_pixels: 200704
       max_pixels: 1003520
@@ -53,10 +53,11 @@ plugins:
   #     with_context: true
 
   # ── 向量编码（本地 GPU，唯一必须本地的模型）──
+  # ── 向量编码（本地 GPU）──
   embedder:
-    backend: "qwen3_vl_embedding"
+    backend: "qwen3_vl_embedding_8b"
     params:
-      model_name: "models/models/Qwen--Qwen3-VL-Embedding-2B/snapshots/master"
+      model_name: "models/Qwen/Qwen3-VL-Embedding-8B"
 
   # ── 摘要生成 via DeepSeek API（vlm_llm 模式使用）──
   summarizer:
@@ -73,18 +74,16 @@ plugins:
 
   # ── 人脸识别（SCRFD + ArcFace R50 via insightface）──
   face:
-    backend: null                     # 设为 "insightface" 启用
-    # params:
-    #   det_thresh: 0.5              # SCRFD 检测阈值
-    #   rec_thresh: 0.4              # ArcFace 识别阈值（内部用，聚类由 FaceRunner 做）
+    backend: "insightface"
+    params:
+      det_thresh: 0.5              # SCRFD 检测阈值
+      rec_thresh: 0.4              # ArcFace 识别阈值（内部用，聚类由 FaceRunner 做）
 
-  # ── 车牌识别（PaddleOCR）──
+  # ── 车牌识别（HyperLPR3 — 专用 LPR 模型）──
   plate:
-    backend: null                     # 设为 "paddle" 启用
-    # params:
-    #   lang: "ch"                   # OCR 语言
-    #   det_db_thresh: 0.3           # 文字检测阈值
-    #   rec_thresh: 0.5              # 文字识别阈值
+    backend: "hyperlpr"
+    params:
+      detect_level: "high"      # low (更快) / high (更准, 640×640)
 
 pipeline:
   sample_fps: 1.0

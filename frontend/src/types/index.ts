@@ -7,6 +7,14 @@
 export type VideoStatus = "pending" | "processing" | "completed" | "failed";
 export type ContentType = "general" | "meeting" | "surveillance" | "text_recognition" | "custom";
 
+/* ── Format / Proxy status (v0.13) ── */
+
+export interface ProxyStatus {
+  status: string;    // "none" | "processing" | "ready" | "failed"
+  progress: number;  // 0.0 ~ 1.0
+  proxy_path: string | null;
+}
+
 /* ── Generic API response envelope ── */
 
 export interface APIResponse<T> {
@@ -37,6 +45,10 @@ export interface VideoListItem {
   search_index_enabled: boolean;
   sample_fps: number;
   language: string;
+  /* ── Format info (v0.13) ── */
+  container_format: string | null;
+  video_codec: string | null;
+  proxy_status: string;
   created_at: string;
   updated_at: string;
 }
@@ -103,6 +115,15 @@ export interface VideoResponse {
   status_detail: string | null;
   qc_result: unknown | null;
   summary: VideoSummary | null;
+  /* ── Format info (v0.13) ── */
+  container_format: string | null;
+  video_codec: string | null;
+  audio_codec: string | null;
+  has_audio: boolean;
+  remuxed_path: string | null;
+  proxy_path: string | null;
+  proxy_status: string;
+  proxy_progress: number;
   created_at: string;
   updated_at: string;
 }
@@ -142,6 +163,7 @@ export interface SearchResultItem {
   plate_text?: string;
   plate_type?: string;
   char_confidences?: number[];
+}
 
 /* ── Face search result (POST /api/v1/search/face) ── */
 

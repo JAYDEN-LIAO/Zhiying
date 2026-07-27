@@ -295,13 +295,16 @@ export function VideoSearchCard({
         {/* Results list */}
         {results.map((item, idx) => {
           const isTrack = item.precision_level === "track";
+          const isPlate = item.precision_level === "plate";
           return (
           <div
-            key={isTrack ? `track-${item.track_id}` : (item.scene_id || idx)}
+            key={isTrack ? `track-${item.track_id}` : isPlate ? `plate-${item.video_id}-${item.track_id}-${idx}` : (item.scene_id || idx)}
             className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
             onClick={() => {
               if (isTrack && item.track_id != null && item.precise_start != null) {
                 onTrackResult?.(item.track_id, item.class_name ?? "", item.precise_start);
+              } else if (isPlate && item.precise_start != null) {
+                if (onSeekTo) onSeekTo(item.precise_start, null);
               } else {
                 const ts = item.precise_start ?? item.scene_range_start;
                 if (onSeekTo && ts != null) onSeekTo(ts, item.precise_end ?? item.scene_range_end);
@@ -355,9 +358,12 @@ export function VideoSearchCard({
 
                   {item.precision_level && item.precision_level !== "scene" && (
                     <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
-                      isTrack ? "bg-amber-50 text-amber-500" : "bg-purple-50 text-purple-400"
+                      isTrack ? "bg-amber-50 text-amber-500"
+                      : isPlate ? "bg-green-50 text-green-600"
+                      : "bg-purple-50 text-purple-400"
                     }`}>
                       {isTrack ? "物体定位"
+                        : isPlate ? "车牌"
                         : item.precision_level === "frame" ? "帧定位"
                         : item.precision_level === "chunk" ? "段落"
                         : item.precision_level}
@@ -369,6 +375,20 @@ export function VideoSearchCard({
                   <p className="text-xs text-gray-800 font-semibold font-mono mt-1">
                     {item.class_name} {classLocalMap.get(item.track_id!) ?? item.track_id}
                   </p>
+                ) : isPlate && item.plate_text ? (
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <span className="text-sm font-bold font-mono text-gray-800 tracking-wider">{item.plate_text}</span>
+                    {item.plate_type && (
+                      <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
+                        item.plate_type === "blue" ? "bg-blue-100 text-blue-700"
+                        : item.plate_type === "yellow" ? "bg-yellow-100 text-yellow-700"
+                        : item.plate_type === "green" ? "bg-green-100 text-green-700"
+                        : "bg-gray-100 text-gray-600"
+                      }`}>
+                        {item.plate_type === "blue" ? "蓝牌" : item.plate_type === "yellow" ? "黄牌" : item.plate_type === "green" ? "绿牌" : item.plate_type}
+                      </span>
+                    )}
+                  </div>
                 ) : item.caption ? (
                   <p className="text-xs text-gray-600 leading-relaxed line-clamp-2 mt-1">{item.caption}</p>
                 ) : null}
@@ -390,7 +410,7 @@ export function VideoSearchCard({
                     </button>
                   ) : null}
                   {/* Frame result: download clip */}
-                  {!isTrack && item.precise_start != null && item.precise_end != null ? (
+                  {!isTrack && !isPlate && item.precise_start != null && item.precise_end != null ? (
                     <button
                       onClick={(e) => { e.stopPropagation();
                         window.open(api.getClipExportUrl(item.video_id, item.precise_start!, item.precise_end!), "_blank"); }}
@@ -402,6 +422,22 @@ export function VideoSearchCard({
                         <polyline points="9 3 9 7 15 7 15 3" />
                       </svg>
                       下载段落
+                    </button>
+                  ) : null}
+                  {/* Plate result: download thumbnail */}
+                  {isPlate && item.thumbnail_url ? (
+                    <button
+                      onClick={(e) => { e.stopPropagation();
+                        window.open(item.thumbnail_url!, "_blank"); }}
+                      className="flex items-center gap-1 text-[10px] text-green-600 hover:text-green-700 transition-colors px-1.5 py-0.5 rounded hover:bg-green-50"
+                      title="查看车牌截图"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                        <circle cx="8.5" cy="8.5" r="1.5" />
+                        <polyline points="21 15 16 10 5 21" />
+                      </svg>
+                      车牌截图
                     </button>
                   ) : null}
                 </div>

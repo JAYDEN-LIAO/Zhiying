@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.12 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.13 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -17,16 +17,21 @@
 │                             │  │   ┌─ frame (1fps 精确)     │  │  ┌── video player │
 │  ┌─ api/video_routes.py ──┐ │  │   ├─ chunk (滑动窗口)      │  │  ├── pipeline UI  │
 │  │ upload/register/params  │ │  │   ├─ text (caption 语义)    │  │  ├── search panel │
-│  │ stream/thumbnail/status │ │  │   ├─ label (JSONB 精确)     │  │  ├── history list │
-│  │ delete/metadata        │ │  │   └─ track (crop 跨模态)    │  │  ├── det panel    │
-│  └─────────────────────────┘ │  └──────────┬──────────────────┘  │  └── export btn   │
-│  ┌─ api/export_routes.py ──┐ │             │                      └──────────────────┘
+│  │ stream (hevc_ok 路由)   │ │  │   ├─ label (JSONB 精确)     │  │  ├── history list │
+│  │ proxy-status/thumbnail  │ │  │   └─ track (crop 跨模态)    │  │  ├── det panel    │
+│  │ delete/metadata        │ │  │   └─ plate (ILIKE 模糊)     │  │  └── export btn   │
+│  └─────────────────────────┘ │  └──────────┬──────────────────┘  └──────────────────┘
+│  ┌─ api/export_routes.py ──┐ │             │
 │  │ clip / frames / track   │ │  ┌──────────▼──────────────────┐
 │  │ thumbnails (GET+POST)   │ │  │   Embedder (local GPU)      │
 │  └─────────────────────────┘ │  │   encode_text("query")      │
 │  ┌─ api/detection_routes.py │  │   encode_image(frame)       │
 │  │ detection/data + thumb   │  └──────────────────────────────┘
 │  └───────────┬──────────────┘
+│  ┌─ FormatService (v0.13)  ─┐
+│  │ probe → remux → proxy    │
+│  │ (按需, 异步, 不阻塞上传) │
+│  └──────────────────────────┘
 └──────────────┬─────────────┘
                │
                ▼
@@ -94,7 +99,7 @@ L3: Function Switches (2)
 L4: Advanced Params (6)
   ├─ language, sample_fps, segment_threshold
   ├─ caption_with_context, summary_detail
-  └─ summary_mode: "native_video" (默认, 本地Qwen2.5-VL + 纯Python聚合) | "vlm_llm" (VLM+LLM, API驱动)
+  └─ summary_mode: "native_video" (默认, 本地Qwen3-VL-8B + 纯Python聚合) | "vlm_llm" (VLM+LLM, API驱动)
 
 Validation: PipelineParams model_validator in core/schemas.py
   ● vision OFF → ocr/caption/detection forced OFF
@@ -144,7 +149,7 @@ Phase 3 (Alignment, 可选)
   ↓
 
 **Phase 4: Understanding (双模式)**
-  ├─ native_video (默认): Qwen2.5-VL-7B 本地 GPU 直接观看视频片段
+  ├─ native_video (默认): Qwen3-VL-8B 本地 GPU 直接观看视频片段
   │    → 输出结构化 JSON {description, keywords, objects, actions, scene_type, lighting}
   │    → scene.caption ← description (搜索用), scene.structured_caption ← 完整 JSON
   │    状态: "正在描述第 X/Y 个场景"
@@ -204,11 +209,11 @@ main.py
         │     ├─ core/models.py      (ORM: Video, Scene, Transcript, FrameEmbedding, Chunk, ...)
         │     ├─ core/schemas.py     (Pydantic DTOs)
         │     ├─ core/repository.py  (DB 数据访问层 + 批量写入)
-        │     ├─ core/search.py      (4 种检索函数: frame/chunk/text/track)
+        │     ├─ core/search.py      (6 种检索函数: frame/chunk/text/track/plate/face)
         │     ├─ services/video_service.py
         │     │     └─ pipeline/engine.py (DAG executor)
         │     │           ├─ pipeline/operations.py (ALL_OPERATIONS)
-        │     │           ├─ pipeline/runners/*.py (12 operation runners)
+        │     │           ├─ pipeline/runners/*.py (14 operation runners)
         │     │           ├─ utils/video_util.py          (keyframe extraction, clip export)
         │     │           ├─ utils/metadata.py            (video metadata extraction)
         │     │           └─ plugins/factory.py
@@ -220,6 +225,8 @@ main.py
         │     │                 ├─ plugins/segmenter/transnet_v2.py
         │     │                 ├─ plugins/transcriber/faster_whisper.py
         │     │                 ├─ plugins/detector/yolo.py
+        │     │                 ├─ plugins/face/insightface_face.py
+        │     │                 ├─ plugins/plate/hyperlpr_plate.py
         │     │                 └─ plugins/*/ (ocr, grounding — stubs)
         │     └─ pipeline/search_engine.py
         │           ├─ core/search.py
@@ -228,11 +235,11 @@ main.py
               └─ utils/video_util.py
 
 core/
-  ├─ interfaces.py         ← 8 个插件 ABC
+  ├─ interfaces.py         ← 10 个插件 ABC
   ├─ models.py             ← ORM: Video, Scene, Transcript, FrameEmbedding, Chunk, TrackEmbedding, ...
   ├─ schemas.py            ← Pydantic v2 DTOs + JSONB 校验模型
   ├─ repository.py         ← DB 数据访问层 + bulk_insert_frames/chunks/tracks
-  ├─ search.py             ← 4 种检索: frame/chunk/text/track
+  ├─ search.py             ← 6 种检索: frame/chunk/text/track/plate/face
   ├─ db.py                 ← 异步引擎/Session 工厂/表初始化/触发器
   ├─ config_loader.py      ← YAML + .env 加载
   ├─ prompt_loader.py      ← Prompt 模板加载
@@ -297,12 +304,14 @@ plugins/factory.py:
 config.yaml controls which backends to load:
 
   segmenter:   transnetv2    → TransNetV2 neural network scene detection
-  captioner:   qwen25_vl     → local Qwen2.5-VL-7B video understanding (default)
+  captioner:   qwen3_vl      → local Qwen3-VL-8B video understanding (default)
                qwen_api      → Qwen-VL-Max DashScope API (vlm_llm mode)
-  embedder:    qwen3_vl_embedding → local GPU model (Qwen3-VL-Embedding-2B), loaded at startup
+  embedder:    qwen3_vl_embedding_8b → local GPU model (Qwen3-VL-Embedding-8B), loaded at startup
   summarizer:  vllm          → DeepSeek API (vlm_llm mode only; native mode uses Python aggregator)
   transcriber: null          → disabled (faster-whisper plugin exists, opt-in)
   detector:    yolo          → YOLO11s object detection (default: enabled via config)
+  face:        insightface   → InsightFace SCRFD + ArcFace R50 (512d)
+  plate:       hyperlpr      → HyperLPR3 ONNX Runtime LPR (with PaddleOCR alternative)
   ocr:         null          → disabled (placeholder)
   grounding:   null          → disabled (placeholder)
 ```
@@ -335,11 +344,13 @@ Semantic Search: POST /api/v1/search/semantic
              match_paths, caption, similarity, thumbnail_url,
              track_id?, class_name?, bbox?}
 
-core/search.py 提供的 4 种检索函数:
+core/search.py 提供的 6 种检索函数:
   1. frame_vector_search      — 帧级精确搜索 (frame_embeddings)
   2. chunk_vector_search      — 窗口过程语义搜索 (chunks)
   3. text_vector_search       — 文本语义搜索 (scenes.text_embedding, 含 caption+ocr+transcript)
   4. track_vector_search      — track crop 跨模态搜索 (track_embeddings)
+  5. plate_text_search        — 车牌文本模糊匹配 (plate_detections, ILIKE + pg_trgm)
+  6. face_identity_search     — 人脸身份向量匹配 (face_identities, ArcFace 512d cosine)
 ```
 
 ## Database Schema
@@ -503,7 +514,7 @@ Vite 开发代理:
 | **Plugin + Factory** | Swap models via config.yaml, zero code changes |
 | **pgvector over standalone vector DB** | Simpler deployment, transactional consistency |
 | **Local GPU for Embedder** | 2048-dim encoding every scene/frame; API latency unacceptable |
-| **Local GPU for Captioner (default)** | Qwen2.5-VL-7B 4-bit on 4060, native video understanding; API captioner available as vlm_llm fallback |
+| **Local GPU for Captioner (default)** | Qwen3-VL-8B on GPU, native video understanding; API captioner available as vlm_llm fallback |
 | **Pure Python summarizer (default)** | native_video mode: aggregated from structured captions, no LLM API costs or latency |
 | **FFmpeg pipe → memory** | No frame files on disk, reduces I/O |
 | **TransNetV2 segmentation** | Neural scene boundary detection, superior to fixed-interval |
@@ -517,6 +528,9 @@ Vite 开发代理:
 | **Incremental pipeline** | L3 switches (summary/search) can re-run independently on completed videos |
 | **Global offline ReID** | Qwen3-VL-Embedding cross-modal matching, 5 constraints (class+time+cos+gap+space), 0.85 threshold, 180s max gap |
 | **Decoupled upload/params** | Upload creates pending video; pipeline starts only after user configures params |
+| **Two-layer format compatibility** | Container remux (-c copy, instant) + codec proxy (NVENC H.264, lazy on-demand). Probe sync (<100ms), remux/proxy async. HEVC browser detection via canPlayType + hevc_ok routing. |
+| **Lazy proxy generation** | Proxy only generated when non-HEVC client first requests video — never eager. Saves GPU time and disk for HEVC-capable browsers (Safari/Electron). |
+| **Embedder @336×224** | Frame encoding resized to 336×224 (~70 vision tokens vs ~880 at 1080p, ~10x speedup). Search quality preserved for semantic queries. |
 | **GET + POST dual export endpoints** | POST for programmatic API calls (curl), GET with query params for browser direct download → avoids async download blocking |
 | **Three-tier metadata extraction** | pymediainfo (full tech) → exiftool (GPS/device) → ffprobe (fallback), graceful degradation |
 | **Class-local track numbering** | Display shows sequential class-local IDs (person 1, car 2) while API uses raw track_id internally |
@@ -528,10 +542,10 @@ Vite 开发代理:
 
 | Module | Status | Note |
 |---|---|---|
-| Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 12 ops with gates/deps, events-driven |
+| Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 14 ops with gates/deps, events-driven |
 | Track Encoding + Global ReID | ✅ | runners/track_encode.py Phase 1: crop→embed; Phase 2: 全局离线 ReID 合并 (cos≥0.85, 时间门180s) |
 | Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
-| License Plate Recognition | ✅ | plugins/plate/paddle_plate.py — PaddleOCR detection + text recognition, PlateRunner |
+| License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
 | Plate Text Search | ✅ | core/search.py plate_text_search — ILIKE fuzzy match via pg_trgm |
 | Semantic Search (6-path) | ✅ | frame + chunk + text + label + track + plate 并行召回, plate 独立 ILIKE |
@@ -545,7 +559,9 @@ Vite 开发代理:
 | Track Segments Export | ✅ | 读 segments 字段按段导出 → zip |
 | Track Thumbnail Download | ✅ | 全尺寸物体裁剪图下载 |
 | Scene Thumbnails Export | ✅ | 全部/指定场景缩略图 → zip |
-| API Routes | ✅ | 23 endpoints: CRUD + stream + metadata + export (8) + detection + search + settings |
+| Multi-Format Support | ✅ | 两层: remux (-c copy) + proxy (NVENC H.264, 按需) |
+| Performance Optimizations | ✅ | embedder@336×224, detection@640px/8fps/batch128, >30min time-based seg, DAG parallel fixes |
+| API Routes | ✅ | 25 endpoints: +proxy-status +stream hevc_ok 路由 |
 | Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值 |
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
@@ -556,6 +572,6 @@ Vite 开发代理:
 | DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration, 8 tables |
 | TransNetV2 Segmenter | ✅ | Neural scene boundary detection |
 | faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
-| OCR | 📋 | PaddleOCR shell only |
+| OCR | 📋 | PaddleOCR available as plate recognition alternative (plugins/plate/paddle_plate.py) |
 | Grounding | 📋 | Florence-2 shell only |
 | Health / Reindex | 📋 | maintenance_routes.py shell |

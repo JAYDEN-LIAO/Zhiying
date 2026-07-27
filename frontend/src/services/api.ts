@@ -15,6 +15,7 @@ import type {
   PlateData,
   FaceSearchResult,
   VideoMetadata,
+  ProxyStatus,
   ExportClipRequest,
   ExportFramesRequest,
   ExportTrackRequest,
@@ -74,6 +75,8 @@ export const api = {
     if (params?.detection_classes?.length) {
       form.append("detection_classes", JSON.stringify(params.detection_classes));
     }
+    form.append("face_enabled", String(params?.face_enabled ?? false));
+    form.append("plate_enabled", String(params?.plate_enabled ?? false));
     form.append("search_index_enabled", String(params?.search_index_enabled ?? true));
     form.append("sample_fps", String(params?.sample_fps ?? 1.0));
     form.append("segment_threshold", String(params?.segment_threshold ?? 0.5));
@@ -125,16 +128,21 @@ export const api = {
       body: JSON.stringify({
         query,
         video_ids: options?.video_ids,
-        search_types: options?.search_types ?? ["frame", "chunk", "text", "track", "label"],
+        search_types: options?.search_types ?? ["frame", "chunk", "text", "track", "label", "plate"],
         top_k: options?.top_k ?? 20,
         min_similarity: options?.min_similarity ?? 0.3,
       }),
     });
   },
 
-  /* ── Get video stream URL ── */
-  getVideoStreamUrl(videoId: string): string {
-    return `${BASE}/videos/${videoId}/stream`;
+  /* ── Get video stream URL (v0.13: hevc_ok for browser capability) ── */
+  getVideoStreamUrl(videoId: string, hevcOk: boolean = false): string {
+    return `${BASE}/videos/${videoId}/stream?hevc_ok=${hevcOk}`;
+  },
+
+  /* ── Proxy transcode status ── */
+  getProxyStatus(videoId: string) {
+    return request<ProxyStatus>(`${BASE}/videos/${videoId}/proxy-status`);
   },
 
   /* ── Detection data ── */

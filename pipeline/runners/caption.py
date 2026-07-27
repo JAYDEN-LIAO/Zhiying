@@ -54,11 +54,11 @@ class CaptionRunner(OperationRunner):
             logger.info("[CaptionRunner] Captioner disabled or no scenes, skipping")
             return
 
-        # 纯检索模式 (摘要未开) + scene 太少 → 跳过 caption, 省 30s/场景
-        if not pctx.video.summary_enabled and len(scenes) < 4:
-            logger.info(
-                "[CaptionRunner] Skipping: summary off + only %d scenes (< 4)", len(scenes),
-            )
+        # 摘要未开 → caption 无下游消费者，跳过（caption 只服务 summary）
+        # 不论场景数量，caption 模型加载 + 逐场景推理都是白白浪费
+        if not pctx.video.summary_enabled:
+            logger.info("[CaptionRunner] Skipping: summary disabled")
+            return
             return
 
         mode = getattr(pctx.video, "summary_mode", "native_video")

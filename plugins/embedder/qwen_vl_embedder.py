@@ -16,7 +16,6 @@ Qwen3-VL-Embedding 向量编码插件。
 import asyncio
 import logging
 import os
-import tempfile
 
 import numpy as np
 import torch
@@ -177,135 +176,104 @@ class QwenVLEmbedder(BaseEmbedder):
         return embedding.cpu().numpy().astype(np.float64).tolist()
 
     def _sync_encode_image(self, image: np.ndarray) -> list[float]:
-        """图像嵌入：保存临时文件 → process_vision_info → chat template → pooling_last。
-
-        通过 qwen_vl_utils.process_vision_info 处理图像输入，
-        确保 processor 正确分配 image tokens。
-        使用聊天模板激活嵌入模式，pooling_last 提取语义向量。
-        """
+        """图像嵌入：numpy → PIL Image（纯内存）→ process_vision_info → pooling_last。"""
         from PIL import Image as PILImage
         from qwen_vl_utils import process_vision_info
 
-        # 内存 numpy → 临时 JPEG 文件（process_vision_info 要求文件路径）
-        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-        tmp_path = tmp.name
-        try:
-            PILImage.fromarray(image).save(tmp_path, format="JPEG", quality=85)
-        except Exception:
-            os.unlink(tmp_path)
-            raise
-        finally:
-            tmp.close()
+        pil_img = PILImage.fromarray(image).resize(self._ENCODE_SIZE, PILImage.LANCZOS)
 
-        try:
-            conversation = [
-                {"role": "system", "content": [{"type": "text", "text": self._SYSTEM_PROMPT}]},
-                {"role": "user", "content": [{"type": "image", "image": tmp_path}]},
-            ]
+        conversation = [
+            {"role": "system", "content": [{"type": "text", "text": self._SYSTEM_PROMPT}]},
+            {"role": "user", "content": [{"type": "image", "image": pil_img}]},
+        ]
 
-            text = self.processor.apply_chat_template(
-                conversation, tokenize=False, add_generation_prompt=True,
-            )
+        text = self.processor.apply_chat_template(
+            conversation, tokenize=False, add_generation_prompt=True,
+        )
 
-            images, _ = process_vision_info(conversation)
+        images, _ = process_vision_info(conversation)
 
-            inputs = self.processor(
-                text=[text],
-                images=images,
-                return_tensors="pt",
-                padding=True,
-            )
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        inputs = self.processor(
+            text=[text],
+            images=images,
+            return_tensors="pt",
+            padding=True,
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-            with torch.no_grad():
-                outputs = self.model(**inputs)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
 
-            embedding = self._pool_last_token(
-                outputs.last_hidden_state, inputs["attention_mask"],
-            )
-            result = embedding.cpu().numpy().astype(np.float64).tolist()
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        embedding = self._pool_last_token(
+            outputs.last_hidden_state, inputs["attention_mask"],
+        )
+        return embedding.cpu().numpy().astype(np.float64).tolist()
 
-        return result
+    # 编码用分辨率 — 远小于原图，大幅减少视觉 token 数量（±10x），
+    # 编码速度和显存消耗用于搜索召回已足够。
+    _ENCODE_SIZE = (336, 224)
 
     def _sync_encode_images_batch(
         self, images: list[np.ndarray],
     ) -> list[list[float]]:
         """批量图像编码 — 多帧 packing 为同一 batch 送入模型。
 
+        直接走内存路径(PIL Image → processor)，零磁盘 I/O。
+        编码前缩放到 _ENCODE_SIZE 减少视觉 token（~10x 加速）。
         每帧独立走 process_vision_info + chat template，
         最后拼成 batch 做一次前向，由 pooling_last 输出各自向量。
         """
         from PIL import Image as PILImage
         from qwen_vl_utils import process_vision_info
 
-        # 将所有帧写入临时 JPEG 文件
-        tmp_paths: list[str] = []
-        for img in images:
-            tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-            tmp_path = tmp.name
-            try:
-                PILImage.fromarray(img).save(tmp_path, format="JPEG", quality=85)
-            except Exception:
-                os.unlink(tmp_path)
-                raise
-            finally:
-                tmp.close()
-            tmp_paths.append(tmp_path)
+        # numpy → 缩略图 PIL Image（纯内存，零磁盘 I/O）
+        # 336×224 → ~100 vision tokens/frame vs 原来的 ~880 tokens
+        pil_images = [
+            PILImage.fromarray(img).resize(self._ENCODE_SIZE, PILImage.LANCZOS)
+            for img in images
+        ]
 
-        try:
-            conversations = [
-                [
-                    {"role": "system", "content": [{"type": "text", "text": self._SYSTEM_PROMPT}]},
-                    {"role": "user", "content": [{"type": "image", "image": p}]},
-                ]
-                for p in tmp_paths
+        conversations = [
+            [
+                {"role": "system", "content": [{"type": "text", "text": self._SYSTEM_PROMPT}]},
+                {"role": "user", "content": [{"type": "image", "image": pil_img}]},
             ]
+            for pil_img in pil_images
+        ]
 
-            texts = []
-            all_images: list = []
-            for conv in conversations:
-                text = self.processor.apply_chat_template(
-                    conv, tokenize=False, add_generation_prompt=True,
-                )
-                imgs, _ = process_vision_info(conv)
-                texts.append(text)
-                all_images.append(imgs[0] if imgs else None)
-
-            inputs = self.processor(
-                text=texts,
-                images=all_images,
-                return_tensors="pt",
-                padding=True,
+        texts = []
+        all_images: list = []
+        for conv in conversations:
+            text = self.processor.apply_chat_template(
+                conv, tokenize=False, add_generation_prompt=True,
             )
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            imgs, _ = process_vision_info(conv)
+            texts.append(text)
+            all_images.append(imgs[0] if imgs else None)
 
-            with torch.no_grad():
-                outputs = self.model(**inputs)
+        inputs = self.processor(
+            text=texts,
+            images=all_images,
+            return_tensors="pt",
+            padding=True,
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-            embeddings = self._pool_last_token(
-                outputs.last_hidden_state, inputs["attention_mask"],
-            )
-            # embeddings shape: (batch_size, hidden_dim)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
 
-            results: list[list[float]] = []
-            for emb in embeddings:
-                norm = torch.linalg.norm(emb)
-                if norm > 0:
-                    emb = emb / norm
-                results.append(emb.cpu().numpy().astype(np.float64).tolist())
-            return results
+        embeddings = self._pool_last_token(
+            outputs.last_hidden_state, inputs["attention_mask"],
+        )
+        # embeddings shape: (batch_size, hidden_dim)
 
-        finally:
-            for p in tmp_paths:
-                try:
-                    os.unlink(p)
-                except OSError:
-                    pass
+        results: list[list[float]] = []
+        for emb in embeddings:
+            norm = torch.linalg.norm(emb)
+            if norm > 0:
+                emb = emb / norm
+            results.append(emb.cpu().numpy().astype(np.float64).tolist())
+        return results
 
     def _sync_encode_video(
         self, video_path: str, fps: float, max_frames: int,

@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { api } from "./services/api";
-import type { VideoListItem, VideoResponse, DetectionData, FaceData, PlateData } from "./types";
+import type { VideoListItem, VideoResponse, DetectionData, FaceData, PlateData, ProxyStatus } from "./types";
 import type { PipelineSwitches } from "./mockData";
 import { fmtDuration } from "./utils/helpers";
 import { IconPlay, IconClose, IconInfo, IconDownload } from "./components/icons";
@@ -36,6 +36,71 @@ export default function Dashboard() {
   const [showMetadata, setShowMetadata] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  /* ── Browser HEVC capability detection (v0.13) ── */
+  const [hevcOk, setHevcOk] = useState(false);
+  useEffect(() => {
+    const v = document.createElement("video");
+    setHevcOk(v.canPlayType('video/mp4; codecs="hvc1.1.6.L123.B0"') !== "");
+  }, []);
+
+  /* ── Proxy transcode status polling ── */
+  const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
+  useEffect(() => {
+    if (!currentVideoId || !currentVideo) return;
+    // Only poll if video is not H.264 and client doesn't support HEVC
+    const needsProxy =
+      currentVideo.video_codec &&
+      currentVideo.video_codec !== "h264" &&
+      !hevcOk;
+    if (!needsProxy) {
+      setProxyStatus(null);
+      return;
+    }
+    // Poll once immediately
+    api.getProxyStatus(currentVideoId)
+      .then(s => setProxyStatus(s))
+      .catch(() => { /* ignore */ });
+    // Poll every 3s while processing
+    const iv = setInterval(() => {
+      api.getProxyStatus(currentVideoId)
+        .then(s => {
+          setProxyStatus(s);
+          if (s.status === "ready" || s.status === "failed") clearInterval(iv);
+          // 代理就绪 → 强制重载视频
+          if (s.status === "ready" && videoRef.current) {
+            videoRef.current.load();
+          }
+        })
+        .catch(() => { /* ignore */ });
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [currentVideoId, currentVideo?.video_codec, hevcOk]);
+
+  /* ── Stream readiness: video element only renders when format is ready ── */
+  const streamReady = useMemo(() => {
+    if (!currentVideo) return false;
+    const vc = currentVideo.video_codec;
+    const cf = currentVideo.container_format;
+    if (!vc) return false;                          // format not probed yet
+    if (vc === "h264") return true;                 // H.264: always browser-safe
+    // HEVC + hevcOk (Safari/Electron):
+    //   MP4 容器 → 原文件直出（HEVC-in-MP4 可硬解）
+    //   非 MP4 容器 → 需要 remux，否则浏览器无法识别容器
+    if (vc === "hevc" && hevcOk) {
+      if (cf === "mp4") return true;
+      return !!currentVideo.remuxed_path;
+    }
+    // Firefox/Chrome (hevcOk=false): 等 proxy
+    return currentVideo.proxy_status === "ready";
+  }, [currentVideo, hevcOk]);
+
+  // Force video reload when stream becomes ready
+  useEffect(() => {
+    if (streamReady && videoRef.current) {
+      videoRef.current.load();
+    }
+  }, [streamReady]);
 
   /* ── Shared detection state (lifted from DetectionOverlay) ── */
   const [detectionData, setDetectionData] = useState<DetectionData | null>(null);
@@ -321,21 +386,54 @@ export default function Dashboard() {
               <div className="w-full aspect-video relative rounded-2xl overflow-hidden bg-black shadow-inner shrink-0">
                 {currentVideoId && currentVideo ? (
                   <div className="relative w-full h-full">
-                    <video
-                      ref={videoRef}
-                      key={currentVideoId}
-                      className="w-full h-full object-contain bg-black"
-                      src={api.getVideoStreamUrl(currentVideoId)}
-                      controls autoPlay={false} preload="auto" playsInline
-                    >您的浏览器不支持视频播放</video>
-                    <DetectionOverlay
-                      videoRef={videoRef}
-                      videoId={currentVideoId}
-                      enabled={currentVideo.detection_enabled ?? false}
-                      data={detectionData}
-                      selectedTrackId={selectedTrackId}
-                      onTrackSelect={(tid, cls) => handleTrackSelect(tid, cls)}
-                    />
+                    {/* Format not ready yet — show preparing overlay instead of video */}
+                    {!streamReady ? (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 z-20">
+                        <div className="w-10 h-10 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                        <p className="text-sm text-white/70 font-medium">
+                          {!currentVideo?.video_codec
+                            ? "正在分析视频格式…"
+                            : "正在准备视频流…"}
+                        </p>
+                        {proxyStatus && proxyStatus.status === "processing" && (
+                          <>
+                            <div className="w-48 h-1.5 bg-white/20 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-indigo-400 rounded-full transition-all duration-500"
+                                style={{ width: `${Math.round((proxyStatus.progress || 0) * 100)}%` }}
+                              />
+                            </div>
+                            <p className="text-xs text-white/50 font-mono">
+                              {Math.round((proxyStatus.progress || 0) * 100)}%
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <video
+                        ref={videoRef}
+                        key={currentVideoId}
+                        className="w-full h-full object-contain bg-black"
+                        src={api.getVideoStreamUrl(currentVideoId, hevcOk)}
+                        controls autoPlay={false} preload="auto" playsInline
+                      >您的浏览器不支持视频播放</video>
+                    )}
+                    {streamReady && (
+                      <DetectionOverlay
+                        videoRef={videoRef}
+                        videoId={currentVideoId}
+                        enabled={currentVideo.detection_enabled ?? false}
+                        data={detectionData}
+                        selectedTrackId={selectedTrackId}
+                        onTrackSelect={(tid, cls) => handleTrackSelect(tid, cls)}
+                      />
+                    )}
+                    {/* ── Proxy failed overlay ── */}
+                    {proxyStatus && proxyStatus.status === "failed" && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm z-30">
+                        <p className="text-sm text-red-400">浏览器兼容代理生成失败 — 请使用 Safari 或 Electron 打开</p>
+                      </div>
+                    )}
                   </div>
                 ) : isUploading ? (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
@@ -364,7 +462,6 @@ export default function Dashboard() {
                 onTrackSelect={handleTrackSelect}
                 data={detectionData}
                 faceData={faceData}
-                plateData={plateData}
               />
 
               {/* ── Pipeline Bar (pushed to bottom, aligns with objects panel bottom) ── */}

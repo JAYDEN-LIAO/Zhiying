@@ -70,7 +70,7 @@ class Scene:
     # ── 编码阶段填充 ──
     # DEPRECATED (v0.8): 不再写入，仅兼容旧数据读取
     embedding: list[float] | None = None
-    text_embedding: list[float] | None = None      # Vector(2048) — encode_text(caption+ocr+transcript)，文本语义搜索用
+    text_embedding: list[float] | None = None      # Vector(4096) — encode_text(caption+ocr+transcript)，文本语义搜索用
 
     # ── 预留 ──
     entities: list[dict] = field(default_factory=list)
@@ -288,7 +288,7 @@ class BaseCaptioner(ABC):
 
 
 class BaseEmbedder(ABC):
-    """向量编码 — 图像 / 文本 → 2048 维嵌入向量。"""
+    """向量编码 — 图像 / 文本 → 4096 维嵌入向量。"""
 
     @abstractmethod
     async def encode_image(self, image: np.ndarray) -> list[float]:
@@ -299,7 +299,7 @@ class BaseEmbedder(ABC):
             image: 输入图像 (H, W, C) uint8。
 
         Returns:
-            2048 维 float 向量（Qwen3-VL-Embedding-2B 输出维度）。
+            4096 维 float 向量（Qwen3-VL-Embedding-2B 输出维度）。
         """
         ...
 
@@ -312,7 +312,7 @@ class BaseEmbedder(ABC):
             text: 输入文本。
 
         Returns:
-            2048 维 float 向量（Qwen3-VL-Embedding-2B 输出维度）。
+            4096 维 float 向量（Qwen3-VL-Embedding-2B 输出维度）。
         """
         ...
 
@@ -331,7 +331,7 @@ class BaseEmbedder(ABC):
             max_frames: 最大帧数。
 
         Returns:
-            2048 维归一化 float 向量。
+            4096 维归一化 float 向量。
         """
         ...
 

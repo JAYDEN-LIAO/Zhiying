@@ -30,10 +30,9 @@ class DetectionRunner(OperationRunner):
 
     async def run(self, pctx: PipelineContext) -> None:
         detector = pctx.plugins.get("detector")
-        scenes = pctx.ctx.scenes
 
-        if detector is None or not scenes:
-            logger.info("[DetectionRunner] Detector disabled or no scenes, skipping")
+        if detector is None:
+            logger.info("[DetectionRunner] Detector disabled, skipping")
             pctx.ctx.frame_detections = []
             pctx.ctx.tracks = []
             return
@@ -75,7 +74,11 @@ class DetectionRunner(OperationRunner):
 
         batch_frames: list[np.ndarray] = []
         batch_timestamps: list[float] = []
+        batch_origin_frames: list[np.ndarray] = []  # 原图引用，给 track_encode 裁剪用
         processed = 0
+
+        # 检测用输入尺寸 — YOLO 内部也缩放到 640, 提前缩避免 1080p 解码开销
+        _DETECT_SIZE = (640, 384)
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -99,15 +102,19 @@ class DetectionRunner(OperationRunner):
                 timestamp = frame_idx / source_fps
                 if timestamp >= next_ts - 0.001 and timestamp <= duration:
                         next_ts += frame_interval
-                        # BGR→RGB（cv2 读取 BGR，YOLO 需要 RGB）
-                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        # 缩放到检测尺寸 → BGR→RGB（YOLO 内部也缩到 640）
+                        small = cv2.resize(frame, _DETECT_SIZE, interpolation=cv2.INTER_LINEAR)
+                        rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
                         batch_frames.append(rgb)
                         batch_timestamps.append(timestamp)
+                        # 保存原图帧引用给 track_encode 裁剪用（bbox 归一化，跨分辨率兼容）
+                        batch_origin_frames.append(frame)
 
                         if len(batch_frames) >= batch_size:
                             await self._process_batch(
                                 detector, batch_frames, batch_timestamps,
                                 pctx, frame_detections, tracks_map, best_cache,
+                                batch_origin_frames,
                             )
                             processed += len(batch_frames)
                             # 进度写 DB 降到最低 (每 100 批 ~ 3 次/视频)
@@ -119,13 +126,15 @@ class DetectionRunner(OperationRunner):
                                 )
                             batch_frames = []
                             batch_timestamps = []
+                            batch_origin_frames = []
                 frame_idx += 1
 
             # 处理最后一批
             if batch_frames:
                 await self._process_batch(
                     detector, batch_frames, batch_timestamps,
-                    pctx, frame_detections, tracks_map,
+                    pctx, frame_detections, tracks_map, best_cache,
+                    batch_origin_frames,
                 )
                 processed += len(batch_frames)
         finally:
@@ -145,7 +154,7 @@ class DetectionRunner(OperationRunner):
         pctx.ctx.track_best_frames = best_cache
 
         # ── 按场景聚合 entities（给 label search 用）──
-        self._aggregate_scene_entities(scenes, frame_detections)
+        self._aggregate_scene_entities(pctx.ctx.scenes, frame_detections)
 
         await pctx.tracker.update("detection", sub_progress=1.0)
 
@@ -166,12 +175,16 @@ class DetectionRunner(OperationRunner):
         frame_detections: list[dict],
         tracks_map: dict[int, dict],
         best_cache: dict[int, dict] | None = None,
+        origin_frames: list[np.ndarray] | None = None,
     ) -> None:
-        """处理一批帧：检测+追踪 → 累加到 frame_detections + tracks_map + best_cache。"""
+        """处理一批帧：检测+追踪 → 累加到 frame_detections + tracks_map + best_cache。
+
+        frames: 缩放后的检测帧（640×384）。
+        origin_frames: 原图帧引用（1080p），给 track_encode 裁剪用。bbox 归一化跨分辨率兼容。
+        """
         batch_dets = await detector.detect(frames)
 
         for i, (timestamp, dets) in enumerate(zip(timestamps, batch_dets)):
-            frame = frames[i]
             for t in dets:
                 tid = t.get("track_id")
                 if tid is None or tid < 0:
@@ -202,12 +215,13 @@ class DetectionRunner(OperationRunner):
                     trk["last_seen"] = float(timestamp)
                     trk["frame_count"] += 1
 
-                # 维护最佳帧缓存 (track_encode runner 复用)
+                # 维护最佳帧缓存 (track_encode runner 裁剪用 — 用原图)
                 if best_cache is not None:
                     conf = t["confidence"]
                     if tid not in best_cache or conf > best_cache[tid]["conf"]:
+                        orig = origin_frames[i] if origin_frames and i < len(origin_frames) else frames[i]
                         best_cache[tid] = {
-                            "frame": frame,
+                            "frame": orig,
                             "bbox": t["bbox"],
                             "timestamp": float(timestamp),
                             "conf": conf,

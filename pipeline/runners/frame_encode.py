@@ -29,14 +29,15 @@ class FrameEncodeRunner(OperationRunner):
         await pctx.tracker.update("frame_encode", sub_progress=0.0)
         logger.info("[FrameEncodeRunner] Encoding frame embeddings ...")
 
-        _BATCH_SIZE = 4
+        _BATCH_SIZE = 64  # 119GB VRAM, 一批走完 46 帧，一次前向
+
+        all_frame_rows: list[dict] = []
 
         for si, scene in enumerate(scenes):
             if not scene.keyframes or not scene.frame_timestamps:
                 await pctx.tracker.update("frame_encode", sub_progress=(si + 1) / scene_count)
                 continue
 
-            frame_rows: list[dict] = []
             frame_items = list(zip(scene.frame_timestamps, scene.keyframes))
 
             for i in range(0, len(frame_items), _BATCH_SIZE):
@@ -64,7 +65,7 @@ class FrameEncodeRunner(OperationRunner):
                 for j, (t, emb) in enumerate(zip(batch_times, embs)):
                     if not emb:
                         continue
-                    frame_rows.append({
+                    all_frame_rows.append({
                         "video_id": pctx.video.id,
                         "scene_index": scene.scene_index,
                         "timestamp_sec": t,
@@ -72,10 +73,10 @@ class FrameEncodeRunner(OperationRunner):
                         "is_keyframe": False,
                     })
 
-            if frame_rows:
-                async with pctx.db_session_factory() as session:
-                    await bulk_insert_frames(session, frame_rows)
-
             await pctx.tracker.update("frame_encode", sub_progress=(si + 1) / scene_count)
+
+        if all_frame_rows:
+            async with pctx.db_session_factory() as session:
+                await bulk_insert_frames(session, all_frame_rows)
 
         logger.info("[FrameEncodeRunner] Done")

@@ -64,7 +64,7 @@ class SearchEngine:
             统一格式的搜索结果列表，按 similarity 降序。
         """
         if search_types is None:
-            search_types = ["frame", "chunk", "text", "label", "track"]
+            search_types = ["frame", "chunk", "text", "label", "track", "plate"]
 
         # 文本查询 → 向量编码（仅一次，三条路共享）
         vec = image_vec

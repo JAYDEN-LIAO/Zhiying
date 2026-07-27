@@ -1,5 +1,6 @@
 /* ════════════════════════════════════════════════════════════
    DetectionOverlay — Canvas-only bbox + trail rendering
+   Renders: YOLO detection bboxes, plate bboxes, face bboxes.
    State (selectedTrackId) lifted to Dashboard for cross-component sync.
    ════════════════════════════════════════════════════════════ */
 
@@ -42,7 +43,10 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
-    if (!canvas || !video || !enabled || !data?.has_detection) {
+    if (!canvas || !video || !enabled) {
+      return;
+    }
+    if (!data?.has_detection) {
       return;
     }
     const ctx = canvas.getContext("2d");
@@ -168,6 +172,8 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
         ctx.fillText(label, x + 3, ly + fs - 1);
       }
     }
+    ctx.globalAlpha = 1.0;
+
     ctx.globalAlpha = 1.0;
     rafRef.current = requestAnimationFrame(draw);
   }, [data, selectedTrackId, videoRef]);

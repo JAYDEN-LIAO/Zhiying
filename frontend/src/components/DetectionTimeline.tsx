@@ -4,7 +4,7 @@
    ════════════════════════════════════════════════════════════ */
 
 import { useEffect, useRef, useMemo, useState } from "react";
-import type { DetectionData, Track, FaceData, PlateData } from "../types";
+import type { DetectionData, Track, FaceData } from "../types";
 
 const CLASS_COLORS: Record<string, string> = {
   person: "#FF6B6B", car: "#4ECDC4", truck: "#FF9F43", bus: "#96CEB4",
@@ -31,7 +31,6 @@ interface Props {
   classFilter: string | null;
   onTrackSelect: (trackId: number, className: string, seekTo: number) => void;
   faceData?: FaceData | null;
-  plateData?: PlateData | null;
 }
 
 interface TrackLane { track: Track; lane: number }
@@ -44,7 +43,7 @@ function computeLanes(tracks: Track[]): { lanes: TrackLane[]; maxLane: number } 
   return { lanes: assigned, maxLane };
 }
 
-export function DetectionTimeline({ videoRef, data, selectedTrackId, classFilter, onTrackSelect, faceData, plateData }: Props) {
+export function DetectionTimeline({ videoRef, data, selectedTrackId, classFilter, onTrackSelect, faceData }: Props) {
   const playheadRef = useRef<HTMLDivElement>(null);
   const lanesRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef(0);
@@ -184,21 +183,6 @@ export function DetectionTimeline({ videoRef, data, selectedTrackId, classFilter
               title={`${ident.label} · ${ts.toFixed(1)}s`}
             >
               <span className="block w-2 h-2 rounded-full bg-white border border-purple-400 shadow-sm" />
-            </div>
-          );
-        })}
-
-        {/* ── Plate markers (yellow diamonds on vehicle tracks) ── */}
-        {plateData?.has_plate && plateData.detections.map((p, idx) => {
-          const leftPct = (p.timestamp_sec / duration) * 100;
-          return (
-            <div
-              key={`plate-${idx}`}
-              className="absolute pointer-events-none"
-              style={{ top: "65%", left: `${leftPct}%`, transform: "translate(-50%, -50%) rotate(45deg)", zIndex: 5 }}
-              title={`${p.plate_text} · ${p.timestamp_sec.toFixed(1)}s`}
-            >
-              <span className="block w-2 h-2 bg-yellow-400 border border-yellow-500 shadow-sm" />
             </div>
           );
         })}

@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import os
+from contextlib import contextmanager
 
 import numpy as np
 
@@ -259,3 +260,27 @@ async def export_video_segment(
             f"FFmpeg export segment failed (code {proc.returncode}): {error_msg}"
         )
     logger.info("[FFmpeg] Segment exported → %s", output_path)
+
+
+# ═══════════════════════════════════════════════════════════
+# 杂项工具
+# ═══════════════════════════════════════════════════════════
+
+@contextmanager
+def suppress_ffmpeg_stderr():
+    """上下文管理器 — 在 with 块内将 stderr 重定向到 /dev/null。
+
+    cv2/FFmpeg 解码器将 HEVC/GOP 损坏警告直接写到 fd=2，
+    绕过 Python logging 和 OpenCV API。此工具在 cv2 操作期间屏蔽这些噪声。
+    """
+    import sys
+    stderr_fd = sys.stderr.fileno()
+    saved = os.dup(stderr_fd)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, stderr_fd)
+    os.close(devnull)
+    try:
+        yield
+    finally:
+        os.dup2(saved, stderr_fd)
+        os.close(saved)
