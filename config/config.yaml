@@ -28,7 +28,7 @@ plugins:
     confidence_threshold: 0.4
     iou_threshold: 0.5
     batch_size: 128
-    detection_fps: 15
+    detection_fps: 10
 
   # ── OCR（Demo 跳过）──
   ocr:

@@ -32,7 +32,7 @@ class PipelineContext:
     shared_embedder: object | None = None
     prompt_loader: PromptLoader | None = None
     embedder_lock: object | None = None  # asyncio.Lock — 防 embedder 并发竞争
-    frame_queue: object | None = None  # asyncio.Queue — keyframes → frame_encode 流式通道
+    frame_queue: object | None = None    # asyncio.Queue — keyframes → frame_encode 流式通道
 
 
 class OperationRunner(ABC):

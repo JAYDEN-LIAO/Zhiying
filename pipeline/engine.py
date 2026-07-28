@@ -127,6 +127,62 @@ def topological_batches(ops: list) -> list[list]:
     return batches
 
 
+# ═══════════════════════════════════════════════════════════
+# 跨 op 后处理 — 所有 op 完成后、persist 前执行
+# ═══════════════════════════════════════════════════════════
+
+
+def _aggregate_scene_entities(
+    scenes: list | None,       # list[core.interfaces.Scene]
+    detections: list[dict] | None,
+) -> None:
+    """将逐帧检测结果按场景聚合去重，写入 scene.entities。
+
+    使用排序 + 双指针 O(n log n + n + m)，替代旧 O(n×m) 嵌套循环。
+    在所有 op 完成后调用 — 确保 scenes 和 detections 均已就绪。
+
+    每个 track_id 在单个场景中只出现一次（首次检测时间戳）。
+    """
+    if not scenes or not detections:
+        return
+
+    # 按时间戳排序 → 双指针扫描
+    dets = sorted(detections, key=lambda d: d["timestamp_sec"])
+    det_idx = 0
+    n_dets = len(dets)
+
+    for scene in scenes:
+        seen_tracks: set[int] = set()
+        entities: list[dict] = []
+
+        # 跳过此场景时间范围之前的 detection
+        while det_idx < n_dets and dets[det_idx]["timestamp_sec"] < scene.start_sec:
+            det_idx += 1
+
+        # 收集此场景时间范围内的 detection（首次 track_id 去重）
+        i = det_idx
+        while i < n_dets and dets[i]["timestamp_sec"] <= scene.end_sec:
+            fd = dets[i]
+            tid = fd["track_id"]
+            if tid not in seen_tracks:
+                seen_tracks.add(tid)
+                entities.append({
+                    "label": fd["class_name"],
+                    "bbox": [fd["bbox"]["x1"], fd["bbox"]["y1"],
+                             fd["bbox"]["x2"], fd["bbox"]["y2"]],
+                    "confidence": fd["confidence"],
+                    "start_sec": fd["timestamp_sec"],
+                    "end_sec": fd["timestamp_sec"],
+                    "track_id": tid,
+                })
+            i += 1
+
+        # 跳过已处理的 detection，下一场景从新位置开始
+        det_idx = i
+
+        scene.entities = entities if entities else []
+
+
 class PipelineEngine:
     """声明式操作 DAG 编排器。
 
@@ -364,6 +420,11 @@ class PipelineEngine:
                 .where(Video.id == self.video.id)
                 .values(duration=self.ctx.duration)
             )
+
+            # ── 检测实体聚合到场景（所有 op 完成后两者均已就绪）──
+            # 从 DetectionRunner 移至此：detection 不依赖 segmentation，
+            # 在 detection 完成时 scenes 可能为空。此处保证两者均已产出。
+            _aggregate_scene_entities(self.ctx.scenes, self.ctx.frame_detections)
 
             # scenes
             if self.ctx.scenes:

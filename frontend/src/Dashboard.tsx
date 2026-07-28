@@ -8,7 +8,7 @@ import { api } from "./services/api";
 import type { VideoListItem, VideoResponse, DetectionData, FaceData, PlateData, ProxyStatus } from "./types";
 import type { PipelineSwitches } from "./mockData";
 import { fmtDuration } from "./utils/helpers";
-import { IconPlay, IconClose, IconInfo, IconDownload } from "./components/icons";
+import { IconPlay, IconClose, IconDownload } from "./components/icons";
 import { LeftSidebar, type PageView, type PanelType } from "./components/LeftSidebar";
 import { ParameterPanel } from "./components/ParameterPanel";
 import { PipelineBar } from "./components/PipelineBar";
@@ -19,7 +19,7 @@ import { SettingsPage } from "./components/SettingsPage";
 import { DetectionOverlay } from "./components/DetectionOverlay";
 import { DetectionPanel } from "./components/DetectionPanel";
 import { DetectionTimeline } from "./components/DetectionTimeline";
-import { MetadataPanel } from "./components/MetadataPanel";
+import { VideoInfoCard } from "./components/VideoInfoCard";
 import { ExportMenu } from "./components/ExportMenu";
 
 export default function Dashboard() {
@@ -33,7 +33,6 @@ export default function Dashboard() {
   const [isUploading, setIsUploading] = useState(false);
   const [seekTarget, setSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
   const [hasPendingParams, setHasPendingParams] = useState(false);
-  const [showMetadata, setShowMetadata] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -341,10 +340,7 @@ export default function Dashboard() {
                       <p className="text-gray-500 text-xs font-mono leading-tight">{statValue}</p>
                     </div>
                     <div className="flex items-center gap-0.5 ml-1">
-                      <button onClick={() => { setShowMetadata((v) => !v); setShowExport(false); }}
-                        className="w-6 h-6 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
-                        title="视频信息"><IconInfo /></button>
-                      <button onClick={() => { setShowExport((v) => !v); setShowMetadata(false); }}
+                      <button onClick={() => { setShowExport((v) => !v); }}
                         className="w-6 h-6 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
                         title="导出"><IconDownload /></button>
                     </div>
@@ -362,11 +358,10 @@ export default function Dashboard() {
                     <span>阈值 {(currentVideo.segment_threshold ?? 0.5).toFixed(1)}</span>
                   </div>
                   {/* Dropdown overlays */}
-                  {(showMetadata || showExport) && (
-                    <div className="fixed inset-0 z-40" onClick={() => { setShowMetadata(false); setShowExport(false); }} />
+                  {showExport && (
+                    <div className="fixed inset-0 z-40" onClick={() => setShowExport(false)} />
                   )}
                   <div className="relative">
-                    {showMetadata && <MetadataPanel videoId={currentVideoId ?? ""} onClose={() => setShowMetadata(false)} />}
                     {showExport && (
                       <ExportMenu videoId={currentVideoId ?? ""}
                         onClose={() => setShowExport(false)} />
@@ -472,7 +467,10 @@ export default function Dashboard() {
           </main>
 
           {/* ── Objects Panel — always visible, same width in all states ── */}
-          <div className="pt-[96px] pb-4 pr-0 flex-shrink-0 flex flex-col">
+          <div className="pt-[96px] pb-4 pr-0 flex-shrink-0 w-[418px] flex flex-col gap-1">
+            <div className="flex-1 min-h-0">
+              <VideoInfoCard videoId={currentVideoId} video={currentVideo} />
+            </div>
             <div className="flex-1 min-h-0">
             <DetectionPanel
               video={currentVideo}

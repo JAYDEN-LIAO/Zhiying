@@ -62,7 +62,7 @@ services/format_service.py — 格式兼容: probe(ffprobe) / remux(容器标准
 services/export_service.py — 导出业务逻辑 (clip/frames/track/thumbnails zip)
 utils/video_util.py        — FFmpeg 工具函数 + stream_frames() (NVDEC MJPEG pipe / cv2 fallback)
 utils/metadata.py          — 视频元数据提取 (pymediainfo → exiftool → ffprobe 三级)
-config/config.yaml         — Main config: server/db/storage/plugins/pipeline (detection_fps:15, batch:128)
+config/config.yaml         — Main config: server/db/storage/plugins/pipeline (detection_fps:10, batch:128)
 config/config_schema.py    — Pydantic config validation
 config/prompts.yaml        — Caption/Summarizer/Grounding prompt templates
 frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~400 lines, hevcOk探测+proxy轮询+streamReady)
@@ -205,7 +205,7 @@ Search (6-path parallel, v0.12):
 | Incremental processing | ✅ Done | pipeline/engine.py run_incremental(); services/video_service.py incremental_process() |
 | Settings API + API key mgmt | ✅ Done | core/settings_service.py; GET/PUT /api/v1/settings |
 | Frontend dashboard | ✅ Done | Dashboard.tsx + 15 components (React 19 + Tailwind 4) — 参数面板四级联动+人脸/车牌子开关, 动态 PipelineBar, 检测面板统一物体列表(车辆内联车牌)+人脸切换, Canvas bbox 渲染(物体框+人脸虚线), 时间轴人脸标记点, 人脸图片搜索(👤按钮), 系统设置页, 历史记录搜索, 元数据卡片, 导出菜单 |
-| Object Detection (YOLO) | ✅ Done | plugins/detector/yolo.py — YOLO11s + ByteTrack/BoT-SORT, dual-gate control, frontend DetectionOverlay |
+| Object Detection + Tracking | ✅ Done | plugins/detector/yolo.py — YOLO11s + ByteTrack/BoT-SORT, dual-gate control, 10fps default, frontend DetectionOverlay |
 | Global ReID merge | ✅ Done | runners/track_encode.py — Qwen3-VL-Embedding cross-modal merge (0.85 cos threshold, 180s time gate, 5 constraints) |
 | Track search path | ✅ Done | core/search.py track_vector_search + search_engine.py _track_search — encode_text(query) vs track crop embeddings, 返回具体物体 |
 | Face Recognition | ✅ Done | plugins/face/insightface_face.py — InsightFace SCRFD + ArcFace R50 (512d), FaceRunner identity clustering with label→DB ID mapping |

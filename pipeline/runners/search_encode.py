@@ -1,12 +1,11 @@
 """
 pipeline/runners/search_encode.py
 ═══════════════════════════════════════════════════════════
-纯搜索索引构建 runner — 流式抽帧 + 批量编码。
+纯搜索索引构建 runner — 独立 NVDEC 流抽帧 + 批量编码。
 
+与 detection 的 NVDEC 流完全独立，两路并行互不干扰。
 不依赖 segmentation / keyframes / scene。
 摘要启用时此 runner 被 gate 关闭，走原有的 keyframes→frame_encode 路径。
-
-解码：优先 NVDEC 硬解（GPU），自动 fallback 到 cv2（CPU）。
 """
 
 import logging
@@ -21,10 +20,10 @@ logger = logging.getLogger(__name__)
 
 
 class SearchEncodeRunner(OperationRunner):
-    """纯搜索索引构建 — 流式抽帧 + 批量编码 → 入库。
+    """纯搜索索引构建 — 独立 NVDEC 流抽帧 + 批量编码 → 入库。
 
-    仅在 summary_enabled=False 时激活。与 detection 真正并行
-    （两者都只依赖 duration），消灭了 segmentation + keyframes 的串行开销。
+    仅在 summary_enabled=False 时激活。
+    与 detection 使用独立 NVDEC 解码流，互不干扰。
 
     同时创建一个覆盖全视频的最小 scene（缩略图用）。
     """
@@ -40,12 +39,8 @@ class SearchEncodeRunner(OperationRunner):
             logger.warning("[SearchEncodeRunner] No valid duration, skipping")
             return
 
-        video_path = pctx.ctx.file_path
-        pipeline_cfg = pctx.config.get("pipeline", {})
-        use_nvdec = pipeline_cfg.get("use_nvdec", False)
-        total_frames = max(1, int(duration))
-
         # ── 编码速度预设：逐视频 profile → 分辨率 + batch_size ──
+        pipeline_cfg = pctx.config.get("pipeline", {})
         profile_name = getattr(pctx.video, "encode_profile", None)
         if not profile_name:
             profile_name = pipeline_cfg.get("default_encode_profile", "balanced")
@@ -56,26 +51,48 @@ class SearchEncodeRunner(OperationRunner):
         batch_size = profile.get("encode_batch_size", 512)
         target_size: tuple[int, int] = (encode_w, encode_h)
 
-        await pctx.tracker.update("search_encode", sub_progress=0.0)
-        logger.info(
-            "[SearchEncodeRunner] ~%d frames @ 1fps, profile=%s, %dx%d, batch=%d, nvdec=%s",
-            total_frames, profile_name, encode_w, encode_h, batch_size, use_nvdec,
+        await self._run_encode(
+            pctx, embedder, duration, target_size, batch_size, pipeline_cfg, profile_name,
         )
 
-        # ── 流式抽帧 + 攒批编码 ──
+    async def _run_encode(
+        self,
+        pctx: PipelineContext,
+        embedder: object,
+        duration: float,
+        target_size: tuple[int, int],
+        batch_size: int,
+        pipeline_cfg: dict,
+        profile_name: str,
+    ) -> None:
+        """独立 NVDEC 流抽帧 + 批量编码。"""
+        video_path = pctx.ctx.file_path
+        use_nvdec = pipeline_cfg.get("use_nvdec", False)
+        total_frames = max(1, int(duration))
+        total_batches = (total_frames + batch_size - 1) // batch_size
+
+        logger.info(
+            "[SearchEncodeRunner] ~%d frames @1fps "
+            "profile=%s %dx%d batch=%d nvdec=%s → %d batch(s)",
+            total_frames, profile_name,
+            target_size[0], target_size[1],
+            batch_size, use_nvdec, total_batches,
+        )
+
+        await pctx.tracker.update("search_encode", sub_progress=0.0)
+
         all_frame_rows: list[dict] = []
         video_id = pctx.video.id
         batch_frames: list = []
         batch_times: list[float] = []
         frame_idx = 0
-        thumbnail_frame = None  # 首帧用作缩略图
+        thumbnail_frame = None
 
         async for frame in stream_frames(
             video_path, fps=1.0, use_nvdec=use_nvdec,
-            output_width=encode_w, output_height=encode_h,
+            output_width=target_size[0], output_height=target_size[1],
             total_frames=total_frames,
         ):
-            # 首帧保存为缩略图
             if thumbnail_frame is None:
                 thumbnail_frame = frame
 
@@ -88,27 +105,27 @@ class SearchEncodeRunner(OperationRunner):
                     embedder, pctx, batch_frames, batch_times, video_id, target_size,
                 )
                 all_frame_rows.extend(rows)
+                current_batch = frame_idx // batch_size
+                pct = min(frame_idx / total_frames * 100, 99.0)
+                msg = f"编码 {frame_idx}/{total_frames}帧 ({pct:.0f}%) | batch {current_batch}/{total_batches}"
+                logger.info("[search_encode] %s", msg)
                 await pctx.tracker.update(
                     "search_encode",
                     sub_progress=min(frame_idx / total_frames, 0.99),
+                    description=msg,
                 )
                 batch_frames = []
                 batch_times = []
 
-        # 最后一批
         if batch_frames:
             rows = await self._encode_batch(
                 embedder, pctx, batch_frames, batch_times, video_id, target_size,
             )
             all_frame_rows.extend(rows)
 
-        # ── 缩略图：创建一个覆盖全视频的最小 scene ──
         if thumbnail_frame is not None:
-            self._create_minimal_scene(
-                pctx, video_path, duration, thumbnail_frame,
-            )
+            self._create_minimal_scene(pctx, video_path, duration, thumbnail_frame)
 
-        # ── 持久化帧嵌入 ──
         if all_frame_rows:
             async with pctx.db_session_factory() as session:
                 await bulk_insert_frames(session, all_frame_rows)

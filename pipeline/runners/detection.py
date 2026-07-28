@@ -3,30 +3,41 @@ pipeline/runners/detection.py
 ═══════════════════════════════════════════════════════════
 检测与追踪 runner — YOLO11 批量推理 + 内置 BoT-SORT 追踪。
 
-独立帧率（默认 10fps，可配置），与 1fps keyframe 池完全解耦。
-cv2 流式抽帧 → detector.detect()（内部 model.track）→ 直接消费 track_id。
+独立帧率（默认 10fps，config.yaml 可配置），与 1fps keyframe 池完全解耦。
+通过 stream_frames() 流式抽帧（NVDEC GPU 硬解优先，cv2 fallback），
+帧提取在后台线程/子进程中执行，不阻塞 asyncio 事件循环。
 
-依赖 segmentation runner 产出（scene 时间边界），
-与 keyframes / alignment 同批并行执行。
+依赖 duration runner 产出（视频时长），
+与 segmentation / keyframes 同批并行执行。
 
 产出:
-  - ctx.frame_detections → engine._persist() 写入 frame_detections 表
-  - ctx.tracks           → engine._persist() 写入 tracks 表
-  - scene.entities       → engine._persist() 通过已有 bulk_insert_scenes 写入
+  - ctx.frame_detections  → engine._persist() 写入 frame_detections 表
+  - ctx.tracks             → engine._persist() 写入 tracks 表
+  - ctx.track_best_frames  → track_encode 消费（全分辨率帧，延迟提取）
+
+entity 聚合已移至 engine._persist()（等所有 op 完成后统一处理，
+保证 scenes 和 detections 均已就绪，O(n+m) 双指针）。
 """
 
+import asyncio
 import logging
 
-import cv2
 import numpy as np
 
 from pipeline.runners.base import OperationRunner, PipelineContext
+from utils.video_util import stream_frames
 
 logger = logging.getLogger(__name__)
 
 
 class DetectionRunner(OperationRunner):
-    """检测与追踪执行器 — 独立帧率抽帧 → YOLO11 track() → 场景聚合。"""
+    """检测与追踪执行器 — 流式抽帧 → YOLO11 track() → 结果累加。
+
+    v0.16 优化:
+      - 生产者-消费者并发: 帧提取（NVDEC pipe）与 YOLO 推理重叠
+      - 检测帧率 configurable (默认 10fps)
+      - 两路独立 NVDEC 流（detection + search_encode），互不干扰
+    """
 
     async def run(self, pctx: PipelineContext) -> None:
         detector = pctx.plugins.get("detector")
@@ -39,8 +50,8 @@ class DetectionRunner(OperationRunner):
 
         # ── 独立检测帧率（与 1fps keyframe 池解耦）──
         det_cfg = pctx.config.get("plugins", {}).get("detector", {})
-        detection_fps: float = det_cfg.get("detection_fps", 10)
-        batch_size: int = det_cfg.get("batch_size", 8)
+        detection_fps: float = det_cfg.get("detection_fps", 15)
+        _BATCH_SIZE = 1024  # 攒批大小，减少 model.predict() 调用开销
         duration = pctx.ctx.duration
 
         if duration is None or duration <= 0:
@@ -50,9 +61,10 @@ class DetectionRunner(OperationRunner):
             return
 
         total_samples = max(1, int(duration * detection_fps))
+        total_batches = (total_samples + _BATCH_SIZE - 1) // _BATCH_SIZE
         logger.info(
-            "[DetectionRunner] Processing @ %.1f fps, duration=%.1fs, ~%d frames, batch_size=%d",
-            detection_fps, duration, total_samples, batch_size,
+            "[DetectionRunner] @%.1ffps dur=%.0fs ~%dframes → %d batch(s) @%d frames/batch",
+            detection_fps, duration, total_samples, total_batches, _BATCH_SIZE,
         )
 
         # ── 设置目标类别过滤（per-video config）──
@@ -66,79 +78,106 @@ class DetectionRunner(OperationRunner):
         if hasattr(detector, "reset_tracker"):
             detector.reset_tracker()
 
-        # ── 流式抽帧 + 批量检测 + 累加结果 ──
+        # ── 生产者-消费者并发：帧提取（NVDEC pipe）与 YOLO 推理重叠 ──
         video_path = pctx.ctx.file_path
+        pipeline_cfg = pctx.config.get("pipeline", {})
+        use_nvdec = pipeline_cfg.get("use_nvdec", False)
+
+        # 内部帧队列：生产者-消费者通道
+        inner_queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+        extract_error: Exception | None = None
+        extract_frame_count = 0
+
+        async def _extract() -> None:
+            """后台任务：NVDEC pipe 读帧 → 推送 inner_queue 供 YOLO 消费。
+
+            生产者-消费者解耦：帧提取与推理并发，NVDEC pipe 在推理时不被阻塞。
+            """
+            nonlocal extract_error, extract_frame_count
+            frame_idx = 0
+            try:
+                async for frame in stream_frames(
+                    video_path,
+                    fps=detection_fps,
+                    use_nvdec=use_nvdec,
+                    output_width=640,
+                    output_height=384,
+                    total_frames=total_samples,
+                ):
+                    timestamp = float(frame_idx) / detection_fps
+                    await inner_queue.put((frame, timestamp))
+                    frame_idx += 1
+            except Exception as e:
+                logger.error("[DetectionRunner] Frame extraction failed: %s", e)
+                extract_error = e
+            finally:
+                await inner_queue.put(None)
+            extract_frame_count = frame_idx
+
+        extract_task = asyncio.create_task(_extract())
+
+        # ── 消费循环：从队列取帧 → 攒批 → 推理 → 累加结果 ──
         frame_detections: list[dict] = []
         tracks_map: dict[int, dict] = {}
         best_cache: dict[int, dict] = {}  # track_id → {frame, bbox, timestamp, conf}
-
         batch_frames: list[np.ndarray] = []
         batch_timestamps: list[float] = []
-        batch_origin_frames: list[np.ndarray] = []  # 原图引用，给 track_encode 裁剪用
         processed = 0
 
-        # 检测用输入尺寸 — YOLO 内部也缩放到 640, 提前缩避免 1080p 解码开销
-        _DETECT_SIZE = (640, 384)
-
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            logger.error("[DetectionRunner] Cannot open video: %s", video_path)
-            pctx.ctx.frame_detections = []
-            pctx.ctx.tracks = []
-            return
+        await pctx.tracker.update("detection", sub_progress=0.0)
 
         try:
-            source_fps = cap.get(cv2.CAP_PROP_FPS)
-            if source_fps <= 0:
-                source_fps = 30.0
-            frame_interval = 1.0 / detection_fps
-            frame_idx = 0
-            next_ts = 0.0
-
             while True:
-                ret, frame = cap.read()
-                if not ret:
+                item = await inner_queue.get()
+                if item is None:
                     break
-                timestamp = frame_idx / source_fps
-                if timestamp >= next_ts - 0.001 and timestamp <= duration:
-                        next_ts += frame_interval
-                        # 缩放到检测尺寸 → BGR→RGB（YOLO 内部也缩到 640）
-                        small = cv2.resize(frame, _DETECT_SIZE, interpolation=cv2.INTER_LINEAR)
-                        rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-                        batch_frames.append(rgb)
-                        batch_timestamps.append(timestamp)
-                        # 保存原图帧引用给 track_encode 裁剪用（bbox 归一化，跨分辨率兼容）
-                        batch_origin_frames.append(frame)
+                frame, timestamp = item
+                batch_frames.append(frame)
+                batch_timestamps.append(timestamp)
 
-                        if len(batch_frames) >= batch_size:
-                            await self._process_batch(
-                                detector, batch_frames, batch_timestamps,
-                                pctx, frame_detections, tracks_map, best_cache,
-                                batch_origin_frames,
-                            )
-                            processed += len(batch_frames)
-                            # 进度写 DB 降到最低 (每 100 批 ~ 3 次/视频)
-                            if (processed // batch_size) % 100 == 0:
-                                await pctx.tracker.update(
-                                    "detection",
-                                    sub_progress=min(processed / total_samples, 0.98),
-                                    description=f"检测追踪 {processed}/{total_samples} 帧",
-                                )
-                            batch_frames = []
-                            batch_timestamps = []
-                            batch_origin_frames = []
-                frame_idx += 1
+                if len(batch_frames) >= _BATCH_SIZE:
+                    await self._process_batch(
+                        detector, batch_frames, batch_timestamps,
+                        pctx, frame_detections, tracks_map, best_cache,
+                    )
+                    processed += len(batch_frames)
+                    current_batch = processed // _BATCH_SIZE
+                    pct = min(processed / total_samples * 100, 99.0)
+                    # 每 2 批输出进度 + 写 DB
+                    if current_batch % 2 == 0 or current_batch == total_batches:
+                        det_so_far = len(frame_detections)
+                        trk_so_far = len(tracks_map)
+                        msg = (
+                            f"检测 {processed}/{total_samples}帧 ({pct:.0f}%) | "
+                            f"batch {current_batch}/{total_batches} | "
+                            f"{det_so_far}det {trk_so_far}trk"
+                        )
+                        logger.info("[detect] %s", msg)
+                        await pctx.tracker.update(
+                            "detection",
+                            sub_progress=min(processed / total_samples, 0.98),
+                            description=msg,
+                        )
+                    batch_frames = []
+                    batch_timestamps = []
 
             # 处理最后一批
             if batch_frames:
                 await self._process_batch(
                     detector, batch_frames, batch_timestamps,
                     pctx, frame_detections, tracks_map, best_cache,
-                    batch_origin_frames,
                 )
                 processed += len(batch_frames)
         finally:
-            cap.release()
+            # 停止帧提取后台任务（防止 inner_queue.put 无限等待）
+            extract_task.cancel()
+            try:
+                await extract_task
+            except asyncio.CancelledError:
+                pass
+
+        if extract_error:
+            raise extract_error  # type: ignore[misc]
 
         if processed == 0:
             logger.warning("[DetectionRunner] No frames extracted")
@@ -151,10 +190,11 @@ class DetectionRunner(OperationRunner):
 
         pctx.ctx.frame_detections = frame_detections
         pctx.ctx.tracks = ctx_tracks
-        pctx.ctx.track_best_frames = best_cache
+        pctx.ctx.track_best_frames = best_cache  # 640×384 检测帧，track_encode 裁剪质量足够
 
-        # ── 按场景聚合 entities（给 label search 用）──
-        self._aggregate_scene_entities(pctx.ctx.scenes, frame_detections)
+        # 注意：entity 聚合已移至 engine._persist() —
+        # 此时 scenes 可能尚未就绪（detection 不依赖 segmentation），
+        # 在所有 op 完成后的 persist 阶段统一处理。
 
         await pctx.tracker.update("detection", sub_progress=1.0)
 
@@ -174,13 +214,12 @@ class DetectionRunner(OperationRunner):
         pctx: PipelineContext,
         frame_detections: list[dict],
         tracks_map: dict[int, dict],
-        best_cache: dict[int, dict] | None = None,
-        origin_frames: list[np.ndarray] | None = None,
+        best_cache: dict[int, dict],
     ) -> None:
         """处理一批帧：检测+追踪 → 累加到 frame_detections + tracks_map + best_cache。
 
-        frames: 缩放后的检测帧（640×384）。
-        origin_frames: 原图帧引用（1080p），给 track_encode 裁剪用。bbox 归一化跨分辨率兼容。
+        frames: 640×384 RGB 检测帧（stream_frames 输出，已缩放+BGR→RGB 转换）。
+        best_cache 存储检测分辨率帧占位，后续由 _upgrade_best_frames 替换为全分辨率。
         """
         batch_dets = await detector.detect(frames)
 
@@ -215,44 +254,12 @@ class DetectionRunner(OperationRunner):
                     trk["last_seen"] = float(timestamp)
                     trk["frame_count"] += 1
 
-                # 维护最佳帧缓存 (track_encode runner 裁剪用 — 用原图)
-                if best_cache is not None:
-                    conf = t["confidence"]
-                    if tid not in best_cache or conf > best_cache[tid]["conf"]:
-                        orig = origin_frames[i] if origin_frames and i < len(origin_frames) else frames[i]
-                        best_cache[tid] = {
-                            "frame": orig,
-                            "bbox": t["bbox"],
-                            "timestamp": float(timestamp),
-                            "conf": conf,
-                        }
-
-    @staticmethod
-    def _aggregate_scene_entities(scenes, frame_detections: list[dict]) -> None:
-        """将逐帧检测结果按场景聚合去重，写入 scene.entities。
-
-        每个 track_id 在单个场景中只出现一次（首次检测），
-        与 scenes.entities 的 JSONB 注释格式完全一致。
-        """
-        if not frame_detections:
-            return
-
-        for scene in scenes:
-            seen_tracks: set[int] = set()
-            entities: list[dict] = []
-            for fd in frame_detections:
-                ts = fd["timestamp_sec"]
-                if scene.start_sec <= ts <= scene.end_sec:
-                    tid = fd["track_id"]
-                    if tid not in seen_tracks:
-                        seen_tracks.add(tid)
-                        entities.append({
-                            "label": fd["class_name"],
-                            "bbox": [fd["bbox"]["x1"], fd["bbox"]["y1"],
-                                     fd["bbox"]["x2"], fd["bbox"]["y2"]],
-                            "confidence": fd["confidence"],
-                            "start_sec": ts,
-                            "end_sec": ts,
-                            "track_id": tid,
-                        })
-            scene.entities = entities if entities else []
+                # 维护最佳帧缓存（检测分辨率 640×384，track_encode 裁剪质量足够）
+                conf = t["confidence"]
+                if tid not in best_cache or conf > best_cache[tid]["conf"]:
+                    best_cache[tid] = {
+                        "frame": frames[i],
+                        "bbox": t["bbox"],
+                        "timestamp": float(timestamp),
+                        "conf": conf,
+                    }

@@ -27,6 +27,10 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+# 静默 uvicorn access log — GET/POST 请求行不打印
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+# 静默 ultralytics WARNING（运动补偿 "not enough matching points" 无害）
+logging.getLogger("ultralytics").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 
