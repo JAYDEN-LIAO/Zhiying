@@ -110,7 +110,6 @@ class DetectionRunner(OperationRunner):
                     output_width=640,
                     output_height=384,
                     total_frames=total_samples,
-                    raw_mode=True,
                 ):
                     timestamp = float(frame_idx) / detection_fps
                     # 推入内部队列供 YOLO 消费
