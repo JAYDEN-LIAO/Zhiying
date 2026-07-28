@@ -99,6 +99,7 @@ interface AdvancedParams {
   segmentThreshold: number;
   captionWithContext: boolean;
   summaryDetail: string;
+  encodeProfile: string | null;
 }
 
 const DEFAULT_ADVANCED: AdvancedParams = {
@@ -107,6 +108,7 @@ const DEFAULT_ADVANCED: AdvancedParams = {
   segmentThreshold: 0.5,
   captionWithContext: true,
   summaryDetail: "standard",
+  encodeProfile: null,
 };
 
 const CUSTOM_PARAMS_KEY = "cerno_custom_params";
@@ -288,6 +290,7 @@ export function ParameterPanel({
       segment_threshold: advanced.segmentThreshold,
       caption_with_context: advanced.captionWithContext,
       summary_detail: advanced.summaryDetail,
+      encode_profile: advanced.encodeProfile,
     });
 
     setSubmitting(true);
@@ -763,6 +766,40 @@ export function ParameterPanel({
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* 处理速度（编码预设） */}
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">
+                处理速度
+              </label>
+              <div className="flex gap-1.5">
+                {([
+                  { key: "fast", label: "快速", hint: "~3min / 1h视频" },
+                  { key: "balanced", label: "平衡", hint: "~5min" },
+                  { key: "precise", label: "精准", hint: "~7min" },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.key}
+                    onClick={() => updateAdvanced({ encodeProfile: opt.key })}
+                    className={`flex-1 px-2 py-2 rounded-lg transition-all border text-center ${
+                      advanced.encodeProfile === opt.key
+                        ? "bg-[#1a65e1] border-[#1a65e1] text-white shadow-sm"
+                        : advanced.encodeProfile === null && opt.key === "balanced"
+                          ? "bg-blue-50 border-blue-200 text-gray-600"
+                          : "bg-gray-100/40 border-gray-200/60 text-gray-500 hover:border-gray-300"
+                    }`}
+                  >
+                    <div className="text-xs font-medium">{opt.label}</div>
+                    <div className={`text-[9px] mt-0.5 ${advanced.encodeProfile === opt.key ? "text-blue-100" : "text-gray-400"}`}>
+                      {opt.hint}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-350 mt-1">
+                {advanced.encodeProfile === null ? "使用全局默认 (设置页可改)" : `已选: ${advanced.encodeProfile === "fast" ? "快速 · 低分辨率" : advanced.encodeProfile === "precise" ? "精准 · 高分辨率" : "平衡 · 中等分辨率"}`}
+              </p>
             </div>
           </div>
         </section>

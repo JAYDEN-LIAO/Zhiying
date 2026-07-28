@@ -42,14 +42,24 @@ class SearchEncodeRunner(OperationRunner):
 
         video_path = pctx.ctx.file_path
         pipeline_cfg = pctx.config.get("pipeline", {})
-        batch_size = pipeline_cfg.get("encode_batch_size", 64)
         use_nvdec = pipeline_cfg.get("use_nvdec", False)
         total_frames = max(1, int(duration))
 
+        # ── 编码速度预设：逐视频 profile → 分辨率 + batch_size ──
+        profile_name = getattr(pctx.video, "encode_profile", None)
+        if not profile_name:
+            profile_name = pipeline_cfg.get("default_encode_profile", "balanced")
+        profiles = pipeline_cfg.get("encode_profiles", {})
+        profile = profiles.get(profile_name, {})
+        encode_w = profile.get("encode_width", 336)
+        encode_h = profile.get("encode_height", 224)
+        batch_size = profile.get("encode_batch_size", 512)
+        target_size: tuple[int, int] = (encode_w, encode_h)
+
         await pctx.tracker.update("search_encode", sub_progress=0.0)
         logger.info(
-            "[SearchEncodeRunner] ~%d frames @ 1fps, batch=%d, nvdec=%s",
-            total_frames, batch_size, use_nvdec,
+            "[SearchEncodeRunner] ~%d frames @ 1fps, profile=%s, %dx%d, batch=%d, nvdec=%s",
+            total_frames, profile_name, encode_w, encode_h, batch_size, use_nvdec,
         )
 
         # ── 流式抽帧 + 攒批编码 ──
@@ -62,6 +72,7 @@ class SearchEncodeRunner(OperationRunner):
 
         async for frame in stream_frames(
             video_path, fps=1.0, use_nvdec=use_nvdec,
+            output_width=encode_w, output_height=encode_h,
             total_frames=total_frames,
         ):
             # 首帧保存为缩略图
@@ -74,7 +85,7 @@ class SearchEncodeRunner(OperationRunner):
 
             if len(batch_frames) >= batch_size:
                 rows = await self._encode_batch(
-                    embedder, pctx, batch_frames, batch_times, video_id,
+                    embedder, pctx, batch_frames, batch_times, video_id, target_size,
                 )
                 all_frame_rows.extend(rows)
                 await pctx.tracker.update(
@@ -87,7 +98,7 @@ class SearchEncodeRunner(OperationRunner):
         # 最后一批
         if batch_frames:
             rows = await self._encode_batch(
-                embedder, pctx, batch_frames, batch_times, video_id,
+                embedder, pctx, batch_frames, batch_times, video_id, target_size,
             )
             all_frame_rows.extend(rows)
 
@@ -112,13 +123,14 @@ class SearchEncodeRunner(OperationRunner):
         frames: list,
         timestamps: list[float],
         video_id,
+        target_size: tuple[int, int] | None = None,
     ) -> list[dict]:
         """编码一批帧 → 返回 frame_embeddings 行列表。"""
         lock = getattr(pctx, "embedder_lock", None)
         if lock:
             await lock.acquire()
         try:
-            embs = await embedder.encode_images_batch(frames)
+            embs = await embedder.encode_images_batch(frames, target_size=target_size)
         except Exception:
             logger.warning(
                 "[SearchEncodeRunner] Batch encode failed, falling back to single-frame"

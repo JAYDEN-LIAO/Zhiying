@@ -44,6 +44,8 @@ class QwenVLEmbedder(BaseEmbedder):
         self,
         model_name: str = "Qwen/Qwen3-VL-Embedding-2B",
         device: str = "cuda",
+        encode_width: int = 336,
+        encode_height: int = 224,
         **kwargs,
     ):
         try:
@@ -54,8 +56,12 @@ class QwenVLEmbedder(BaseEmbedder):
             ) from e
 
         self.device = device
+        self.encode_size = (encode_width, encode_height)
 
-        logger.info("[QwenVLEmbedder] Loading model %s on %s ...", model_name, device)
+        logger.info(
+            "[QwenVLEmbedder] Loading model %s on %s (encode %dx%d) ...",
+            model_name, device, encode_width, encode_height,
+        )
         self.processor = AutoProcessor.from_pretrained(
             model_name, trust_remote_code=True,
         )
@@ -115,11 +121,13 @@ class QwenVLEmbedder(BaseEmbedder):
 
     async def encode_images_batch(
         self, images: list[np.ndarray],
+        target_size: tuple[int, int] | None = None,
     ) -> list[list[float]]:
         """批量图像编码 — 多帧一次前向，比逐帧 encode_image 吞吐更高。
 
         Args:
             images: 图像列表，每项为 (H, W, 3) uint8 numpy 数组。
+            target_size: 可选 (w, h) 覆盖默认编码分辨率，用于速度预设。
 
         Returns:
             list[list[float]] — 每帧 2048 维归一化向量，顺序与输入一致。
@@ -135,7 +143,7 @@ class QwenVLEmbedder(BaseEmbedder):
 
         try:
             vectors = await asyncio.to_thread(
-                self._sync_encode_images_batch, processed,
+                self._sync_encode_images_batch, processed, target_size,
             )
             return vectors
         except Exception as e:
@@ -180,7 +188,7 @@ class QwenVLEmbedder(BaseEmbedder):
         from PIL import Image as PILImage
         from qwen_vl_utils import process_vision_info
 
-        pil_img = PILImage.fromarray(image).resize(self._ENCODE_SIZE, PILImage.LANCZOS)
+        pil_img = PILImage.fromarray(image).resize(self.encode_size, PILImage.LANCZOS)
 
         conversation = [
             {"role": "system", "content": [{"type": "text", "text": self._SYSTEM_PROMPT}]},
@@ -209,30 +217,31 @@ class QwenVLEmbedder(BaseEmbedder):
         )
         return embedding.cpu().numpy().astype(np.float64).tolist()
 
-    # 编码用分辨率 — 远小于原图，大幅减少视觉 token 数量（±10x），
-    # 编码速度和显存消耗用于搜索召回已足够。
-    _ENCODE_SIZE = (336, 224)
-
     def _sync_encode_images_batch(
         self, images: list[np.ndarray],
+        target_size: tuple[int, int] | None = None,
     ) -> list[list[float]]:
         """批量图像编码 — 多帧 packing 为同一 batch 送入模型。
 
         直接走内存路径(PIL Image → processor)，零磁盘 I/O。
-        编码前缩放到 _ENCODE_SIZE 减少视觉 token（~10x 加速）。
-        每帧独立走 process_vision_info + chat template，
-        最后拼成 batch 做一次前向，由 pooling_last 输出各自向量。
+        编码前缩放到 encode_size 减少视觉 token（~10x 加速）。
+        target_size 可覆盖默认分辨率（用于速度预设）。
+        PIL resize 通过线程池并行化，float32 输出（余弦检索精度已足够）。
         """
+        from concurrent.futures import ThreadPoolExecutor as Pool
         from PIL import Image as PILImage
         from qwen_vl_utils import process_vision_info
 
-        # numpy → 缩略图 PIL Image（纯内存，零磁盘 I/O）
-        # 336×224 → ~100 vision tokens/frame vs 原来的 ~880 tokens
-        pil_images = [
-            PILImage.fromarray(img).resize(self._ENCODE_SIZE, PILImage.LANCZOS)
-            for img in images
-        ]
+        encode_size = target_size if target_size is not None else self.encode_size
 
+        # ── 并行 PIL resize (PIL 线程安全) ──
+        with Pool(max_workers=8) as pool:
+            pil_images = list(pool.map(
+                lambda img: PILImage.fromarray(img).resize(encode_size, PILImage.LANCZOS),
+                images,
+            ))
+
+        # ── 构建对话 + chat template + vision info (串行: processor 可能非线程安全) ──
         conversations = [
             [
                 {"role": "system", "content": [{"type": "text", "text": self._SYSTEM_PROMPT}]},
@@ -262,18 +271,14 @@ class QwenVLEmbedder(BaseEmbedder):
         with torch.no_grad():
             outputs = self.model(**inputs)
 
+        # _pool_last_token 已做逐行 L2 归一化，无需后处理
         embeddings = self._pool_last_token(
             outputs.last_hidden_state, inputs["attention_mask"],
         )
         # embeddings shape: (batch_size, hidden_dim)
 
-        results: list[list[float]] = []
-        for emb in embeddings:
-            norm = torch.linalg.norm(emb)
-            if norm > 0:
-                emb = emb / norm
-            results.append(emb.cpu().numpy().astype(np.float64).tolist())
-        return results
+        # GPU → CPU float32 (2048-dim cos similarity 不需要 float64 精度)
+        return embeddings.cpu().to(torch.float32).numpy().tolist()
 
     def _sync_encode_video(
         self, video_path: str, fps: float, max_frames: int,
@@ -334,7 +339,10 @@ class QwenVLEmbedder(BaseEmbedder):
 
     @staticmethod
     def _pool_last_token(hidden_states, attention_mask) -> torch.Tensor:
-        """从最后一个非 padding token 位置提取向量。
+        """从最后一个非 padding token 位置提取向量并 L2 归一化。
+
+        - 单样本 (B=1): 返回 1D (D,) 归一化向量
+        - 批量 (B>1): 返回 2D (B, D)，逐行 L2 归一化
 
         模型训练时嵌入从该位置读取，mean pooling 会稀释语义信号。
         """
@@ -342,8 +350,16 @@ class QwenVLEmbedder(BaseEmbedder):
         last_pos = flipped.argmax(dim=1)
         col = attention_mask.shape[1] - last_pos - 1
         row = torch.arange(hidden_states.shape[0], device=hidden_states.device)
-        embedding = hidden_states[row, col].squeeze(0)
-        norm = torch.linalg.norm(embedding)
-        if norm > 0:
-            embedding = embedding / norm
+        embedding = hidden_states[row, col]  # (B, D); 高级索引保留 batch 维度
+
+        if embedding.shape[0] == 1:
+            # 单样本: squeeze batch dim → 1D 向量，L2 归一化
+            embedding = embedding.squeeze(0)
+            norm = torch.linalg.norm(embedding)
+            if norm > 0:
+                embedding = embedding / norm
+        else:
+            # 批量 (B>1): 逐行 L2 归一化，替代旧的 Frobenius group-norm bug
+            embedding = torch.nn.functional.normalize(embedding, p=2, dim=1)
+
         return embedding

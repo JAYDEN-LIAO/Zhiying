@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.14 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.15 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -97,9 +97,10 @@ L3: Function Switches (2)
   ├─ search_index_enabled → 4-path encoding for semantic search (frame+chunk+text+track)
   └─ summary_enabled      → global structured summary
 
-L4: Advanced Params (6)
+L4: Advanced Params (7)
   ├─ language, sample_fps, segment_threshold
   ├─ caption_with_context, summary_detail
+  ├─ encode_profile: "fast" | "balanced" | "precise" | null (全局默认)
   └─ summary_mode: "native_video" (默认, 本地Qwen3-VL-8B + 纯Python聚合) | "vlm_llm" (VLM+LLM, API驱动)
 
 Validation: PipelineParams model_validator in core/schemas.py
@@ -117,9 +118,10 @@ Incremental: Only L3 switches can be toggled on completed videos
 
 ```
 Phase 0: 搜索路径（search_encode, 并行于 Phase 1-5）
-  搜索功能开启时，search_encode 与下方摘要管线完全并行
-  ├─ depends_on=["duration"]，不等任何人
-  └─ 自抽帧 1fps + 批量编码 → frame_embeddings 表
+  仅 summary_enabled=False 时激活（v0.15 gate 修复），与检测并行
+  ├─ depends_on=["duration"]
+  ├─ NVDEC MJPEG pipe 抽帧 @1fps + embedder 批量编码
+  └─ → frame_embeddings 表
 
 Phase 1 (DAG: duration → segmentation, transcription)
   ├─ duration (ffprobe) → ctx.duration
@@ -133,14 +135,14 @@ Phase 1 (DAG: duration → segmentation, transcription)
   ↓
 
 Keyframe Extraction (Phase 1→4 间)
-  ├─ FFmpeg pipe → memory (numpy ndarray, 无磁盘 I/O)
-  │   按 1fps 逐帧抽取，全部存入 scene 帧池
-  │   状态: "正在抽取第 X/Y 个场景的关键帧"
+  ├─ stream_frames() async generator (NVDEC MJPEG pipe / cv2 fallback)
+  │   按 1fps 流式抽帧，推入 asyncio.Queue(512) → frame_encode 并发消费
+  │   同时存入 scene 帧池供 caption 使用
   ├─ 中点帧 → scene.keyframe（缩略图用）
   ├─ vlm_llm 模式: 均匀选 3-7 帧 → scene.caption_frames（API captioner 用）
   │   native_video 模式: 跳过（模型直接读视频，不需要代表帧）
-  └─ 四条消费链路复用同一批帧（chunk 路由 config pipeline.chunk_encoding 控制）：
-      ① 帧级路 → encode_image → frame_embeddings 表
+  └─ 消费链路:
+      ① 帧级路 → frame_encode (asyncio.Queue 消费 + 批量编码) → frame_embeddings 表
       ② Chunk 路 → encode_video(clip) → chunks 表（默认关闭）
       ③ 文本路 → encode_text(caption+ocr+transcript) → scenes.text_embedding
       ④ VLM 路 → caption 生成
@@ -457,6 +459,7 @@ plate_detections
 | GET | /api/v1/videos/{id}/metadata | 视频元数据 (编码/GPS/设备信息) |
 | GET | /api/v1/settings | 获取系统设置 (API key 状态) |
 | PUT | /api/v1/settings | 更新系统设置 (保存 API key) |
+| GET | /api/v1/settings/pipeline | 获取 Pipeline 配置 (编码预设等全局默认值) |
 | GET | /api/v1/pipeline/operations | 查询启用的操作列表 + 进度范围 |
 | GET | /api/v1/videos/{id}/detection/data | 逐帧检测框 + 追踪轨迹 JSON |
 | GET | /api/v1/videos/{id}/detection/thumbnail | track crop 缩略图 (bbox 裁剪) |
@@ -533,12 +536,15 @@ Vite 开发代理:
 | **4-level parameter hierarchy** | Scene type sets defaults for modules, which gate functions and advanced params |
 | **Incremental pipeline** | L3 switches (summary/search) can re-run independently on completed videos |
 | **Global offline ReID** | Qwen3-VL-Embedding cross-modal matching, 5 constraints (class+time+cos+gap+space), 0.85 threshold, 180s max gap |
-| **Search/summary path decoupling** | search_encode (depends duration) runs parallel to summary pipeline; frame search ready without waiting for caption/summary |
+| **Search/summary path decoupling** | search_encode (depends duration, gated by not v.summary_enabled) runs parallel to summary pipeline; frame search ready without waiting for caption/summary |
+| **Producer-consumer pipeline** | keyframes→frame_encode via asyncio.Queue(512), GPU 编码与 CPU 抽帧并发, frame_encode depends_on=["segmentation"] |
+| **NVDEC MJPEG pipe** | MJPEG 压缩流 (~100KB/帧) 替代 raw NV12 (3.1MB/帧), pipe I/O 减少 30×, 默认启用 |
+| **Speed presets** | 三档编码预设 (fast/balanced/precise) 控制分辨率 + batch_size, 逐视频可选, 默认在 config.yaml |
 | **Plate Levenshtein search** | Levenshtein 编辑距离（≤2）+ ILIKE 子串匹配；替换 pg_trgm 相似度，天然处理错位/增减 |
 | **Decoupled upload/params** | Upload creates pending video; pipeline starts only after user configures params |
 | **Two-layer format compatibility** | Container remux (-c copy, instant) + codec proxy (NVENC H.264, lazy on-demand). Probe sync (<100ms), remux/proxy async. HEVC browser detection via canPlayType + hevc_ok routing. |
 | **Lazy proxy generation** | Proxy only generated when non-HEVC client first requests video — never eager. Saves GPU time and disk for HEVC-capable browsers (Safari/Electron). |
-| **Embedder @336×224** | Frame encoding resized to 336×224 (~70 vision tokens vs ~880 at 1080p, ~10x speedup). Search quality preserved for semantic queries. |
+| **Embedder resolution configurable** | 三档预设 (fast 336×224 / balanced 504×336 / precise 672×448) + per-call target_size 覆盖。PIL resize 8 线程并行 + NVDEC scale_cuda GPU 缩放。 |
 | **GET + POST dual export endpoints** | POST for programmatic API calls (curl), GET with query params for browser direct download → avoids async download blocking |
 | **Three-tier metadata extraction** | pymediainfo (full tech) → exiftool (GPS/device) → ffprobe (fallback), graceful degradation |
 | **Class-local track numbering** | Display shows sequential class-local IDs (person 1, car 2) while API uses raw track_id internally |
@@ -568,7 +574,7 @@ Vite 开发代理:
 | Track Thumbnail Download | ✅ | 全尺寸物体裁剪图下载 |
 | Scene Thumbnails Export | ✅ | 全部/指定场景缩略图 → zip |
 | Multi-Format Support | ✅ | 两层: remux (-c copy) + proxy (NVENC H.264, 按需) |
-| Performance Optimizations | ✅ | embedder@336×224, detection@640px/15fps/batch128, >30min time-based seg, search/summary parallel, NVDEC opt-in |
+| Performance Optimizations | ✅ | embedder 可配置 3 档 (336-672), PIL resize 8线程并行, batch 512, NVDEC MJPEG pipe 默认启用, keyframes→frame_encode 生产者-消费者并发, float32 |
 | API Routes | ✅ | 25 endpoints: +proxy-status +stream hevc_ok 路由 |
 | Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值 |
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |

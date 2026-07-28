@@ -150,6 +150,7 @@ class PipelineParams(BaseModel):
     segment_threshold: float    = Field(default=0.5, ge=0.2, le=0.8)
     caption_with_context: bool  = Field(default=True)
     summary_detail: str         = Field(default="standard", pattern=r"^(brief|standard|detailed)$")
+    encode_profile: str | None  = Field(default=None, pattern=r"^(fast|balanced|precise)$", description="编码速度预设；None=使用全局默认")
 
     @model_validator(mode="after")
     def validate_cross_dependencies(self):

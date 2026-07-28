@@ -187,6 +187,13 @@ class PipelineEngine:
                 db_session_factory=self.db_session_factory,
                 operations=enabled,
             )
+            # 生产者-消费者队列：keyframes → frame_encode 流式通道
+            enabled_names = {op.name for op in enabled}
+            frame_queue: asyncio.Queue | None = (
+                asyncio.Queue(maxsize=512)
+                if "frame_encode" in enabled_names
+                else None
+            )
             pctx = PipelineContext(
                 video=v,
                 ctx=self.ctx,
@@ -197,6 +204,7 @@ class PipelineEngine:
                 shared_embedder=self._shared_embedder,
                 prompt_loader=self.prompt_loader,
                 embedder_lock=asyncio.Lock(),
+                frame_queue=frame_queue,
             )
 
             # 5. 事件驱动调度 (替代原拓扑分批+gather)
@@ -285,6 +293,12 @@ class PipelineEngine:
                 db_session_factory=self.db_session_factory,
                 operations=enabled,
             )
+            enabled_names = {op.name for op in enabled}
+            frame_queue: asyncio.Queue | None = (
+                asyncio.Queue(maxsize=512)
+                if "frame_encode" in enabled_names
+                else None
+            )
             pctx = PipelineContext(
                 video=v,
                 ctx=self.ctx,
@@ -294,6 +308,7 @@ class PipelineEngine:
                 db_session_factory=self.db_session_factory,
                 shared_embedder=self._shared_embedder,
                 prompt_loader=self.prompt_loader,
+                frame_queue=frame_queue,
             )
 
             for batch in batches:

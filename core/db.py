@@ -255,6 +255,12 @@ async def init_db():
             ADD COLUMN IF NOT EXISTS proxy_progress float DEFAULT 0.0 NOT NULL
         """))
 
+        # ── 编码速度预设 ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS encode_profile VARCHAR(16) DEFAULT NULL
+        """))
+
         # ── 清理：删除废弃的列、枚举类型、触发器 ──
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS preset

@@ -165,6 +165,10 @@ class Video(Base):
         String(16), default="standard", nullable=False,
         comment="摘要详细度: brief / standard / detailed",
     )
+    encode_profile: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, default=None,
+        comment="编码速度预设: fast / balanced / precise；NULL=全局默认",
+    )
 
     # ── 摘要 (JSONB) ──
     summary: Mapped[dict | None] = mapped_column(

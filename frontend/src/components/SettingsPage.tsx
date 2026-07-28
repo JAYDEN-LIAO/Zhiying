@@ -53,6 +53,8 @@ export function SettingsPage() {
                 </div>
               </div>
             </section>
+
+            <PipelineDefaultsSection />
           </div>
         </div>
 
@@ -102,6 +104,66 @@ export function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+
+/* ── Pipeline 默认值卡片 ── */
+
+function PipelineDefaultsSection() {
+  const [data, setData] = useState<any>(null);
+
+  useEffect(() => {
+    fetch("/api/v1/settings/pipeline")
+      .then((r) => r.json())
+      .then((d) => setData(d.data))
+      .catch(() => {});
+  }, []);
+
+  if (!data) return null;
+
+  const profiles: Record<string, any> = data.encode_profiles ?? {};
+  const defaultProfile = data.default_encode_profile ?? "balanced";
+
+  return (
+    <section>
+      <h3 className="font-semibold text-gray-900 text-sm mb-3">
+        Pipeline 调优
+        <span className="text-[11px] font-normal text-gray-400 ml-2">编辑 config.yaml 后重启生效</span>
+      </h3>
+      <div className="space-y-2">
+        {Object.entries(profiles).map(([key, p]: [string, any]) => {
+          const isDefault = key === defaultProfile;
+          return (
+            <div
+              key={key}
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-sm ${
+                isDefault ? "bg-blue-50 border-blue-200" : "bg-gray-50 border-gray-150"
+              }`}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-medium ${isDefault ? "text-gray-900" : "text-gray-600"}`}>
+                    {p.label ?? key}
+                  </span>
+                  {isDefault && (
+                    <span className="text-[9px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">默认</span>
+                  )}
+                </div>
+                <span className="text-[10px] text-gray-400 block truncate">
+                  {p.encode_width}×{p.encode_height} · batch={p.encode_batch_size} · {p.desc ?? ""}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex gap-2 text-[10px] text-gray-400">
+        <span>NVDEC: {data.use_nvdec ? "ON" : "OFF"}</span>
+        <span>·</span>
+        <span>Chunk: {data.chunk_encoding ? "ON" : "OFF"}</span>
+      </div>
+    </section>
   );
 }
 

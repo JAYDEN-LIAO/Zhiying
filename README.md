@@ -58,7 +58,7 @@ curl -X POST -H "Content-Type: application/json" \
 | Track Video Export (zip) | `GET/POST /api/v1/videos/{id}/export/track/{tid}` | ✅ |
 | Video Clip Export | `GET/POST /api/v1/videos/{id}/export/clip` | ✅ |
 | Scene Thumbnails Export (zip) | `GET/POST /api/v1/videos/{id}/export/thumbnails` | ✅ |
-| System Settings (API keys) | `GET/PUT /api/v1/settings` | ✅ |
+| System Settings (API keys + Pipeline) | `GET/PUT /api/v1/settings` + `GET /api/v1/settings/pipeline` | ✅ |
 | Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 (unified objects view + face toggle) | ✅ |
 | Track Encoding + Global ReID | `POST /api/v1/search/semantic` (track path) | ✅ |
 | Incremental Processing | summary/search re-run on completed videos | ✅ |
@@ -70,15 +70,15 @@ Upload → Pipeline (DAG) → DB → Search → Frontend
          ├─ Duration detection (ffprobe)
          ├─ [搜索路径]  Search Encode @1fps — 自抽帧+批量编码 (与摘要管线并行)
          ├─ [摘要路径]  Scene Segmentation (TransNetV2) + Audio Transcription (faster-whisper)
-         │    ├─ Keyframe Extraction @1fps (cv2 stream → memory)
+         │    ├─ Keyframe Extraction @1fps (NVDEC MJPEG pipe / cv2 stream)
          │    ├─ Captioning — 双模式 (runners/caption.py 内部策略):
          │    │    ├─ native_video (默认): Qwen3-VL-8B 本地 GPU → 结构化 JSON
          │    │    └─ vlm_llm (备选): Qwen-VL-Max API 看图说话
          │    └─ Summarization — 双模式 (runners/summary.py 内部策略)
          ├─ Object Detection — YOLO11s + BoT-SORT (可选，双门控):
          │    └─ 逐帧检测 → 跨帧追踪 → 前端 Canvas 框选
-         ├─ Embedding — 4 encoding paths:
-         │    ├─ Frame-level: search_encode 自抽帧 encode_image (1fps, per-frame)
+         ├─ Embedding — 4 encoding paths (分辨率可配置, 3-档预设):
+         │    ├─ Frame-level: search_encode 自抽帧 + frame_encode 队列消费 (1fps, per-frame)
          │    ├─ Chunk-level: encode_video (sliding window, 默认关闭, 需摘要)
          │    ├─ Text-level: encode_text(caption+ocr+transcript, 需摘要)
          │    └─ Track-level: encode_image(crop) (cross-modal, track search)
@@ -92,14 +92,14 @@ Upload → Pipeline (DAG) → DB → Search → Frontend
               └─ SCRFD + ArcFace R50 (face recognizer, ONNX, preloaded)
 ```
 
-- **Declarative pipeline** orchestrated by `PipelineEngine` (DAG executor), with 4-path frame/chunk/text/track encoding + face recognition + license plate recognition (15 operations total). Search and summary paths fully decoupled — `search_encode` runs parallel to `segmentation → keyframes → caption → summary`
+- **Declarative pipeline** orchestrated by `PipelineEngine` (DAG executor), with 4-path frame/chunk/text/track encoding + face recognition + license plate recognition (15 operations total). Search and summary paths fully decoupled — `search_encode` (gated by `not v.summary_enabled`) runs parallel to `segmentation → keyframes → frame_encode` (producer-consumer via `asyncio.Queue`). NVDEC MJPEG pipe for GPU-accelerated frame extraction.
 - **10 abstract plugin interfaces** with dynamic factory loading
 - **PostgreSQL + pgvector** with 11 tables: videos, scenes, transcripts, frame_embeddings, chunks, frame_detections, tracks, track_embeddings, face_identities, face_detections, plate_detections
 - **6-path parallel semantic search**: frame (1fps precision) + chunk (process semantics) + text (caption+ocr+transcript semantics) + label (JSONB @> entities) + track (crop cross-modal embedding) + plate (Levenshtein + ILIKE); **face image search**: POST /search/face (upload image → ArcFace 512d identity matching)
-- **4-level parameter system**: Scene Type → Perception Modules → Function Switches → Advanced Params, with face/plate sub-switches under detection
+- **4-level parameter system**: Scene Type → Perception Modules → Function Switches → Advanced Params (含 encode_profile 速度预设: fast/balanced/precise), with face/plate sub-switches under detection
 - **Multi-format video support** — two-layer: container remux (-c copy, instant) + codec proxy (NVENC H.264, lazy on-demand). Frontend canPlayType() HEVC detection + smart stream routing (hevc_ok param). Probe sync (<100ms), remux/proxy async — upload never blocked.
 - **Pipeline real-time status** — each phase writes human-readable progress descriptions (`status_detail`) to the database, displayed in the frontend in real time
-- **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, parameter panel, summary mode selector, and settings page
+- **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, 4-level parameter panel (含速度预设), summary mode selector, and settings page (含 Pipeline 调优)
 - **Export API** — clip export (stream copy), frame export (zip), track segment export (zip), scene thumbnail export (zip), track thumbnail download
 - **Video metadata extraction** — three-tier extraction (pymediainfo → exiftool → ffprobe), GPS/device/codec info via GET /metadata endpoint
 
@@ -211,6 +211,7 @@ cerno/
 
 ## Development Status
 
+- **v0.15 — Pipeline Performance + Speed Presets**: `keyframes`→`frame_encode` 生产者-消费者并发 (asyncio.Queue); `search_encode` gate 修复防双编码; NVDEC MJPEG pipe (~100KB/帧) 默认启用; embedder `_pool_last_token` 逐行 L2 归一化 + float32 + PIL resize 8线程并行; batch_size 512; 三档速度预设 (fast/balanced/precise) 控制分辨率 336-672; 前端 "处理速度" 控件 + Pipeline 调优 Settings 页; `GET /api/v1/settings/pipeline`。
 - **v0.14 — Search/Summary Decoupling + Preload**: Search and summary paths fully decoupled — new `search_encode` operation (self-extracting frames @1fps + batch encoding) runs parallel to summary pipeline, depends only on duration. Captioner preloaded at startup alongside embedder (shared instances, no per-pipeline load/unload). Configurable encode batch size (pipeline.encode_batch_size). NVDEC hardware decoding support (optional, pipeline.use_nvdec). detection_fps: 15. 15 operations, 11 DB tables, 10 plugin ABCs.
 - **v0.10 — Track encoding + Global ReID**: TrackEncodeRunner (最佳帧 crop + Qwen3-VL-Embedding 2048-dim). 全局离线 ReID 合并 (5 约束: 同类 + 时间不重叠 + 间隔≤180s + cos≥0.85 + 空间门). 5-path semantic search (frame+chunk+text+label+track). track 搜索独立去重, 返回具体物体 (class_name#id + crop 缩略图). EventDrivenScheduler: 异步事件驱动替代拓扑分批.
 - **v0.9 — YOLO detection + tracking**: YOLO11s + BoT-SORT (15fps 独立帧率, dual-gate). 前端 DetectionOverlay (Canvas bbox + 插值 + 拖尾) + DetectionPanel (物体列表 + 分类筛选) + DetectionTimeline (时间轴 + 播放头 + 选中滚动). demo 验证通过.

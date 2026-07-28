@@ -267,42 +267,30 @@ async def export_video_segment(
 # ═══════════════════════════════════════════════════════════
 
 
-def _nv12_frame_size(width: int, height: int) -> int:
-    """NV12 单帧字节数: Y (w*h) + UV (w*h/2)。"""
-    return width * height * 3 // 2
-
-
-def _nv12_to_rgb_cv2(data: bytes, width: int, height: int) -> 'np.ndarray':
-    """NV12 → RGB uint8 (H, W, 3) via cv2。"""
-    import cv2
-    import numpy as np
-    yuv = np.frombuffer(data, dtype=np.uint8).reshape(height * 3 // 2, width)
-    return cv2.cvtColor(yuv, cv2.COLOR_YUV2RGB_NV12)
-
-
 async def stream_frames_nvdec(
     video_path: str,
     fps: float = 1.0,
     output_width: int | None = None,
     output_height: int | None = None,
 ):
-    """NVDEC 硬解 → 异步 RGB 帧生成器。
+    """NVDEC 硬解 → 异步 RGB 帧生成器（MJPEG pipe 传输）。
 
-    GPU 解码 + 缩放（scale_cuda），CPU 仅做 NV12→RGB 颜色转换。
-    FFmpeg/NVDEC 不可用时自动 fallback 到 cv2。
+    GPU 解码 + 缩放（scale_cuda），输出 MJPEG 压缩流（~100KB/帧），
+    替代 raw NV12（3.1MB/帧 @ 1080p），消除长视频下的 asyncio pipe I/O 瓶颈。
 
     Args:
         video_path: 视频文件路径。
         fps: 采样帧率。
-        output_width / output_height: 输出分辨率。未指定时使用原始分辨率（需先 probe）。
+        output_width / output_height: 输出分辨率。未指定时使用原始分辨率。
 
     Yields:
         (H, W, 3) uint8 numpy RGB 帧数组。
     """
-    import cv2
+    import io as _io
     import numpy as np
+    from PIL import Image
 
-    # ── 构建 FFmpeg NVDEC 命令 ──
+    # ── 构建 FFmpeg NVDEC 命令（MJPEG 输出）──
     scale_filter = ""
     if output_width is not None and output_height is not None:
         scale_filter = f",scale_cuda={output_width}:{output_height}"
@@ -314,8 +302,9 @@ async def stream_frames_nvdec(
         "-hwaccel_output_format", "cuda",
         "-i", video_path,
         "-vf", f"fps={fps}{scale_filter},hwdownload,format=nv12",
-        "-f", "rawvideo",
-        "-pix_fmt", "nv12",
+        "-c:v", "mjpeg",
+        "-q:v", "3",
+        "-f", "image2pipe",
         "pipe:1",
     ]
 
@@ -325,32 +314,52 @@ async def stream_frames_nvdec(
         stderr=asyncio.subprocess.DEVNULL,
     )
 
-    # ── 探测实际输出分辨率 ──
-    # 从 FFmpeg stderr 解析 stream 信息，或使用已知参数
-    out_w = output_width
-    out_h = output_height
-    if out_w is None or out_h is None:
-        # 懒 probe via cv2 (仅一次，<100ms)
-        cap = cv2.VideoCapture(video_path)
-        out_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
-        out_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
-        cap.release()
-        logger.debug("[NVDEC] probed resolution: %dx%d", out_w, out_h)
+    if output_width and output_height:
+        logger.info(
+            "[NVDEC] Streaming %dx%d @ %.1f fps via NVDEC (MJPEG pipe)",
+            output_width, output_height, fps,
+        )
+    else:
+        logger.info(
+            "[NVDEC] Streaming @ %.1f fps via NVDEC (MJPEG pipe, native resolution)",
+            fps,
+        )
 
-    frame_bytes = _nv12_frame_size(out_w, out_h)
-    logger.info("[NVDEC] Streaming %dx%d @ %.1f fps via NVDEC", out_w, out_h, fps)
+    # ── MJPEG 流解析：从 pipe 读取 JPEG 片段 → 解码为 RGB ndarray ──
+    _SOI = b'\xff\xd8'   # JPEG Start of Image
+    _EOI = b'\xff\xd9'   # JPEG End of Image
 
+    buffer = bytearray()
     try:
         while True:
-            data = await proc.stdout.read(frame_bytes)
-            if not data or len(data) < frame_bytes:
+            chunk = await proc.stdout.read(65536)
+            if not chunk:
                 break
-            try:
-                rgb = _nv12_to_rgb_cv2(data, out_w, out_h)
-                yield rgb
-            except Exception:
-                logger.warning("[NVDEC] NV12→RGB failed for one frame, skipping")
-                continue
+            buffer.extend(chunk)
+
+            # 处理 buffer 中所有完整 JPEG 帧
+            while True:
+                start = buffer.find(_SOI)
+                if start == -1:
+                    buffer.clear()
+                    break
+                if start > 0:
+                    del buffer[:start]
+
+                end = buffer.find(_EOI, 2)  # 跳过 SOI 标记
+                if end == -1:
+                    break  # 帧不完整，等下一块数据
+
+                jpeg_bytes = bytes(buffer[:end + 2])
+                del buffer[:end + 2]
+
+                try:
+                    pil_img = Image.open(_io.BytesIO(jpeg_bytes))
+                    rgb = np.array(pil_img)
+                    yield rgb
+                except Exception:
+                    logger.warning("[NVDEC] JPEG decode failed for one frame, skipping")
+                    continue
     finally:
         try:
             proc.stdout.close()

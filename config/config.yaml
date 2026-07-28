@@ -52,12 +52,16 @@ plugins:
   #     model_name: "qwen-vl-max"
   #     with_context: true
 
-  # ── 向量编码（本地 GPU，唯一必须本地的模型）──
   # ── 向量编码（本地 GPU）──
   embedder:
     backend: "qwen3_vl_embedding_8b"
     params:
       model_name: "models/Qwen/Qwen3-VL-Embedding-8B"
+      # 编码分辨率 [宽, 高] — 影响速度与语义精度
+      # 336×224: ~70 vision tokens/帧, 速度快, 语义级搜索足够
+      # 504×336: ~160 vision tokens/帧, 更细粒度, 速度约为 2×
+      encode_width: 336
+      encode_height: 224
 
   # ── 摘要生成 via DeepSeek API（vlm_llm 模式使用）──
   summarizer:
@@ -91,8 +95,29 @@ pipeline:
   # chunk 编码：默认关闭（8GB GPU 上帧+文本路已足够）
   # 开启需要较好 GPU（≥12GB VRAM），并确认 encode_video 不 OOM
   chunk_encoding: false
-  # 帧编码批大小 — 按 GPU VRAM 调整: 24GB→128, 48GB→256
-  encode_batch_size: 256
-  # NVDEC 硬解 — 长视频（1h+）收益明显，短视频反而有子进程开销
-  # 需要 NVIDIA GPU + FFmpeg 编译 CUDA 支持
-  use_nvdec: false
+  # NVDEC 硬解 — GPU 硬件解码 + MJPEG pipe 传输 (~100KB/帧)
+  # 需要 NVIDIA GPU + FFmpeg 编译 CUDA 支持；不可用时自动 fallback 到 cv2
+  use_nvdec: true
+
+  # ── 编码速度预设 — 控制搜索精度与处理时间的权衡 ──
+  # 每个预设定义分辨率 + 批大小；逐视频可在参数面板选择
+  default_encode_profile: "balanced"
+  encode_profiles:
+    fast:
+      label: "快速"
+      desc: "低分辨率 + 大批量，1h 视频约 3min"
+      encode_width: 336
+      encode_height: 224
+      encode_batch_size: 512
+    balanced:
+      label: "平衡"
+      desc: "中等分辨率，速度精度兼顾（默认）"
+      encode_width: 504
+      encode_height: 336
+      encode_batch_size: 512
+    precise:
+      label: "精准"
+      desc: "高分辨率，适合精细检索"
+      encode_width: 672
+      encode_height: 448
+      encode_batch_size: 256

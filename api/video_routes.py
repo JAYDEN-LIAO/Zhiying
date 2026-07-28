@@ -228,6 +228,7 @@ async def update_video_params(
                 segment_threshold=payload.segment_threshold,
                 caption_with_context=payload.caption_with_context,
                 summary_detail=payload.summary_detail,
+                encode_profile=payload.encode_profile,
             )
         )
         await db.commit()

@@ -99,7 +99,7 @@ ALL_OPERATIONS: list[Operation] = [
 
     Operation(
         name="frame_encode", runner=FrameEncodeRunner(),
-        depends_on=["keyframes"],
+        depends_on=["segmentation"],  # 与 keyframes 并行: 通过 frame_queue 流式消费帧
         gate=lambda v, _: v.search_index_enabled and v.vision_enabled and v.summary_enabled,
         required_plugins=["embedder"],
         label="帧级编码", description="逐帧向量编码中",
@@ -137,7 +137,8 @@ ALL_OPERATIONS: list[Operation] = [
         gate=lambda v, _: (
             v.search_index_enabled
             and v.vision_enabled
-        ),  # 始终与摘要路径并行，不依赖 segmentation/keyframes
+            and not v.summary_enabled  # 摘要开启时由 keyframes→frame_encode 负责编码
+        ),
         required_plugins=["embedder"],
         label="搜索索引构建", description="1fps 抽帧 + 批量编码中",
         progress_weight=0.23,
