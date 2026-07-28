@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.15 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.16 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -47,16 +47,15 @@
 │  EventDrivenScheduler (v0.10)│
 │  Each op awaits upstream     │
 │  ┌─ duration                │
-│  │  → search_encode (∥)     │
+│  │  → detect ──→ search_queue ──→ search_encode (队列消费) │
 │  │  → seg + transcribe      │
 │  │    → keyframes + align   │
 │  │      → caption           │
 │  │      → frame_encode      │
 │  │      → text_encode       │
-│  │  → detect                │
 │  │    → track_encode        │
 │  │    → face + plate        │
-│  │      → summary           │
+│  │  → summary               │
 │  └─ Persist → DB            │
 └─────────────────────────────┘
            │
@@ -117,10 +116,11 @@ Incremental: Only L3 switches can be toggled on completed videos
 ## Pipeline Detail
 
 ```
-Phase 0: 搜索路径（search_encode, 并行于 Phase 1-5）
-  仅 summary_enabled=False 时激活（v0.15 gate 修复），与检测并行
+Phase 0: 搜索路径（search_encode, 与 detection 共享 NVDEC 流）
+  仅 summary_enabled=False 时激活
   ├─ depends_on=["duration"]
-  ├─ NVDEC MJPEG pipe 抽帧 @1fps + embedder 批量编码
+  ├─ 与 detection 共享单 NVDEC 流：detection @10fps 抽取，每 10 帧采样+resize → search_queue
+  ├─ search_encode 以 64 帧为一批从队列消费 + embedder 批量编码
   └─ → frame_embeddings 表
 
 Phase 1 (DAG: duration → segmentation, transcription)
@@ -535,7 +535,9 @@ Vite 开发代理:
 | **Shared embedder in app.state** | Avoids reloading 4GB model per video |
 | **4-level parameter hierarchy** | Scene type sets defaults for modules, which gate functions and advanced params |
 | **Incremental pipeline** | L3 switches (summary/search) can re-run independently on completed videos |
-| **Global offline ReID** | Qwen3-VL-Embedding cross-modal matching, 5 constraints (class+time+cos+gap+space), 0.85 threshold, 180s max gap |
+| **Single NVDEC stream sharing** | detection 与 search_encode 共享一条 NVDEC 流，消灭双流 GPU decoder 竞争。detection 推送 1fps 采样帧到队列，search_encode 以 64 帧为批消费编码。|
+| **Producer-consumer (detection)** | detection runner 使用 asyncio.Queue 解耦帧提取与 YOLO 推理，pipe 读取与 GPU 推理重叠。|
+| **Track fallback removed** | 移除以 track 为单位的 FFmpeg fallback 抽帧（_is_mid_frame / _fallback_frame），直接使用 cache 帧 crop，长视频 track_encode 从 ~257s 降至 ~43s。|
 | **Search/summary path decoupling** | search_encode (depends duration, gated by not v.summary_enabled) runs parallel to summary pipeline; frame search ready without waiting for caption/summary |
 | **Producer-consumer pipeline** | keyframes→frame_encode via asyncio.Queue(512), GPU 编码与 CPU 抽帧并发, frame_encode depends_on=["segmentation"] |
 | **NVDEC MJPEG pipe** | MJPEG 压缩流 (~100KB/帧) 替代 raw NV12 (3.1MB/帧), pipe I/O 减少 30×, 默认启用 |
@@ -557,7 +559,7 @@ Vite 开发代理:
 | Module | Status | Note |
 |---|---|---|
 | Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 15 ops, search/summary decoupled, gates/deps, events-driven |
-| Track Encoding + Global ReID | ✅ | runners/track_encode.py Phase 1: crop→embed; Phase 2: 全局离线 ReID 合并 (cos≥0.85, 时间门180s) |
+| Track Encoding (crop→embed) | ✅ | runners/track_encode.py: 最佳帧 crop → Qwen3-VL-Embedding 2048-dim。跳过头尾帧 FFmpeg fallback（直接使用 cache 帧），长视频 track_encode ~43s |
 | Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
 | License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
@@ -566,7 +568,7 @@ Vite 开发代理:
 | Frame-level Encoding | ✅ | runners/frame_encode.py: batch encode 4 frames |
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
 | Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
-| Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT, 15fps 独立帧率, dual-gate control |
+| Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT, 10fps 独立帧率（与 search 共享 NVDEC 流）, dual-gate control |
 | Video Metadata Extraction | ✅ | utils/metadata.py: 三级提取 (pymediainfo→exiftool→ffprobe) |
 | Clip Export | ✅ | services/export_service.py: 流复制 (-c copy) 极速导出 |
 | Frames Export | ✅ | 指定时间戳帧序列 → zip 打包 |
