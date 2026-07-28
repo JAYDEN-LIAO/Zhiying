@@ -272,16 +272,19 @@ async def stream_frames_nvdec(
     fps: float = 1.0,
     output_width: int | None = None,
     output_height: int | None = None,
+    raw_mode: bool = False,
 ):
-    """NVDEC 硬解 → 异步 RGB 帧生成器（MJPEG pipe 传输）。
+    """NVDEC 硬解 → 异步 RGB 帧生成器。
 
-    GPU 解码 + 缩放（scale_cuda），输出 MJPEG 压缩流（~100KB/帧），
-    替代 raw NV12（3.1MB/帧 @ 1080p），消除长视频下的 asyncio pipe I/O 瓶颈。
+    MJPEG 模式（默认）：GPU 解码 + 缩放 + MJPEG 压缩流（~100KB/帧），
+    替代 raw NV12（3.1MB/帧 @ 1080p），减少 pipe I/O。
+    Raw 模式：直接出 NV12 raw bytes，跳过 MJPEG 编解码来回，CPU 负担更低。
 
     Args:
         video_path: 视频文件路径。
         fps: 采样帧率。
         output_width / output_height: 输出分辨率。未指定时使用原始分辨率。
+        raw_mode: True 时输出 raw NV12 而非 MJPEG（省 CPU 编解码）。
 
     Yields:
         (H, W, 3) uint8 numpy RGB 帧数组。
@@ -290,23 +293,42 @@ async def stream_frames_nvdec(
     import numpy as np
     from PIL import Image
 
-    # ── 构建 FFmpeg NVDEC 命令（MJPEG 输出）──
+    # ── 构建 FFmpeg NVDEC 命令 ──
     scale_filter = ""
     if output_width is not None and output_height is not None:
         scale_filter = f",scale_cuda={output_width}:{output_height}"
 
-    cmd = [
-        "ffmpeg",
-        "-loglevel", "error",
-        "-hwaccel", "cuda",
-        "-hwaccel_output_format", "cuda",
-        "-i", video_path,
-        "-vf", f"fps={fps}{scale_filter},hwdownload,format=nv12",
-        "-c:v", "mjpeg",
-        "-q:v", "3",
-        "-f", "image2pipe",
-        "pipe:1",
-    ]
+    if raw_mode and output_width is not None and output_height is not None:
+        # Raw NV12 模式：跳过 MJPEG 编解码，降低 CPU 负担
+        cmd = [
+            "ffmpeg",
+            "-loglevel", "error",
+            "-hwaccel", "cuda",
+            "-hwaccel_output_format", "cuda",
+            "-i", video_path,
+            "-vf", f"fps={fps}{scale_filter},hwdownload,format=nv12",
+            "-pix_fmt", "nv12",
+            "-f", "rawvideo",
+            "pipe:1",
+        ]
+        fmt_label = "RAW NV12"
+        frame_bytes = output_width * output_height * 3 // 2  # NV12: 12bpp
+    else:
+        # MJPEG 模式（默认）：压缩传输，pipe I/O 最小
+        cmd = [
+            "ffmpeg",
+            "-loglevel", "error",
+            "-hwaccel", "cuda",
+            "-hwaccel_output_format", "cuda",
+            "-i", video_path,
+            "-vf", f"fps={fps}{scale_filter},hwdownload,format=nv12",
+            "-c:v", "mjpeg",
+            "-q:v", "3",
+            "-f", "image2pipe",
+            "pipe:1",
+        ]
+        fmt_label = "MJPEG pipe"
+        frame_bytes = 0  # not used in MJPEG mode
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -316,18 +338,51 @@ async def stream_frames_nvdec(
 
     if output_width and output_height:
         logger.info(
-            "[NVDEC] Streaming %dx%d @ %.1f fps via NVDEC (MJPEG pipe)",
-            output_width, output_height, fps,
+            "[NVDEC] Streaming %dx%d @ %.1f fps via NVDEC (%s)",
+            output_width, output_height, fps, fmt_label,
         )
     else:
         logger.info(
-            "[NVDEC] Streaming @ %.1f fps via NVDEC (MJPEG pipe, native resolution)",
-            fps,
+            "[NVDEC] Streaming @ %.1f fps via NVDEC (%s, native resolution)",
+            fps, fmt_label,
         )
 
-    # ── MJPEG 流解析：从 pipe 读取 JPEG 片段 → 解码为 RGB ndarray ──
-    _SOI = b'\xff\xd8'   # JPEG Start of Image
-    _EOI = b'\xff\xd9'   # JPEG End of Image
+    # ── 流解析 ──
+    if raw_mode and frame_bytes > 0:
+        # Raw NV12 模式：readexactly 读定长帧 → cv2 NV12→RGB
+        import cv2
+        try:
+            while True:
+                try:
+                    raw = await asyncio.wait_for(
+                        proc.stdout.readexactly(frame_bytes),
+                        timeout=30.0,
+                    )
+                except asyncio.IncompleteReadError:
+                    break
+                except asyncio.TimeoutError:
+                    logger.warning("[NVDEC] Raw read timeout, aborting")
+                    break
+                nv12 = np.frombuffer(raw, dtype=np.uint8).reshape(
+                    (output_height * 3 // 2, output_width)
+                )
+                rgb = cv2.cvtColor(nv12, cv2.COLOR_YUV2RGB_NV12)
+                yield rgb
+        finally:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            await proc.wait()
+        return
+
+    # MJPEG 模式：JPEG 标记解析
+    _SOI = b'\xff\xd8'
+    _EOI = b'\xff\xd9'
 
     buffer = bytearray()
     try:
@@ -337,7 +392,6 @@ async def stream_frames_nvdec(
                 break
             buffer.extend(chunk)
 
-            # 处理 buffer 中所有完整 JPEG 帧
             while True:
                 start = buffer.find(_SOI)
                 if start == -1:
@@ -346,7 +400,7 @@ async def stream_frames_nvdec(
                 if start > 0:
                     del buffer[:start]
 
-                end = buffer.find(_EOI, 2)  # 跳过 SOI 标记
+                end = buffer.find(_EOI, 2)
                 if end == -1:
                     break  # 帧不完整，等下一块数据
 
@@ -477,6 +531,7 @@ async def stream_frames(
     output_height: int | None = None,
     use_nvdec: bool = True,
     total_frames: int | None = None,
+    raw_mode: bool = False,
 ):
     """统一帧流接口 — 优先 NVDEC，不可用时自动 fallback 到 cv2。
 
@@ -485,7 +540,8 @@ async def stream_frames(
         fps: 采样帧率。
         output_width / output_height: 输出分辨率。None 为原始分辨率。
         use_nvdec: 是否尝试 NVDEC 硬解。
-        total_frames: 需要抽取的总帧数（传入时使用计数驱动，准确可靠）。
+        total_frames: 需要抽取的总帧数（cv2 路径计数驱动）。
+        raw_mode: True 时 NVDEC 输出 raw NV12 而非 MJPEG（省 CPU 编解码）。
 
     Yields:
         (H, W, 3) uint8 numpy RGB 帧数组。
@@ -493,7 +549,7 @@ async def stream_frames(
     if use_nvdec:
         try:
             async for frame in stream_frames_nvdec(
-                video_path, fps, output_width, output_height,
+                video_path, fps, output_width, output_height, raw_mode=raw_mode,
             ):
                 yield frame
             return

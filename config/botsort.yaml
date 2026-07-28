@@ -6,9 +6,9 @@ tracker_type: botsort       # (str) tracker backend identifier (required)
 # Track life cycle
 track_high_thresh: 0.5      # 0.4-0.5 检测走二阶恢复, 不干扰主流匹配
 track_low_thresh: 0.1       # second-stage threshold for low-score recovery
-new_track_thresh: 0.5       # 新 track 需要较高置信度, 减少误创建
-track_buffer: 120            # frames to keep lost tracks alive (6s @ 20fps)
-match_thresh: 0.5           # 匹配门槛 — 控制变量对齐参考版
+new_track_thresh: 0.4       # 与 confidence_threshold 对齐, 减少低分漏创建
+track_buffer: 120            # frames to keep lost tracks alive (12s @ 10fps)
+match_thresh: 0.4           # 放宽匹配, 减少快速运动和遮挡时的断链
 
 # Motion
 gmc_method: sparseOptFlow   # global motion compensation method

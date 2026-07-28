@@ -250,6 +250,12 @@ class PipelineEngine:
                 if "frame_encode" in enabled_names
                 else None
             )
+            # 共享 NVDEC 流队列：detection → search_encode 共享解码流
+            search_frame_queue: asyncio.Queue | None = (
+                asyncio.Queue(maxsize=128)
+                if "search_encode" in enabled_names and "detection" in enabled_names
+                else None
+            )
             pctx = PipelineContext(
                 video=v,
                 ctx=self.ctx,
@@ -261,6 +267,7 @@ class PipelineEngine:
                 prompt_loader=self.prompt_loader,
                 embedder_lock=asyncio.Lock(),
                 frame_queue=frame_queue,
+                search_frame_queue=search_frame_queue,
             )
 
             # 5. 事件驱动调度 (替代原拓扑分批+gather)
@@ -355,6 +362,11 @@ class PipelineEngine:
                 if "frame_encode" in enabled_names
                 else None
             )
+            search_frame_queue: asyncio.Queue | None = (
+                asyncio.Queue(maxsize=128)
+                if "search_encode" in enabled_names and "detection" in enabled_names
+                else None
+            )
             pctx = PipelineContext(
                 video=v,
                 ctx=self.ctx,
@@ -365,6 +377,7 @@ class PipelineEngine:
                 shared_embedder=self._shared_embedder,
                 prompt_loader=self.prompt_loader,
                 frame_queue=frame_queue,
+                search_frame_queue=search_frame_queue,
             )
 
             for batch in batches:

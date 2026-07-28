@@ -22,6 +22,7 @@ entity 聚合已移至 engine._persist()（等所有 op 完成后统一处理，
 import asyncio
 import logging
 
+import cv2
 import numpy as np
 
 from pipeline.runners.base import OperationRunner, PipelineContext
@@ -78,10 +79,15 @@ class DetectionRunner(OperationRunner):
         if hasattr(detector, "reset_tracker"):
             detector.reset_tracker()
 
-        # ── 生产者-消费者并发：帧提取（NVDEC pipe）与 YOLO 推理重叠 ──
+        # ── 生产者-消费者并发：帧提取（NVDEC raw pipe）与 YOLO 推理重叠 ──
         video_path = pctx.ctx.file_path
         pipeline_cfg = pctx.config.get("pipeline", {})
         use_nvdec = pipeline_cfg.get("use_nvdec", False)
+
+        # 搜索帧共享队列 + 搜索目标分辨率（从 encode_profile 读取）
+        search_queue: asyncio.Queue | None = getattr(pctx, "search_frame_queue", None)
+        frames_per_search = max(1, int(detection_fps))
+        search_target_w, search_target_h = _get_search_target(pctx, pipeline_cfg)
 
         # 内部帧队列：生产者-消费者通道
         inner_queue: asyncio.Queue = asyncio.Queue(maxsize=256)
@@ -89,9 +95,10 @@ class DetectionRunner(OperationRunner):
         extract_frame_count = 0
 
         async def _extract() -> None:
-            """后台任务：NVDEC pipe 读帧 → 推送 inner_queue 供 YOLO 消费。
+            """后台任务：NVDEC raw pipe 读帧 → 推送 inner_queue + 搜索帧队列。
 
-            生产者-消费者解耦：帧提取与推理并发，NVDEC pipe 在推理时不被阻塞。
+            单 NVDEC session，输出 raw NV12（无 MJPEG 编解码）。
+            每 10 帧（1fps 采样）resize 后推送给 search_encode 消费。
             """
             nonlocal extract_error, extract_frame_count
             frame_idx = 0
@@ -103,9 +110,15 @@ class DetectionRunner(OperationRunner):
                     output_width=640,
                     output_height=384,
                     total_frames=total_samples,
+                    raw_mode=True,
                 ):
                     timestamp = float(frame_idx) / detection_fps
+                    # 推入内部队列供 YOLO 消费
                     await inner_queue.put((frame, timestamp))
+                    # 1fps 采样推入搜索队列（共享 NVDEC 流，单 session）
+                    if search_queue is not None and frame_idx % frames_per_search == 0:
+                        small = cv2.resize(frame, (search_target_w, search_target_h))
+                        await search_queue.put((small, timestamp))
                     frame_idx += 1
             except Exception as e:
                 logger.error("[DetectionRunner] Frame extraction failed: %s", e)
@@ -169,7 +182,10 @@ class DetectionRunner(OperationRunner):
                 )
                 processed += len(batch_frames)
         finally:
-            # 停止帧提取后台任务（防止 inner_queue.put 无限等待）
+            # 通知 search_encode 流结束
+            if search_queue is not None:
+                await search_queue.put(None)
+            # 停止帧提取后台任务
             extract_task.cancel()
             try:
                 await extract_task
@@ -263,3 +279,15 @@ class DetectionRunner(OperationRunner):
                         "timestamp": float(timestamp),
                         "conf": conf,
                     }
+
+
+def _get_search_target(pctx, pipeline_cfg: dict) -> tuple[int, int]:
+    """从视频 encode_profile 或 config 默认值获取搜索帧目标分辨率。"""
+    profile_name = getattr(pctx.video, "encode_profile", None)
+    if not profile_name:
+        profile_name = pipeline_cfg.get("default_encode_profile", "balanced")
+    profiles = pipeline_cfg.get("encode_profiles", {})
+    profile = profiles.get(profile_name, {})
+    w = profile.get("encode_width", 336)
+    h = profile.get("encode_height", 224)
+    return (w, h)

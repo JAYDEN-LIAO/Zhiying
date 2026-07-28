@@ -19,7 +19,6 @@ from pipeline.runners.base import OperationRunner, PipelineContext
 logger = logging.getLogger(__name__)
 
 CROP_EXPAND_RATIO = 1.3         # bbox 外扩比例 (每边 15%)
-HEAD_TAIL_CUT_RATIO = 0.15      # track 头尾淘汰比例
 
 
 class TrackEncodeRunner(OperationRunner):
@@ -54,14 +53,11 @@ class TrackEncodeRunner(OperationRunner):
             if not cache:
                 continue
 
-            # 头尾过滤
+            # 直接用 cache 帧做 crop（640×384 检测帧，跟踪质量已足够）
+            # 跳过 _is_mid_frame + _fallback_frame：那条路径每 track 起一个 FFmpeg 子进程，
+            # 对 1000+ track 的长视频会额外增加几分钟的 seek 开销，而质量提升微不足道。
             frame = cache["frame"]
             ts = cache["timestamp"]
-            if not self._is_mid_frame(trk, ts):
-                frame = await self._fallback_frame(pctx.ctx.file_path, trk)
-                if frame is None:
-                    continue
-                ts = trk["first_seen"] + (trk["last_seen"] - trk["first_seen"]) * 0.5
 
             crop = self._expand_crop(frame, cache["bbox"])
             crops.append(crop)
@@ -141,30 +137,5 @@ class TrackEncodeRunner(OperationRunner):
         ny2 = min(h, int((cy + bh / 2) * h))
 
         return frame[ny1:ny2, nx1:nx2]
-
-    @staticmethod
-    def _is_mid_frame(trk: dict, ts: float) -> bool:
-        """检查时间戳是否在 track 的中间 70% 区间 (避开头尾 15%)。"""
-        dur = trk["last_seen"] - trk["first_seen"]
-        if dur <= 0:
-            return True
-        head = trk["first_seen"] + dur * HEAD_TAIL_CUT_RATIO
-        tail = trk["last_seen"] - dur * HEAD_TAIL_CUT_RATIO
-        return head <= ts <= tail
-
-    @staticmethod
-    async def _fallback_frame(file_path: str, trk: dict) -> np.ndarray | None:
-        """头尾帧回退 → FFmpeg pipe 异步提取 track 中间时间点。
-
-        使用 extract_keyframe_to_memory（FFmpeg subprocess + asyncio），
-        不阻塞事件循环。替代旧 cv2.VideoCapture 同步 seek 方案。
-        """
-        from utils.video_util import extract_keyframe_to_memory
-
-        mid = trk["first_seen"] + (trk["last_seen"] - trk["first_seen"]) * 0.5
-        try:
-            return await extract_keyframe_to_memory(file_path, mid)
-        except Exception:
-            return None
 
 

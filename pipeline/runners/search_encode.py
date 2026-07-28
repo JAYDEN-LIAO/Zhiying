@@ -51,9 +51,100 @@ class SearchEncodeRunner(OperationRunner):
         batch_size = profile.get("encode_batch_size", 512)
         target_size: tuple[int, int] = (encode_w, encode_h)
 
-        await self._run_encode(
-            pctx, embedder, duration, target_size, batch_size, pipeline_cfg, profile_name,
+        # ── 队列模式（优先）：从 detection 共享 NVDEC 流消费帧 ──
+        search_queue: object | None = getattr(pctx, "search_frame_queue", None)
+        if search_queue is not None:
+            await self._run_from_queue(
+                pctx, embedder, search_queue, duration, target_size, profile_name,
+            )
+        else:
+            await self._run_encode(
+                pctx, embedder, duration, target_size, batch_size, pipeline_cfg, profile_name,
+            )
+
+    async def _run_from_queue(
+        self,
+        pctx: PipelineContext,
+        embedder: object,
+        queue: object,
+        duration: float,
+        target_size: tuple[int, int],
+        profile_name: str,
+    ) -> None:
+        """队列模式：消费 detection 共享流推送的帧，不独立开 NVDEC 流。
+
+        使用 QUEUE_BATCH=64 提前开始编码，与帧提取重叠，
+        避免等齐全部帧再编（否则 decode 和 encode 完全串行）。
+        帧已由 detection 端 resize 到 target_size。
+        """
+        video_id = pctx.video.id
+        total_frames = max(1, int(duration))
+        QUEUE_BATCH = 64
+        total_batches = (total_frames + QUEUE_BATCH - 1) // QUEUE_BATCH
+
+        logger.info(
+            "[SearchEncodeRunner] Queue mode: consuming from shared detection stream, "
+            "profile=%s %dx%d queue_batch=%d ~%d frames → %d batch(s)",
+            profile_name, target_size[0], target_size[1],
+            QUEUE_BATCH, total_frames, total_batches,
         )
+
+        await pctx.tracker.update("search_encode", sub_progress=0.0)
+
+        all_frame_rows: list[dict] = []
+        batch_frames: list = []
+        batch_times: list[float] = []
+        frame_idx = 0
+        thumbnail_frame = None
+
+        while True:
+            item = await queue.get()  # type: ignore[union-attr]
+            if item is None:
+                break
+            frame, ts = item
+
+            if thumbnail_frame is None:
+                thumbnail_frame = frame
+
+            batch_frames.append(frame)
+            batch_times.append(ts)
+            frame_idx += 1
+
+            if len(batch_frames) >= QUEUE_BATCH:
+                rows = await self._encode_batch(
+                    embedder, pctx, batch_frames, batch_times, video_id, target_size,
+                )
+                all_frame_rows.extend(rows)
+                current_batch = frame_idx // QUEUE_BATCH
+                pct = min(frame_idx / total_frames * 100, 99.0)
+                msg = f"编码 {frame_idx}/{total_frames}帧 ({pct:.0f}%) | batch {current_batch}/{total_batches}"
+                logger.info("[search_encode] %s", msg)
+                await pctx.tracker.update(
+                    "search_encode",
+                    sub_progress=min(frame_idx / total_frames, 0.99),
+                    description=msg,
+                )
+                batch_frames = []
+                batch_times = []
+
+        # 最后一批
+        if batch_frames:
+            rows = await self._encode_batch(
+                embedder, pctx, batch_frames, batch_times, video_id, target_size,
+            )
+            all_frame_rows.extend(rows)
+
+        # ── 缩略图 + 最小 scene ──
+        if thumbnail_frame is not None:
+            self._create_minimal_scene(pctx, pctx.ctx.file_path, duration, thumbnail_frame)
+
+        # ── 持久化帧嵌入 ──
+        if all_frame_rows:
+            async with pctx.db_session_factory() as session:
+                await bulk_insert_frames(session, all_frame_rows)
+
+        await pctx.tracker.update("search_encode", sub_progress=1.0)
+        logger.info("[SearchEncodeRunner] Queue mode done: %d frames encoded", len(all_frame_rows))
 
     async def _run_encode(
         self,
