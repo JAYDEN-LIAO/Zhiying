@@ -365,17 +365,17 @@ export function ParameterPanel({
   const presetLabel = sceneType === "custom" ? "自定义" : (SCENE_PRESETS[sceneType]?.label ?? "自定义");
 
   return (
-    <div className="w-[380px] h-full flex flex-col text-gray-900">
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 shrink-0">
-        <h2 className="font-bold text-gray-900 text-base">参数设置</h2>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+    <div className="w-[380px] h-full flex flex-col">
+      {/* Header — dark to match slide panel */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
+        <h2 className="font-bold text-white text-base">参数设置</h2>
+        <button onClick={onClose} className="text-white/50 hover:text-white transition-colors cursor-pointer">
           <IconClose />
         </button>
       </div>
 
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 space-y-5">
+      {/* Scrollable content — light background */}
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5 bg-[var(--color-surface)] text-gray-900">
         {/* L1: 场景类型 */}
         <section>
           <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">场景类型</h3>

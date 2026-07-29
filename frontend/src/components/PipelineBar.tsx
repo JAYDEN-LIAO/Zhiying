@@ -1,22 +1,10 @@
 /* ════════════════════════════════════════════════════════════
-   PipelineBar — extracted from Dashboard.tsx
+   PipelineBar — v2.0 new style (mockup-dark)
    ════════════════════════════════════════════════════════════ */
 
 import { useMemo } from "react";
 import { computePipelineStages } from "../mockData";
-import type { PipelineStage, PipelineSwitches } from "../mockData";
-
-
-const stageColorMap: Record<string, string> = {
-  upload:   "#34d399",
-  segment:  "#4f93ed",
-  keyframe: "#5799e9",
-  audio:    "#5ca8e8",
-  align:    "#63b4e0",
-  caption:  "#67c4c0",
-  embed:    "#60c9a8",
-  summary:  "#55c890",
-};
+import type { PipelineSwitches } from "../mockData";
 
 export function PipelineBar({
   progress,
@@ -33,82 +21,35 @@ export function PipelineBar({
   const isEmpty = progress === 0 && !subtitle;
   const isComplete = progress >= 1;
 
-  const statusText = subtitle || (
-    isEmpty
-      ? "选择视频后查看处理进度"
-      : isComplete
-        ? "处理完成 ✓"
-        : (statusDetail || "处理中...")
-  );
+  const statusText = subtitle
+    || (isEmpty ? "选择视频后查看处理进度" : isComplete ? "处理完成 ✓" : (statusDetail || "处理中..."));
 
   return (
-    <div className="card-surface rounded-xl px-4 py-2 border border-gray-200/60 w-full flex flex-col gap-y-1">
-      {/* ── Row 1: Progress bar ── */}
-      <div>
-        <div className="relative h-3 w-full rounded-full overflow-hidden bg-gray-100/50">
-          <div
-            className="absolute inset-0 rounded-full transition-all duration-700 ease-out"
-            style={{
-              background: "linear-gradient(90deg, #34d399 0%, #34d399 9%, #4f93ed 22%, #5ca8e8 48%, #60c9a8 70%, #55c890 85%, #55c890 100%)",
-              clipPath: `inset(0 ${100 - Math.round(progress * 100)}% 0 0)`,
-              transition: "clip-path 700ms ease-out",
-            }}
-          />
-        </div>
+    <div className="pipeline-bar">
+      {/* Progress bar */}
+      <div className="pipeline-progress">
+        <div
+          className="pipeline-fill"
+          style={{ width: `${Math.round(progress * 100)}%` }}
+        />
       </div>
 
-      {/* ── Row 2: Stage pills (dynamic) ── */}
-      <div className="flex items-center justify-between flex-wrap gap-x-3 gap-y-1">
+      {/* Stage pills */}
+      <div className="pipeline-stages">
         {stages.map((stage) => {
           const isDone = progress >= stage.progressEnd;
           const isActive = !isDone && progress >= stage.progressStart;
-          const c = stageColorMap[stage.id] || "#4785f0";
-
           return (
-            <div key={stage.id} className="flex items-center gap-1.5">
-              {isDone ? (
-                <div className="w-[14px] h-[14px] rounded-full bg-green-400 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 24 24" strokeWidth="3" stroke="currentColor">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                </div>
-              ) : isActive ? (
-                <div
-                  className="w-[14px] h-[14px] rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{ backgroundColor: c }}
-                >
-                  <div className="w-[5px] h-[5px] rounded-full bg-white" />
-                </div>
-              ) : (
-                <div className="w-[14px] h-[14px] rounded-full bg-gray-200/70 flex-shrink-0" />
-              )}
-              <span
-                className={`text-[10px] font-medium whitespace-nowrap ${
-                  isDone ? "text-gray-700" : isActive ? "text-gray-900" : "text-gray-400"
-                }`}
-              >
+            <div key={stage.id} className="ps">
+              <span className={"ps-dot" + (isDone ? " done" : isActive ? " active" : "")} />
+              <span className={"ps-label" + (isDone ? " done" : isActive ? " active" : "")}>
                 {stage.label}
               </span>
             </div>
           );
         })}
+        <span className="ps-status">{statusText}</span>
       </div>
-
-      {/* ── Row 3: Status line ── */}
-      {statusText && (
-        <p
-          className={`text-[10px] ${
-            isComplete ? "text-green-500 font-medium" : "text-gray-400"
-          }`}
-        >
-          {statusText}
-        </p>
-      )}
     </div>
   );
 }
-
-/* ════════════════════════════════════════════════════════════
-   VideoSummaryCard — 连接后端 API
-   ════════════════════════════════════════════════════════════ */
-

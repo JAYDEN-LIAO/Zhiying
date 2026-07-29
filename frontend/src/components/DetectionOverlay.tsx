@@ -43,11 +43,12 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
-    if (!canvas || !video || !enabled) {
+    if (!canvas || !video || !enabled || !data?.has_detection) {
       return;
     }
-    if (!data?.has_detection) {
-      return;
+    // ★ Pause-safe: stop rAF loop when video is paused
+    if (video.paused) {
+      return;  // Don't request next frame when paused — keeps last frame visible
     }
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
