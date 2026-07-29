@@ -298,33 +298,52 @@ export interface PlateData {
 
 /* ── Video Metadata (GET /api/v1/videos/{id}/metadata) ── */
 
+export interface VideoStreamMeta {
+  codec: string | null;
+  codec_profile: string | null;
+  codec_level: string | null;
+  codec_tier: string | null;
+  resolution: string | null;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  bitrate: number | null;
+  pixel_format: string | null;
+  color_space: string | null;
+  color_primaries: string | null;
+  transfer_characteristics: string | null;
+  chroma_subsampling: string | null;
+  bit_depth: number | null;
+  display_aspect_ratio: string | null;
+  rotation: number | null;
+  encoder: string | null;
+}
+
+export interface AudioStreamMeta {
+  codec: string | null;
+  channels: number | null;
+  channel_layout: string | null;
+  sample_rate: number | null;
+  bitrate: number | null;
+  language: string | null;
+}
+
+export interface SubtitleStreamMeta {
+  format: string | null;
+  language: string | null;
+  title: string | null;
+  forced: boolean;
+}
+
 export interface VideoMetadata {
   container: string | null;
+  format_name: string | null;
   duration: number | null;
   file_size: number | null;
   overall_bitrate: number | null;
-  video_streams: Array<{
-    codec: string | null;
-    codec_profile: string | null;
-    resolution: string | null;
-    width: number | null;
-    height: number | null;
-    fps: number | null;
-    bitrate: number | null;
-    pixel_format: string | null;
-    color_space: string | null;
-    bit_depth: number | null;
-    display_aspect_ratio: string | null;
-    rotation: number | null;
-  }>;
-  audio_streams: Array<{
-    codec: string | null;
-    channels: number | null;
-    channel_layout: string | null;
-    sample_rate: number | null;
-    bitrate: number | null;
-    language: string | null;
-  }>;
+  video_streams: VideoStreamMeta[];
+  audio_streams: AudioStreamMeta[];
+  subtitle_streams: SubtitleStreamMeta[];
   device: {
     make?: string;
     model?: string;
@@ -338,6 +357,36 @@ export interface VideoMetadata {
     modified?: string;
   } | null;
   raw: Record<string, unknown> | null;
+  source_analysis: SourceAnalysis | null;
+  ai_detect: AIDetectResult | null;
+}
+
+/* ── Source Analysis & AI Detection (v0.17) ── */
+
+export interface SourceAnalysis {
+  source_type: "phone" | "camera" | "screen_recording" | "surveillance" | "non_camera_source" | "unknown";
+  source_label: string;
+  confidence: "high" | "medium" | "low";
+  evidence: string[];
+  surveillance_brand: string | null;
+  surveillance_method: string | null;
+}
+
+export interface AIDetectSignal {
+  source: string;
+  confidence: string;
+  description: string;
+  tool: string | null;
+}
+
+export interface AIDetectResult {
+  status: "not_run" | "analyzing" | "completed" | "error";
+  score: number | null;
+  verdict: "ai_generated" | "likely_ai" | "no_signal" | "error" | null;
+  signals: AIDetectSignal[];
+  software_info: [string, string][];
+  error_message: string | null;
+  deep_analysis_used: boolean;
 }
 
 /* ── Export (POST /api/v1/videos/{id}/export/*) ── */

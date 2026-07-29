@@ -68,3 +68,10 @@ pymediainfo>=6.1.0
 # ══════════════════════════════════════════════
 pytest>=8.1.1
 pytest-asyncio>=0.23.5
+
+# ══════════════════════════════════════════════
+#  视频来源分析与 AI 检测 (v0.17) — 系统级依赖
+#  ══════════════════════════════════════════════
+#  exiftool: sudo apt-get install exiftool        # 设备元数据提取（Make/Model/GPS）
+#  AICheck:  cargo install aicheck               # AI 生成检测（元数据+SEI+C2PA）
+#  安装后确保 ~/.cargo/bin（或 $CARGO_HOME/bin）在 PATH 中

@@ -134,57 +134,19 @@ class FormatService:
             frame_rate=self._parse_frame_rate(video_stream),
         )
 
-    # ── 分类辅助函数 ─────────────────────────────────────
+    # ── 分类辅助函数（委托给共享的 utils.metadata 实现）───
 
     @staticmethod
     def _classify_container(raw: str) -> str:
         """将 ffprobe format_name 归一化为简短标识。"""
-        raw_lower = raw.lower()
-        if "mp4" in raw_lower or "mov" in raw_lower:
-            # MOV is ISOBMFF-compatible; distinguish for remux decision
-            if "mov" in raw_lower and "mp4" not in raw_lower:
-                return "mov"
-            return "mp4"
-        if "mpegts" in raw_lower:
-            return "mpeg_ts"
-        if "mpegps" in raw_lower or "mpeg" in raw_lower:
-            return "mpeg_ps"
-        if "matroska" in raw_lower or "webm" in raw_lower:
-            # WebM is a subset of Matroska
-            if "webm" in raw_lower:
-                return "webm"
-            return "mkv"
-        if "avi" in raw_lower:
-            return "avi"
-        if "flv" in raw_lower:
-            return "flv"
-        if "asf" in raw_lower or "wmv" in raw_lower:
-            return "wmv"
-        if "ogg" in raw_lower:
-            return "ogg"
-        if "h264" in raw_lower or "hevc" in raw_lower:
-            return "raw"
-        return raw_lower.split(",")[0].strip()
+        from utils.metadata import classify_container
+        return classify_container(raw) or raw
 
     @staticmethod
     def _classify_codec(raw: str) -> str:
         """将 ffprobe codec_name 归一化为简短标识。"""
-        mapping = {
-            "h264": "h264",
-            "hevc": "hevc",
-            "h265": "hevc",
-            "av1": "av1",
-            "vp9": "vp9",
-            "vp8": "vp8",
-            "mpeg4": "mpeg4",
-            "msmpeg4v3": "mpeg4",
-            "wmv3": "wmv3",
-            "wmv2": "wmv3",
-            "vc1": "wmv3",
-            "prores": "prores",
-            "rawvideo": "raw",
-        }
-        return mapping.get(raw.lower(), raw.lower())
+        from utils.metadata import classify_codec
+        return classify_codec(raw) or raw
 
     @staticmethod
     def _parse_frame_rate(stream: dict) -> float | None:

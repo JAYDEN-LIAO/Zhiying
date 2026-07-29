@@ -279,7 +279,7 @@ frontend/
   │       ├─ DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+交互)
   │       ├─ DetectionPanel     ← 物体列表 (分类筛选+缩略图+导出按钮)
   │       ├─ DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
-  │       ├─ MetadataPanel      ← 视频元数据信息卡片
+  │       ├─ VideoInfoCard      ← 视频元数据信息卡片
   │       ├─ ExportMenu         ← 导出菜单 (视频片段或节点)
   │       └─ icons.tsx          ← 18+ SVG 图标
   ├─ package.json          ← React 19, Vite 6, Tailwind 4
@@ -288,11 +288,13 @@ frontend/
 
 utils/
   ├─ video_util.py         ← FFmpeg 工具函数 (音频提取/关键帧/时长/视频片段导出)
-  └─ metadata.py           ← 视频元数据提取 (pymediainfo + exiftool + ffprobe 三级)
+  ├─ metadata.py           ← 视频元数据提取 (pymediainfo + exiftool + ffprobe 三级)
+  └─ video_source.py       ← 视频来源分析规则引擎 (phone/camera/surveillance/...)
 
 services/
   ├─ video_service.py      ← Pipeline 调用与后台调度
-  └─ export_service.py     ← 导出业务逻辑 (clip/frames/track/thumbnails zip)
+  ├─ export_service.py     ← 导出业务逻辑 (clip/frames/track/thumbnails zip)
+  └─ ai_detect_service.py  ← AICheck CLI 调用封装 (subprocess aic --deep)
 ```
 
 ## Plugin System
@@ -372,6 +374,9 @@ videos
   ├─ function: search_index_enabled, summary_enabled, summary_mode
   ├─ advanced: sample_fps, segment_threshold, caption_with_context, summary_detail
   ├─ summary (JSONB)
+  ├─ metadata_json (JSONB)          — 缓存的完整技术元数据（首次提取后后续 <1ms）
+  ├─ source_analysis (JSONB)        — 视频来源分析：类型/置信度/证据链/监控品牌
+  ├─ ai_detect_result (JSONB)       — AI 生成检测结果（AICheck 输出，含 signals/verdict）
   ├─ status_detail (管道实时操作描述)
   └─ created_at, updated_at
 
@@ -456,13 +461,15 @@ plate_detections
 | GET | /api/v1/videos/{id}/stream | 视频流式播放 (支持 Range) |
 | GET | /api/v1/videos/{id}/thumbnail/{scene_index} | 场景缩略图 |
 | DELETE | /api/v1/videos/{id} | 删除视频 (CASCADE) |
-| GET | /api/v1/videos/{id}/metadata | 视频元数据 (编码/GPS/设备信息) |
+| GET | /api/v1/videos/{id}/metadata | 视频元数据 + 来源分析 + AI 检测 (支持 ?verbose=true, 自动缓存) |
 | GET | /api/v1/settings | 获取系统设置 (API key 状态) |
 | PUT | /api/v1/settings | 更新系统设置 (保存 API key) |
 | GET | /api/v1/settings/pipeline | 获取 Pipeline 配置 (编码预设等全局默认值) |
 | GET | /api/v1/pipeline/operations | 查询启用的操作列表 + 进度范围 |
 | GET | /api/v1/videos/{id}/detection/data | 逐帧检测框 + 追踪轨迹 JSON |
 | GET | /api/v1/videos/{id}/detection/thumbnail | track crop 缩略图 (bbox 裁剪) |
+| GET | /api/v1/videos/{id}/face/data | 人脸识别数据 (身份/track_id/时间戳) |
+| GET | /api/v1/videos/{id}/face/thumbnail | 人脸 crop 缩略图 |
 | GET | /api/v1/videos/{id}/plate/data | 车牌识别数据 |
 | GET | /api/v1/videos/{id}/plate/thumbnail | 车牌缩略图 |
 | POST | /api/v1/search/semantic | 语义搜索 (六路并行：frame+chunk+text+label+track+plate) |
@@ -494,7 +501,7 @@ React 19 + Vite 6 + Tailwind CSS 4
   │   ├── DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+选中)
   │   ├── DetectionPanel     ← 物体列表 (分类筛选+缩略图 hover+导出按钮)
   │   ├── DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
-  │   ├── MetadataPanel      ← 视频元数据信息卡片
+  │   ├── VideoInfoCard      ← 视频元数据信息卡片
   │   ├── ExportMenu         ← 导出菜单 (视频片段或节点)
   │   └── icons.tsx          ← 20+ SVG 图标
   ├── utils/helpers.ts       ← fmtDuration, fmtDate, formatSec
@@ -509,7 +516,7 @@ React 19 + Vite 6 + Tailwind CSS 4
   选择视频 → GET /api/v1/videos/{id} 每 3s 轮询, 同步更新历史列表状态
   增量修改 → PUT /videos/{id}/params (仅 summary/search_index) → run_incremental()
   搜索 → POST /api/v1/search/semantic → 结果卡片 (切换视频时自动清空)
-  信息 → GET /videos/{id}/metadata → MetadataPanel 弹出卡片
+  信息 → GET /videos/{id}/metadata → VideoInfoCard 弹出卡片
   导出 → window.open(GET /videos/{id}/export/...) → 浏览器直接下载
 
 Vite 开发代理:
@@ -549,6 +556,9 @@ Vite 开发代理:
 | **Embedder resolution configurable** | 三档预设 (fast 336×224 / balanced 504×336 / precise 672×448) + per-call target_size 覆盖。PIL resize 8 线程并行 + NVDEC scale_cuda GPU 缩放。 |
 | **GET + POST dual export endpoints** | POST for programmatic API calls (curl), GET with query params for browser direct download → avoids async download blocking |
 | **Three-tier metadata extraction** | pymediainfo (full tech) → exiftool (GPS/device) → ffprobe (fallback), graceful degradation |
+| **Metadata cached to DB** | Extracted metadata stored in Video.metadata_json JSONB column. First request: live extraction + cache; subsequent requests: <1ms fast path from DB. Cache versioned via _METADATA_CACHE_VERSION. |
+| **AICheck deep scan on upload** | AICheck CLI --deep auto-runs on upload/register/reuse as async task. Covers metadata + SEI + C2PA + pixel-level watermark. Results in Video.ai_detect_result JSONB, displayed in frontend VideoInfoCard. Non-blocking — upload completes immediately. |
+| **Source analysis rule engine** | classify_video_source() uses EXIF device data + file naming patterns + media structure (resolution/fps/audio) to classify origin. No ML dependency — pure heuristics, <10ms. Triggers on first GET /metadata, caches result. |
 | **Class-local track numbering** | Display shows sequential class-local IDs (person 1, car 2) while API uses raw track_id internally |
 | **Per-video face/plate toggles** | Sub-switches under detection_enabled in parameter panel. Surveillance preset defaults both ON. Three-level gate: config backend + detection_enabled + face_enabled/plate_enabled |
 | **Face image search (ArcFace 512d)** | Separate search endpoint (POST /search/face) using ArcFace R50 512-dim vectors, not the shared Qwen3-VL 2048-dim embedder. Image-to-identity matching, not text-to-face |
@@ -569,7 +579,9 @@ Vite 开发代理:
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
 | Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
 | Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT, 10fps 独立帧率（与 search 共享 NVDEC 流）, dual-gate control |
-| Video Metadata Extraction | ✅ | utils/metadata.py: 三级提取 (pymediainfo→exiftool→ffprobe) |
+| AI Generation Detection | ✅ | services/ai_detect_service.py: AICheck CLI --deep, auto-run on upload/register/reuse, results in Video.ai_detect_result JSONB, frontend VideoInfoCard display |
+| Video Source Analysis | ✅ | utils/video_source.py: 规则引擎 classify_video_source(), phone/camera/screen_recording/surveillance/non_camera_source, 基于 EXIF + file naming + media structure, 首次 GET /metadata 触发, 结果缓存到 DB |
+| Metadata Extraction + Cache | ✅ | utils/metadata.py: 三级提取 (pymediainfo→exiftool→ffprobe); 结果缓存到 Video.metadata_json 列, 后续请求 <1ms 返回; ?verbose=true 查看原始数据 |
 | Clip Export | ✅ | services/export_service.py: 流复制 (-c copy) 极速导出 |
 | Frames Export | ✅ | 指定时间戳帧序列 → zip 打包 |
 | Track Segments Export | ✅ | 读 segments 字段按段导出 → zip |
@@ -577,7 +589,7 @@ Vite 开发代理:
 | Scene Thumbnails Export | ✅ | 全部/指定场景缩略图 → zip |
 | Multi-Format Support | ✅ | 两层: remux (-c copy) + proxy (NVENC H.264, 按需) |
 | Performance Optimizations | ✅ | embedder 可配置 3 档 (336-672), PIL resize 8线程并行, batch 512, NVDEC MJPEG pipe 默认启用, keyframes→frame_encode 生产者-消费者并发, float32 |
-| API Routes | ✅ | 25 endpoints: +proxy-status +stream hevc_ok 路由 |
+| API Routes | ✅ | 27 endpoints: +face/data +face/thumbnail +metadata cache +source_analysis +ai_detect |
 | Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值 |
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |

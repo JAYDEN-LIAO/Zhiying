@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from "react";
 import { api } from "../services/api";
-import type { VideoMetadata, VideoResponse } from "../types";
+import type { VideoMetadata, VideoResponse, SourceAnalysis, AIDetectResult } from "../types";
 import { fmtDuration } from "../utils/helpers";
 
 export function VideoInfoCard({
@@ -21,11 +21,28 @@ export function VideoInfoCard({
 
   useEffect(() => {
     if (!videoId) { setMeta(null); setError(null); return; }
-    setLoading(true);
-    setError(null);
-    api.fetchVideoMetadata(videoId)
-      .then((d) => { setMeta(d); setLoading(false); })
-      .catch((err) => { setError(err.message); setLoading(false); });
+    let cancelled = false;
+    const fetchMeta = () => {
+      setLoading(true);
+      setError(null);
+      api.fetchVideoMetadata(videoId)
+        .then((d) => {
+          if (cancelled) return;
+          setMeta(d);
+          setLoading(false);
+          // AI 检测中 → 3s 后自动刷新
+          if (d?.ai_detect?.status === "analyzing") {
+            setTimeout(fetchMeta, 3000);
+          }
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setError(err.message);
+          setLoading(false);
+        });
+    };
+    fetchMeta();
+    return () => { cancelled = true; };
   }, [videoId]);
 
   const containerClass = "card-surface rounded-2xl p-3 border border-gray-200/60 flex flex-col h-full";
@@ -34,6 +51,8 @@ export function VideoInfoCard({
   const a_s = meta?.audio_streams?.[0];
   const dev = meta?.device;
   const ts = meta?.timestamps;
+  const sa = meta?.source_analysis;
+  const ad = meta?.ai_detect;
 
   /* ── 1. No video selected ── */
   if (!video) {
@@ -156,10 +175,128 @@ export function VideoInfoCard({
             {ts.modified && <Row label="修改" value={fmtISODate(ts.modified)} />}
           </Section>
         )}
+
+        {/* Source Analysis (v0.17) */}
+        {sa && <SourceAnalysisSection sa={sa} />}
+
+        {/* AI Detection (v0.17) */}
+        {ad && <AIDetectSection ad={ad} />}
       </div>
     </div>
   );
 }
+
+/* ── Source Analysis section (v0.17) ── */
+
+function SourceAnalysisSection({ sa }: { sa: SourceAnalysis }) {
+  const confColor = sa.confidence === "high" ? "text-green-600" : sa.confidence === "medium" ? "text-amber-500" : "text-gray-400";
+  const confIcon = sa.confidence === "high" ? "✓" : sa.confidence === "medium" ? "~" : "?";
+  const survLabel = sa.surveillance_brand
+    ? BRAND_LABELS[sa.surveillance_brand as keyof typeof BRAND_LABELS] ?? sa.surveillance_brand
+    : null;
+
+  return (
+    <Section title="来源分析">
+      <Row label="来源类型" value={sa.source_label} />
+      <Row label="置信度" value={
+        <span className={confColor}>{confIcon} {sa.confidence === "high" ? "高置信度" : sa.confidence === "medium" ? "中置信度" : "低置信度"}</span>
+      } />
+      {sa.evidence.length > 0 && (
+        <div className="text-gray-400 text-[10px] mt-0.5 space-y-0.5">
+          {sa.evidence.map((e, i) => <div key={i} className="pl-2 border-l-2 border-gray-200">{e}</div>)}
+        </div>
+      )}
+      {survLabel && <Row label="监控品牌" value={survLabel} />}
+    </Section>
+  );
+}
+
+/* ── AI Detection section (v0.17) ── */
+
+function AIDetectSection({ ad }: { ad: AIDetectResult }) {
+  if (ad.status === "not_run") {
+    return <Section title="AI 生成检测"><Row label="状态" value="待分析" /></Section>;
+  }
+
+  if (ad.status === "analyzing") {
+    return (
+      <Section title="AI 生成检测">
+        <Row label="状态" value={<span className="text-amber-500">检测中...</span>} />
+        <div className="text-[10px] text-gray-400 mt-0.5 pl-2 border-l-2 border-gray-200">
+          正在扫描 C2PA 签名 / H.264 SEI 水印 / 像素级水印分析
+        </div>
+      </Section>
+    );
+  }
+
+  if (ad.status === "error") {
+    return (
+      <Section title="AI 生成检测">
+        <Row label="状态" value={<span className="text-red-500">检测失败</span>} />
+        {ad.error_message && <Row label="错误" value={ad.error_message} />}
+      </Section>
+    );
+  }
+
+  const isAi = ad.verdict === "ai_generated" || ad.verdict === "likely_ai";
+  const verdictLabel = ad.verdict === "ai_generated" ? "AI 生成"
+    : ad.verdict === "likely_ai" ? "疑似 AI 生成"
+    : ad.verdict === "no_signal" ? "未检测到 AI 信号" : "—";
+  const verdictColor = isAi ? "text-red-600" : "text-green-600";
+  const verdictIcon = isAi ? "⚠" : "✓";
+
+  const highSignals = ad.signals.filter(s => s.confidence === "high");
+  const medSignals = ad.signals.filter(s => s.confidence === "medium");
+
+  return (
+    <Section title={`AI 生成检测${ad.deep_analysis_used ? " [深度检测]" : ""}`}>
+      <Row label="结果" value={<span className={verdictColor}>{verdictIcon} {verdictLabel}</span>} />
+      {ad.score != null && (
+        <Row label="综合分数" value={ad.score >= 0.5 ? `${(ad.score * 100).toFixed(0)}%` : `${(ad.score * 100).toFixed(1)}%`} />
+      )}
+      {highSignals.length > 0 && (
+        <div className="mt-1 space-y-0.5">
+          <h5 className="text-[9px] font-medium text-red-500 uppercase tracking-wide">HIGH 信号</h5>
+          {highSignals.map((s, i) => <SignalRow key={i} signal={s} />)}
+        </div>
+      )}
+      {medSignals.length > 0 && (
+        <div className="mt-1 space-y-0.5">
+          <h5 className="text-[9px] font-medium text-amber-500 uppercase tracking-wide">MEDIUM 信号</h5>
+          {medSignals.map((s, i) => <SignalRow key={i} signal={s} />)}
+        </div>
+      )}
+      {ad.verdict === "no_signal" && ad.signals.length === 0 && (
+        <div className="text-[10px] text-gray-400 mt-0.5 pl-2 border-l-2 border-gray-200">
+          已检查 C2PA 签名 / H.264 SEI 水印 / MP4 元数据 / 文件名 / AIGC 标签
+        </div>
+      )}
+      {ad.deep_analysis_used && <Row label="深度分析" value="已执行像素级水印检测" />}
+    </Section>
+  );
+}
+
+function SignalRow({ signal }: { signal: { source: string; description: string; tool: string | null } }) {
+  return (
+    <div className="text-[10px] pl-2 border-l-2 border-gray-200">
+      <span className="font-medium text-gray-600">{signal.source}</span>
+      {signal.tool && <span className="text-gray-400 ml-1">→ {signal.tool}</span>}
+      <div className="text-gray-400 truncate">{signal.description}</div>
+    </div>
+  );
+}
+
+const BRAND_LABELS: Record<string, string> = {
+  hikvision: "海康威视",
+  dahua: "大华",
+  ezviz: "萤石",
+  reolink: "Reolink",
+  xiaomi: "小米",
+  tplink: "TP-Link",
+  uniview: "宇视",
+  generic_ip: "通用网络摄像头",
+  unknown: "未知",
+};
 
 /* ── Sub-components ── */
 
@@ -172,11 +309,15 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value }: { label: string; value: string | React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between">
       <span className="text-gray-500 shrink-0 mr-3">{label}</span>
-      <span className="text-gray-800 text-right font-mono break-all max-w-[60%]">{value}</span>
+      {typeof value === "string" ? (
+        <span className="text-gray-800 text-right font-mono break-all max-w-[60%]">{value}</span>
+      ) : (
+        <span className="text-gray-800 text-right max-w-[60%]">{value}</span>
+      )}
     </div>
   );
 }
@@ -184,10 +325,10 @@ function Row({ label, value }: { label: string; value: string }) {
 /* ── Helpers ── */
 
 function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  if (bytes < 1000) return `${bytes} B`;
+  if (bytes < 1000 * 1000) return `${(bytes / 1000).toFixed(1)} kB`;
+  if (bytes < 1000 * 1000 * 1000) return `${(bytes / (1000 * 1000)).toFixed(1)} MB`;
+  return `${(bytes / (1000 * 1000 * 1000)).toFixed(2)} GB`;
 }
 
 function formatChannels(n: number, layout?: string): string {

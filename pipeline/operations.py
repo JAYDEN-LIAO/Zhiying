@@ -183,4 +183,5 @@ ALL_OPERATIONS: list[Operation] = [
         label="车牌识别", description="PaddleOCR 车牌检测与文字识别",
         progress_weight=0.03,
     ),
+
 ]

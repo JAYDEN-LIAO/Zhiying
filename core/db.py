@@ -261,7 +261,26 @@ async def init_db():
             ADD COLUMN IF NOT EXISTS encode_profile VARCHAR(16) DEFAULT NULL
         """))
 
+        # ── 增量迁移 v0.17: 元数据缓存列 ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS metadata_json jsonb
+        """))
+
+        # ── 增量迁移 v0.17: 来源分析与 AI 检测字段 ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS source_analysis jsonb
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS ai_detect_result jsonb
+        """))
+
         # ── 清理：删除废弃的列、枚举类型、触发器 ──
+        await conn.execute(text("""
+            ALTER TABLE videos DROP COLUMN IF EXISTS ai_detect_enabled
+        """))
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS preset
         """))

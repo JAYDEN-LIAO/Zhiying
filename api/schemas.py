@@ -10,7 +10,7 @@ API 层共享 Pydantic 模型 — 请求/响应 DTO + 通用信封。
 import uuid
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ═══════════════════════════════════════════════════════════
@@ -100,6 +100,8 @@ class ReuseRequest(BaseModel):
     caption_enabled: bool = True
     detection_enabled: bool = False
     detection_classes: list[str] | None = None
+    face_enabled: bool = False
+    plate_enabled: bool = False
     summary_enabled: bool = True
     summary_mode: str = "native_video"
     search_index_enabled: bool = True
@@ -118,20 +120,112 @@ class SettingsKeysRequest(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════
-# 元数据 DTO
+# 来源分析 & AI 检测 DTO (v0.17)
 # ═══════════════════════════════════════════════════════════
 
+class SourceAnalysis(BaseModel):
+    """视频来源分析结果 — 规则引擎输出。"""
+    source_type: str = Field(..., description="来源类型: phone/camera/screen_recording/surveillance/non_camera_source/unknown")
+    source_label: str = Field(..., description="中文标签，如'手机视频'")
+    confidence: str = Field(..., description="置信度: high/medium/low")
+    evidence: list[str] = Field(default_factory=list, description="判断依据列表")
+    surveillance_brand: str | None = Field(default=None, description="命中的监控品牌")
+    surveillance_method: str | None = Field(default=None, description="品牌判断方法")
+
+
+class AIDetectSignal(BaseModel):
+    """单个 AI 检测信号 — 来自 AICheck。"""
+    source: str = Field(..., description="信号来源: C2PA / MP4 / XMP / EXIF / WATERMARK / FILE / SPEC")
+    confidence: str = Field(..., description="high / medium / low")
+    description: str = Field(..., description="人类可读描述")
+    tool: str | None = Field(default=None, description="命中的 AI 工具名")
+
+
+class AIDetectResult(BaseModel):
+    """AI 生成检测结果 — AICheck CLI 输出。"""
+    status: str = Field(default="not_run", description="not_run / analyzing / completed / error")
+    score: float | None = Field(default=None, description="综合置信度 0.0-1.0")
+    verdict: str | None = Field(default=None, description="ai_generated / likely_ai / no_signal / error")
+    signals: list[AIDetectSignal] = Field(default_factory=list, description="命中的信号列表")
+    software_info: list[tuple[str, str]] = Field(default_factory=list, description="非 AI 创作软件信息")
+    error_message: str | None = Field(default=None)
+    deep_analysis_used: bool = Field(default=False, description="是否执行了像素级深度检测")
+
+
+# ═══════════════════════════════════════════════════════════
+# 元数据 DTO — 类型化流信息
+# ═══════════════════════════════════════════════════════════
+
+class VideoStreamInfo(BaseModel):
+    """视频流技术参数。"""
+    codec: str | None = None
+    codec_profile: str | None = None
+    codec_level: str | None = None
+    codec_tier: str | None = None
+    resolution: str | None = None
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    bitrate: int | None = None
+    pixel_format: str | None = None
+    color_space: str | None = None
+    color_primaries: str | None = None
+    transfer_characteristics: str | None = None
+    chroma_subsampling: str | None = None
+    bit_depth: int | None = None
+    display_aspect_ratio: str | None = None
+    rotation: float | None = None
+    encoder: str | None = None
+
+    # ── 防御性类型转换：ffprobe 某些字段返回整数 ──
+    @field_validator(
+        "codec_level", "codec_tier", "codec_profile",
+        "codec", "pixel_format", "color_space",
+        "color_primaries", "transfer_characteristics",
+        "chroma_subsampling", "display_aspect_ratio", "encoder",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_to_str(cls, v: object) -> str | None:
+        """Coerce ffprobe integers (e.g. level=120) to strings."""
+        if v is None:
+            return None
+        return str(v)
+
+
+class AudioStreamInfo(BaseModel):
+    """音频流技术参数。"""
+    codec: str | None = None
+    channels: int | None = None
+    channel_layout: str | None = None
+    sample_rate: int | None = None
+    bitrate: int | None = None
+    language: str | None = None
+
+
+class SubtitleStreamInfo(BaseModel):
+    """字幕流信息。"""
+    format: str | None = None
+    language: str | None = None
+    title: str | None = None
+    forced: bool = False
+
+
 class VideoMetadataResponse(BaseModel):
-    """视频文件技术元数据 — 编码/分辨率/GPS/设备信息等。"""
+    """视频文件技术元数据 — 编码/分辨率/GPS/设备/HDR信息等。"""
     container: str | None = None
+    format_name: str | None = Field(default=None, description="原始容器格式名（ffprobe format_name）")
     duration: float | None = None
     file_size: int | None = None
     overall_bitrate: int | None = None
-    video_streams: list[dict] = Field(default_factory=list)
-    audio_streams: list[dict] = Field(default_factory=list)
+    video_streams: list[VideoStreamInfo] = Field(default_factory=list)
+    audio_streams: list[AudioStreamInfo] = Field(default_factory=list)
+    subtitle_streams: list[SubtitleStreamInfo] = Field(default_factory=list)
     device: dict | None = None
     timestamps: dict | None = None
-    raw: dict | None = None
+    raw: dict | None = Field(default=None, description="原始提取数据，仅 ?verbose=true 时返回")
+    source_analysis: SourceAnalysis | None = Field(default=None, description="视频来源分析（首次提取后缓存）")
+    ai_detect: AIDetectResult | None = Field(default=None, description="AI 生成检测结果（上传时自动全面检测：元数据+SEI+C2PA+像素级深度分析）")
 
 
 # ═══════════════════════════════════════════════════════════

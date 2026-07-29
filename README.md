@@ -62,11 +62,14 @@ curl -X POST -H "Content-Type: application/json" \
 | Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 (unified objects view + face toggle) | ✅ |
 | Track Crop Embedding (track search) | `POST /api/v1/search/semantic` (track path) | ✅ |
 | Incremental Processing | summary/search re-run on completed videos | ✅ |
+| Video Source Analysis | Rule engine: phone/camera/screen_recording/surveillance/non_camera_source | ✅ |
+| AI Generation Detection | AICheck CLI (metadata+SEI+C2PA+像素级深度分析), auto-run on upload | ✅ |
+| Metadata Caching | Extracted metadata cached to DB (fast path <1ms on repeat requests) | ✅ |
 
 ## Architecture Overview
 
 ```
-Upload → Pipeline (DAG) → DB → Search → Frontend
+Upload → Probe + AICheck(quick) → Pipeline (DAG) → DB → Search → Frontend
          ├─ Duration detection (ffprobe)
          ├─ [搜索路径]  Search Encode @1fps — 与 detection 共享 NVDEC 流 (队列消费)
          ├─ [摘要路径]  Scene Segmentation (TransNetV2) + Audio Transcription (faster-whisper)
@@ -86,6 +89,10 @@ Upload → Pipeline (DAG) → DB → Search → Frontend
          │    └─ Person crop → SCRFD detect → ArcFace R50 512d embed → identity clustering
          ├─ License Plate (可选 — 三门控: config + detection_enabled + plate_enabled):
          │    └─ Vehicle crop → HyperLPR3 detect + recognize → plate text + type + confidence
+         ├─ AICheck (deep, async on upload): AICheck CLI --deep
+         │    └─ AI generation detection → metadata+SEI+C2PA+watermark signals
+         ├─ Source Analysis (rule engine, on first GET /metadata):
+         │    └─ classify_video_source() → phone/camera/surveillance/non_camera
          └─ Shared GPU models (embedder 启动时预加载; captioner 按需加载):
               ├─ Qwen3-VL-Embedding-8B (embedder, FP16, ~16GB, preloaded)
               ├─ Qwen3-VL-8B-Instruct (captioner, BF16, ~16GB, on-demand)
@@ -101,7 +108,9 @@ Upload → Pipeline (DAG) → DB → Search → Frontend
 - **Pipeline real-time status** — each phase writes human-readable progress descriptions (`status_detail`) to the database, displayed in the frontend in real time
 - **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, 4-level parameter panel (含速度预设), summary mode selector, and settings page (含 Pipeline 调优)
 - **Export API** — clip export (stream copy), frame export (zip), track segment export (zip), scene thumbnail export (zip), track thumbnail download
-- **Video metadata extraction** — three-tier extraction (pymediainfo → exiftool → ffprobe), GPS/device/codec info via GET /metadata endpoint
+- **Video metadata extraction** — three-tier extraction (pymediainfo → exiftool → ffprobe), GPS/device/codec info via GET /metadata endpoint, results cached to DB (fast path <1ms on repeat requests)
+- **AI Generation Detection** — AICheck CLI `--deep` auto-run on upload, covers metadata + SEI + C2PA + pixel-level watermark analysis, results in `Video.ai_detect_result` JSONB (displayed in frontend VideoInfoCard)
+- **Video Source Analysis** — rule engine classifies video origin: phone/camera/screen_recording/surveillance/non_camera_source, based on EXIF + file naming + media structure heuristics, results cached to DB via `Video.source_analysis`
 
 ## Tech Stack
 
@@ -181,10 +190,12 @@ cerno/
 ├── services/             # Business logic layer
 │   ├── video_service.py  # Video processing orchestration
 │   ├── format_service.py # Multi-format support (probe/remux/proxy, lazy on-demand)
-│   └── export_service.py # Export business logic (clip/frames/track/thumbnails)
+│   ├── export_service.py # Export business logic (clip/frames/track/thumbnails)
+│   └── ai_detect_service.py # AICheck CLI wrapper (subprocess aic --deep)
 ├── utils/                # FFmpeg tools + metadata extraction
 │   ├── video_util.py     # FFmpeg subprocess helpers (extract audio/keyframes/duration)
-│   └── metadata.py       # Video metadata extraction (pymediainfo/exiftool/ffprobe)
+│   ├── metadata.py       # Video metadata extraction (pymediainfo/exiftool/ffprobe)
+│   └── video_source.py   # Video source classification (rule engine: phone/camera/surveillance/...)
 ├── frontend/             # React + Vite + Tailwind dashboard
 │   ├── public/
 │   │   └── cerno.svg     # App logo
@@ -195,7 +206,7 @@ cerno/
 │   │   │   ├── PipelineBar.tsx, VideoSummaryCard.tsx, VideoSearchCard.tsx
 │   │   │   ├── HistoryPanelContent.tsx, SettingsPage.tsx
 │   │   │   ├── DetectionOverlay.tsx, DetectionPanel.tsx, DetectionTimeline.tsx
-│   │   │   ├── MetadataPanel.tsx, ExportMenu.tsx
+│   │   │   ├── VideoInfoCard.tsx, ExportMenu.tsx
 │   │   ├── utils/helpers.ts  # Shared helpers
 │   │   ├── services/api.ts
 │   │   ├── types/index.ts
@@ -211,6 +222,7 @@ cerno/
 
 ## Development Status
 
+- **v0.17 — AI Detection + Source Analysis + Metadata Cache**: 新增 AICheck CLI 集成（上传时自动 --deep 全面检测：metadata+SEI+C2PA+像素级水印分析）；新增视频来源分析规则引擎（classify_video_source: phone/camera/screen_recording/surveillance/non_camera_source/unknown）；元数据缓存到 DB（metadata_json 列，首次提取后后续 <1ms 返回）；GET /metadata 返回 source_analysis + ai_detect 字段；前端 VideoInfoCard 展示来源分析+AI检测结果；format_service 分类函数委托到 utils/metadata 共享；参数面板 face_enabled/plate_enabled 支持增量修改。
 - **v0.16 — Single NVDEC stream + Performance**: 单 NVDEC 流供 detection 与 search_encode 共享（detection 推送 1fps 采样帧到队列，search_encode 64 帧即编）；生产者-消费者并发（帧提取与 YOLO 推理重叠）；移除全局 ReID（质量差、开销高）；移除以 track 为单位的 FFmpeg fallback 抽帧（替换为直接使用 cache 帧，track_encode 耗时从 257s→43s）；BoT-SORT 调参（new_track_thresh=0.4, match_thresh=0.4）；detection 默认帧率 10fps。
 - **v0.16 — Single NVDEC stream + Performance + Speed Presets**: `keyframes`→`frame_encode` 生产者-消费者并发 (asyncio.Queue); `search_encode` gate 修复防双编码; NVDEC MJPEG pipe (~100KB/帧) 默认启用; embedder `_pool_last_token` 逐行 L2 归一化 + float32 + PIL resize 8线程并行; batch_size 512; 三档速度预设 (fast/balanced/precise) 控制分辨率 336-672; 前端 "处理速度" 控件 + Pipeline 调优 Settings 页; `GET /api/v1/settings/pipeline`。
 - **v0.14 — Search/Summary Decoupling + Preload**: Search and summary paths fully decoupled — new `search_encode` operation (self-extracting frames @1fps + batch encoding) runs parallel to summary pipeline, depends only on duration. Captioner preloaded at startup alongside embedder (shared instances, no per-pipeline load/unload). Configurable encode batch size (pipeline.encode_batch_size). NVDEC hardware decoding support (optional, pipeline.use_nvdec). 15 operations, 11 DB tables, 10 plugin ABCs.

@@ -216,6 +216,22 @@ class Video(Base):
         comment="代理转码进度 0.0 ~ 1.0",
     )
 
+    # ── 元数据缓存 (v0.17) ──
+    metadata_json: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="缓存的完整技术元数据（上传后一次性提取，避免每次 GET 重复解析 pymediainfo）",
+    )
+
+    # ── 来源分析与 AI 检测 (v0.17) ──
+    source_analysis: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="视频来源分析结果：来源类型/置信度/证据链/监控品牌（规则引擎输出，首次 GET /metadata 时写入）",
+    )
+    ai_detect_result: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="AI 生成检测结果（AICheck 输出，上传时自动全面检测：元数据+SEI+C2PA+像素级深度分析）",
+    )
+
     # ── 时间戳 ──
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False,

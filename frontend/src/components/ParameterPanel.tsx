@@ -141,7 +141,10 @@ export function ParameterPanel({
   });
   const [modules, setModules] = useState<Record<ModuleKey, boolean>>(() => {
     const saved = loadCustomParams();
-    if (saved?.modules) return saved.modules as Record<ModuleKey, boolean>;
+    if (saved?.modules) {
+      const m = saved.modules as Record<string, boolean>;
+      return { vision: false, audio: false, ocr: false, caption: false, detection: false, ...m };
+    }
     const preset = SCENE_PRESETS["general"];
     return { ...preset.modules };
   });
