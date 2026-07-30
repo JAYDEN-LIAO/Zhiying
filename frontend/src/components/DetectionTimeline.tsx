@@ -5,16 +5,8 @@
 
 import { useEffect, useRef, useMemo, useState } from "react";
 import type { DetectionData, Track, FaceData } from "../types";
+import { colorOf, zhLabel } from "../labels";
 
-const CLASS_COLORS: Record<string, string> = {
-  person: "#FF6B6B", car: "#4ECDC4", truck: "#FF9F43", bus: "#96CEB4",
-  motorcycle: "#F7DC6F", bicycle: "#45B7D1", dog: "#FF6348", cat: "#FFA502",
-  bird: "#70A1FF", horse: "#E056A0", chair: "#A29BFE", couch: "#DFE6E9",
-  bed: "#636E72", "dining table": "#B2BEC3", laptop: "#6C5CE7",
-  "cell phone": "#54A0FF", tv: "#0984E3", book: "#A3CB38",
-  backpack: "#00B894", umbrella: "#6C5CE7", bottle: "#17E8B5", cup: "#FDA7DF",
-  default: "#95A5A6",
-};
 const SELECTED = "#FFD700";
 
 const LANE_H = 9;
@@ -109,7 +101,7 @@ export function DetectionTimeline({ videoRef, data, selectedTrackId, classFilter
         <div style={{ height: Math.max((maxLane + 1) * (LANE_H + LANE_GAP) + PAD * 2, 0), position: "relative" }}>
           {lanes.map(({ track, lane }) => {
             const segs = track.segments?.length ? track.segments : [{ start: track.first_seen, end: track.last_seen }];
-            const color = CLASS_COLORS[track.class_name] ?? CLASS_COLORS.default;
+            const color = colorOf(track.class_name);
             const isSel = track.track_id === selectedTrackId;
             return segs.map((seg, si) => {
               const leftPct = (seg.start / duration) * 100;
@@ -141,7 +133,7 @@ export function DetectionTimeline({ videoRef, data, selectedTrackId, classFilter
                   onMouseLeave={() => setHovered(null)}
                 >
                   {wPct > 3 && si === 0 && (
-                    <span className="tl-track-lbl">{track.class_name} #{track.track_id}</span>
+                    <span className="tl-track-lbl">{zhLabel(track.class_name, track.track_id)}</span>
                   )}
                 </div>
               );
@@ -176,8 +168,8 @@ export function DetectionTimeline({ videoRef, data, selectedTrackId, classFilter
             background: "rgba(0,0,0,0.85)", color: "#fff", whiteSpace: "nowrap",
           }}
         >
-          <span style={{ color: CLASS_COLORS[hovered.track.class_name] ?? CLASS_COLORS.default, fontWeight: 600 }}>
-            {hovered.track.class_name} #{hovered.track.track_id}
+          <span style={{ color: colorOf(hovered.track.class_name), fontWeight: 600 }}>
+            {zhLabel(hovered.track.class_name, hovered.track.track_id)}
           </span>
           <span className="text-white/60 ml-1.5">
             {hovered.track.frame_count}f · {hovered.track.first_seen.toFixed(1)}s–{hovered.track.last_seen.toFixed(1)}s

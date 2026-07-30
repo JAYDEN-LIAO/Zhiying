@@ -6,24 +6,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import type { DetectionData, Detection } from "../types";
-
-/* ── Class-specific colors ── */
-const CLASS_COLORS: Record<string, string> = {
-  person: "#FF6B6B", bicycle: "#45B7D1", car: "#4ECDC4", motorcycle: "#F7DC6F",
-  airplane: "#A29BFE", bus: "#96CEB4", train: "#DDA0DD", truck: "#FF9F43",
-  boat: "#54A0FF", "traffic light": "#FFD700", "fire hydrant": "#FF4757",
-  "stop sign": "#FF6348", bench: "#7BED9F", bird: "#70A1FF", cat: "#FFA502",
-  dog: "#FF6348", horse: "#E056A0", backpack: "#00B894", umbrella: "#6C5CE7",
-  handbag: "#E17055", tie: "#0984E3", suitcase: "#00CEC9",
-  skis: "#81ECEC", snowboard: "#74B9FF", skateboard: "#F8A5C2",
-  bottle: "#17E8B5", cup: "#FDA7DF", bowl: "#F19066",
-  banana: "#FFEAA7", apple: "#FF7675", sandwich: "#FDCB6E",
-  chair: "#A29BFE", couch: "#DFE6E9", bed: "#636E72",
-  "dining table": "#B2BEC3", tv: "#0984E3", laptop: "#6C5CE7",
-  "cell phone": "#54A0FF", remote: "#FDCB6E", keyboard: "#74B9FF",
-  book: "#A3CB38", clock: "#F8A5C2", vase: "#D980FA",
-  default: "#95A5A6",
-};
+import { colorOf, zhLabel } from "../labels";
 const SELECTED_COLOR = "#FFD700";
 
 interface Props {
@@ -113,7 +96,7 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
     // ── Trails ──
     const TRAIL_DURATION = 2.0, TRAIL_STEP = 0.1, MAX_GAP = 3;
     for (const det of interpolated) {
-      const color = CLASS_COLORS[det.class_name] ?? CLASS_COLORS.default;
+      const color = colorOf(det.class_name);
       const isSel = det.track_id === selectedTrackId;
       const curCx = offsetX + ((det.bbox.x1 + det.bbox.x2) / 2) * displayW;
       const curCy = offsetY + ((det.bbox.y1 + det.bbox.y2) / 2) * displayH;
@@ -144,7 +127,7 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
     // ── Bboxes ──
     for (const det of interpolated) {
       const isSel = det.track_id === selectedTrackId;
-      const color = CLASS_COLORS[det.class_name] ?? CLASS_COLORS.default;
+      const color = colorOf(det.class_name);
       const x = offsetX + det.bbox.x1 * displayW;
       const y = offsetY + det.bbox.y1 * displayH;
       const w = (det.bbox.x2 - det.bbox.x1) * displayW;
@@ -160,7 +143,7 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
       ctx.strokeRect(x, y, w, h);
       if (w > 24) {
         ctx.globalAlpha = alpha;
-        const label = `${det.class_name} #${det.track_id}`;
+        const label = zhLabel(det.class_name, det.track_id);
         const fs = Math.max(10, Math.min(13, h * 0.35));
         ctx.font = `${fs}px system-ui, sans-serif`;
         const tw = ctx.measureText(label).width + 6;

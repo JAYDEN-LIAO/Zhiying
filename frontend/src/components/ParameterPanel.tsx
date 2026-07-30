@@ -6,6 +6,7 @@ import { useState, useEffect, useMemo } from "react";
 import { IconClose } from "./icons";
 import { api } from "../services/api";
 import type { ContentType, PipelineParams } from "../types";
+import { zh } from "../labels";
 
 const SCENE_PRESETS: Record<string, {
   label: string;
@@ -488,7 +489,7 @@ export function ParameterPanel({
                           onClick={() => setDetectionClasses((prev) => (prev ?? []).filter((c) => c !== cls))}
                           className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-[#1a65e1] text-white rounded-md cursor-pointer hover:bg-blue-700 transition-colors"
                         >
-                          {cls}
+                          {zh(cls)}
                           <svg className="w-2.5 h-2.5 opacity-70" viewBox="0 0 12 12" fill="currentColor">
                             <path d="M3 3l6 6M9 3l-6 6" stroke="white" strokeWidth="1.5" fill="none" />
                           </svg>
@@ -523,7 +524,7 @@ export function ParameterPanel({
                               }}
                               className="w-full text-left px-2.5 py-1 text-[11px] hover:bg-blue-50 text-gray-600 transition-colors"
                             >
-                              {c}
+                              {zh(c)}
                             </button>
                           ))}
                         </div>
@@ -539,7 +540,7 @@ export function ParameterPanel({
                         onClick={() => setDetectionClasses((prev) => [...(prev ?? []), cls])}
                         className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-100/60 text-gray-500 rounded-md hover:bg-blue-100 hover:text-blue-700 transition-colors"
                       >
-                        + {cls}
+                        + {zh(cls)}
                       </button>
                     ))}
                   </div>

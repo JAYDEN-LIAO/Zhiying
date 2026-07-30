@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api } from "../services/api";
 import type { SearchResultItem, VideoResponse, FaceSearchResult } from "../types";
 import { formatSec } from "../utils/helpers";
+import { zhLabel } from "../labels";
 
 export function VideoSearchCard({
   video,
@@ -234,7 +235,7 @@ export function VideoSearchCard({
                       </span>
                     </div>
                     {isTrack && item.class_name ? (
-                      <div className="sr-track">{item.class_name} #{classLocalMap.get(item.track_id!) ?? item.track_id}</div>
+                      <div className="sr-track">{zhLabel(item.class_name, classLocalMap.get(item.track_id!) ?? item.track_id!)}</div>
                     ) : isPlate && item.plate_text ? (
                       <div className="sr-plate">{item.plate_text}</div>
                     ) : item.caption ? (

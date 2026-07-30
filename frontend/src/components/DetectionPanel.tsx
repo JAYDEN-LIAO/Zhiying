@@ -6,16 +6,8 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import type { DetectionData, Track, VideoResponse } from "../types";
 import { api } from "../services/api";
+import { colorOf, zh } from "../labels";
 
-const CLASS_COLORS: Record<string, string> = {
-  person: "#FF6B6B", car: "#4ECDC4", truck: "#FF9F43", bus: "#96CEB4",
-  motorcycle: "#F7DC6F", bicycle: "#45B7D1", dog: "#FF6348", cat: "#FFA502",
-  bird: "#70A1FF", horse: "#E056A0", chair: "#A29BFE", couch: "#DFE6E9",
-  bed: "#636E72", "dining table": "#B2BEC3", laptop: "#6C5CE7",
-  "cell phone": "#54A0FF", tv: "#0984E3", book: "#A3CB38",
-  backpack: "#00B894", umbrella: "#6C5CE7", bottle: "#17E8B5", cup: "#FDA7DF",
-  default: "#95A5A6",
-};
 const SELECTED = "#FFD700";
 
 interface Props {
@@ -179,7 +171,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
   const classEntries = Object.entries(classCounts).sort((a, b) => b[1] - a[1]);
   const filtered = classFilter ? tracks.filter((t) => t.class_name === classFilter) : tracks;
   const isAll = classFilter === null;
-  const activeColor = !isAll ? (CLASS_COLORS[classFilter!] ?? CLASS_COLORS.default) : "#6B7280";
+  const activeColor = !isAll ? (colorOf(classFilter!)) : "#6B7280";
 
   return (
     <div className="major-card">
@@ -215,7 +207,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
               {isAll ? (
                 <span>全部 · {tracks.length}</span>
               ) : (
-                <><span className="dot" style={{ background: activeColor }} />{classFilter} · {classCounts[classFilter]}</>
+                <><span className="dot" style={{ background: activeColor }} />{zh(classFilter)} · {classCounts[classFilter]}</>
               )}
               <svg className={`w-3 h-3 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="currentColor"><path d="M3 5l3 3 3-3" /></svg>
             </button>
@@ -235,7 +227,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                       className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 ${classFilter === cls ? "font-semibold text-gray-900" : "text-gray-600"}`}
                       onClick={() => { onClassFilterChange(cls); setDropdownOpen(false); }}
                     >
-                      <span className="dot" style={{ background: CLASS_COLORS[cls] ?? CLASS_COLORS.default }} />{cls} · {count}
+                      <span className="dot" style={{ background: colorOf(cls) }} />{zh(cls)} · {count}
                     </button>
                   ))}
                 </div>
@@ -244,8 +236,8 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
           </div>
         )}
         {!showFaces && classEntries.length <= 1 && classEntries.length > 0 && (
-          <span className="text-[11px] font-medium" style={{ color: CLASS_COLORS[classEntries[0][0]] ?? CLASS_COLORS.default }}>
-            {classEntries[0][0]} × {classEntries[0][1]}
+          <span className="text-[11px] font-medium" style={{ color: colorOf(classEntries[0][0]) }}>
+            {zh(classEntries[0][0])} × {classEntries[0][1]}
           </span>
         )}
 
@@ -253,7 +245,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
         {!showFaces && (
           <div className="dtc-list" ref={listRef}>
             {filtered.map((t) => {
-              const color = CLASS_COLORS[t.class_name] ?? CLASS_COLORS.default;
+              const color = colorOf(t.class_name);
               const isSel = t.track_id === selectedTrackId;
               const thumbResult = getThumbBbox(data, t);
               const bbox = thumbResult?.bbox ?? null;
@@ -281,7 +273,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                   )}
                   <div className="dtc-info">
                     <div className="dtc-name">
-                      {t.class_name}
+                      {zh(t.class_name)}
                       <span className="dtc-id">#{classLocalIds.get(t.track_id) ?? t.track_id}</span>
                       {hasFace && <span className="dtc-face">👤</span>}
                       {plate && (
