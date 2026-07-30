@@ -86,12 +86,25 @@ class SummaryRunner(OperationRunner):
         entities = [o for o, _ in obj_counter.most_common(1)]
 
         if scenes_summary:
-            types_str = "、".join(list(dict.fromkeys(all_types))[:2])
-            one_liner = (
-                f"共 {len(scenes_summary)} 个场景"
-                + (f"（{types_str}）" if types_str else "")
-                + f"：{scenes_summary[0]['description'][:80]}..."
-            )
+            # 构建总摘要：遍历所有场景，提取时间+关键词，非模型拼接
+            scene_briefs: list[str] = []
+            for s in scenes_summary:
+                start_str = f"{int(s['start_sec'] // 60):02d}:{int(s['start_sec'] % 60):02d}"
+                # 取前 3 个关键词作为场景速写
+                kws = s.get("keywords", [])[:3]
+                brief = start_str
+                if kws:
+                    brief += " " + "、".join(kws)
+                scene_briefs.append(brief)
+
+            chain = " → ".join(scene_briefs)
+            label = "个场景" if len(scene_briefs) == 1 else "个片段"
+            one_liner = f"{len(scenes_summary)} {label}：{chain}"
+
+            # 追加全局标签作为补充
+            top_tags = [k for k, _ in kw_counter.most_common(3)]
+            if top_tags:
+                one_liner += f" ｜{'、'.join(top_tags)}"
         else:
             one_liner = ""
 
@@ -175,7 +188,16 @@ class SummaryRunner(OperationRunner):
              "description": (s.caption or "")[:200], "keywords": []}
             for s in captioned
         ]
+        # fallback 也构建多场景总摘要
+        if len(items) == 1:
+            fallback_one = f"{len(items)} 个场景：{ (items[0]['description'] or '')[:40] }"
+        else:
+            briefs = []
+            for it in items:
+                ts = f"{int(it['start_sec'] // 60):02d}:{int(it['start_sec'] % 60):02d}"
+                briefs.append(ts)
+            fallback_one = f"{len(items)} 个片段：" + " → ".join(briefs)
         return {
-            "one_liner": f"共 {len(items)} 个场景：{(captioned[0].caption or '')[:80]}...",
+            "one_liner": fallback_one,
             "scenes_summary": items, "tags": [], "main_topics": [], "main_entities": [],
         }

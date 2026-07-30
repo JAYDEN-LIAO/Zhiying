@@ -4,7 +4,7 @@
    ════════════════════════════════════════════════════════════ */
 
 import { useEffect, useRef, useState, useMemo } from "react";
-import type { DetectionData, Track, VideoResponse } from "../types";
+import type { DetectionData, Track, VideoResponse, VideoListItem } from "../types";
 import { api } from "../services/api";
 import { colorOf, zh } from "../labels";
 
@@ -19,6 +19,11 @@ interface Props {
   onTrackSelect: (trackId: number, className: string, seekTo: number) => void;
   faceData: import("../types").FaceData | null;
   plateData: import("../types").PlateData | null;
+  /* ── v0.19 组感知 ── */
+  groupVideos?: string[];
+  videos?: VideoListItem[];
+  detectionVideoId?: string | null;
+  onDetectionVideoChange?: (videoId: string | null) => void;
 }
 
 function getThumbBbox(data: DetectionData, track: Track) {
@@ -40,7 +45,7 @@ function thumbUrl(videoId: string, ts: number, bbox: { x1: number; y1: number; x
   return `/api/v1/videos/${videoId}/detection/thumbnail?timestamp=${ts}&x1=${bbox.x1}&y1=${bbox.y1}&x2=${bbox.x2}&y2=${bbox.y2}`;
 }
 
-export function DetectionPanel({ video, data, selectedTrackId, classFilter, onClassFilterChange, onTrackSelect, faceData, plateData }: Props) {
+export function DetectionPanel({ video, data, selectedTrackId, classFilter, onClassFilterChange, onTrackSelect, faceData, plateData, groupVideos, videos, detectionVideoId, onDetectionVideoChange }: Props) {
   const [showFaces, setShowFaces] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [trackDropdown, setTrackDropdown] = useState<number | null>(null);
@@ -184,6 +189,22 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
           {showFaces ? "人脸" : "物体检测"}
         </div>
         <div className="flex items-center gap-2">
+          {/* v0.19: 组内视频选择器 */}
+          {(groupVideos && groupVideos.length > 1 && onDetectionVideoChange) && (
+            <select
+              value={detectionVideoId ?? video?.id ?? ""}
+              onChange={(e) => onDetectionVideoChange(e.target.value || null)}
+              className="text-[10px] border border-gray-200 rounded-md px-1.5 py-0.5 bg-white text-gray-700 max-w-[100px]"
+              title="选择检测视频"
+            >
+              {groupVideos.map((vId) => {
+                const vName = videos?.find(v => v.id === vId)?.file_name ?? vId.slice(0, 8);
+                return (
+                  <option key={vId} value={vId}>{vName.length > 8 ? vName.slice(0, 8) + "…" : vName}</option>
+                );
+              })}
+            </select>
+          )}
           {showFaceBtn && (
             <button
               onClick={() => setShowFaces(!showFaces)}

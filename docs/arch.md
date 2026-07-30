@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.18 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.19 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -9,8 +9,9 @@
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │                     Client (CLI/Browser / React Frontend)                        │
 └──────────────────┬────────────────────────────┬──────────────────┬───────────────┘
-                   │ POST /videos/upload        │ POST /search/semantic │ GET /videos/
-                   │ + PUT /videos/{id}/params  │ GET /videos/{id}/meta │
+                   │ POST /videos/upload (single)     │ POST /search/semantic │ GET /videos/
+                   │ + POST /videos/upload/batch (v0.19) │ GET /videos/{id}/meta │
+                   │ + PUT /videos/{id}/params     │                        │
                    ▼                            ▼                        ▼
 ┌─────────────────────────────┐  ┌─────────────────────────────┐  ┌──────────────────┐
 │     FastAPI (main.py)       │  │   SearchEngine              │  │  React Dashboard │
@@ -183,21 +184,20 @@ Phase 5: Summarization (双模式)
 
   ↓
 
-Persist
-  ├─ bulk_insert_scenes → scenes 表
-  ├─ insert transcript → transcripts 表
-  └─ update video → videos 表 (duration, summary, status_detail)
-
-  ↓
-
 Encode Frames（与 caption/summary 同批并行，Persist 前执行）
-  ├─ a. 帧级路 (runners/frame_encode.py): 逐帧 encode_image → bulk_insert_frames → frame_embeddings 表
+  ├─ a. 帧级路 (runners/frame_encode.py): asyncio.Queue 消费 → 批量 encode_image → bulk_insert_frames
   │   状态: "逐帧向量编码中"
   ├─ b. Chunk 路 (runners/chunk_encode.py, config pipeline.chunk_encoding 控制，默认关闭):
   │     -c copy 流复制 → 480p 5fps 预处理 → encode_video → chunks 表
   │     自适应窗口: ≤5s 不切, 5-60s 窗口=时长/2, >60s 窗口=30s/步长=15s
   └─ c. 文本语义路 (runners/text_encode.py): encode_text(caption+ocr+transcript) → ctx.text_embedding
-       → Persist 时由 bulk_insert_scenes 统一入库（不在 runner 内单写 DB）
+
+  ↓
+
+Persist
+  ├─ bulk_insert_scenes → scenes 表（含 ctx.text_embedding）
+  ├─ insert transcript → transcripts 表
+  └─ update video → videos 表 (duration, summary, status_detail)
 ```
 
 ## Module Dependency
@@ -221,7 +221,7 @@ main.py
         │     ├─ services/video_service.py
         │     │     └─ pipeline/engine.py (DAG executor)
         │     │           ├─ pipeline/operations.py (ALL_OPERATIONS)
-        │     │           ├─ pipeline/runners/*.py (16 operation runners)
+        │     │           ├─ pipeline/runners/*.py (15 operation runners)
         │     │           ├─ utils/video_util.py          (keyframe extraction, clip export)
         │     │           ├─ utils/metadata.py            (video metadata extraction)
         │     │           └─ plugins/factory.py
@@ -385,6 +385,10 @@ SearchEngine.search_image_only() — 图搜专用路径 (v0.18):
 ## Database Schema
 
 ```
+video_groups (v0.19 多视频分组)
+  ├─ id (UUID PK), name (nullable), created_at, updated_at
+  └─ videos: list["Video"] (relationship)
+
 videos
   ├─ id (UUID PK), status, progress, error_message
   ├─ file_path, file_name, file_size, duration
@@ -397,6 +401,7 @@ videos
   ├─ source_analysis (JSONB)        — 视频来源分析：类型/置信度/证据链/监控品牌
   ├─ ai_detect_result (JSONB)       — AI 生成检测结果（AICheck 输出，含 signals/verdict）
   ├─ status_detail (管道实时操作描述)
+  ├─ group_id (UUID FK → video_groups.id, nullable, v0.19) — NULL=单视频未分组
   └─ created_at, updated_at
 
 scenes
@@ -471,7 +476,8 @@ plate_detections
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | /api/v1/videos | 注册视频任务 (JSON body) |
-| POST | /api/v1/videos/upload | 上传视频文件 (multipart, 不启动 Pipeline) |
+| POST | /api/v1/videos/upload | 上传视频文件 (multipart, 不启动 Pipeline, group_id=NULL) |
+| POST | /api/v1/videos/upload/batch | 批量上传视频文件 (multipart, 创建 VideoGroup, 并发处理) |
 | PUT | /api/v1/videos/{id}/params | 设置参数 + 启动 Pipeline (pending/completed) |
 | POST | /api/v1/videos/reuse | 基于已有视频创建新记录 (复用文件) |
 | GET | /api/v1/videos/ | 视频列表 (按创建时间降序) |
@@ -509,34 +515,36 @@ plate_detections
 React 19 + Vite 6 + Tailwind CSS 4
   │
   ├── App.tsx                ← 根组件
-  ├── Dashboard.tsx          ← 主工作台 (~280 行, 状态编排 + render)
+  ├── Dashboard.tsx          ← 主工作台 (~430 行, 状态编排 + group 状态 + detectionVideoId + header 下拉)
   ├── components/
   │   ├── Sidebar            ← 深色渐变导航栏: 页面切换 + 面板开关
   │   ├── ParameterPanel     ← 侧滑参数面板: 四级联动 (L1场景/L2感知/L3功能/L4高级)
   │   ├── PipelineBar        ← 动态阶段进度条 (根据开关渲染对应节点)
   │   ├── VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮
-  │   ├── VideoSearchCard    ← 语义/图搜/人脸搜索面板 (索引未开启时置灰)
-  │   ├── HistoryPanelContent← 历史记录列表 (搜索+自动刷新+缩略图+参数摘要)
+  │   ├── VideoSearchCard    ← 语义/图搜/人脸搜索面板 (索引未开启时置灰) + 搜索范围选择器 (组感知)
+  │   ├── HistoryPanelContent← 历史记录列表 (搜索+自动刷新+缩略图+参数摘要) + 组卡片堆叠/展开
   │   ├── SettingsPage       ← 系统设置: 存储路径 + API 密钥管理
   │   ├── DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+选中)
-  │   ├── DetectionPanel     ← 物体列表 (分类筛选+缩略图 hover+导出按钮)
+  │   ├── DetectionPanel     ← 物体列表 (分类筛选+缩略图 hover+导出按钮) + 独立视频选择器 (组感知)
   │   ├── DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
   │   ├── VideoInfoCard      ← 视频元数据 + 来源分析 + AI 检测
   │   ├── ExportMenu         ← 导出菜单 (视频片段或节点)
   │   └── icons.tsx          ← 20+ SVG 图标
   ├── labels.ts              ← YOLO COCO 类名英→中映射 + 统一颜色表
   ├── utils/helpers.ts       ← fmtDuration, fmtDate, formatSec
-  ├── services/api.ts        ← API 封装 + 轮询工具函数 + 下载辅助
-  ├── types/index.ts         ← TypeScript 类型定义
+  ├── services/api.ts        ← API 封装 + 轮询工具函数 + 下载辅助 + uploadBatch()
+  ├── types/index.ts         ← TypeScript 类型定义 (镜像 backend schemas, +VideoGroup)
   └── mockData.ts            ← Pipeline 阶段定义 + computePipelineStages()
 
 数据流:
   Dashboard mount → GET /api/v1/videos/ 拉取列表
-  上传 → POST multipart → 参数面板自动展开 (不可点击外部关闭)
-  配置参数 → PUT /videos/{id}/params → Pipeline 启动
+  上传 → POST multipart → 参数面板自动展开 (不可点击外部关闭); 多文件走 uploadBatch → VideoGroup
+  POST /videos/upload/batch → group 内第一个视频自动选中, history 组卡片堆叠
+  配置参数 → PUT /videos/{id}/params → Pipeline 启动 (组内所有 pending 兄弟同步启动)
   选择视频 → GET /api/v1/videos/{id} 每 3s 轮询, 同步更新历史列表状态
+  增切换 → Header 下拉切组内视频 / 历史卡片切视频 / 搜索结果跨视频跳转
   增量修改 → PUT /videos/{id}/params (仅 summary/search_index) → run_incremental()
-  搜索 → POST /api/v1/search/semantic → 结果卡片 (切换视频时自动清空)
+  搜索 → POST /api/v1/search/semantic (支持 video_ids 范围过滤: 当前/组内/全部)
   信息 → GET /videos/{id}/metadata → VideoInfoCard 弹出卡片
   导出 → window.open(GET /videos/{id}/export/...) → 浏览器直接下载
 
@@ -578,6 +586,7 @@ Vite 开发代理:
 | **GET + POST dual export endpoints** | POST for programmatic API calls (curl), GET with query params for browser direct download → avoids async download blocking |
 | **Three-tier metadata extraction** | pymediainfo (full tech) → exiftool (GPS/device) → ffprobe (fallback), graceful degradation |
 | **Metadata cached to DB** | Extracted metadata stored in Video.metadata_json JSONB column. First request: live extraction + cache; subsequent requests: <1ms fast path from DB. Cache versioned via _METADATA_CACHE_VERSION. |
+| **Multi-video group (v0.19)** | Batch upload creates VideoGroup; concurrent per-file processing (semaphore=5, independent DB sessions); PUT /params on one video triggers same params + pipeline for all pending siblings; frontend history stacked cards + Header dropdown switching + search scope selector + independent detection panel |
 | **AICheck deep scan on upload** | AICheck CLI --deep auto-runs on upload/register/reuse as async task. Covers metadata + SEI + C2PA + pixel-level watermark. Results in Video.ai_detect_result JSONB, displayed in frontend VideoInfoCard. Non-blocking — upload completes immediately. |
 | **Source analysis rule engine** | classify_video_source() uses EXIF device data + file naming patterns + media structure (resolution/fps/audio) to classify origin. No ML dependency — pure heuristics, <10ms. Triggers on first GET /metadata, caches result. |
 | **Class-local track numbering** | Display shows sequential class-local IDs (person 1, car 2) while API uses raw track_id internally |
@@ -591,7 +600,7 @@ Vite 开发代理:
 
 | Module | Status | Note |
 |---|---|---|
-| Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 16 ops, search/summary decoupled, gates/deps, events-driven |
+| Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 15 ops, search/summary decoupled, gates/deps, events-driven |
 | Track Encoding (crop→embed) | ✅ | runners/track_encode.py: 最佳帧 crop → Qwen3-VL-Embedding 2048-dim。跳过头尾帧 FFmpeg fallback（直接使用 cache 帧），长视频 track_encode ~43s |
 | Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
 | License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
@@ -614,15 +623,16 @@ Vite 开发代理:
 | Scene Thumbnails Export | ✅ | 全部/指定场景缩略图 → zip |
 | Multi-Format Support | ✅ | 两层: remux (-c copy) + proxy (NVENC H.264, 按需) |
 | Performance Optimizations | ✅ | embedder 可配置 3 档 (336-672), PIL resize 8线程并行, batch 512, NVDEC MJPEG pipe 默认启用, keyframes→frame_encode 生产者-消费者并发, float32 |
-| API Routes | ✅ | 27 endpoints: +face/data +face/thumbnail +metadata cache +source_analysis +ai_detect |
+| API Routes | ✅ | 28 endpoints: +batch upload +face/data +face/thumbnail +metadata cache +source_analysis +ai_detect |
 | Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值 |
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
+| Multi-Video Group (v0.19) | ✅ | POST /videos/upload/batch; VideoGroup ORM; 组参数同步; frontend 历史堆叠/展开/切换/跨视频搜索/独立检测面板 |
 | Settings API + Keys | ✅ | core/settings_service.py, GET/PUT /api/v1/settings |
 | Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 20 components + 8 hooks + labels.ts incl Detection/Timeline/Metadata/Export/ImageSearch |
 | Config Schema | ✅ | Pydantic v2 validation for config.yaml |
 | Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |
-| DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration, 11 tables |
+| DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration, 12 tables (+video_groups) |
 | TransNetV2 Segmenter | ✅ | Neural scene boundary detection |
 | faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
 | OCR | 📋 | PaddleOCR available as plate recognition alternative (plugins/plate/paddle_plate.py) |

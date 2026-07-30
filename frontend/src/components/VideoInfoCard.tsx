@@ -201,29 +201,21 @@ export function VideoInfoCard({
    ════════════════════════════════════════════════════════════ */
 
 function SourceAnalysisItems({ sa }: { sa: SourceAnalysis }) {
-  const confLabel = sa.confidence === "high" ? "高" : sa.confidence === "medium" ? "中" : "低";
-  const confIcon = sa.confidence === "high" ? "✓" : sa.confidence === "medium" ? "~" : "?";
   const survLabel = sa.surveillance_brand
     ? BRAND_LABELS[sa.surveillance_brand as keyof typeof BRAND_LABELS] ?? sa.surveillance_brand
     : null;
 
   return (
     <>
-      <div className="vif-item" style={{ gridColumn: "1 / -1" }}>
+      <div className="vif-item">
         <span className="vif-lbl">来源分析</span>
         <span className="vif-val">{sa.source_label}{survLabel ? ` · ${survLabel}` : ""}</span>
       </div>
-      <div className="vif-item"><span className="vif-lbl">置信度</span><span className="vif-val">{confIcon} {confLabel}</span></div>
-      {sa.evidence.length > 0 && (
-        <div className="vif-item" style={{ gridColumn: "1 / -1" }}>
-          <span className="vif-lbl">依据</span>
-          <span className="vif-val" style={{ fontSize: 10, lineHeight: 1.4 }}>
-            {sa.evidence.join("；")}
-          </span>
-        </div>
-      )}
       {sa.surveillance_method && (
-        <div className="vif-item"><span className="vif-lbl">识别方式</span><span className="vif-val">{sa.surveillance_method}</span></div>
+        <div className="vif-item">
+          <span className="vif-lbl">识别方式</span>
+          <span className="vif-val">{sa.surveillance_method}</span>
+        </div>
       )}
     </>
   );
@@ -236,45 +228,42 @@ function SourceAnalysisItems({ sa }: { sa: SourceAnalysis }) {
 function AIDetectItems({ ad }: { ad: AIDetectResult }) {
   const isAi = ad.verdict === "ai_generated" || ad.verdict === "likely_ai";
   const verdictLabel = ad.verdict === "ai_generated" ? "AI 生成" : ad.verdict === "likely_ai" ? "疑似 AI" : ad.verdict === "no_signal" ? "无信号" : "—";
-  const verdictColor = isAi ? "text-red-600" : "text-green-600";
+  const hasSignals = ad.signals.length > 0;
 
   return (
     <>
-      <div className="vif-item" style={{ gridColumn: "1 / -1" }}>
+      <div className="vif-item">
         <span className="vif-lbl">
           AI 检测{ad.deep_analysis_used ? " [深度]" : ""}
-          {ad.software_info.length > 0 && <span className="text-gray-400 font-normal ml-1">({ad.software_info.map(s => s[0]).join(", ")})</span>}
         </span>
-        <span className={`vif-val ${verdictColor}`}>{isAi ? "⚠" : "✓"} {verdictLabel}</span>
+        <span className="vif-val">{isAi ? "⚠ " : "✓ "}{verdictLabel}</span>
       </div>
-      {ad.score != null && <div className="vif-item"><span className="vif-lbl">分数</span><span className="vif-val">{ad.score >= 0.5 ? `${(ad.score * 100).toFixed(0)}%` : `${(ad.score * 100).toFixed(1)}%`}</span></div>}
-
-      {/* High-confidence signals */}
-      {ad.signals.filter(s => s.confidence === "high").map((s, i) => (
-        <div key={i} className="vif-item" style={{ gridColumn: "1 / -1" }}>
-          <span className="vif-lbl text-red-500">{s.source}</span>
-          <span className="vif-val">
-            {s.tool ? ` → ${s.tool}` : ""}
-            {s.description && <span className="block text-[10px] text-gray-400">{s.description}</span>}
-          </span>
+      {ad.score != null && (
+        <div className="vif-item">
+          <span className="vif-lbl">分数</span>
+          <span className="vif-val">{ad.score >= 0.5 ? `${(ad.score * 100).toFixed(0)}%` : `${(ad.score * 100).toFixed(1)}%`}</span>
         </div>
-      ))}
-
-      {/* Medium-confidence signals */}
-      {ad.signals.filter(s => s.confidence === "medium").map((s, i) => (
-        <div key={i} className="vif-item" style={{ gridColumn: "1 / -1" }}>
-          <span className="vif-lbl text-amber-500">{s.source}</span>
-          <span className="vif-val">
-            {s.tool ? ` → ${s.tool}` : ""}
-            {s.description && <span className="block text-[10px] text-gray-400">{s.description}</span>}
-          </span>
-        </div>
-      ))}
-
-      {ad.verdict === "no_signal" && ad.signals.length === 0 && (
-        <div className="vif-item" style={{ gridColumn: "1 / -1" }}>
+      )}
+      {hasSignals ? (
+        ad.signals.map((s, i) => (
+          <div key={i} className="vif-item">
+            <span className="vif-lbl">{s.source}</span>
+            <span className="vif-val">
+              {s.tool && <span className="text-[10px]">{s.tool}</span>}
+              {s.description && <span className="block text-[10px] text-gray-400">{s.description}</span>}
+            </span>
+          </div>
+        ))
+      ) : (
+        <div className="vif-item">
           <span className="vif-lbl">检测项</span>
-          <span className="vif-val text-[10px] text-gray-400">C2PA / H.264 SEI / MP4 元数据</span>
+          <span className="vif-val text-[10px]">C2PA / H.264 SEI / MP4 元数据</span>
+        </div>
+      )}
+      {ad.software_info.length > 0 && (
+        <div className="vif-item">
+          <span className="vif-lbl">检测工具</span>
+          <span className="vif-val text-[10px]">{ad.software_info.map(s => s[0]).join(", ")}</span>
         </div>
       )}
     </>

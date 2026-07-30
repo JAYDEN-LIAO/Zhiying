@@ -46,6 +46,8 @@ export interface VideoListItem {
   sample_fps: number;
   language: string;
   encode_profile: string | null;
+  /* ── Group (v0.19 多视频处理) ── */
+  group_id: string | null;
   /* ── Format info (v0.13) ── */
   container_format: string | null;
   video_codec: string | null;
@@ -115,6 +117,8 @@ export interface VideoResponse {
   summary_detail: string;
   encode_profile: string | null;
   status_detail: string | null;
+  /* ── Group (v0.19 多视频处理) ── */
+  group_id: string | null;
   qc_result: unknown | null;
   summary: VideoSummary | null;
   /* ── Format info (v0.13) ── */
@@ -210,6 +214,13 @@ export interface PipelineParams {
   caption_with_context: boolean;
   summary_detail: string;
   encode_profile: string | null;
+}
+
+/* ── Video Group (v0.19 多视频处理) ── */
+
+export interface VideoGroup {
+  groupId: string;
+  videoIds: string[];
 }
 
 /* ── Settings ── */

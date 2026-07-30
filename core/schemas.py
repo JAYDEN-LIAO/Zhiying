@@ -120,6 +120,9 @@ class VideoCreate(BaseModel):
     caption_with_context: bool  = Field(default=True)
     summary_detail: str         = Field(default="standard", pattern=r"^(brief|standard|detailed)$")
 
+    # ── 分组 (v0.19) ──
+    group_id: uuid.UUID | None  = Field(default=None, description="所属分组 ID，批量上传时设置")
+
 
 class PipelineParams(BaseModel):
     """Pipeline 启动参数 — 四级参数统一校验模型。
@@ -189,6 +192,17 @@ class PipelineParams(BaseModel):
 # 响应 DTO
 # ═══════════════════════════════════════════════════════════
 
+class VideoGroupResponse(BaseModel):
+    """视频分组响应 — 映射 VideoGroup ORM 模型。"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str | None = None
+    video_ids: list[uuid.UUID] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
 class VideoResponse(BaseModel):
     """视频详情响应 — 完整映射 Video ORM 模型。"""
     model_config = ConfigDict(from_attributes=True)
@@ -225,6 +239,9 @@ class VideoResponse(BaseModel):
     summary_detail: str
 
     status_detail: str | None      = None
+
+    # ── 分组 (v0.19) ──
+    group_id: uuid.UUID | None     = None
 
     summary: VideoSummary | None   = None
 
@@ -267,6 +284,9 @@ class VideoListItem(BaseModel):
     search_index_enabled: bool     = True
     sample_fps: float              = 1.0
     language: str                  = "auto"
+
+    # ── 分组 (v0.19) ──
+    group_id: uuid.UUID | None     = None
 
     # ── 格式信息 (v0.13) ──
     container_format: str | None        = None

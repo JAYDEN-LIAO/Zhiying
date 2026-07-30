@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api } from "./services/api";
-import type { VideoListItem, VideoResponse } from "./types";
+import type { VideoListItem, VideoResponse, VideoGroup } from "./types";
 import { fmtDuration } from "./utils/helpers";
 import { IconDownload } from "./components/icons";
 import { ExportMenu } from "./components/ExportMenu";
@@ -29,7 +29,6 @@ export default function Dashboard() {
   const [currentPage, setCurrentPage] = useState<PageView>("dashboard");
   const [activePanel, setActivePanel] = useState<PanelType | null>(null);
   const navigate = useCallback((page: PageView) => { setCurrentPage(page); setActivePanel(null); }, []);
-  const togglePanel = useCallback((panel: PanelType) => { setActivePanel((p) => (p === panel ? null : panel)); }, []);
 
   /* ── Video selection ── */
   const [currentVideoId, setCurrentVideoId] = useState<string | null>(null);
@@ -41,6 +40,26 @@ export default function Dashboard() {
   const [seekTarget, setSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
   const [showExport, setShowExport] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  /* ── Group state (v0.19 多视频处理) ── */
+  const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
+  const [currentGroupVideos, setCurrentGroupVideos] = useState<string[]>([]);
+  const [drillGroupId, setDrillGroupId] = useState<string | null>(null);
+  const [detectionVideoId, setDetectionVideoId] = useState<string | null>(null);
+  const [detectionVideo, setDetectionVideo] = useState<VideoResponse | null>(null);
+
+  /* ── Panel toggle (must be after currentVideo / drillGroupId declarations) ── */
+  const togglePanel = useCallback((panel: PanelType) => {
+    const isCurrentlyOpen = activePanel === panel;
+    setActivePanel(isCurrentlyOpen ? null : panel);
+    if (panel === "history") {
+      if (isCurrentlyOpen) {
+        setDrillGroupId(null);
+      } else {
+        setDrillGroupId(currentVideo?.group_id ?? null);
+      }
+    }
+  }, [activePanel, currentVideo?.group_id]);
 
   /* ── Compute derived booleans ── */
   const isPending = currentVideo?.status === "pending";
@@ -80,12 +99,22 @@ export default function Dashboard() {
   // Stream readiness
   const streamReady = useStreamReady(currentVideo, hevcOk);
 
-  // Detection data
+  // Detection video sync (v0.19 — 独立于当前播放视频)
+  useEffect(() => {
+    if (!detectionVideoId) { setDetectionVideo(null); return; }
+    const found = videos.find(v => v.id === detectionVideoId);
+    if (found) api.getVideo(detectionVideoId).then(setDetectionVideo);
+  }, [detectionVideoId, videos]);
+
+  // Detection data (使用 detectionVideoId，若未设置则跟随 currentVideoId)
+  const actualDetectionId = detectionVideoId ?? currentVideoId;
+  const actualDetectionFace = detectionVideo?.face_enabled ?? currentVideo?.face_enabled ?? false;
+  const actualDetectionPlate = detectionVideo?.plate_enabled ?? currentVideo?.plate_enabled ?? false;
   const { detectionData, faceData, plateData } = useDetectionData(
-    currentVideoId,
+    actualDetectionId,
     showDetection,
-    currentVideo?.face_enabled ?? false,
-    currentVideo?.plate_enabled ?? false,
+    actualDetectionFace,
+    actualDetectionPlate,
   );
 
   // Pipeline switches
@@ -122,6 +151,31 @@ export default function Dashboard() {
       .catch(() => {});
   }, [listKey]);
 
+  /* ── Periodic refresh for real-time status updates ── */
+  useEffect(() => {
+    const interval = setInterval(() => {
+      api.listVideos().then((data) => { if (data) setVideos(data); }).catch(() => {});
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  /* ── Rebuild videoGroups from API data (persist across reload) ── */
+  useEffect(() => {
+    const groupMap = new Map<string, string[]>();
+    for (const v of videos) {
+      if (v.group_id) {
+        const existing = groupMap.get(v.group_id) ?? [];
+        existing.push(v.id);
+        groupMap.set(v.group_id, existing);
+      }
+    }
+    const rebuilt: VideoGroup[] = [];
+    for (const [groupId, videoIds] of groupMap) {
+      rebuilt.push({ groupId, videoIds });
+    }
+    setVideoGroups(rebuilt);
+  }, [videos]);
+
   /* ── Seek ── */
   useEffect(() => {
     if (!seekTarget || !videoRef.current) return;
@@ -132,33 +186,84 @@ export default function Dashboard() {
     }
   }, [seekTarget]);
 
-  /* ── Video selection ── */
-  const handleSelect = useCallback((id: string) => {
+  /* ── Video selection (v0.19 支持分组) ── */
+  const handleSelect = useCallback((id: string, groupId?: string) => {
     if (id === currentVideoId) return;
     setCurrentVideoId(id);
     setCurrentVideo(null);
     setHasPendingParams(false);
     setSelectedTrackId(null);
     setClassFilter(null);
-  }, [currentVideoId]);
+    // 优先使用传入的 groupId，否则从 videos 列表查找视频自身的 group_id
+    const resolvedGroupId = groupId ?? videos.find(v => v.id === id)?.group_id ?? undefined;
+    if (resolvedGroupId) {
+      const group = videoGroups.find(g => g.groupId === resolvedGroupId);
+      setCurrentGroupVideos(group?.videoIds ?? [id]);
+    } else {
+      setCurrentGroupVideos([id]);
+    }
+  }, [currentVideoId, videoGroups, videos]);
 
   const handleDelete = useCallback((deletedId: string) => {
     if (currentVideoId === deletedId) { setCurrentVideoId(null); setCurrentVideo(null); }
+    // ★ 同步清理 videoGroups
+    setVideoGroups(prev => {
+      const updated = prev.map(g => ({
+        ...g,
+        videoIds: g.videoIds.filter(id => id !== deletedId),
+      })).filter(g => g.videoIds.length > 0);
+      return updated;
+    });
   }, [currentVideoId]);
 
-  /* ── Upload ── */
+  /* ── Group video switch (v0.19) ── */
+  const handleGroupVideoSwitch = useCallback((videoId: string) => {
+    if (videoId === currentVideoId) return;
+    const group = videoGroups.find(g => g.videoIds.includes(videoId));
+    if (group) {
+      setCurrentGroupVideos(group.videoIds);
+    } else {
+      setCurrentGroupVideos([videoId]);
+    }
+    setCurrentVideoId(videoId);
+    setCurrentVideo(null);
+    setHasPendingParams(false);
+    setSelectedTrackId(null);
+    setClassFilter(null);
+    setSeekTarget(null);
+    // 检测面板跟随切换（如未独立设置）
+    if (!detectionVideoId || group?.videoIds.includes(detectionVideoId)) {
+      setDetectionVideoId(null);
+    }
+  }, [currentVideoId, videoGroups, detectionVideoId]);
+
+  /* ── Upload (v0.19 支持多选) ── */
   const handleUpload = useCallback(() => {
+    // 从设置页点"开始"时先切回工作台
+    setCurrentPage("dashboard");
+    setActivePanel(null);
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".mp4,.mov,.avi,.mkv,.webm";
+    input.multiple = true;
     input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
+      const files = input.files;
+      if (!files || files.length === 0) return;
       setIsUploading(true);
       try {
-        const result = await api.upload(file);
-        setCurrentVideoId(result.id);
-        setCurrentVideo(result);
+        if (files.length === 1) {
+          const result = await api.upload(files[0]);
+          setCurrentVideoId(result.id);
+          setCurrentVideo(result);
+        } else {
+          const results = await api.uploadBatch(Array.from(files));
+          setCurrentVideoId(results[0].id);
+          setCurrentVideo(results[0]);
+          setVideoGroups(prev => [...prev, {
+            groupId: results[0].group_id!,
+            videoIds: results.map(r => r.id),
+          }]);
+        }
         setListKey((k) => k + 1);
         setHasPendingParams(true);
         setActivePanel("params");
@@ -224,14 +329,24 @@ export default function Dashboard() {
 
         <SlideOutPanel open={activePanel === "history"} width={380}>
           <div className="h-full flex flex-col slide-panel-content" style={{ paddingLeft: 12 }}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
-              <h2 className="font-bold text-white text-base">历史记录</h2>
-              <button onClick={() => setActivePanel(null)} className="text-white/50 hover:text-white transition-colors cursor-pointer">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-white/10 shrink-0">
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <h2 className="font-bold text-white text-base shrink-0">历史记录</h2>
+                {drillGroupId && (
+                  <button onClick={() => setDrillGroupId(null)}
+                    className="text-[11px] text-blue-300 hover:text-white cursor-pointer flex items-center gap-0.5 shrink-0 transition-colors">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M19 12H5" /><polyline points="12 19 5 12 12 5" /></svg>
+                    返回全部
+                  </button>
+                )}
+              </div>
+              <button onClick={() => setActivePanel(null)} className="text-white/50 hover:text-white transition-colors cursor-pointer shrink-0">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
               </button>
             </div>
             <HistoryPanelContent videos={videos} currentVideoId={currentVideoId} loading={false}
-              onSelect={(id) => { handleSelect(id); setActivePanel(null); }} onDelete={handleDelete} />
+              videoGroups={videoGroups} drillGroupId={drillGroupId} onDrillChange={setDrillGroupId}
+              onSelect={(id: string, groupId?: string) => { handleSelect(id, groupId); if (!groupId) setActivePanel(null); }} onDelete={handleDelete} />
           </div>
         </SlideOutPanel>
       </div>
@@ -264,12 +379,21 @@ export default function Dashboard() {
             />
           </main>
 
-          {/* ── Right Panels ── */}
+          {/* ── Right Panels (v0.19 组感知) ── */}
           <RightPanel
             videoId={currentVideoId} video={currentVideo}
             detectionData={detectionData} faceData={faceData} plateData={plateData}
             selectedTrackId={selectedTrackId} classFilter={classFilter}
             onClassFilterChange={setClassFilter} onTrackSelect={handleTrackSelect}
+            groupVideos={currentGroupVideos} videos={videos}
+            detectionVideoId={detectionVideoId}
+            onDetectionVideoChange={(vid) => {
+              setDetectionVideoId(vid);
+              // 同步 detectionVideo 对象
+              if (vid) api.getVideo(vid).then(setDetectionVideo);
+              else setDetectionVideo(null);
+            }}
+            onGroupVideoSwitch={handleGroupVideoSwitch}
             onSeekTo={(start, end) => {
               setSeekTarget({ start, end });
               // Direct seek in click context — avoids autoplay-blocked play()

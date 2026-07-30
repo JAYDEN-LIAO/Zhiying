@@ -46,19 +46,6 @@ const SCENE_PRESETS: Record<string, {
 
 const CONTENT_TYPES = Object.entries(SCENE_PRESETS).map(([value, { label }]) => ({ value, label }));
 
-const LANGUAGES = [
-  { value: "auto", label: "自动" },
-  { value: "zh", label: "中文" },
-  { value: "en", label: "English" },
-  { value: "ja", label: "日本語" },
-  { value: "ko", label: "한국어" },
-] as const;
-
-const SUMMARY_DETAILS = [
-  { value: "brief", label: "简要" },
-  { value: "standard", label: "标准" },
-  { value: "detailed", label: "详细" },
-] as const;
 
 const MODULE_AVAILABLE: Record<string, boolean> = {
   audio: false,
@@ -95,20 +82,14 @@ const COMMON_CLASSES = [
 type ModuleKey = "vision" | "audio" | "ocr" | "caption" | "detection";
 
 interface AdvancedParams {
-  language: string;
   sampleFps: number;
   segmentThreshold: number;
-  captionWithContext: boolean;
-  summaryDetail: string;
   encodeProfile: string | null;
 }
 
 const DEFAULT_ADVANCED: AdvancedParams = {
-  language: "auto",
   sampleFps: 1.0,
   segmentThreshold: 0.5,
-  captionWithContext: true,
-  summaryDetail: "standard",
   encodeProfile: null,
 };
 
@@ -191,10 +172,7 @@ export function ParameterPanel({
     // 功能开关
     g.summary = !modules.caption;
     // 高级参数
-    g.language = !modules.audio;
     g.sampleFps = !modules.vision;
-    g.captionWithContext = !modules.caption;
-    g.summaryDetail = !functions.summary || !modules.caption;
     g.detectionClasses = !modules.detection;
     return g;
   }, [modules, functions]);
@@ -289,11 +267,11 @@ export function ParameterPanel({
       search_index_enabled: functions.searchIndex,
       summary_enabled: functions.summary,
       summary_mode: summaryMode,
-      language: advanced.language,
+      language: "auto",
       sample_fps: advanced.sampleFps,
       segment_threshold: advanced.segmentThreshold,
-      caption_with_context: advanced.captionWithContext,
-      summary_detail: advanced.summaryDetail,
+      caption_with_context: true,
+      summary_detail: "standard",
       encode_profile: advanced.encodeProfile,
     });
 
@@ -349,18 +327,27 @@ export function ParameterPanel({
 
   /* ── 切换开关子组件 ── */
   const Toggle = ({ checked, onChange, disabled }: { checked: boolean; onChange: () => void; disabled: boolean }) => (
-    <div
-      className={`relative w-9 h-5 rounded-full transition-colors duration-200 ${
-        disabled ? "bg-gray-150 cursor-not-allowed opacity-40" : checked ? "bg-[#1a65e1] cursor-pointer" : "bg-gray-200 cursor-pointer"
-      }`}
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-all duration-300 ease-out
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a2740]
+        ${disabled
+          ? "bg-white/10 cursor-not-allowed"
+          : checked
+            ? "bg-blue-500 cursor-pointer shadow-[0_0_10px_rgba(59,130,246,0.35)]"
+            : "bg-white/15 cursor-pointer hover:bg-white/25"
+        }`}
       onClick={() => !disabled && onChange()}
     >
-      <div
-        className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200 ${
-          checked ? "translate-x-[18px]" : "translate-x-[2px]"
-        }`}
+      <span
+        style={{ backgroundColor: disabled ? "rgba(255,255,255,0.4)" : "#fff" }}
+        className={`inline-block h-5 w-5 rounded-full shadow-md transition-all duration-300 ease-out
+          ${checked ? "translate-x-[22px]" : "translate-x-0.5"}`}
       />
-    </div>
+    </button>
   );
 
   const presetLabel = sceneType === "custom" ? "自定义" : (SCENE_PRESETS[sceneType]?.label ?? "自定义");
@@ -379,7 +366,7 @@ export function ParameterPanel({
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
         {/* L1: 场景类型 */}
         <section>
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">场景类型</h3>
+          <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">场景类型</h3>
           <div className="flex gap-1.5 flex-wrap">
             {CONTENT_TYPES.map((ct) => (
               <button
@@ -387,7 +374,7 @@ export function ParameterPanel({
                 onClick={() => handleSceneTypeChange(ct.value as ContentType)}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
                   sceneType === ct.value
-                    ? "bg-[#1a65e1] text-white shadow-sm"
+                    ? "bg-blue-600 text-white shadow-sm"
                     : "bg-gray-100/60 text-gray-600 hover:bg-gray-100"
                 }`}
               >
@@ -398,7 +385,7 @@ export function ParameterPanel({
               onClick={() => handleSceneTypeChange("custom" as ContentType)}
               className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
                 sceneType === "custom"
-                  ? "bg-[#1a65e1] text-white shadow-sm"
+                  ? "bg-blue-600 text-white shadow-sm"
                   : "bg-gray-100/60 text-gray-600 hover:bg-gray-100"
               }`}
             >
@@ -409,7 +396,7 @@ export function ParameterPanel({
 
         {/* L2: 感知模块 */}
         <section>
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">感知模块</h3>
+          <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">感知模块</h3>
           <div className="space-y-1.5">
             {([
               { key: "vision" as ModuleKey, label: "视觉分析", hint: "帧处理总开关" },
@@ -429,10 +416,10 @@ export function ParameterPanel({
                   }`}
                 >
                   <div className="flex-1 min-w-0">
-                    <span className={`text-xs font-medium block ${isGrayed ? "text-gray-350" : isOn ? "text-gray-900" : "text-gray-500"}`}>
+                    <span className={`text-xs font-medium block ${isGrayed ? "text-gray-400" : isOn ? "text-gray-900" : "text-gray-600"}`}>
                       {mod.label}
                     </span>
-                    <span className="text-[10px] text-gray-400 truncate block">{mod.hint}</span>
+                    <span className="text-[10px] text-gray-500 truncate block">{mod.hint}</span>
                   </div>
                   <Toggle
                     checked={isOn}
@@ -450,7 +437,7 @@ export function ParameterPanel({
               grayed.detectionClasses ? "border-gray-150 bg-gray-50/30 opacity-40" : "border-blue-300 bg-blue-50/30"
             }`}>
               <div className="flex items-center justify-between mb-2">
-                <span className={`text-[11px] font-medium ${grayed.detectionClasses ? "text-gray-350" : "text-gray-500"}`}>
+                <span className={`text-[11px] font-medium ${grayed.detectionClasses ? "text-gray-400" : "text-gray-600"}`}>
                   目标类别
                 </span>
                 <div className="flex gap-1">
@@ -459,7 +446,7 @@ export function ParameterPanel({
                     disabled={grayed.detectionClasses}
                     className={`px-2 py-0.5 text-[10px] font-medium rounded-md transition-all ${
                       grayed.detectionClasses ? "text-gray-300 cursor-not-allowed" :
-                      detectionClasses === null ? "bg-[#1a65e1] text-white" : "bg-gray-100/60 text-gray-500 hover:bg-gray-100"
+                      detectionClasses === null ? "bg-blue-600 text-white" : "bg-gray-100/80 text-gray-600 hover:bg-gray-200/80"
                     }`}
                   >
                     全部
@@ -469,7 +456,7 @@ export function ParameterPanel({
                     disabled={grayed.detectionClasses}
                     className={`px-2 py-0.5 text-[10px] font-medium rounded-md transition-all ${
                       grayed.detectionClasses ? "text-gray-300 cursor-not-allowed" :
-                      detectionClasses !== null ? "bg-[#1a65e1] text-white" : "bg-gray-100/60 text-gray-500 hover:bg-gray-100"
+                      detectionClasses !== null ? "bg-blue-600 text-white" : "bg-gray-100/80 text-gray-600 hover:bg-gray-200/80"
                     }`}
                   >
                     自定义
@@ -487,7 +474,7 @@ export function ParameterPanel({
                         <span
                           key={cls}
                           onClick={() => setDetectionClasses((prev) => (prev ?? []).filter((c) => c !== cls))}
-                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-[#1a65e1] text-white rounded-md cursor-pointer hover:bg-blue-700 transition-colors"
+                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-blue-600 text-white rounded-md cursor-pointer hover:bg-blue-700 transition-colors"
                         >
                           {zh(cls)}
                           <svg className="w-2.5 h-2.5 opacity-70" viewBox="0 0 12 12" fill="currentColor">
@@ -556,10 +543,10 @@ export function ParameterPanel({
             }`}>
               <div className="flex items-center justify-between">
                 <div className="flex-1 min-w-0">
-                  <span className={`text-[11px] font-medium block ${!MODULE_AVAILABLE.face ? "text-gray-350" : "text-gray-500"}`}>
+                  <span className={`text-[11px] font-medium block ${!MODULE_AVAILABLE.face ? "text-gray-400" : "text-gray-600"}`}>
                     人脸识别
                   </span>
-                  <span className="text-[10px] text-gray-400 truncate block">
+                  <span className="text-[10px] text-gray-500 truncate block">
                     {MODULE_AVAILABLE.face ? "SCRFD 检测 + ArcFace 身份聚类" : "插件未启用"}
                   </span>
                 </div>
@@ -579,10 +566,10 @@ export function ParameterPanel({
             }`}>
               <div className="flex items-center justify-between">
                 <div className="flex-1 min-w-0">
-                  <span className={`text-[11px] font-medium block ${!MODULE_AVAILABLE.plate ? "text-gray-350" : "text-gray-500"}`}>
+                  <span className={`text-[11px] font-medium block ${!MODULE_AVAILABLE.plate ? "text-gray-400" : "text-gray-600"}`}>
                     车牌识别
                   </span>
-                  <span className="text-[10px] text-gray-400 truncate block">
+                  <span className="text-[10px] text-gray-500 truncate block">
                     {MODULE_AVAILABLE.plate ? "PaddleOCR 车牌检测与文字识别" : "插件未启用"}
                   </span>
                 </div>
@@ -598,7 +585,7 @@ export function ParameterPanel({
 
         {/* L3: 功能开关 */}
         <section>
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">功能开关</h3>
+          <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">功能开关</h3>
           <div className="space-y-1.5">
             {([
               { key: "searchIndex", label: "搜索索引", hint: "建立向量索引，支持语义搜索" },
@@ -615,10 +602,10 @@ export function ParameterPanel({
                   }`}
                 >
                   <div className="flex-1 min-w-0">
-                    <span className={`text-xs font-medium block ${isGrayed ? "text-gray-350" : isOn ? "text-gray-900" : "text-gray-500"}`}>
+                    <span className={`text-xs font-medium block ${isGrayed ? "text-gray-400" : isOn ? "text-gray-900" : "text-gray-600"}`}>
                       {fn.label}
                     </span>
-                    <span className="text-[10px] text-gray-400 truncate block">{fn.hint}</span>
+                    <span className="text-[10px] text-gray-500 truncate block">{fn.hint}</span>
                   </div>
                   <Toggle
                     checked={isOn}
@@ -671,34 +658,12 @@ export function ParameterPanel({
 
         {/* L4: 高级参数 */}
         <section>
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">高级参数</h3>
+          <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">高级参数</h3>
           <div className="space-y-3">
-            {/* 识别语言 */}
-            <div>
-              <label className={`text-xs mb-1 block ${grayed.language ? "text-gray-300" : "text-gray-400"}`}>
-                识别语言
-              </label>
-              <div className="flex gap-1.5 flex-wrap">
-                {LANGUAGES.map((l) => (
-                  <button
-                    key={l.value}
-                    onClick={() => !grayed.language && updateAdvanced({ language: l.value })}
-                    disabled={grayed.language}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
-                      grayed.language ? "bg-gray-50 text-gray-300 cursor-not-allowed" :
-                      advanced.language === l.value ? "bg-[#1a65e1] text-white shadow-sm" : "bg-gray-100/60 text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    {l.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {/* 采样帧率 */}
             <div>
               <label className={`text-xs mb-1 block ${grayed.sampleFps ? "text-gray-300" : "text-gray-400"}`}>
-                采样帧率 <span className="font-mono">{advanced.sampleFps.toFixed(1)} fps</span>
+                采样帧率 <span className="font-mono text-gray-600">{advanced.sampleFps.toFixed(1)} fps</span>
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -709,7 +674,7 @@ export function ParameterPanel({
                   max={3.0}
                   step={0.5}
                   disabled={grayed.sampleFps}
-                  className={`flex-1 ${grayed.sampleFps ? "opacity-30" : "accent-[#1a65e1]"}`}
+                  className={`flex-1 ${grayed.sampleFps ? "opacity-30" : "accent-blue-500"}`}
                 />
               </div>
               <div className="flex justify-between text-[9px] text-gray-350 mt-0.5">
@@ -719,7 +684,7 @@ export function ParameterPanel({
 
             {/* 场景切换敏感度 */}
             <div>
-              <label className="text-xs text-gray-400 mb-1 block">
+              <label className="text-xs text-gray-500 mb-1 block">
                 场景切换敏感度 <span className="font-mono">{advanced.segmentThreshold.toFixed(1)}</span>
               </label>
               <div className="flex items-center gap-2">
@@ -730,7 +695,7 @@ export function ParameterPanel({
                   min={0.2}
                   max={0.8}
                   step={0.1}
-                  className="flex-1 accent-[#1a65e1]"
+                  className="flex-1 accent-blue-500"
                 />
               </div>
               <div className="flex justify-between text-[9px] text-gray-350 mt-0.5">
@@ -738,43 +703,9 @@ export function ParameterPanel({
               </div>
             </div>
 
-            {/* 记忆上下文 */}
-            <div className="flex items-center justify-between">
-              <span className={`text-xs ${grayed.captionWithContext ? "text-gray-300" : "text-gray-400"}`}>
-                记忆上下文
-              </span>
-              <Toggle
-                checked={advanced.captionWithContext}
-                onChange={() => updateAdvanced({ captionWithContext: !advanced.captionWithContext })}
-                disabled={grayed.captionWithContext}
-              />
-            </div>
-
-            {/* 摘要详细度 */}
-            <div>
-              <label className={`text-xs mb-1 block ${grayed.summaryDetail ? "text-gray-300" : "text-gray-400"}`}>
-                摘要详细度
-              </label>
-              <div className="flex gap-1.5 flex-wrap">
-                {SUMMARY_DETAILS.map((d) => (
-                  <button
-                    key={d.value}
-                    onClick={() => !grayed.summaryDetail && updateAdvanced({ summaryDetail: d.value })}
-                    disabled={grayed.summaryDetail}
-                    className={`px-3 py-1 text-xs font-medium rounded-lg transition-all ${
-                      grayed.summaryDetail ? "bg-gray-50 text-gray-300 cursor-not-allowed" :
-                      advanced.summaryDetail === d.value ? "bg-[#1a65e1] text-white shadow-sm" : "bg-gray-100/60 text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    {d.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {/* 处理速度（编码预设） */}
             <div>
-              <label className="text-xs text-gray-400 mb-1 block">
+              <label className="text-xs text-gray-500 mb-1 block">
                 处理速度
               </label>
               <div className="flex gap-1.5">
@@ -788,7 +719,7 @@ export function ParameterPanel({
                     onClick={() => updateAdvanced({ encodeProfile: opt.key })}
                     className={`flex-1 px-2 py-2 rounded-lg transition-all border text-center ${
                       advanced.encodeProfile === opt.key
-                        ? "bg-[#1a65e1] border-[#1a65e1] text-white shadow-sm"
+                        ? "bg-blue-600 border-blue-600 text-white shadow-sm"
                         : advanced.encodeProfile === null && opt.key === "balanced"
                           ? "bg-blue-50 border-blue-200 text-gray-600"
                           : "bg-gray-100/40 border-gray-200/60 text-gray-500 hover:border-gray-300"
@@ -821,7 +752,7 @@ export function ParameterPanel({
         <button
           onClick={handleSubmit}
           disabled={submitting}
-          className="px-5 py-2 text-xs font-medium bg-[#1a65e1] text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors shadow-sm"
+          className="px-5 py-2 text-xs font-medium bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg hover:from-blue-600 hover:to-blue-700 disabled:opacity-50 transition-all shadow-sm"
         >
           {submitting ? "启动中..." : "参数启动"}
         </button>

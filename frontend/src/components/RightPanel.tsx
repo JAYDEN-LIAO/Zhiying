@@ -1,14 +1,13 @@
 /* ════════════════════════════════════════════════════════════
    RightPanel — two 340px columns in 5:2.5:2.5 layout
-   Left column:  DetectionPanel (major, full height)
-   Right column: SearchCard (major, flex:5) + SummaryCard (minor, flex:2.5) + InfoCard (minor, flex:2.5)
+   v0.19: group-aware (passes groupVideos + detectionVideoId to DetectionPanel)
    ════════════════════════════════════════════════════════════ */
 
 import { VideoInfoCard } from "./VideoInfoCard";
 import { VideoSummaryCard } from "./VideoSummaryCard";
 import { VideoSearchCard } from "./VideoSearchCard";
 import { DetectionPanel } from "./DetectionPanel";
-import type { VideoResponse, DetectionData, FaceData, PlateData } from "../types";
+import type { VideoResponse, VideoListItem, DetectionData, FaceData, PlateData } from "../types";
 
 interface Props {
   videoId: string | null;
@@ -21,6 +20,12 @@ interface Props {
   onClassFilterChange: (cls: string | null) => void;
   onTrackSelect: (trackId: number, className: string, seekTo?: number) => void;
   onSeekTo: (start: number, end: number | null) => void;
+  /* ── v0.19 组感知 ── */
+  groupVideos?: string[];
+  videos?: VideoListItem[];
+  detectionVideoId?: string | null;
+  onDetectionVideoChange?: (videoId: string | null) => void;
+  onGroupVideoSwitch?: (videoId: string) => void;
 }
 
 export function RightPanel({
@@ -34,6 +39,11 @@ export function RightPanel({
   onClassFilterChange,
   onTrackSelect,
   onSeekTo,
+  groupVideos,
+  videos,
+  detectionVideoId,
+  onDetectionVideoChange,
+  onGroupVideoSwitch,
 }: Props) {
   return (
     <div className="right-area">
@@ -48,6 +58,10 @@ export function RightPanel({
           onTrackSelect={onTrackSelect}
           faceData={faceData}
           plateData={plateData}
+          groupVideos={groupVideos}
+          videos={videos ?? []}
+          detectionVideoId={detectionVideoId}
+          onDetectionVideoChange={onDetectionVideoChange}
         />
       </div>
 
@@ -60,6 +74,9 @@ export function RightPanel({
           onTrackResult={(trackId, className, start) => {
             onTrackSelect(trackId, className, start);
           }}
+          groupVideos={groupVideos}
+          allVideos={videos}
+          onGroupVideoSwitch={onGroupVideoSwitch}
         />
 
         {/* VideoSummary: minor-card, flex: 2.5 */}

@@ -83,15 +83,20 @@ async def upload_videos_batch(
     request: Request,
     files: list[UploadFile] = File(...),    # 多个文件
     # 参数和单视频上传相同，应用到组内所有视频
+    # 注意：encode_profile 不在此处设置（匹配单视频上传行为），通过 PUT /params 单独配置
     content_type: str = Form("general"),
-    # ... 其余参数 ...
+    # ... 其余 form 参数与单视频上传完全一致 ...
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[list[VideoResponse]]:
 ```
 
 1. 创建 `VideoGroup` 记录
-2. 循环每个文件：保存到磁盘、创建 `Video` 记录（`group_id` 指向新组）、同步 probe、异步 remux/proxy、AICheck
+2. 使用 `asyncio.gather` 并发处理所有文件（限制最大并发数以控制资源）：
+   - 每个文件：保存到磁盘 → 创建 `Video` 记录（`group_id` 指向新组） → 同步 probe
+   - 所有文件处理完后，统一触发异步 remux/proxy + AICheck
 3. 返回该组所有 `VideoResponse` 列表
+
+> **注意**：同步 probe（`<100ms`）和 DB 创建可并行，而 remux/proxy 和 AICheck 已由 `asyncio.create_task` 异步执行，不阻塞响应。
 
 #### 前端上传改动
 
@@ -119,9 +124,9 @@ const handleUpload = useCallback(() => {
           // 组内第一个视频自动选中
           setCurrentVideoId(results[0].id);
           setCurrentVideo(results[0]);
-          // ★ 存储组信息
+          // ★ 存储组信息：所有视频共享同一个 group_id
           setVideoGroups(prev => [...prev, {
-            groupId: results[0].group_id!,  // 所有视频共享同一个 group_id
+            groupId: results[0].group_id!,
             videoIds: results.map(r => r.id),
           }]);
         }
@@ -137,6 +142,8 @@ const handleUpload = useCallback(() => {
 }, []);
 ```
 
+> **设计决策**：批量上传的所有视频共享同一组参数初始值（default），每个视频的微调通过后续 `PUT /videos/{id}/params` 独立配置。
+
 ### Dashboard.tsx — 新增分组状态
 
 ```typescript
@@ -147,6 +154,47 @@ interface VideoGroup {
 
 const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
 const [currentGroupVideos, setCurrentGroupVideos] = useState<string[]>([]); // 当前选中组的所有视频ID
+```
+
+删除视频时同步清理 `videoGroups`（组内视频数为 0 时移除整个组）：
+
+```typescript
+const handleDelete = useCallback((deletedId: string) => {
+    if (currentVideoId === deletedId) { setCurrentVideoId(null); setCurrentVideo(null); }
+    // ★ 同步清理 videoGroups
+    setVideoGroups(prev => {
+      const updated = prev.map(g => ({
+        ...g,
+        videoIds: g.videoIds.filter(id => id !== deletedId),
+      })).filter(g => g.videoIds.length > 0);  // 空组自动移除
+      return updated;
+    });
+}, [currentVideoId]);
+```
+
+新增组内视频切换函数（同时管理播放器、检测面板、搜索和轮询的同步）：
+
+```typescript
+const handleGroupVideoSwitch = useCallback((videoId: string) => {
+    if (videoId === currentVideoId) return;
+    // 查找视频所属的组
+    const group = videoGroups.find(g => g.videoIds.includes(videoId));
+    if (group) {
+      setCurrentGroupVideos(group.videoIds);
+    } else {
+      setCurrentGroupVideos([videoId]);
+    }
+    setCurrentVideoId(videoId);
+    setCurrentVideo(null);
+    setHasPendingParams(false);
+    setSelectedTrackId(null);
+    setClassFilter(null);
+    setSeekTarget(null);
+    // 检测面板跟随切换（如未独立设置）
+    if (!detectionVideoId || group?.videoIds.includes(detectionVideoId)) {
+      setDetectionVideoId(null); // 重置为跟随 currentVideoId
+    }
+}, [currentVideoId, videoGroups, detectionVideoId]);
 ```
 
 当选中某个视频时，根据其 `group_id` 查询组内所有视频：
@@ -238,35 +286,44 @@ interface HistoryGroup {
 
 ### 3b. Header 视频切换
 
-#### Header.tsx — 新增组模式渲染
+#### Dashboard 组装 statsBar（推荐方案）
 
-当前 `statsBar: ReactNode` 改为更灵活接口，当组内有多个视频时：
+当前 `Header` 的 `statsBar` 是 `ReactNode`。组切换 UI 由 Dashboard 在组装 `statsContent` 时根据是否组模式渲染，Header 本身无需新增 props：
 
 ```tsx
-// Header 中
-{groupVideos.length > 1 ? (
-  <div className="header-group-selector">
-    <span className="header-stats-name">{currentVideo.file_name}</span>
-    <button className="header-switch-btn" onClick={toggleDropdown}>
-      <svg>▼</svg>
-    </button>
-    {/* 下拉列表切换不同视频 */}
-    {dropdownOpen && (
-      <div className="header-video-dropdown">
-        {groupVideos.map(v => (
-          <button key={v.id} onClick={() => onSwitchVideo(v.id)}
-            className={v.id === currentVideoId ? "active" : ""}>
-            {v.file_name}
-          </button>
-        ))}
+// Dashboard 中
+const statsContent = currentVideo ? (
+  <div className="header-stats-wrap">
+    {currentGroupVideos.length > 1 ? (
+      // 组模式：文件名 + 切换下拉
+      <div className="header-group-selector">
+        <span className="header-stats-name">{currentVideo.file_name}</span>
+        <button className="header-switch-btn" onClick={toggleDropdown}>
+          <svg>▼</svg>
+        </button>
+        {dropdownOpen && (
+          <div className="header-video-dropdown">
+            {currentGroupVideos.map(v => (
+              <button key={v.id} onClick={() => handleGroupVideoSwitch(v.id)}
+                className={v.id === currentVideoId ? "active" : ""}>
+                {v.file_name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    ) : (
+      // 单视频：原样渲染
+      <div className="header-stats">
+        <span className="header-stats-name">{currentVideo.file_name}</span>
+        {/* ... 原有 meta 信息 ... */}
       </div>
     )}
   </div>
-) : (
-  // 单视频：原样渲染
-  <span className="header-stats-name">{currentVideo.file_name}</span>
-)}
+) : null;
 ```
+
+> **设计决策**：保持 `Header` props 接口不变（`statsBar?: React.ReactNode`），组切换逻辑完全在 Dashboard 中实现。这样 Header 仍是纯展示组件，符合当前架构。
 
 **联动**：切换时调用 `Dashboard.handleGroupVideoSwitch(videoId)` → 同步更新 `currentVideoId`, `currentVideo`, `seekTarget` 等。
 
@@ -284,7 +341,10 @@ interface HistoryGroup {
 
 #### 搜索范围控制
 
-已有基础设施：`POST /search/semantic` 支持 `video_ids` 参数。
+已有基础设施：
+- `POST /search/semantic` — `video_ids` 参数（JSON 数组）
+- `POST /search/face` — `video_ids` 参数（逗号分隔字符串）
+- `POST /search/image` — `video_ids` 参数（逗号分隔字符串）
 
 前端 UI：
 
@@ -311,10 +371,17 @@ interface HistoryGroup {
 映射到 API 调用：
 
 ```typescript
+// 语义搜索、图搜、人脸搜索都使用同一 scope 逻辑
 const videoIds = searchScope === "current" ? [currentVideoId]
   : searchScope === "group" ? currentGroupVideos
   : undefined;  // 全部
+
+// 语义搜索
 const data = await api.searchSemantic(query, { video_ids: videoIds });
+// 图搜（传入 video_ids 限定搜索范围）
+const imageResults = await api.searchImage(file, { video_ids: videoIds });
+// 人脸搜索
+const faceResults = await api.searchFace(file, videoIds);
 ```
 
 #### 搜索结果点击 → 跨视频跳转
@@ -326,17 +393,18 @@ const data = await api.searchSemantic(query, { video_ids: videoIds });
 ```typescript
 onClick={() => {
   if (item.video_id !== currentVideoId) {
-    // 先切换视频
-    onSwitchVideo(item.video_id);
-    // 再跳转到时间点
-    setTimeout(() => onSeekTo(item.precise_start, item.precise_end), 100);
+    // 先切换视频，利用 seekTarget 机制在 stream 加载后自动 seek
+    handleGroupVideoSwitch(item.video_id);
+    setSeekTarget({ start: item.precise_start, end: item.precise_end });
   } else {
     onSeekTo(item.precise_start, item.precise_end);
   }
 }}
 ```
 
-**效果**：搜索到视频2的结果 → 点击 → Header 切换到视频2、播放器加载视频2 并 seek 到对应时间点。
+**效果**：搜索到视频2的结果 → 点击 → Header 切换到视频2、`seekTarget` 设置后由 Dashboard 的 `useEffect` 在 video 加载后自动 seek（等待 `streamReady` 状态）。
+
+> **注意**：不能使用 `setTimeout` seek（新视频 stream 加载延迟不定），应利用现有 `seekTarget` 机制。`seekTarget` 的 `useEffect` 会在 `videoRef.current` 可用时自动执行 seek。
 
 ### 3d. 检测面板独立视频切换
 
@@ -366,16 +434,29 @@ useEffect(() => {
 
 #### 检测数据获取独立
 
-`useDetectionData` hook 也需要独立调用：
+`useDetectionData` hook 也需要独立调用。关键：`face_enabled`/`plate_enabled` 应使用**检测视频**的值，而非当前播放视频的值：
 
 ```typescript
+// 需要独立维护 detectionVideo 对象（不仅是 ID），以获取其 face_enabled/plate_enabled
+const [detectionVideo, setDetectionVideo] = useState<VideoResponse | null>(null);
+
+// 当 detectionVideoId 变化时，从 videos 列表或 API 获取对应视频
+useEffect(() => {
+  if (!detectionVideoId) { setDetectionVideo(null); return; }
+  // 从已有数据查找，找不到则 API 获取
+  const found = videos.find(v => v.id === detectionVideoId);
+  if (found) api.getVideo(detectionVideoId).then(setDetectionVideo);
+}, [detectionVideoId]);
+
 const { detectionData, faceData, plateData } = useDetectionData(
-  detectionVideoId ?? currentVideoId,   // ★ 用独立 ID
+  detectionVideoId ?? currentVideoId,     // ★ 用独立 ID
   showDetection,
-  currentVideo?.face_enabled ?? false,
-  currentVideo?.plate_enabled ?? false,
+  detectionVideo?.face_enabled ?? false,  // ★ 用检测视频的值
+  detectionVideo?.plate_enabled ?? false, // ★ 用检测视频的值
 );
 ```
+
+> **注意**：不能使用 `currentVideo?.face_enabled`，否则当检测面板看的视频与播放器不同时，人脸/车牌开关会错位。
 
 #### 联动规则
 
@@ -406,8 +487,9 @@ const handleDetectionTrackSelect = useCallback((trackId: number, className: stri
 | `core/models.py` | 新增 `VideoGroup` 模型；`Video` 表加 `group_id` 列 (FK → video_groups.id) |
 | `core/db.py` | `init_db()` 增量迁移加列 |
 | `api/video_routes.py` | 新增 `POST /videos/upload/batch` 批量上传端点 |
-| `api/schemas.py` | 新增 `VideoGroupResponse` DTO；`VideoResponse` 加 `group_id` 字段 |
+| `core/schemas.py` | 新增 `VideoGroupResponse` DTO；`VideoResponse` / `VideoListItem` 增加 `group_id` 字段 |
 | `core/repository.py` | 可选：新增 `list_video_groups()` 查询 |
+| `api/router.py` | 无需改动（`video_router` 已包含，新端点自动注册） |
 
 ### 前端
 
@@ -416,7 +498,7 @@ const handleDetectionTrackSelect = useCallback((trackId: number, className: stri
 | `types/index.ts` | `VideoListItem` / `VideoResponse` 加 `group_id`；新增 `VideoGroup` 类型 |
 | `services/api.ts` | 新增 `uploadBatch()` 方法；`listVideos()` 支持返回 `group_id` |
 | `Dashboard.tsx` | 新增分组状态 (`videoGroups`, `currentGroupVideos`, `expandedGroupId`, `detectionVideoId`)；修改 `handleUpload` 支持多选；新增 `handleGroupVideoSwitch`；修改 `handleSelect` 传入 groupId |
-| `Header.tsx` | 新增组切换下拉 UI；`onSwitchVideo` 回调 |
+| `Header.tsx` | 无需改动（组切换 UI 由 Dashboard 通过 `statsBar` 组装） |
 | `HistoryPanelContent.tsx` | 完全重写为分组展示：重叠样式 + 展开/缩回动画 |
 | `DetectionPanel.tsx` | 新增独立视频选择器；`detectionVideoId` prop |
 | `VideoSearchCard.tsx` | 新增搜索范围选择器（当前/组内/全部）；结果点击跨视频跳转 |
@@ -434,5 +516,5 @@ const handleDetectionTrackSelect = useCallback((trackId: number, className: stri
 | 播放器正在播放视频A，检测面板选视频B | 播放器继续放A，检测面板显示B的数据（独立） |
 | Header下拉切换视频 | 播放器、时间轴、摘要、信息卡片联动切 |
 | 搜索结果中只显示同组视频，但搜索栏自定义可选全部 | 搜索范围切换时清空结果重新搜索 |
-| 删除组内的一个视频 | 组仍在，count 减少；删除全部后组消失 |
+| 删除组内的一个视频 | 组仍在，count 减少；删除全部后组消失。`handleDelete` 同步清理 `videoGroups` |
 | 新增上传不组组 | `group_id = NULL`，历史记录中作为单视频项展示 |

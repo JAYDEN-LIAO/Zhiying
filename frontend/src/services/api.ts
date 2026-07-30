@@ -59,6 +59,38 @@ export const api = {
     return request<VideoStatusResponse>(`${BASE}/videos/${videoId}/status`);
   },
 
+  /* ── Batch upload multiple videos (v0.19) ── */
+  async uploadBatch(files: File[], params?: Partial<PipelineParams>): Promise<VideoResponse[]> {
+    const form = new FormData();
+    for (const file of files) {
+      form.append("files", file);
+    }
+    form.append("content_type", params?.content_type ?? "general");
+    form.append("language", params?.language ?? "auto");
+    form.append("audio_enabled", String(params?.audio_enabled ?? false));
+    form.append("vision_enabled", String(params?.vision_enabled ?? true));
+    form.append("ocr_enabled", String(params?.ocr_enabled ?? false));
+    form.append("caption_enabled", String(params?.caption_enabled ?? true));
+    form.append("summary_enabled", String(params?.summary_enabled ?? true));
+    form.append("summary_mode", params?.summary_mode ?? "native_video");
+    form.append("detection_enabled", String(params?.detection_enabled ?? false));
+    if (params?.detection_classes?.length) {
+      form.append("detection_classes", JSON.stringify(params.detection_classes));
+    }
+    form.append("face_enabled", String(params?.face_enabled ?? false));
+    form.append("plate_enabled", String(params?.plate_enabled ?? false));
+    form.append("search_index_enabled", String(params?.search_index_enabled ?? true));
+    form.append("sample_fps", String(params?.sample_fps ?? 1.0));
+    form.append("segment_threshold", String(params?.segment_threshold ?? 0.5));
+    form.append("caption_with_context", String(params?.caption_with_context ?? true));
+    form.append("summary_detail", params?.summary_detail ?? "standard");
+
+    return request<VideoResponse[]>(`${BASE}/videos/upload/batch`, {
+      method: "POST",
+      body: form,
+    });
+  },
+
   /* ── Upload a video (does NOT start pipeline) ── */
   upload(file: File, params?: Partial<PipelineParams>) {
     const form = new FormData();

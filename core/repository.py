@@ -48,6 +48,7 @@ async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video:
         segment_threshold=video_dto.segment_threshold,
         caption_with_context=video_dto.caption_with_context,
         summary_detail=video_dto.summary_detail,
+        group_id=video_dto.group_id,
     )
     session.add(video)
     try:

@@ -18,9 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_db
 from api.schemas import APIResponse, VideoStatusResponse, ReuseRequest
 from core.schemas import (
-    VideoCreate, VideoResponse, VideoListItem, PipelineParams, ContentType,
+    VideoCreate, VideoResponse, VideoListItem, VideoGroupResponse,
+    PipelineParams, ContentType,
 )
-from core.models import Video
+from core.models import Video, VideoGroup, VideoStatus
 from core.repository import create_video, get_video_with_relations, list_videos, delete_video
 from services.video_service import VideoService
 
@@ -140,6 +141,119 @@ async def upload_video(
     return APIResponse(data=VideoResponse.model_validate(video))
 
 
+@router.post("/videos/upload/batch", status_code=201)
+async def upload_videos_batch(
+    request: Request,
+    files: list[UploadFile] = File(...),
+    content_type: str = Form("general"),
+    language: str = Form("auto"),
+    audio_enabled: bool = Form(False),
+    vision_enabled: bool = Form(True),
+    ocr_enabled: bool = Form(False),
+    grounding_enabled: bool = Form(False),
+    caption_enabled: bool = Form(True),
+    detection_enabled: bool = Form(False),
+    detection_classes: str | None = Form(None),
+    face_enabled: bool = Form(False),
+    plate_enabled: bool = Form(False),
+    summary_enabled: bool = Form(True),
+    summary_mode: str = Form("native_video"),
+    search_index_enabled: bool = Form(True),
+    sample_fps: float = Form(1.0),
+    segment_threshold: float = Form(0.5),
+    caption_with_context: bool = Form(True),
+    summary_detail: str = Form("standard"),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[list[VideoResponse]]:
+    """批量上传视频文件，创建 VideoGroup 并将所有视频关联到该组。
+
+    每个文件使用独立的 DB session 并发处理，避免 SQLAlchemy session 并发冲突。
+    """
+    config: dict = request.app.state.config
+    video_dir = config.get("storage", {}).get("video_dir", "/home/cerno/data/videos")
+    os.makedirs(video_dir, exist_ok=True)
+
+    if not files:
+        raise HTTPException(status_code=400, detail="请至少上传一个文件")
+
+    # 1. 创建 VideoGroup 记录（使用主 session，需 commit 以供其他 session 可见）
+    group = VideoGroup(name=None)
+    db.add(group)
+    await db.commit()  # commit 让独立 session 能读到 group
+    await db.refresh(group)
+    group_id = group.id
+
+    # 解析 detection_classes
+    detection_classes_list: list[str] | None = None
+    if detection_classes:
+        import json as _json
+        try:
+            parsed = _json.loads(detection_classes)
+            detection_classes_list = parsed if isinstance(parsed, list) else None
+        except (_json.JSONDecodeError, TypeError):
+            detection_classes_list = None
+
+    # 2. 并发处理所有文件（每个文件独立 session）
+    sem = asyncio.Semaphore(5)
+    db_factory = request.app.state.db_session_factory
+    format_service = request.app.state.format_service
+
+    async def process_one(file: UploadFile) -> VideoResponse:
+        async with sem:
+            file_id = uuid.uuid4()
+            ext = os.path.splitext(file.filename or "video.mp4")[1] or ".mp4"
+            dest_path = os.path.join(video_dir, f"{file_id}{ext}")
+
+            with open(dest_path, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+
+            file_size = os.path.getsize(dest_path)
+
+            dto = VideoCreate(
+                file_path=dest_path,
+                file_name=file.filename or f"video_{file_id}{ext}",
+                file_size=file_size,
+                content_type=ContentType(content_type),
+                language=language,
+                audio_enabled=audio_enabled,
+                vision_enabled=vision_enabled,
+                ocr_enabled=ocr_enabled,
+                grounding_enabled=grounding_enabled,
+                caption_enabled=caption_enabled,
+                detection_enabled=detection_enabled,
+                detection_classes=detection_classes_list,
+                face_enabled=face_enabled,
+                plate_enabled=plate_enabled,
+                summary_enabled=summary_enabled,
+                summary_mode=summary_mode,
+                search_index_enabled=search_index_enabled,
+                sample_fps=sample_fps,
+                segment_threshold=segment_threshold,
+                caption_with_context=caption_with_context,
+                summary_detail=summary_detail,
+                group_id=group_id,
+            )
+
+            # ★ 每个文件使用独立 session，不共享主 session
+            async with db_factory() as fsession:
+                video = await create_video(fsession, dto)
+                # 同步 probe（probe_and_save 内部使用自己的 session）
+                await format_service.probe_and_save(video.id, dest_path)
+
+            # 异步 remux/proxy + AICheck（使用独立 session factory）
+            asyncio.create_task(format_service.process_format(video.id, dest_path))
+            await _run_ai_check_and_save(video.id, dest_path, db_factory)
+
+            return VideoResponse.model_validate(video)
+
+    results = await asyncio.gather(*[process_one(f) for f in files])
+
+    await db.refresh(group)
+    logger.info("[BatchUpload] group=%s files=%d", group.id, len(results))
+
+    return APIResponse(data=results)
+
+
 @router.post("/videos/reuse", status_code=201)
 async def reuse_video(
     payload: ReuseRequest,
@@ -253,6 +367,46 @@ async def update_video_params(
         )
         background_tasks.add_task(service.process_video, video.id)
         logger.info("[Params] video=%s full pipeline starting", video_id)
+
+        # ★ 如果是组内视频，同组其他 pending 视频也应用相同参数并启动 pipeline
+        if video.group_id:
+            group_result = await db.execute(
+                select(Video).where(
+                    Video.group_id == video.group_id,
+                    Video.id != video_id,
+                    Video.status == VideoStatus.PENDING,
+                )
+            )
+            siblings = group_result.scalars().all()
+            for sibling in siblings:
+                await db.execute(
+                    update(Video)
+                    .where(Video.id == sibling.id)
+                    .values(
+                        content_type=payload.content_type,
+                        vision_enabled=payload.vision_enabled,
+                        audio_enabled=payload.audio_enabled,
+                        ocr_enabled=payload.ocr_enabled,
+                        caption_enabled=payload.caption_enabled,
+                        detection_enabled=payload.detection_enabled,
+                        detection_classes=payload.detection_classes,
+                        face_enabled=payload.face_enabled,
+                        plate_enabled=payload.plate_enabled,
+                        summary_enabled=payload.summary_enabled,
+                        summary_mode=payload.summary_mode,
+                        search_index_enabled=payload.search_index_enabled,
+                        language=payload.language,
+                        sample_fps=payload.sample_fps,
+                        segment_threshold=payload.segment_threshold,
+                        caption_with_context=payload.caption_with_context,
+                        summary_detail=payload.summary_detail,
+                        encode_profile=payload.encode_profile,
+                    )
+                )
+                await db.commit()
+                background_tasks.add_task(service.process_video, sibling.id)
+                logger.info("[Params] sibling video=%s (group=%s) pipeline starting", sibling.id, video.group_id)
+
         return APIResponse(data=VideoResponse.model_validate(video))
 
     elif status_val in ("completed", "failed"):

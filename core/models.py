@@ -46,6 +46,38 @@ class ContentType(str, enum.Enum):
 
 
 # ═══════════════════════════════════════════════════════════
+# VideoGroup — 多视频分组
+# ═══════════════════════════════════════════════════════════
+
+class VideoGroup(Base):
+    """视频分组表 — 将多个视频关联到一组（批量上传时自动创建）。"""
+    __tablename__ = "video_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str | None] = mapped_column(
+        String(256), nullable=True, comment="组名（可选）",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow,
+        onupdate=datetime.utcnow, nullable=False,
+    )
+
+    # 关联
+    videos: Mapped[list["Video"]] = relationship(
+        "Video", back_populates="group", cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        {"comment": "视频分组表 — 批量上传时自动创建，单视频上传 group_id=NULL"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
 # Video
 # ═══════════════════════════════════════════════════════════
 
@@ -232,6 +264,14 @@ class Video(Base):
         comment="AI 生成检测结果（AICheck 输出，上传时自动全面检测：元数据+SEI+C2PA+像素级深度分析）",
     )
 
+    # ── 分组（v0.19 多视频处理） ──
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("video_groups.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+        comment="所属分组 ID，NULL=单视频未分组",
+    )
+
     # ── 时间戳 ──
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False,
@@ -242,6 +282,9 @@ class Video(Base):
     )
 
     # ── 关联 ──
+    group: Mapped["VideoGroup | None"] = relationship(
+        "VideoGroup", back_populates="videos",
+    )
     scenes: Mapped[list["Scene"]] = relationship(
         "Scene", back_populates="video", cascade="all, delete-orphan",
     )

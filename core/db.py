@@ -277,6 +277,25 @@ async def init_db():
             ADD COLUMN IF NOT EXISTS ai_detect_result jsonb
         """))
 
+        # ── 增量迁移 v0.19: 多视频分组 ──
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS video_groups (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                name VARCHAR(256) DEFAULT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS group_id UUID
+                REFERENCES video_groups(id) ON DELETE SET NULL
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_videos_group_id
+            ON videos (group_id)
+        """))
+
         # ── 清理：删除废弃的列、枚举类型、触发器 ──
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS ai_detect_enabled

@@ -38,6 +38,8 @@ curl -X POST -H "Content-Type: application/json" \
 | Feature | Endpoint | Status |
 |---|---|---|
 | Video Upload & Pipeline | `POST /api/v1/videos/upload` + `PUT /videos/{id}/params` | ✅ |
+| Batch Video Upload (group) | `POST /api/v1/videos/upload/batch` (multiple files, VideoGroup, group pipeline trigger) | ✅ |
+| Group Video Switching | Header dropdown, history group cards (stacked + expand), cross-video search, independent detection panel | ✅ |
 | Video Detail + Summary | `GET /api/v1/videos/{id}` | ✅ |
 | Processing Status | `GET /api/v1/videos/{id}/status` | ✅ |
 | Video Streaming (Range) | `GET /api/v1/videos/{id}/stream` | ✅ |
@@ -103,12 +105,12 @@ Upload → Probe + AICheck(quick) → Pipeline (DAG) → DB → Search → Front
 
 - **Declarative pipeline** orchestrated by `PipelineEngine` (DAG executor), with 4-path frame/chunk/text/track encoding + face recognition + license plate recognition (15 operations total). Search and summary paths fully decoupled — `search_encode` (gated by `not v.summary_enabled`) shares a single NVDEC stream with `detection` (detection pushes 1fps sampled frames to search queue, search_encode encodes in batches of 64). Producer-consumer pattern (`asyncio.Queue`) for frame extraction vs YOLO inference overlap. NVDEC MJPEG pipe for GPU-accelerated frame extraction.
 - **10 abstract plugin interfaces** with dynamic factory loading
-- **PostgreSQL + pgvector** with 11 tables: videos, scenes, transcripts, frame_embeddings, chunks, frame_detections, tracks, track_embeddings, face_identities, face_detections, plate_detections
+- **PostgreSQL + pgvector** with 12 tables: video_groups, videos, scenes, transcripts, frame_embeddings, chunks, frame_detections, tracks, track_embeddings, face_identities, face_detections, plate_detections
 - **7-path parallel semantic search**: frame (1fps precision) + chunk (process semantics) + text (caption+ocr+transcript semantics) + label (JSONB @> entities) + track (crop cross-modal embedding) + plate (Levenshtein + ILIKE); **face image search**: POST /search/face (upload image → ArcFace 512d identity matching); **universal image search**: POST /search/image (upload any image → Qwen3-VL-Embedding 2048-dim → frame_embeddings cosine match, no clustering per-frame results)
 - **4-level parameter system**: Scene Type → Perception Modules → Function Switches → Advanced Params (含 encode_profile 速度预设: fast/balanced/precise), with face/plate sub-switches under detection
 - **Multi-format video support** — two-layer: container remux (-c copy, instant) + codec proxy (NVENC H.264, lazy on-demand). Frontend canPlayType() HEVC detection + smart stream routing (hevc_ok param). Probe sync (<100ms), remux/proxy async — upload never blocked.
 - **Pipeline real-time status** — each phase writes human-readable progress descriptions (`status_detail`) to the database, displayed in the frontend in real time
-- **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, 4-level parameter panel (含速度预设), summary mode selector, and settings page (含 Pipeline 调优)
+- **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, 4-level parameter panel (含速度预设), summary mode selector, settings page (含 Pipeline 调优), **multi-video group** support (history stack/expand, header switching, cross-video search, independent detection panel)
 - **Export API** — clip export (stream copy), frame export (zip), track segment export (zip), scene thumbnail export (zip), track thumbnail download
 - **Video metadata extraction** — three-tier extraction (pymediainfo → exiftool → ffprobe), GPS/device/codec info via GET /metadata endpoint, results cached to DB (fast path <1ms on repeat requests)
 - **AI Generation Detection** — AICheck CLI `--deep` auto-run on upload, covers metadata + SEI + C2PA + pixel-level watermark analysis, results in `Video.ai_detect_result` JSONB (displayed in frontend VideoInfoCard)
@@ -172,7 +174,7 @@ cerno/
 ├── pipeline/             # Pipeline DAG orchestrator + runners
 │   ├── engine.py         # DAG executor: gate filter → EventDrivenScheduler
 │   ├── operations.py     # Operation registry: ALL_OPERATIONS with gates/deps/labels
-│   ├── runners/          # 16 operation runners (one per processing unit)
+│   ├── runners/          # 15 operation runners (one per processing unit)
 │   │   ├── duration.py, segmentation.py, transcription.py
 │   │   ├── keyframe.py, alignment.py, caption.py, summary.py
 │   │   ├── detection.py (YOLO11 + BoT-SORT), search_encode.py
@@ -204,7 +206,7 @@ cerno/
 │   ├── public/
 │   │   └── cerno.svg     # App logo
 │   ├── src/
-│   │   ├── Dashboard.tsx # Main workspace (~280 lines, orchestrates state + render)
+│   │   ├── Dashboard.tsx # Main workspace (~430 lines, orchestrates state + group state + detectionVideoId)
 │   │   ├── components/   # 20 UI components
 │   │   │   ├── Sidebar.tsx, Header.tsx, SlideOutPanel.tsx
 │   │   │   ├── ParameterPanel.tsx, PipelineBar.tsx
@@ -232,6 +234,7 @@ cerno/
 
 ## Development Status
 
+- **v0.19 — Multi-Video Group Processing**: 批量上传 POST /videos/upload/batch（并发处理，信号量5，独立 DB session）；VideoGroup 模型 + videos.group_id FK；组参数同步（PUT /params 时自动同步到同组 all pending 视频）；前端分组历史卡片堆叠/展开动画 + Header 组内切换下拉 + 搜索范围选择器（当前/组内/全部）+ DetectionPanel 独立视频选择器 + 搜索结果跨视频跳转；summary one_liner 改为时间轴链格式。
 - **v0.18 — Universal Image Search + Frontend Chinese Labels**: 通用图搜 POST /search/image（Qwen3-VL-Embedding 2048-dim → frame_embeddings，独立 search_image_only 路径跳过帧聚类和 scene 信息补充）；前端标签中文化 labels.ts（统一 ZH_LABELS + CLASS_COLORS，4 组件改为 zh()/zhLabel()/colorOf() 显示中文）；图搜结果点击跳转不自动播放（end=null 语义控制）。
 - **v0.17 — AI Detection + Source Analysis + Metadata Cache**: AICheck CLI --deep 自动全面检测（metadata+SEI+C2PA+像素级水印）；来源分析规则引擎 classify_video_source（phone/camera/screen_recording/surveillance/non_camera_source/unknown）；元数据缓存到 DB metadata_json 列（首次 <1ms 返回）；GET /metadata 返回 source_analysis + ai_detect；VideoInfoCard 展示来源分析 + AI 检测；参数面板 face/plate 子开关增量修改。
 - **v0.16 — Single NVDEC stream + Performance + Speed Presets**: 单 NVDEC 流供 detection 与 search_encode 共享（队列消费 1fps→64帧即编）；生产者-消费者并发（帧提取与 YOLO 推理重叠）；移除全局 ReID + FFmpeg fallback 抽帧（track_encode 257s→43s）；NVDEC MJPEG pipe 默认启用；embedder 逐行 L2 归一化 + float32 + PIL 8 线程并行；batch_size 512；三档速度预设 (fast/balanced/precise) 控制分辨率 336-672；前端处理速度控件 + Pipeline 调优页。
