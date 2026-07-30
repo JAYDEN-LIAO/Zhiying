@@ -166,6 +166,22 @@ export const api = {
     return json.data ?? [];
   },
 
+  /* ── Image search (通用图搜) ── */
+  async searchImage(file: File, options?: {
+    video_ids?: string[];
+    search_types?: string[];
+    top_k?: number;
+    min_similarity?: number;
+  }): Promise<SearchResults> {
+    const form = new FormData();
+    form.append("file", file);
+    if (options?.video_ids?.length) form.append("video_ids", options.video_ids.join(","));
+    if (options?.search_types?.length) form.append("search_types", options.search_types.join(","));
+    if (options?.top_k != null) form.append("top_k", String(options.top_k));
+    if (options?.min_similarity != null) form.append("min_similarity", String(options.min_similarity));
+    return request<SearchResults>(`${BASE}/search/image`, { method: "POST", body: form });
+  },
+
   /* ── Face data ── */
   fetchFaceData(videoId: string) {
     return request<FaceData>(`${BASE}/videos/${videoId}/face/data`);

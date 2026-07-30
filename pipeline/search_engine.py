@@ -381,6 +381,72 @@ class SearchEngine:
 
         return merged
 
+    # ═══════════════════════════════════════════════════════════
+    # 通用图搜专用路径
+    # ═══════════════════════════════════════════════════════════
+
+    async def search_image_only(
+        self,
+        vec: list[float],
+        video_ids: list[str] | None = None,
+        search_types: list[str] | None = None,
+        top_k: int = 20,
+        min_similarity: float = 0.3,
+    ) -> list[dict]:
+        """图搜专用搜索路径。
+
+        和 search() 的关键区别：
+          - 帧结果不做时间聚类，每帧独立返回（精确到秒）
+          - 不补充 scene 信息（不调 _enrich_merged）
+          - 仅支持 frame + track 两种搜索路径
+
+        Args:
+            vec:             来自 encode_image() 的 2048-dim 向量。
+            video_ids:       限定视频范围，None=全库。
+            search_types:    启用路径 ["frame","track"]，默认全开。
+            top_k:           最终返回条数。
+            min_similarity:  最低相似度阈值。
+
+        Returns:
+            按 similarity 降序排列的结果列表。
+        """
+        if search_types is None:
+            search_types = ["frame", "track"]
+
+        tasks = []
+        if "frame" in search_types:
+            tasks.append(self._frame_search(vec, video_ids, top_k))
+        if "track" in search_types:
+            tasks.append(self._track_search(vec, video_ids, top_k))
+
+        if not tasks:
+            return []
+
+        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 帧结果原样保留（不聚类）
+        # Track 结果按 (video_id, track_id) 去重，保留最高分
+        track_map: dict[tuple[str, int], dict] = {}
+        merged: list[dict] = []
+        for r in results_list:
+            if isinstance(r, Exception) or not r:
+                continue
+            for item in r:
+                if item.get("source") == "track":
+                    key = (item["video_id"], item.get("track_id", 0))
+                    if key not in track_map or item.get("similarity", 0) > track_map[key].get("similarity", 0):
+                        track_map[key] = dict(item)
+                        track_map[key]["match_paths"] = [item.get("source", "track")]
+                else:
+                    merged.append(item)
+
+        merged.extend(track_map.values())
+
+        # 过滤低分 + 排序 + Top-K
+        merged = [m for m in merged if m.get("similarity", 0) >= min_similarity]
+        merged.sort(key=lambda x: x.get("similarity", 0), reverse=True)
+        return merged[:top_k]
+
     # ──────────────────────────────────────────────────────
     # 格式化
     # ──────────────────────────────────────────────────────

@@ -126,7 +126,10 @@ export default function Dashboard() {
   useEffect(() => {
     if (!seekTarget || !videoRef.current) return;
     videoRef.current.currentTime = seekTarget.start;
-    videoRef.current.play().catch(() => {});
+    // end 为 null 表示单帧定位（如图搜结果），不自动播放
+    if (seekTarget.end != null) {
+      videoRef.current.play().catch(() => {});
+    }
   }, [seekTarget]);
 
   /* ── Video selection ── */

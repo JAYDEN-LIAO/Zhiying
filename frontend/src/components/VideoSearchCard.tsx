@@ -28,7 +28,9 @@ export function VideoSearchCard({
   const [dlTrackId, setDlTrackId] = useState<number | null>(null);
   const [faceSearching, setFaceSearching] = useState(false);
   const [faceResults, setFaceResults] = useState<FaceSearchResult[]>([]);
+  const [imageSearching, setImageSearching] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setQuery(""); setResults([]); setSearching(false); setHasSearched(false); setError(null); setFaceResults([]);
@@ -49,6 +51,24 @@ export function VideoSearchCard({
     try { setFaceResults(await api.searchFace(file, currentVideoId ? [currentVideoId] : undefined)); }
     catch (err) { setError(err instanceof Error ? err.message : "人脸搜索失败"); }
     finally { setFaceSearching(false); if (fileInputRef.current) fileInputRef.current.value = ""; }
+  }, [currentVideoId]);
+
+  /* ── 通用图搜 ── */
+  const handleImageSearch = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setImageSearching(true); setError(null); setFaceResults([]);
+    try {
+      const data = await api.searchImage(file, {
+        video_ids: currentVideoId ? [currentVideoId] : undefined,
+      });
+      setResults(data.results ?? []);
+      setHasSearched(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "图搜失败");
+    } finally {
+      setImageSearching(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
   }, [currentVideoId]);
 
   const handleSearch = useCallback(async () => {
@@ -148,6 +168,14 @@ export function VideoSearchCard({
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round"><circle cx="9" cy="9" r="3" /><path d="M1 20v-1a6 6 0 0112 0v1" /></svg>
             )}
           </button>
+          <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageSearch} className="hidden" />
+          <button className="src-img" onClick={() => imageInputRef.current?.click()} disabled={imageSearching} title="以图搜图">
+            {imageSearching ? <span className="inline-block w-3 h-3 border-2 border-emerald-300 border-t-emerald-500 rounded-full animate-spin" /> : (
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
+              </svg>
+            )}
+          </button>
         </div>
 
         {/* Error */}
@@ -207,7 +235,7 @@ export function VideoSearchCard({
                     else onSeekTo?.(item.precise_start, null);
                   } else {
                     const ts = item.precise_start ?? item.scene_range_start;
-                    if (onSeekTo && ts != null) onSeekTo(ts, item.precise_end ?? item.scene_range_end);
+                    if (onSeekTo && ts != null) onSeekTo(ts, item.precise_end);
                   }
                 }}
               >
@@ -222,7 +250,7 @@ export function VideoSearchCard({
                       <span className="sr-time">
                         {formatSec(item.precise_start ?? item.scene_range_start)}
                         {(() => {
-                          const end = item.precise_end ?? item.scene_range_end;
+                          const end = item.precise_end;
                           const start = item.precise_start ?? item.scene_range_start;
                           return (end != null && end !== start)
                             ? ` – ${formatSec(end)}`

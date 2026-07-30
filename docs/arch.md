@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.17 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.18 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -342,17 +342,21 @@ Semantic Search: POST /api/v1/search/semantic
     ↓
   SearchEngine (lazy init, cached in app.state._searcher)
     ├─ Embedder.encode_text() → 2048-dim vector (shared, 只编码一次)
-    ├─ 六路并行召回:
+    ├─ 六路并行召回 (文本搜索):
     │   ├─ _frame_search()  → frame_embeddings 表, 1fps 帧级精确秒定位
     │   ├─ _chunk_search()  → chunks 表, 滑动窗口多帧原生编码
     │   ├─ _text_search()   → scenes.text_embedding, caption+ocr+transcript 语义
     │   ├─ _label_search()  → JSONB @> entities.label (YOLO 激活后用)
     │   ├─ _track_search()  → track_embeddings 表, crop 跨模态嵌入, 返回具体物体
     │   └─ _plate_search()  → plate_detections 表, Levenshtein 编辑距离 + ILIKE
-    └─ Face image search: POST /search/face
-        └─ image → ArcFace R50 512d → face_identities.face_embedding cosine match
+    ├─ Face image search: POST /search/face
+    │   └─ image → ArcFace R50 512d → face_identities.face_embedding cosine match
+    ├─ Universal image search: POST /search/image (v0.18)
+    │   ├─ image → Qwen3-VL-Embedding 2048-dim → frame_embeddings 余弦匹配
+    │   └─ 专用 search_image_only() 路径: 帧不聚类、不补 scene 信息、单帧独立精确到秒
     └─ 按 scene 合并 + 去重:
-        ├─ 帧结果按时间聚类 (间隔 ≤ 4s)
+        ├─ 帧结果按时间聚类 (间隔 ≤ 4s) — 仅文本搜索
+        ├─ 图搜帧结果不做聚类，每帧独立返回
         ├─ chunk/text 结果与帧簇重叠 → 丢弃 (帧精度更高)
         ├─ 非重叠 chunk/text 保留, 同 scene 取最高分
         └─ track 独立按 (video_id, track_id) 去重
@@ -369,6 +373,13 @@ core/search.py 提供的 6 种异步检索函数:
   4. track_vector_search      — track crop 跨模态搜索 (track_embeddings)
   5. plate_text_search        — 车牌文本模糊匹配 (plate_detections, Levenshtein + ILIKE)
   6. face_identity_search     — 人脸身份向量匹配 (face_identities, ArcFace 512d cosine)
+
+SearchEngine.search_image_only() — 图搜专用路径 (v0.18):
+  不接受 query，仅接受 encode_image() 产出的 2048-dim 向量
+  - 帧结果不做时间聚类 → precise_end=None，每帧独立返回
+  - 不调用 _enrich_merged → 不补充 scene 信息，保持精确帧时间戳
+  - 默认搜索路径 ["frame", "track"]，不触发 text/label/plate（依赖 query）
+  - 点击结果跳转不自动播放（end=null 控制 Dashboard useEffect play 行为）
 ```
 
 ## Database Schema
@@ -482,6 +493,7 @@ plate_detections
 | GET | /api/v1/videos/{id}/plate/thumbnail | 车牌缩略图 |
 | POST | /api/v1/search/semantic | 语义搜索 (六路并行：frame+chunk+text+label+track+plate) |
 | POST | /api/v1/search/face | 人脸图片搜索 (multipart image → ArcFace 512d) |
+| POST | /api/v1/search/image | 通用图搜 (multipart image → Qwen3-VL-Embedding 2048-dim → frame_embeddings) |
 | POST | /api/v1/videos/{id}/export/clip | 导出视频片段 (JSON) |
 | GET | /api/v1/videos/{id}/export/clip | 导出视频片段/单帧 (query params) |
 | POST | /api/v1/videos/{id}/export/frames | 导出帧 zip (兼容) |
@@ -503,7 +515,7 @@ React 19 + Vite 6 + Tailwind CSS 4
   │   ├── ParameterPanel     ← 侧滑参数面板: 四级联动 (L1场景/L2感知/L3功能/L4高级)
   │   ├── PipelineBar        ← 动态阶段进度条 (根据开关渲染对应节点)
   │   ├── VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮
-  │   ├── VideoSearchCard    ← 语义搜索面板 (索引未开启时置灰)
+  │   ├── VideoSearchCard    ← 语义/图搜/人脸搜索面板 (索引未开启时置灰)
   │   ├── HistoryPanelContent← 历史记录列表 (搜索+自动刷新+缩略图+参数摘要)
   │   ├── SettingsPage       ← 系统设置: 存储路径 + API 密钥管理
   │   ├── DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+选中)
@@ -512,6 +524,7 @@ React 19 + Vite 6 + Tailwind CSS 4
   │   ├── VideoInfoCard      ← 视频元数据 + 来源分析 + AI 检测
   │   ├── ExportMenu         ← 导出菜单 (视频片段或节点)
   │   └── icons.tsx          ← 20+ SVG 图标
+  ├── labels.ts              ← YOLO COCO 类名英→中映射 + 统一颜色表
   ├── utils/helpers.ts       ← fmtDuration, fmtDate, formatSec
   ├── services/api.ts        ← API 封装 + 轮询工具函数 + 下载辅助
   ├── types/index.ts         ← TypeScript 类型定义
@@ -570,6 +583,8 @@ Vite 开发代理:
 | **Class-local track numbering** | Display shows sequential class-local IDs (person 1, car 2) while API uses raw track_id internally |
 | **Per-video face/plate toggles** | Sub-switches under detection_enabled in parameter panel. Surveillance preset defaults both ON. Three-level gate: config backend + detection_enabled + face_enabled/plate_enabled |
 | **Face image search (ArcFace 512d)** | Separate search endpoint (POST /search/face) using ArcFace R50 512-dim vectors, not the shared Qwen3-VL 2048-dim embedder. Image-to-identity matching, not text-to-face |
+| **Universal image search (Qwen3-VL 2048-dim)** | POST /search/image using shared Qwen3-VL-Embedding (same as frame encoding). Dedicated search_image_only() path: no frame clustering (each frame independent), no scene enrichment (precise_start only), default ["frame","track"] search paths |
+| **Image search click = no autoplay** | Image search frame results pass precise_end=null, Dashboard useEffect skips play() when end=null. Text search frame clusters always have precise_end set → unaffected. Zero new props/types needed |
 | **Plate text search (Levenshtein)** | Text-based, not vector. Uses PostgreSQL fuzzystrmatch Levenshtein distance (≤2 edits) + ILIKE substring. Independent search path with precision_level="plate" |
 
 ## Current Status
@@ -582,7 +597,9 @@ Vite 开发代理:
 | License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
 | Plate Text Search | ✅ | core/search.py plate_text_search — Levenshtein edit distance + ILIKE substring |
-| Semantic Search (6-path) | ✅ | frame + chunk + text + label + track + plate 并行召回, plate 独立 ILIKE |
+| Semantic Search (7-path) | ✅ | frame + chunk + text + label + track + plate + image 并行召回, plate 独立 ILIKE |
+| Universal Image Search | ✅ | POST /api/v1/search/image — Qwen3-VL-Embedding 2048-dim → frame_embeddings, 独立 search_image_only() 路径 (帧不聚类、不补 scene、每帧独立精确到秒) |
+| Frontend Chinese Labels | ✅ | frontend/src/labels.ts — 统一 ZH_LABELS (80 COCO 类)+zh()/zhLabel()/colorOf(), 消除 3 份重复 CLASS_COLORS |
 | Frame-level Encoding | ✅ | runners/frame_encode.py: batch encode 4 frames |
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
 | Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
@@ -602,7 +619,7 @@ Vite 开发代理:
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
 | Settings API + Keys | ✅ | core/settings_service.py, GET/PUT /api/v1/settings |
-| Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 20 components + 8 hooks incl Detection/Timeline/Metadata/Export |
+| Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 20 components + 8 hooks + labels.ts incl Detection/Timeline/Metadata/Export/ImageSearch |
 | Config Schema | ✅ | Pydantic v2 validation for config.yaml |
 | Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |
 | DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration, 11 tables |

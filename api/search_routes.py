@@ -160,6 +160,100 @@ async def search_face(
 
 
 # ═══════════════════════════════════════════════════════════
+# 通用图搜
+# ═══════════════════════════════════════════════════════════
+
+@router.post("/search/image")
+async def search_image(
+    file: UploadFile = File(...),
+    video_ids: str | None = None,
+    search_types: str | None = None,
+    top_k: int = 20,
+    min_similarity: float = 0.3,
+    request: Request = None,
+) -> APIResponse[SearchResults]:
+    """上传任意图片 → Qwen3-VL-Embedding 2048-dim → 与 frame_embeddings 表向量匹配。
+
+    和人脸搜索不同：整图直接编码，不检测/不切割图片内容。
+
+    Args:
+        file:          图片文件（JPEG/PNG/WebP）
+        video_ids:     逗号分隔的 video UUID 列表，可选
+        search_types:  逗号分隔的检索路，默认 "frame,track"
+        top_k:         返回结果数量上限
+        min_similarity:最低相似度阈值
+    """
+    t0 = time.monotonic()
+
+    embedder = getattr(request.app.state, "embedder", None)
+    if embedder is None:
+        raise HTTPException(status_code=503, detail="Embedder not loaded")
+
+    # 读取图片 → numpy array
+    try:
+        contents = await file.read()
+        img = Image.open(io.BytesIO(contents)).convert("RGB")
+        image = np.array(img)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
+
+    # Qwen3-VL-Embedding 编码 → 2048-dim 向量
+    vec = await embedder.encode_image(image)
+
+    # 初始化 SearchEngine
+    se = getattr(request.app.state, "_searcher", None)
+    if se is None:
+        from pipeline.search_engine import SearchEngine
+        se = SearchEngine(request.app.state.db_session_factory, embedder)
+        request.app.state._searcher = se
+
+    # 解析参数
+    vid_list: list[str] | None = None
+    if video_ids:
+        vid_list = [v.strip() for v in video_ids.split(",") if v.strip()]
+
+    st_list: list[str] | None = None
+    if search_types:
+        st_list = [s.strip() for s in search_types.split(",") if s.strip()]
+    else:
+        st_list = ["frame", "track"]
+
+    # 搜索（图搜专用路径：帧不聚类，不补 scene 信息）
+    results = await se.search_image_only(
+        vec=vec,
+        video_ids=vid_list,
+        search_types=st_list,
+        top_k=top_k,
+        min_similarity=min_similarity,
+    )
+
+    elapsed = (time.monotonic() - t0) * 1000
+
+    items = [
+        SearchResultItem(
+            scene_id=r.get("scene_id", 0),
+            video_id=r["video_id"],
+            scene_index=r["scene_index"],
+            scene_range_start=r.get("scene_range_start", r.get("start_sec", 0)),
+            scene_range_end=r.get("scene_range_end", r.get("end_sec", 0)),
+            precise_start=r.get("precise_start"),
+            precise_end=r.get("precise_end"),
+            precision_level=r.get("precision_level", "frame"),
+            match_paths=r.get("match_paths", []),
+            caption=r.get("caption"),
+            similarity=r.get("similarity"),
+            thumbnail_url=r.get("thumbnail_url") or f"/api/v1/videos/{r['video_id']}/thumbnail/{r['scene_index']}",
+            track_id=r.get("track_id"),
+            class_name=r.get("class_name"),
+            bbox=r.get("bbox"),
+        )
+        for r in results
+    ]
+
+    return APIResponse(data=SearchResults(results=items, total=len(items), query_time_ms=elapsed))
+
+
+# ═══════════════════════════════════════════════════════════
 # Pipeline 操作查询（前端进度条用）
 # ═══════════════════════════════════════════════════════════
 

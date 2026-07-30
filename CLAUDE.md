@@ -2,7 +2,7 @@
 
 ## One-Line Summary
 
-Cerno is a **video analytics engine** (v0.16) that ingests videos, runs a **declarative operation DAG** (16 operations with event-driven orchestration), generates **4-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics + track-level crop embeddings), runs **YOLO11 object detection + BoT-SORT tracking** as an optional add-on, adds **face recognition** (SCRFD + ArcFace R50 identity clustering) and **license plate recognition** (HyperLPR3, with PaddleOCR alternative) as optional perception modules, enables **6-path parallel semantic search** (frame + chunk + text + label + track + plate, chunk 配置关闭默认不启用) + **face image search** (POST /search/face, ArcFace 512d), provides **multi-format video compatibility** (容器 remux + 编码 proxy, 按需生成, 零浪费), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
+Cerno is a **video analytics engine** (v0.18) that ingests videos, runs a **declarative operation DAG** (16 operations with event-driven orchestration), generates **4-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics + track-level crop embeddings), runs **YOLO11 object detection + BoT-SORT tracking** as an optional add-on, adds **face recognition** (SCRFD + ArcFace R50 identity clustering) and **license plate recognition** (HyperLPR3, with PaddleOCR alternative) as optional perception modules, enables **7-path parallel semantic search** (frame + chunk + text + label + track + plate, chunk 配置关闭默认不启用) + **face image search** (POST /search/face, ArcFace 512d) + **universal image search** (POST /search/image, Qwen3-VL-Embedding 2048-dim), provides **multi-format video compatibility** (容器 remux + 编码 proxy, 按需生成, 零浪费), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
 
 ## Quick File Map
 
@@ -50,7 +50,7 @@ pipeline/runners/          — 16 operation runners (one per processing unit):
   runners/face.py            — SCRFD face detection + ArcFace R50 embedding + identity clustering
   runners/plate.py           — HyperLPR3 license plate detection + text recognition
   runners/search_encode.py   — 纯搜索路径：队列消费 detection 共享流帧 1fps + 批量编码，不依赖 segmentation/keyframes
-pipeline/search_engine.py  — 6-path parallel recall (frame/chunk/text/label/track/plate) + scene-merge dedup
+pipeline/search_engine.py  — 7-path parallel recall (frame/chunk/text/label/track/plate + image) + scene-merge dedup, search_image_only() for no-cluster per-frame image search
 plugins/factory.py         — Dynamic plugin loader (CATEGORY_MAP, _MODULE_OVERRIDES, _CLASS_OVERRIDES)
 plugins/detector/yolo.py   — YOLO11s detector (batch GPU inference, asyncio.to_thread)
 plugins/face/insightface_face.py  — InsightFace SCRFD + ArcFace R50 recognizer
@@ -74,6 +74,7 @@ frontend/src/components/    — Split components (20 files):
                               VideoSummaryCard, VideoSearchCard, HistoryPanelContent, SettingsPage,
                               DetectionOverlay, DetectionPanel, DetectionTimeline,
                               VideoInfoCard, ExportMenu, RightPanel
+frontend/src/labels.ts        — COCO 类名英→中映射 + 统一颜色表 (zh/zhLabel/colorOf)
 frontend/src/utils/helpers.ts — Shared helpers (fmtDuration, fmtDate, formatSec)
 frontend/src/services/api.ts — API wrapper + polling helper (getVideoStreamUrl hevc_ok, getProxyStatus)
 frontend/src/types/index.ts — TypeScript types (mirrors backend schemas + ProxyStatus)
@@ -138,9 +139,9 @@ Adding a new perception module (e.g. YOLO detector):
   3. Add column to Video model + field to PipelineParams (unavoidable)
   → engine.py needs ZERO changes.
 
-Search (6-path parallel, v0.12):
+Search (7-path parallel, v0.18):
   text query → embedder.encode_text() → 2048-dim vector (shared, once)
-  → 6 parallel tasks:
+  → 6 parallel tasks (text search):
     _frame_search()  → frame_embeddings table, 1fps per-frame precision
     _chunk_search()  → chunks table, sliding window process semantics（默认关闭）
     _text_search()   → scenes.text_embedding, caption+ocr+transcript 语义
@@ -148,6 +149,9 @@ Search (6-path parallel, v0.12):
     _track_search()  → track_embeddings table, crop跨模态嵌入, 返回具体物体
     _plate_search()  → plate_detections table, Levenshtein 编辑距离 ≤ 2 模糊匹配
   → Face image search: POST /search/face (multipart image → ArcFace 512d → face_identities 表)
+  → Universal image search: POST /search/image (任一图片→Qwen3-VL-Embedding 2048-dim→frame_embeddings)
+    └─ 专用 search_image_only() 路径：帧结果不做时间聚类，不补充 scene 信息，每帧独立返回精确到秒
+    └─ 默认搜索路径 ["frame", "track"]，不触发 text/label/plate（依赖 query 字符串）
   → merge: frame clusters (≤4s gap), chunk/text去重叠, track/plate 独立去重
   → enrich with scene metadata → return results with precision_level
 ```
@@ -195,7 +199,7 @@ Search (6-path parallel, v0.12):
 | Frame/Chunk/Text encoding | ✅ Complete | runners/frame_encode, chunk_encode, text_encode |
 | Object Detection + Tracking | ✅ Complete | plugins/detector/yolo.py, runners/detection.py, api/detection_routes.py, DetectionOverlay.tsx |
 | Track Encoding (crop→embed) | ✅ Complete | runners/track_encode.py — 最佳帧 crop + Qwen3-VL-Embedding 2048-dim（跳过 FFmpeg fallback 抽帧）|
-| Semantic search (6-path) | ✅ Verified | search_engine.py + api/search_routes.py (frame+chunk+text+label+track+plate) |
+| Semantic search (7-path) | ✅ Verified | search_engine.py + api/search_routes.py (frame+chunk+text+label+track+plate+image) |
 | Captioner (local GPU + API) | ✅ Verified | plugins/captioner/qwen25_vl_captioner.py + qwen_api_captioner.py |
 | Embedder (local GPU) | ✅ Verified | plugins/embedder/qwen_vl_embedder.py — preloaded at startup, shared via app.state.embedder |
 | Summarizer (aggregator + API) | ✅ Verified | runners/summary.py dual-path: Python aggregator (default) + vllm_summarizer.py (vlm_llm fallback) |
@@ -214,6 +218,8 @@ Search (6-path parallel, v0.12):
 | Face Recognition | ✅ Done | plugins/face/insightface_face.py — InsightFace SCRFD + ArcFace R50 (512d), FaceRunner identity clustering with label→DB ID mapping |
 | License Plate Recognition | ✅ Done | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ Done | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
+| Universal Image Search | ✅ Done | POST /api/v1/search/image — 上传任意图片 → Qwen3-VL-Embedding 2048-dim → frame_embeddings 余弦匹配。专用 search_image_only() 路径：帧不聚类、不补 scene 信息，每帧独立精确到秒 |
+| Frontend Chinese Labels | ✅ Done | frontend/src/labels.ts 统一映射中心, zh()/zhLabel()/colorOf() 取代 3份重复 CLASS_COLORS, DetectionPanel/Overlay/Timeline/VideoSearchCard/ParameterPanel 改为中文展示 |
 | Plate Text Search | ✅ Done | core/search.py plate_text_search — Levenshtein 编辑距离 + ILIKE 子串匹配 |
 | Video Metadata Extraction | ✅ Done | utils/metadata.py — 三级提取 (pymediainfo → exiftool → ffprobe), GPS/device/codec |
 | Clip Export | ✅ Done | services/export_service.py + api/export_routes.py — 流复制视频片段导出 |
@@ -239,8 +245,8 @@ Search (6-path parallel, v0.12):
 7. **Vector dimension**: 2048. All vector columns (scenes.text_embedding, frame_embeddings.embedding, chunks.embedding, track_embeddings.embedding) use `Vector(2048)`. Face embeddings use `Vector(512)` (ArcFace R50). No pgvector HNSW/IVFFlat index (2048 > 2000 limit, but full scan is fine for demo scale).
 8. **Four encoding paths**: Frame (encode_image), Chunk (config-gated, default disabled, -c copy + encode_video), Text (encode_text). All three reuse the shared embedder.
 9. **When adding new dependencies**: add to `requirements.txt` AND to `Dockerfile`.
-10. **Search result format**: All results include `precision_level` (frame/chunk/text/label), `precise_start/end` (text 也有 scene 起止作为锚点), `match_paths`, and `thumbnail_url`. Merge 时帧簇优先，text 与非重叠帧的 text 按路径权重排序。
-11. **Frontend**: Dashboard.tsx (~280 lines) orchestrates all state and renders imported components from `components/`. Component files (20 files): icons, Sidebar, Header, SlideOutPanel, ParameterPanel, PipelineBar, VideoSection, VideoPlayer, VideoSummaryCard, VideoSearchCard, DetectionPanel, DetectionTimeline, HistoryPanelContent, SettingsPage, DetectionOverlay, VideoInfoCard, ExportMenu, RightPanel. Hooks are in `hooks/` (8 files: useDetectionData/HEVCCapability/ParameterForm/ProxyStatus/Search/StreamReady/VideoPolling). Utility functions in `utils/helpers.ts`. TypeScript types in `types/index.ts` mirror backend Pydantic schemas.
+10. **Search result format**: All results include `precision_level` (frame/chunk/text/label), `precise_start/end` (text 也有 scene 起止作为锚点), `match_paths`, and `thumbnail_url`. Merge 时帧簇优先，text 与非重叠帧的 text 按路径权重排序。图搜使用独立 `search_image_only()` 路径：帧不做时间聚类、不补充 scene 信息，`precise_end=None` 表示单帧精确匹配。
+11. **Frontend**: Dashboard.tsx (~280 lines) orchestrates all state and renders imported components from `components/`. Component files (20 files): icons, Sidebar, Header, SlideOutPanel, ParameterPanel, PipelineBar, VideoSection, VideoPlayer, VideoSummaryCard, VideoSearchCard, DetectionPanel, DetectionTimeline, HistoryPanelContent, SettingsPage, DetectionOverlay, VideoInfoCard, ExportMenu, RightPanel. Hooks are in `hooks/` (8 files: useDetectionData/HEVCCapability/ParameterForm/ProxyStatus/Search/StreamReady/VideoPolling). Label/color mapping in `labels.ts` (80 COCO classes zh/zhLabel/colorOf). Utility functions in `utils/helpers.ts`. TypeScript types in `types/index.ts` mirror backend Pydantic schemas.
 12. **Detection gate pattern**: New perception modules that are optional should follow the dual-gate pattern: config-level enable/disable (`plugins.{name}.backend: yolo` vs `null`) AND per-video toggle (`detection_enabled` in PipelineParams). Gate function checks both. This allows server-wide opt-out while letting users control per-video.
 13. **Canvas overlay pattern**: The DetectionOverlay uses a `canvas` with `pointerEvents: "none"` for pure rendering, with click/mousemove handlers attached via native `addEventListener` to the parent container. This allows clicks to pass through to video controls while still enabling bbox interaction.
 14. **Video format handling (v0.13)**: Video format processing is TWO-LAYER — remux (container standardization, `-c copy` stream copy, audio → AAC if needed) and proxy (codec compatibility, NVENC H.264, lazy on-demand). Probe is synchronous during upload (<100ms). Remux and proxy are async (asyncio.create_task). Stream endpoint routes via `FormatService.get_stream_target(video_id, hevc_ok)`. Frontend detects HEVC support via `canPlayType()` and passes `hevc_ok` query param. Proxy is NEVER eager-generated — only triggered when a non-HEVC client requests the video.

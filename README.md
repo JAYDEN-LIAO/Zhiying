@@ -53,6 +53,7 @@ curl -X POST -H "Content-Type: application/json" \
 | Face Recognition | SCRFD + ArcFace R50 (512d) identity clustering | ✅ |
 | License Plate Recognition | HyperLPR3 (ONNX Runtime) detection + text recognition | ✅ |
 | Face Image Search | `POST /api/v1/search/face` (upload image → ArcFace 512d) | ✅ |
+| Universal Image Search | `POST /api/v1/search/image` (upload any image → Qwen3-VL-Embedding 2048-dim → frame_embeddings) | ✅ |
 | Plate Text Search | `POST /api/v1/search/semantic` (plate path, Levenshtein + ILIKE) | ✅ |
 | Track Thumbnail Download | `GET /api/v1/videos/{id}/export/track/{tid}/thumbnail` | ✅ |
 | Track Video Export (zip) | `GET/POST /api/v1/videos/{id}/export/track/{tid}` | ✅ |
@@ -61,6 +62,7 @@ curl -X POST -H "Content-Type: application/json" \
 | System Settings (API keys + Pipeline) | `GET/PUT /api/v1/settings` + `GET /api/v1/settings/pipeline` | ✅ |
 | Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 (unified objects view + face toggle) | ✅ |
 | Track Crop Embedding (track search) | `POST /api/v1/search/semantic` (track path) | ✅ |
+| Frontend Labels Chinese Localization | 统一 labels.ts 映射中心，zh()/zhLabel()/colorOf() 函数 | ✅ |
 | Incremental Processing | summary/search re-run on completed videos | ✅ |
 | Video Source Analysis | Rule engine: phone/camera/screen_recording/surveillance/non_camera_source | ✅ |
 | AI Generation Detection | AICheck CLI (metadata+SEI+C2PA+像素级深度分析), auto-run on upload | ✅ |
@@ -102,7 +104,7 @@ Upload → Probe + AICheck(quick) → Pipeline (DAG) → DB → Search → Front
 - **Declarative pipeline** orchestrated by `PipelineEngine` (DAG executor), with 4-path frame/chunk/text/track encoding + face recognition + license plate recognition (15 operations total). Search and summary paths fully decoupled — `search_encode` (gated by `not v.summary_enabled`) shares a single NVDEC stream with `detection` (detection pushes 1fps sampled frames to search queue, search_encode encodes in batches of 64). Producer-consumer pattern (`asyncio.Queue`) for frame extraction vs YOLO inference overlap. NVDEC MJPEG pipe for GPU-accelerated frame extraction.
 - **10 abstract plugin interfaces** with dynamic factory loading
 - **PostgreSQL + pgvector** with 11 tables: videos, scenes, transcripts, frame_embeddings, chunks, frame_detections, tracks, track_embeddings, face_identities, face_detections, plate_detections
-- **6-path parallel semantic search**: frame (1fps precision) + chunk (process semantics) + text (caption+ocr+transcript semantics) + label (JSONB @> entities) + track (crop cross-modal embedding) + plate (Levenshtein + ILIKE); **face image search**: POST /search/face (upload image → ArcFace 512d identity matching)
+- **7-path parallel semantic search**: frame (1fps precision) + chunk (process semantics) + text (caption+ocr+transcript semantics) + label (JSONB @> entities) + track (crop cross-modal embedding) + plate (Levenshtein + ILIKE); **face image search**: POST /search/face (upload image → ArcFace 512d identity matching); **universal image search**: POST /search/image (upload any image → Qwen3-VL-Embedding 2048-dim → frame_embeddings cosine match, no clustering per-frame results)
 - **4-level parameter system**: Scene Type → Perception Modules → Function Switches → Advanced Params (含 encode_profile 速度预设: fast/balanced/precise), with face/plate sub-switches under detection
 - **Multi-format video support** — two-layer: container remux (-c copy, instant) + codec proxy (NVENC H.264, lazy on-demand). Frontend canPlayType() HEVC detection + smart stream routing (hevc_ok param). Probe sync (<100ms), remux/proxy async — upload never blocked.
 - **Pipeline real-time status** — each phase writes human-readable progress descriptions (`status_detail`) to the database, displayed in the frontend in real time
@@ -215,6 +217,7 @@ cerno/
 │   │   │   ├── useDetectionData.ts, useHEVCCapability.ts, useParameterForm.ts
 │   │   │   ├── useProxyStatus.ts, useSearch.ts, useStreamReady.ts, useVideoPolling.ts
 │   │   ├── utils/helpers.ts  # Shared helpers (fmtDuration, fmtDate, formatSec)
+│   │   ├── labels.ts        # YOLO COCO 类名英→中映射 + 颜色表
 │   │   ├── services/api.ts
 │   │   ├── types/index.ts
 │   │   └── mockData.ts   # Pipeline stage definitions + computePipelineStages()
@@ -229,6 +232,7 @@ cerno/
 
 ## Development Status
 
+- **v0.18 — Universal Image Search + Frontend Chinese Labels**: 通用图搜 POST /search/image（Qwen3-VL-Embedding 2048-dim → frame_embeddings，独立 search_image_only 路径跳过帧聚类和 scene 信息补充）；前端标签中文化 labels.ts（统一 ZH_LABELS + CLASS_COLORS，4 组件改为 zh()/zhLabel()/colorOf() 显示中文）；图搜结果点击跳转不自动播放（end=null 语义控制）。
 - **v0.17 — AI Detection + Source Analysis + Metadata Cache**: AICheck CLI --deep 自动全面检测（metadata+SEI+C2PA+像素级水印）；来源分析规则引擎 classify_video_source（phone/camera/screen_recording/surveillance/non_camera_source/unknown）；元数据缓存到 DB metadata_json 列（首次 <1ms 返回）；GET /metadata 返回 source_analysis + ai_detect；VideoInfoCard 展示来源分析 + AI 检测；参数面板 face/plate 子开关增量修改。
 - **v0.16 — Single NVDEC stream + Performance + Speed Presets**: 单 NVDEC 流供 detection 与 search_encode 共享（队列消费 1fps→64帧即编）；生产者-消费者并发（帧提取与 YOLO 推理重叠）；移除全局 ReID + FFmpeg fallback 抽帧（track_encode 257s→43s）；NVDEC MJPEG pipe 默认启用；embedder 逐行 L2 归一化 + float32 + PIL 8 线程并行；batch_size 512；三档速度预设 (fast/balanced/precise) 控制分辨率 336-672；前端处理速度控件 + Pipeline 调优页。
 - **v0.14 — Search/Summary Decoupling + Preload**: Search and summary paths fully decoupled — new `search_encode` operation (self-extracting frames @1fps + batch encoding) runs parallel to summary pipeline, depends only on duration. Captioner preloaded at startup alongside embedder (shared instances, no per-pipeline load/unload). Configurable encode batch size (pipeline.encode_batch_size). NVDEC hardware decoding support (optional, pipeline.use_nvdec). 15 operations, 11 DB tables, 10 plugin ABCs.
