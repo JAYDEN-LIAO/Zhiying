@@ -48,9 +48,6 @@ async def register_video(
     await format_service.probe_and_save(video.id, payload.file_path)
     asyncio.create_task(format_service.process_format(video.id, payload.file_path))
 
-    # AICheck 快检（同步等待，确保元数据请求时结果已就绪）
-    await _run_ai_check_and_save(video.id, payload.file_path, request.app.state.db_session_factory)
-
     return APIResponse(data=VideoResponse.model_validate(video))
 
 
@@ -134,9 +131,6 @@ async def upload_video(
     await format_service.probe_and_save(video.id, dest_path)
     # 重操作异步执行
     asyncio.create_task(format_service.process_format(video.id, dest_path))
-
-    # AICheck 快检（~30-60ms，同步等待，确保元数据请求时结果已就绪）
-    await _run_ai_check_and_save(video.id, dest_path, request.app.state.db_session_factory)
 
     return APIResponse(data=VideoResponse.model_validate(video))
 
@@ -240,9 +234,8 @@ async def upload_videos_batch(
                 # 同步 probe（probe_and_save 内部使用自己的 session）
                 await format_service.probe_and_save(video.id, dest_path)
 
-            # 异步 remux/proxy + AICheck（使用独立 session factory）
+            # 异步 remux/proxy（使用独立 session factory）
             asyncio.create_task(format_service.process_format(video.id, dest_path))
-            await _run_ai_check_and_save(video.id, dest_path, db_factory)
 
             return VideoResponse.model_validate(video)
 
@@ -303,9 +296,6 @@ async def reuse_video(
         captioner=getattr(request.app.state, "captioner", None),
     )
     background_tasks.add_task(service.process_video, video.id)
-
-    # AICheck 快检（复用源视频文件，同步等待）
-    await _run_ai_check_and_save(video.id, source.file_path, request.app.state.db_session_factory)
 
     logger.info("[Reuse] video=%s sourced from %s", video.id, payload.source_video_id)
     return APIResponse(data=VideoResponse.model_validate(video))
@@ -673,10 +663,10 @@ async def get_video_metadata_endpoint(
     - 首次请求实时提取（pymediainfo + exiftool），结果缓存到 DB
     - 后续请求直接返回缓存（<1ms）
     - ``?verbose=true`` 可返回原始提取数据（调试用）
-    - 附带来源分析（规则引擎）和 AI 检测结果（AICheck 快检）
+    - 附带来源分析（规则引擎）
     """
+    from api.schemas import VideoMetadataResponse
     from utils.metadata import get_video_metadata as extract_metadata
-    from api.schemas import VideoMetadataResponse, AIDetectResult
 
     result = await db.execute(
         select(Video.file_path, Video.metadata_json,
@@ -689,7 +679,8 @@ async def get_video_metadata_endpoint(
 
     file_path = row.file_path
     source_analysis = row.source_analysis
-    ai_detect_result = row.ai_detect_result
+    # Mock: 新视频返回 not_run，旧视频保留已有数据
+    ai_detect_result = row.ai_detect_result or {"status": "not_run"}
 
     # ── Fast path: return cached metadata from DB ──
     from utils.metadata import _METADATA_CACHE_VERSION
@@ -698,7 +689,7 @@ async def get_video_metadata_endpoint(
         if not verbose:
             cached.pop("raw", None)
         cached["source_analysis"] = source_analysis
-        cached["ai_detect"] = _build_ai_detect_response(ai_detect_result)
+        cached["ai_detect"] = ai_detect_result
         return APIResponse(data=VideoMetadataResponse(**cached))
 
     # ── Slow path: live extraction ──
@@ -737,7 +728,7 @@ async def get_video_metadata_endpoint(
         meta.pop("raw", None)
 
     meta["source_analysis"] = source_analysis
-    meta["ai_detect"] = _build_ai_detect_response(ai_detect_result)
+    meta["ai_detect"] = ai_detect_result
     return APIResponse(data=VideoMetadataResponse(**meta))
 
 
@@ -760,79 +751,6 @@ async def _cache_metadata(
         logger.warning("[Metadata] Failed to cache for %s", video_id, exc_info=True)
 
 
-async def _run_ai_check_and_save(
-    video_id: uuid.UUID,
-    file_path: str,
-    db_session_factory,
-) -> None:
-    """运行 AICheck 全面检测（元数据+SEI+C2PA+像素级深度分析）。
-
-    先写 "analyzing" 状态到 DB（前端可展示"检测中"），
-    实际 AICheck --deep 异步执行，完成后覆盖更新。
-    """
-    # 先标记 analyzing
-    try:
-        async with db_session_factory() as session:
-            await session.execute(
-                update(Video)
-                .where(Video.id == video_id)
-                .values(ai_detect_result={"status": "analyzing"})
-            )
-            await session.commit()
-    except Exception as e:
-        logger.warning("[AICheck] Failed to set analyzing state: %s", e)
-
-    # 异步跑全面检测（包括 --deep 像素分析）
-    asyncio.create_task(_run_ai_check_deep(video_id, file_path, db_session_factory))
-
-
-async def _run_ai_check_deep(
-    video_id: uuid.UUID,
-    file_path: str,
-    db_session_factory,
-) -> None:
-    """后台任务：执行 AICheck --deep 全面检测并写入 DB。"""
-    try:
-        from services.ai_detect_service import run_ai_check
-        result = await run_ai_check(file_path, deep=True)
-        if result.get("status") == "error":
-            logger.info("[AICheck] Skipped save — error: %s",
-                         result.get("error_message", "")[:100])
-            # 出错时写入 error 状态，前端可展示
-            async with db_session_factory() as session:
-                await session.execute(
-                    update(Video)
-                    .where(Video.id == video_id)
-                    .values(ai_detect_result=result)
-                )
-                await session.commit()
-            return
-        async with db_session_factory() as session:
-            await session.execute(
-                update(Video)
-                .where(Video.id == video_id)
-                .values(ai_detect_result=result)
-            )
-            await session.commit()
-        logger.info("[AICheck] Deep check done for video=%s verdict=%s",
-                     video_id, result.get("verdict"))
-    except Exception as e:
-        logger.warning("[AICheck] Deep check failed for %s: %s", video_id, e)
-        try:
-            async with db_session_factory() as session:
-                await session.execute(
-                    update(Video)
-                    .where(Video.id == video_id)
-                    .values(ai_detect_result={
-                        "status": "error",
-                        "error_message": str(e)[:200],
-                    })
-                )
-                await session.commit()
-        except Exception:
-            pass
-
-
 async def _cache_source_analysis(
     video_id: uuid.UUID,
     source_analysis: dict,
@@ -850,17 +768,4 @@ async def _cache_source_analysis(
         logger.debug("[SourceAnalysis] Cached for video %s", video_id)
     except Exception as e:
         logger.warning("[SourceAnalysis] Failed to cache for %s: %s", video_id, e)
-
-
-def _build_ai_detect_response(
-    ai_detect_result: dict | None,
-) -> dict | None:
-    """构建 AI 检测响应 dict。
-
-    返回 None（旧视频尚未检测）或 AICheck 结果（包括 analyzing/completed/error 状态）。
-    """
-    if ai_detect_result is None:
-        return None
-    return dict(ai_detect_result)
-
 

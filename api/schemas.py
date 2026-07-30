@@ -134,22 +134,22 @@ class SourceAnalysis(BaseModel):
 
 
 class AIDetectSignal(BaseModel):
-    """单个 AI 检测信号 — 来自 AICheck。"""
-    source: str = Field(..., description="信号来源: C2PA / MP4 / XMP / EXIF / WATERMARK / FILE / SPEC")
+    """单个 AI 检测信号。"""
+    source: str = Field(..., description="信号来源")
     confidence: str = Field(..., description="high / medium / low")
     description: str = Field(..., description="人类可读描述")
-    tool: str | None = Field(default=None, description="命中的 AI 工具名")
+    tool: str | None = Field(default=None, description="关联工具")
 
 
 class AIDetectResult(BaseModel):
-    """AI 生成检测结果 — AICheck CLI 输出。"""
+    """AI 生成检测结果。"""
     status: str = Field(default="not_run", description="not_run / analyzing / completed / error")
     score: float | None = Field(default=None, description="综合置信度 0.0-1.0")
     verdict: str | None = Field(default=None, description="ai_generated / likely_ai / no_signal / error")
     signals: list[AIDetectSignal] = Field(default_factory=list, description="命中的信号列表")
-    software_info: list[tuple[str, str]] = Field(default_factory=list, description="非 AI 创作软件信息")
+    software_info: list[tuple[str, str]] = Field(default_factory=list, description="软件信息")
     error_message: str | None = Field(default=None)
-    deep_analysis_used: bool = Field(default=False, description="是否执行了像素级深度检测")
+    deep_analysis_used: bool = Field(default=False, description="是否执行深度检测")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -225,7 +225,7 @@ class VideoMetadataResponse(BaseModel):
     timestamps: dict | None = None
     raw: dict | None = Field(default=None, description="原始提取数据，仅 ?verbose=true 时返回")
     source_analysis: SourceAnalysis | None = Field(default=None, description="视频来源分析（首次提取后缓存）")
-    ai_detect: AIDetectResult | None = Field(default=None, description="AI 生成检测结果（上传时自动全面检测：元数据+SEI+C2PA+像素级深度分析）")
+    ai_detect: AIDetectResult | None = Field(default=None, description="AI 生成检测结果")
 
 
 # ═══════════════════════════════════════════════════════════

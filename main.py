@@ -12,12 +12,6 @@ FastAPI 应用入口 — Cerno Video Analytics Core Engine
 import logging
 import os
 
-# 确保 cargo/bin 在 PATH 中（AICheck CLI）
-_cargo_home = os.environ.get("CARGO_HOME") or os.path.expanduser("~/.cargo")
-_cargo_bin = os.path.join(_cargo_home, "bin")
-if os.path.isdir(_cargo_bin) and _cargo_bin not in os.environ.get("PATH", ""):
-    os.environ["PATH"] = f"{_cargo_bin}:{os.environ.get('PATH', '')}"
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -98,16 +92,6 @@ async def lifespan(app: FastAPI):
     from services.format_service import FormatService
     app.state.format_service = FormatService(config, AsyncSessionLocal)
     logger.info("FormatService ready")
-
-    # AI 生成检测（AICheck CLI）
-    from services.ai_detect_service import check_ai_check_available
-    if check_ai_check_available():
-        logger.info("AICheck CLI detected — AI generation detection enabled")
-    else:
-        logger.warning(
-            "AICheck CLI not found! Install: cargo install aicheck\n"
-            "  Then ensure $HOME/.cargo/bin is in PATH"
-        )
 
     yield
     await engine.dispose()

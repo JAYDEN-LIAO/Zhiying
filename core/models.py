@@ -261,7 +261,7 @@ class Video(Base):
     )
     ai_detect_result: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True,
-        comment="AI 生成检测结果（AICheck 输出，上传时自动全面检测：元数据+SEI+C2PA+像素级深度分析）",
+        comment="AI 生成检测结果（待接入新检测引擎）",
     )
 
     # ── 分组（v0.19 多视频处理） ──

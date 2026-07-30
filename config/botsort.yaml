@@ -1,21 +1,22 @@
-# BoT-SORT tracker config — overrides ultralytics built-in defaults
-# Used by YoloDetector._sync_track() via model.track(tracker="...")
+# BoT-SORT + ReID tracker config
+# Kalman + IoU + ReID 表观特征加权匹配
+# 轨迹稳、跳变少，适合监控/街景/密集人群
 
-tracker_type: botsort       # (str) tracker backend identifier (required)
+tracker_type: botsort
 
-# Track life cycle
-track_high_thresh: 0.5      # 0.4-0.5 检测走二阶恢复, 不干扰主流匹配
-track_low_thresh: 0.1       # second-stage threshold for low-score recovery
-new_track_thresh: 0.4       # 与 confidence_threshold 对齐, 减少低分漏创建
-track_buffer: 120            # frames to keep lost tracks alive (12s @ 10fps)
-match_thresh: 0.4           # 放宽匹配, 减少快速运动和遮挡时的断链
+# ── Track 生命周期 ──
+track_high_thresh: 0.5      # 一阶高置信匹配门槛（与 confidence 对齐）
+track_low_thresh: 0.1       # 二阶低分恢复
+new_track_thresh: 0.5       # 新 track 创建门槛（比默认 0.4 提高，减少碎片）
+track_buffer: 45             # 丢失保留 4.5s @10fps（足够遮挡恢复，不留尸体）
+match_thresh: 0.5           # IoU 匹配阈值（比 0.4 严格，减少密集误匹配）
 
-# Motion
-gmc_method: sparseOptFlow   # global motion compensation method
+# ── 全局运动补偿 ──
+gmc_method: sparseOptFlow
 
-# ReID — 关闭后降级为纯 IOU+Kalman（ByteTrack），消除 ReID 错误关联
-with_reid: false            # 在线 ReID — 控制变量对齐参考版
-proximity_thresh: 0.5       # (unused, required by ultralytics init)
-appearance_thresh: 0.25     # (unused, required by ultralytics init)
-model: null                   # ultralytics 新版强制要求此字段存在，即使 with_reid=false
-fuse_score: true            # fuse detection score with track confidence
+# ── 在线 ReID ──
+with_reid: true
+proximity_thresh: 0.5       # IoU 门控：位置远于 0.5 → 禁止 ReID 匹配
+appearance_thresh: 0.6      # 表观门控：cos_distance > 0.4 → 拒绝（严格防过度合并）
+model: "auto"               # fallback 到 yolo26n-cls 提取特征
+fuse_score: true
