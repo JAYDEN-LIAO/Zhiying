@@ -49,7 +49,7 @@ export function HistoryPanelContent({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2">
+      <div className="flex-1 overflow-y-auto px-4 pb-4">
         {searchQuery && <p className="text-[10px] text-gray-400">找到 {filteredVideos.length} 条</p>}
         {loading ? (
           <div className="space-y-3">
@@ -64,38 +64,45 @@ export function HistoryPanelContent({
             if (item.search_index_enabled) fnParts.push("搜索");
             if (item.summary_enabled) fnParts.push("摘要");
             const fnLabel = fnParts.length === 2 ? "搜索+摘要" : fnParts[0] || "—";
+            const isDeleting = deletingIds.has(item.id);
             return (
-              <div key={item.id} onClick={() => onSelect(item.id)}
-                className={`rounded-xl cursor-pointer transition-all duration-300 border ${
-                  deletingIds.has(item.id) ? "p-0 max-h-0 opacity-0 -translate-x-full scale-95 border-transparent overflow-hidden"
-                    : `${currentVideoId === item.id ? "bg-blue-50 border-blue-200" : "bg-white border-gray-100 hover:bg-gray-50 hover:border-gray-200"} p-3`
+              <div key={item.id}
+                className={`overflow-hidden transition-all duration-500 ease-out ${
+                  isDeleting
+                    ? "max-h-0 opacity-0 -translate-x-full scale-y-0 mb-0"
+                    : "max-h-[200px] opacity-100 translate-x-0 scale-y-100 mb-2"
                 }`}>
-                <div className="flex items-start gap-3">
-                  <div className="w-[72px] aspect-video rounded-lg shrink-0 bg-gray-100 flex items-center justify-center overflow-hidden border border-gray-200/50">
-                    {item.status === "completed" ? (
-                      <img src={`/api/v1/videos/${item.id}/thumbnail/0`} alt="" className="w-full h-full object-cover" loading="lazy"
-                        onError={(e) => { (e.target as HTMLImageElement).parentElement!.innerHTML = '<span class="text-[10px] text-gray-400">视频</span>'; }} />
-                    ) : <span className="text-[10px] text-gray-400">视频</span>}
-                  </div>
-                  <div className="min-w-0 flex-1 self-stretch flex flex-col justify-between">
-                    <div>
-                      <h3 className="text-sm font-semibold text-gray-900 truncate" title={item.file_name}>{shortName}</h3>
-                      <p className="text-[10px] text-gray-400 leading-tight mt-0.5">
-                        {ctLabel[item.content_type] || item.content_type} <span className="text-gray-300">|</span> {fnLabel} <span className="text-gray-300">|</span> {item.sample_fps.toFixed(1)}fps
-                      </p>
+                <div onClick={() => onSelect(item.id)}
+                  className={`rounded-xl cursor-pointer border p-3 transition-all duration-300 ${
+                    currentVideoId === item.id ? "bg-blue-50 border-blue-200" : "bg-white border-gray-100 hover:bg-gray-50 hover:border-gray-200"
+                  }`}>
+                  <div className="flex items-start gap-3">
+                    <div className="w-[72px] aspect-video rounded-lg shrink-0 bg-gray-100 flex items-center justify-center overflow-hidden border border-gray-200/50">
+                      {item.status === "completed" ? (
+                        <img src={`/api/v1/videos/${item.id}/thumbnail/0`} alt="" className="w-full h-full object-cover" loading="lazy"
+                          onError={(e) => { (e.target as HTMLImageElement).parentElement!.innerHTML = '<span class="text-[10px] text-gray-400">视频</span>'; }} />
+                      ) : <span className="text-[10px] text-gray-400">视频</span>}
                     </div>
-                    <div className="flex items-center justify-between mt-1">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-[10px] font-medium ${
-                          item.status === "completed" ? "text-green-500" : item.status === "processing" ? "text-blue-500"
-                          : item.status === "failed" ? "text-red-400" : "text-gray-400"}`}>
-                          {item.status === "completed" ? "已完成" : item.status === "processing" ? "处理中" : item.status === "failed" ? "失败" : "等待中"}
-                        </span>
-                        <span className="text-[9px] text-gray-400">{fmtDate(item.created_at)}</span>
+                    <div className="min-w-0 flex-1 self-stretch flex flex-col justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-900 truncate" title={item.file_name}>{shortName}</h3>
+                        <p className="text-[10px] text-gray-400 leading-tight mt-0.5">
+                          {ctLabel[item.content_type] || item.content_type} <span className="text-gray-300">|</span> {fnLabel} <span className="text-gray-300">|</span> {item.sample_fps.toFixed(1)}fps
+                        </p>
                       </div>
-                      <button onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }} className="text-gray-300 hover:text-red-500 transition-colors cursor-pointer">
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
-                      </button>
+                      <div className="flex items-center justify-between mt-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] font-medium ${
+                            item.status === "completed" ? "text-green-500" : item.status === "processing" ? "text-blue-500"
+                            : item.status === "failed" ? "text-red-400" : "text-gray-400"}`}>
+                            {item.status === "completed" ? "已完成" : item.status === "processing" ? "处理中" : item.status === "failed" ? "失败" : "等待中"}
+                          </span>
+                          <span className="text-[9px] text-gray-400">{fmtDate(item.created_at)}</span>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }} className="text-gray-300 hover:text-red-500 transition-colors cursor-pointer">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

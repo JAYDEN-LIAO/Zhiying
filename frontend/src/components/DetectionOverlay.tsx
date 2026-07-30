@@ -46,10 +46,9 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
     if (!canvas || !video || !enabled || !data?.has_detection) {
       return;
     }
-    // ★ Pause-safe: stop rAF loop when video is paused
-    if (video.paused) {
-      return;  // Don't request next frame when paused — keeps last frame visible
-    }
+    // ★ Draw current frame then only schedule next frame when playing
+    // Without this check the rAF loop keeps running during pause (wasteful).
+    // With it removed below we still draw once so bboxes appear on initial load.
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
@@ -176,13 +175,30 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
     ctx.globalAlpha = 1.0;
 
     ctx.globalAlpha = 1.0;
-    rafRef.current = requestAnimationFrame(draw);
+    // Only schedule next frame when playing (avoids waste during pause)
+    if (!video.paused) {
+      rafRef.current = requestAnimationFrame(draw);
+    }
   }, [data, selectedTrackId, videoRef]);
 
   useEffect(() => {
     if (!data?.has_detection) return;
+
+    // Initial draw
     rafRef.current = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(rafRef.current);
+
+    // Restart rAF loop when video starts playing (paused → playing)
+    const video = videoRef.current;
+    const onPlay = () => {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(draw);
+    };
+    video?.addEventListener("play", onPlay);
+
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      video?.removeEventListener("play", onPlay);
+    };
   }, [data, draw]);
 
   /* ── Coord transform ── */

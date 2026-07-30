@@ -205,15 +205,42 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
       </div>
 
       <div className="major-card-bd" style={{ padding: "6px 10px 8px" }}>
-        {/* Class filter */}
+        {/* Class filter — dropdown */}
         {!showFaces && classEntries.length > 1 && (
-          <div className="dtc-filter">
-            <button className={`dtc-fbtn ${isAll ? "active" : ""}`} onClick={() => onClassFilterChange(null)}>全部 · {tracks.length}</button>
-            {classEntries.map(([cls, count]) => (
-              <button key={cls} className={`dtc-fbtn ${classFilter === cls ? "active" : ""}`} onClick={() => onClassFilterChange(cls)}>
-                <span className="dot" style={{ background: CLASS_COLORS[cls] ?? CLASS_COLORS.default }} />{cls} · {count}
-              </button>
-            ))}
+          <div className="relative mb-2">
+            <button
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              className="dtc-filter-btn"
+            >
+              {isAll ? (
+                <span>全部 · {tracks.length}</span>
+              ) : (
+                <><span className="dot" style={{ background: activeColor }} />{classFilter} · {classCounts[classFilter]}</>
+              )}
+              <svg className={`w-3 h-3 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="currentColor"><path d="M3 5l3 3 3-3" /></svg>
+            </button>
+            {dropdownOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setDropdownOpen(false)} />
+                <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden min-w-[160px]">
+                  <button
+                    className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 ${isAll ? "font-semibold text-gray-900" : "text-gray-600"}`}
+                    onClick={() => { onClassFilterChange(null); setDropdownOpen(false); }}
+                  >
+                    全部 · {tracks.length}
+                  </button>
+                  {classEntries.map(([cls, count]) => (
+                    <button
+                      key={cls}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 ${classFilter === cls ? "font-semibold text-gray-900" : "text-gray-600"}`}
+                      onClick={() => { onClassFilterChange(cls); setDropdownOpen(false); }}
+                    >
+                      <span className="dot" style={{ background: CLASS_COLORS[cls] ?? CLASS_COLORS.default }} />{cls} · {count}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
         {!showFaces && classEntries.length <= 1 && classEntries.length > 0 && (

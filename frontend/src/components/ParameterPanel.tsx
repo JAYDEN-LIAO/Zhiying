@@ -374,8 +374,8 @@ export function ParameterPanel({
         </button>
       </div>
 
-      {/* Scrollable content — light background */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5 bg-[var(--color-surface)] text-gray-900">
+      {/* Scrollable content — dark theme matches slide panel */}
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
         {/* L1: 场景类型 */}
         <section>
           <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">场景类型</h3>

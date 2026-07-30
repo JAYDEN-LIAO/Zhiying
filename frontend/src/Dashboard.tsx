@@ -9,6 +9,7 @@ import { api } from "./services/api";
 import type { VideoListItem, VideoResponse } from "./types";
 import { fmtDuration } from "./utils/helpers";
 import { IconDownload } from "./components/icons";
+import { ExportMenu } from "./components/ExportMenu";
 import { Sidebar, type PageView, type PanelType } from "./components/Sidebar";
 import { Header } from "./components/Header";
 import { SlideOutPanel } from "./components/SlideOutPanel";
@@ -16,7 +17,6 @@ import { ParameterPanel } from "./components/ParameterPanel";
 import { HistoryPanelContent } from "./components/HistoryPanelContent";
 import { VideoSection } from "./components/VideoSection";
 import { RightPanel } from "./components/RightPanel";
-import { ExportMenu } from "./components/ExportMenu";
 import { SettingsPage } from "./components/SettingsPage";
 import { useHEVCCapability } from "./hooks/useHEVCCapability";
 import { useVideoPolling } from "./hooks/useVideoPolling";
@@ -172,7 +172,7 @@ export default function Dashboard() {
   const langLabel: Record<string, string> = { auto: "自动", zh: "中文", en: "English", ja: "日本語", ko: "한국어" };
 
   const statsContent = currentVideo ? (
-    <div className="flex items-center gap-2">
+    <div className="header-stats-wrap">
       <div className="header-stats">
         <span className="header-stats-name">{currentVideo.file_name}</span>
         <span className="header-stats-meta">
@@ -187,7 +187,7 @@ export default function Dashboard() {
           {!currentVideo.summary_enabled && currentVideo.search_index_enabled && <><span className="sep">·</span><span>搜索</span></>}
         </span>
       </div>
-      <div className="relative">
+      <div className="relative flex-shrink-0">
         <button onClick={() => setShowExport((v) => !v)} className="w-6 h-6 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all cursor-pointer" title="导出">
           <IconDownload />
         </button>
@@ -207,9 +207,9 @@ export default function Dashboard() {
       <Sidebar currentPage={currentPage} activePanel={activePanel} onNavigate={navigate} onTogglePanel={togglePanel} />
 
       {/* ── Slide-out panels ── */}
-      <div className="relative flex-shrink-0 z-20 ml-4 my-4">
-        <SlideOutPanel open={activePanel === "params"} width={420}>
-          <div className="h-full flex flex-col" style={{ paddingLeft: 32 }}>
+      <div className="relative flex-shrink-0 z-20">
+        <SlideOutPanel open={activePanel === "params"} width={380}>
+          <div className="h-full flex flex-col slide-panel-content" style={{ paddingLeft: 12 }}>
             <ParameterPanel
               videoId={currentVideoId}
               onClose={() => { setActivePanel(null); setHasPendingParams(false); }}
@@ -220,7 +220,7 @@ export default function Dashboard() {
         </SlideOutPanel>
 
         <SlideOutPanel open={activePanel === "history"} width={380}>
-          <div className="h-full flex flex-col" style={{ paddingLeft: 32 }}>
+          <div className="h-full flex flex-col slide-panel-content" style={{ paddingLeft: 12 }}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
               <h2 className="font-bold text-white text-base">历史记录</h2>
               <button onClick={() => setActivePanel(null)} className="text-white/50 hover:text-white transition-colors cursor-pointer">
@@ -233,13 +233,13 @@ export default function Dashboard() {
         </SlideOutPanel>
       </div>
 
-      {/* Click-outside backdrop */}
-      {activePanel !== null && !hasPendingParams && (
+      {/* Click-outside backdrop — always close on blank click */}
+      {activePanel !== null && (
         <div className="absolute inset-0 z-[15]" onClick={() => setActivePanel(null)} />
       )}
 
       {/* ── Header ── */}
-      <Header isUploading={isUploading} onUpload={handleUpload} statsBar={statsContent} />
+      <Header isUploading={isUploading} onUpload={handleUpload} currentPage={currentPage} statsBar={statsContent} />
 
       {/* ════════════════════════════════════════════════════════════
          Page content
@@ -267,7 +267,11 @@ export default function Dashboard() {
             detectionData={detectionData} faceData={faceData} plateData={plateData}
             selectedTrackId={selectedTrackId} classFilter={classFilter}
             onClassFilterChange={setClassFilter} onTrackSelect={handleTrackSelect}
-            onSeekTo={(start, end) => setSeekTarget({ start, end })}
+            onSeekTo={(start, end) => {
+              setSeekTarget({ start, end });
+              // Direct seek in click context — avoids autoplay-blocked play()
+              if (videoRef.current) videoRef.current.currentTime = start;
+            }}
           />
         </>
       ) : (

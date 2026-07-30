@@ -145,6 +145,8 @@ cerno/
 │   ├── search_routes.py  # Semantic search + pipeline/operations
 │   ├── settings_routes.py# System settings (API keys)
 │   ├── detection_routes.py # Detection data API (bbox + track thumbnail)
+│   ├── face_routes.py    # Face data + thumbnail endpoints
+│   ├── plate_routes.py   # Plate data + thumbnail endpoints
 │   ├── export_routes.py  # Export: clip / frames / track / thumbnails (7 endpoints)
 │   ├── face_routes.py    # Face data + thumbnail endpoints
 │   ├── plate_routes.py   # Plate data + thumbnail endpoints
@@ -154,7 +156,7 @@ cerno/
 │   ├── models.py         # ORM: Video, Scene, Transcript, FrameEmbedding, Chunk
 │   ├── schemas.py        # Pydantic DTOs + JSONB validation
 │   ├── repository.py     # Data access layer + bulk_insert_frames/chunks
-│   ├── search.py         # 4 search functions: frame/chunk/text/track
+│   ├── search.py         # 6 async search functions: frame/chunk/text/track/plate/face
 │   ├── interfaces.py     # 10 abstract plugin base classes
 │   ├── config_loader.py  # YAML + .env loading with env var overrides
 │   ├── prompt_loader.py  # Prompt template loader
@@ -168,12 +170,12 @@ cerno/
 ├── pipeline/             # Pipeline DAG orchestrator + runners
 │   ├── engine.py         # DAG executor: gate filter → EventDrivenScheduler
 │   ├── operations.py     # Operation registry: ALL_OPERATIONS with gates/deps/labels
-│   ├── runners/          # 15 operation runners (one per processing unit)
+│   ├── runners/          # 16 operation runners (one per processing unit)
 │   │   ├── duration.py, segmentation.py, transcription.py
 │   │   ├── keyframe.py, alignment.py, caption.py, summary.py
-│   │   ├── detection.py (YOLO11 + BoT-SORT)
+│   │   ├── detection.py (YOLO11 + BoT-SORT), search_encode.py
 │   │   ├── frame_encode.py, chunk_encode.py, text_encode.py
-│   │   └── plate.py
+│   │   ├── track_encode.py, face.py, plate.py
 │   └── search_engine.py  # 6-path parallel recall (frame+chunk+text+label+track+plate) + scene-merge dedup
 ├── plugins/              # Plugin implementations + factory
 │   ├── factory.py        # Dynamic plugin loader
@@ -200,14 +202,19 @@ cerno/
 │   ├── public/
 │   │   └── cerno.svg     # App logo
 │   ├── src/
-│   │   ├── Dashboard.tsx # Main workspace (~400 lines, orchestrates state + render)
-│   │   ├── components/   # Extracted UI components
-│   │   │   ├── icons.tsx, LeftSidebar.tsx, ParameterPanel.tsx
-│   │   │   ├── PipelineBar.tsx, VideoSummaryCard.tsx, VideoSearchCard.tsx
-│   │   │   ├── HistoryPanelContent.tsx, SettingsPage.tsx
+│   │   ├── Dashboard.tsx # Main workspace (~280 lines, orchestrates state + render)
+│   │   ├── components/   # 20 UI components
+│   │   │   ├── Sidebar.tsx, Header.tsx, SlideOutPanel.tsx
+│   │   │   ├── ParameterPanel.tsx, PipelineBar.tsx
+│   │   │   ├── VideoSection.tsx, VideoPlayer.tsx
+│   │   │   ├── VideoSummaryCard.tsx, VideoSearchCard.tsx
+│   │   │   ├── HistoryPanelContent.tsx, SettingsPage.tsx, RightPanel.tsx
 │   │   │   ├── DetectionOverlay.tsx, DetectionPanel.tsx, DetectionTimeline.tsx
-│   │   │   ├── VideoInfoCard.tsx, ExportMenu.tsx
-│   │   ├── utils/helpers.ts  # Shared helpers
+│   │   │   ├── VideoInfoCard.tsx, ExportMenu.tsx, icons.tsx
+│   │   ├── hooks/        # 8 custom hooks
+│   │   │   ├── useDetectionData.ts, useHEVCCapability.ts, useParameterForm.ts
+│   │   │   ├── useProxyStatus.ts, useSearch.ts, useStreamReady.ts, useVideoPolling.ts
+│   │   ├── utils/helpers.ts  # Shared helpers (fmtDuration, fmtDate, formatSec)
 │   │   ├── services/api.ts
 │   │   ├── types/index.ts
 │   │   └── mockData.ts   # Pipeline stage definitions + computePipelineStages()
@@ -222,9 +229,8 @@ cerno/
 
 ## Development Status
 
-- **v0.17 — AI Detection + Source Analysis + Metadata Cache**: 新增 AICheck CLI 集成（上传时自动 --deep 全面检测：metadata+SEI+C2PA+像素级水印分析）；新增视频来源分析规则引擎（classify_video_source: phone/camera/screen_recording/surveillance/non_camera_source/unknown）；元数据缓存到 DB（metadata_json 列，首次提取后后续 <1ms 返回）；GET /metadata 返回 source_analysis + ai_detect 字段；前端 VideoInfoCard 展示来源分析+AI检测结果；format_service 分类函数委托到 utils/metadata 共享；参数面板 face_enabled/plate_enabled 支持增量修改。
-- **v0.16 — Single NVDEC stream + Performance**: 单 NVDEC 流供 detection 与 search_encode 共享（detection 推送 1fps 采样帧到队列，search_encode 64 帧即编）；生产者-消费者并发（帧提取与 YOLO 推理重叠）；移除全局 ReID（质量差、开销高）；移除以 track 为单位的 FFmpeg fallback 抽帧（替换为直接使用 cache 帧，track_encode 耗时从 257s→43s）；BoT-SORT 调参（new_track_thresh=0.4, match_thresh=0.4）；detection 默认帧率 10fps。
-- **v0.16 — Single NVDEC stream + Performance + Speed Presets**: `keyframes`→`frame_encode` 生产者-消费者并发 (asyncio.Queue); `search_encode` gate 修复防双编码; NVDEC MJPEG pipe (~100KB/帧) 默认启用; embedder `_pool_last_token` 逐行 L2 归一化 + float32 + PIL resize 8线程并行; batch_size 512; 三档速度预设 (fast/balanced/precise) 控制分辨率 336-672; 前端 "处理速度" 控件 + Pipeline 调优 Settings 页; `GET /api/v1/settings/pipeline`。
+- **v0.17 — AI Detection + Source Analysis + Metadata Cache**: AICheck CLI --deep 自动全面检测（metadata+SEI+C2PA+像素级水印）；来源分析规则引擎 classify_video_source（phone/camera/screen_recording/surveillance/non_camera_source/unknown）；元数据缓存到 DB metadata_json 列（首次 <1ms 返回）；GET /metadata 返回 source_analysis + ai_detect；VideoInfoCard 展示来源分析 + AI 检测；参数面板 face/plate 子开关增量修改。
+- **v0.16 — Single NVDEC stream + Performance + Speed Presets**: 单 NVDEC 流供 detection 与 search_encode 共享（队列消费 1fps→64帧即编）；生产者-消费者并发（帧提取与 YOLO 推理重叠）；移除全局 ReID + FFmpeg fallback 抽帧（track_encode 257s→43s）；NVDEC MJPEG pipe 默认启用；embedder 逐行 L2 归一化 + float32 + PIL 8 线程并行；batch_size 512；三档速度预设 (fast/balanced/precise) 控制分辨率 336-672；前端处理速度控件 + Pipeline 调优页。
 - **v0.14 — Search/Summary Decoupling + Preload**: Search and summary paths fully decoupled — new `search_encode` operation (self-extracting frames @1fps + batch encoding) runs parallel to summary pipeline, depends only on duration. Captioner preloaded at startup alongside embedder (shared instances, no per-pipeline load/unload). Configurable encode batch size (pipeline.encode_batch_size). NVDEC hardware decoding support (optional, pipeline.use_nvdec). 15 operations, 11 DB tables, 10 plugin ABCs.
 - **v0.10 — Track encoding + crop embedding**: TrackEncodeRunner (最佳帧 crop + Qwen3-VL-Embedding 2048-dim). 5-path semantic search (frame+chunk+text+label+track). track 搜索独立去重, 返回具体物体 (class_name#id + crop 缩略图). EventDrivenScheduler: 异步事件驱动替代拓扑分批.
 - **v0.9 — YOLO detection + tracking**: YOLO11s + BoT-SORT (10fps 独立帧率, dual-gate). 前端 DetectionOverlay (Canvas bbox + 插值 + 拖尾) + DetectionPanel (物体列表 + 分类筛选) + DetectionTimeline (时间轴 + 播放头 + 选中滚动). demo 验证通过.

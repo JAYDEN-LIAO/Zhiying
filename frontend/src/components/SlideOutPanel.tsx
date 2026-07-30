@@ -27,7 +27,7 @@ export function SlideOutPanel({ open, width, children }: SlideOutPanelProps) {
     <div
       className="slide-panel"
       style={{
-        left: 32,
+        left: 0,
         width: open ? width : 0,
         height: "100%",
         borderColor: open ? "rgba(203, 213, 225, 0.8)" : "transparent",

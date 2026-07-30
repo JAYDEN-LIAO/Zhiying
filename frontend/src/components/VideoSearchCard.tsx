@@ -218,7 +218,16 @@ export function VideoSearchCard({
                   </div>
                   <div className="sr-c">
                     <div className="sr-meta">
-                      <span className="sr-time">@ {formatSec(item.precise_start ?? item.scene_range_start)}</span>
+                      <span className="sr-time">
+                        {formatSec(item.precise_start ?? item.scene_range_start)}
+                        {(() => {
+                          const end = item.precise_end ?? item.scene_range_end;
+                          const start = item.precise_start ?? item.scene_range_start;
+                          return (end != null && end !== start)
+                            ? ` – ${formatSec(end)}`
+                            : "";
+                        })()}
+                      </span>
                       {item.similarity != null && <span className="sr-score">{Math.round(item.similarity * 100)}%</span>}
                       <span className={`sr-type ${isTrack ? "track" : isPlate ? "plate" : "frame"}`}>
                         {isTrack ? "物体定位" : isPlate ? "车牌" : "帧定位"}

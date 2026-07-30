@@ -47,7 +47,7 @@ export function Sidebar({
           }`}>
             {/* Params panel toggle */}
             <button
-              className={"sb-btn" + (activePanel === "params" ? " active" : "")}
+              className={"sb-btn" + (activePanel === "params" ? " active-green" : "")}
               onClick={() => onTogglePanel("params")}
               title="参数设置"
             >
@@ -62,7 +62,7 @@ export function Sidebar({
 
             {/* History panel toggle */}
             <button
-              className={"sb-btn" + (activePanel === "history" ? " active" : "")}
+              className={"sb-btn" + (activePanel === "history" ? " active-green" : "")}
               onClick={() => onTogglePanel("history")}
               title="历史记录"
             >

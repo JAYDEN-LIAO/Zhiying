@@ -2,7 +2,7 @@
 
 ## One-Line Summary
 
-Cerno is a **video analytics engine** (v0.16) that ingests videos, runs a **declarative operation DAG** (15 operations with event-driven orchestration), generates **4-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics + track-level crop embeddings), runs **YOLO11 object detection + BoT-SORT tracking** as an optional add-on, adds **face recognition** (SCRFD + ArcFace R50 identity clustering) and **license plate recognition** (HyperLPR3, with PaddleOCR alternative) as optional perception modules, enables **6-path parallel semantic search** (frame + chunk + text + label + track + plate, chunk 配置关闭默认不启用) + **face image search** (POST /search/face, ArcFace 512d), provides **multi-format video compatibility** (容器 remux + 编码 proxy, 按需生成, 零浪费), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
+Cerno is a **video analytics engine** (v0.16) that ingests videos, runs a **declarative operation DAG** (16 operations with event-driven orchestration), generates **4-path encodings** (frame-level 1fps + chunk-level sliding window + text-level caption semantics + track-level crop embeddings), runs **YOLO11 object detection + BoT-SORT tracking** as an optional add-on, adds **face recognition** (SCRFD + ArcFace R50 identity clustering) and **license plate recognition** (HyperLPR3, with PaddleOCR alternative) as optional perception modules, enables **6-path parallel semantic search** (frame + chunk + text + label + track + plate, chunk 配置关闭默认不启用) + **face image search** (POST /search/face, ArcFace 512d), provides **multi-format video compatibility** (容器 remux + 编码 proxy, 按需生成, 零浪费), exposes everything via **FastAPI + PostgreSQL/pgvector**, and provides a **4-level parameter system** (scene type → perception modules → function switches → advanced params) that controls pipeline execution.
 
 ## Quick File Map
 
@@ -24,7 +24,7 @@ api/maintenance_routes.py  — (stub) planned health/reindex endpoints
 core/models.py             — ORM: Video (+8 format fields), Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection (11 tables)
 core/schemas.py            — Pydantic v2 DTOs + JSONB validation models + FormatInfo/ProxyStatus
 core/interfaces.py         — 10 abstract base classes (ABCs) + Scene/VideoContext dataclasses
-core/search.py             — 6 search functions: frame/chunk/text/track/plate/face
+core/search.py             — 6 search functions: frame/chunk/text/track/plate/face (async def)
 core/repository.py         — Data access layer + bulk_insert_frames/chunks
 core/db.py                 — Async engine, init_db(), incremental migration (extensions: pgvector, pg_trgm, fuzzystrmatch)
 core/config_loader.py      — Loads config.yaml, merges .env secrets via _ENV_OVERRIDES
@@ -33,7 +33,7 @@ core/status_tracker.py     — Pipeline progress + dynamic operation-based weigh
 core/exceptions.py         — Custom exceptions
 pipeline/engine.py         — DAG executor: EventDrivenScheduler (event-driven, ~200 lines), reads remuxed_path
 pipeline/operations.py     — Operation registry: ALL_OPERATIONS with gates/deps/labels (v0.14 gate fixes)
-pipeline/runners/          — 15 operation runners (one per processing unit):
+pipeline/runners/          — 16 operation runners (one per processing unit):
   runners/base.py            — OperationRunner ABC + PipelineContext + Operation dataclass
   runners/duration.py        — ffprobe duration detection
   runners/segmentation.py    — TransNetV2 (≤30min) / time-based (>30min) 自适应
@@ -67,11 +67,13 @@ utils/video_source.py      — 视频来源分析: 规则引擎分类 phone/came
 config/config.yaml         — Main config: server/db/storage/plugins/pipeline (detection_fps:10, batch:128)
 config/config_schema.py    — Pydantic config validation
 config/prompts.yaml        — Caption/Summarizer/Grounding prompt templates
-frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~400 lines, hevcOk探测+proxy轮询+streamReady)
-frontend/src/components/    — Split components: icons, LeftSidebar, ParameterPanel, PipelineBar,
+frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~280 lines, hevcOk探测+proxy轮询+streamReady)
+frontend/src/components/    — Split components (20 files):
+                              icons, Sidebar, Header, SlideOutPanel,
+                              ParameterPanel, PipelineBar, VideoSection, VideoPlayer,
                               VideoSummaryCard, VideoSearchCard, HistoryPanelContent, SettingsPage,
                               DetectionOverlay, DetectionPanel, DetectionTimeline,
-                              VideoInfoCard, ExportMenu
+                              VideoInfoCard, ExportMenu, RightPanel
 frontend/src/utils/helpers.ts — Shared helpers (fmtDuration, fmtDate, formatSec)
 frontend/src/services/api.ts — API wrapper + polling helper (getVideoStreamUrl hevc_ok, getProxyStatus)
 frontend/src/types/index.ts — TypeScript types (mirrors backend schemas + ProxyStatus)
@@ -189,7 +191,7 @@ Search (6-path parallel, v0.12):
 
 | Area | Status | Files |
 |---|---|---|
-| Pipeline core (DAG) | ✅ Complete (EventDrivenScheduler v0.10) | engine.py, operations.py, runners/* (15 ops) |
+| Pipeline core (DAG) | ✅ Complete (EventDrivenScheduler v0.10) | engine.py, operations.py, runners/* (16 ops) |
 | Frame/Chunk/Text encoding | ✅ Complete | runners/frame_encode, chunk_encode, text_encode |
 | Object Detection + Tracking | ✅ Complete | plugins/detector/yolo.py, runners/detection.py, api/detection_routes.py, DetectionOverlay.tsx |
 | Track Encoding (crop→embed) | ✅ Complete | runners/track_encode.py — 最佳帧 crop + Qwen3-VL-Embedding 2048-dim（跳过 FFmpeg fallback 抽帧）|
@@ -203,10 +205,10 @@ Search (6-path parallel, v0.12):
 | DB + migrations | ✅ Done | db.py, models.py, init_db() |
 | Prompt templates | ✅ Done | config/prompts.yaml |
 | Pipeline real-time status | ✅ Done | status_tracker.py with dynamic weight allocation + sub_progress per-operation interpolation |
-| Parameter system (4-level) | ✅ Done | core/schemas.py PipelineParams + model_validator; config/presets.yaml; frontend ParameterPanel with cascade |
+| Parameter system (4-level) | ✅ Done | core/schemas.py PipelineParams + model_validator; core/schemas.py PipelineParams; frontend ParameterPanel with cascade |
 | Incremental processing | ✅ Done | pipeline/engine.py run_incremental(); services/video_service.py incremental_process() |
 | Settings API + API key mgmt | ✅ Done | core/settings_service.py; GET/PUT /api/v1/settings |
-| Frontend dashboard | ✅ Done | Dashboard.tsx + 15 components (React 19 + Tailwind 4) — 参数面板四级联动+人脸/车牌子开关, 动态 PipelineBar, 检测面板统一物体列表(车辆内联车牌)+人脸切换, Canvas bbox 渲染(物体框+人脸虚线), 时间轴人脸标记点, 人脸图片搜索(👤按钮), 系统设置页, 历史记录搜索, 元数据卡片, 导出菜单 |
+| Frontend dashboard | ✅ Done | Dashboard.tsx + 20 components + 8 hooks (React 19 + Tailwind 4) — 参数面板四级联动+人脸/车牌子开关, 动态 PipelineBar, 检测面板统一物体列表(车辆内联车牌)+人脸切换, Canvas bbox 渲染(物体框+人脸虚线), 时间轴人脸标记点, 人脸图片搜索(👤按钮), 系统设置页, 历史记录搜索, 元数据卡片, 导出菜单 |
 | Object Detection + Tracking | ✅ Done | plugins/detector/yolo.py — YOLO11s + BoT-SORT, dual-gate control, 10fps 默认, 生产者-消费者并发 + 单 NVDEC 流共享, frontend DetectionOverlay |
 | Track search path | ✅ Done | core/search.py track_vector_search + search_engine.py _track_search — encode_text(query) vs track crop embeddings, 返回具体物体 |
 | Face Recognition | ✅ Done | plugins/face/insightface_face.py — InsightFace SCRFD + ArcFace R50 (512d), FaceRunner identity clustering with label→DB ID mapping |
@@ -238,7 +240,7 @@ Search (6-path parallel, v0.12):
 8. **Four encoding paths**: Frame (encode_image), Chunk (config-gated, default disabled, -c copy + encode_video), Text (encode_text). All three reuse the shared embedder.
 9. **When adding new dependencies**: add to `requirements.txt` AND to `Dockerfile`.
 10. **Search result format**: All results include `precision_level` (frame/chunk/text/label), `precise_start/end` (text 也有 scene 起止作为锚点), `match_paths`, and `thumbnail_url`. Merge 时帧簇优先，text 与非重叠帧的 text 按路径权重排序。
-11. **Frontend**: Dashboard.tsx (~400 lines) orchestrates all state and renders imported components from `components/`. Component files: icons, LeftSidebar, ParameterPanel, PipelineBar, VideoSummaryCard, VideoSearchCard, DetectionPanel, DetectionTimeline, HistoryPanelContent, SettingsPage, DetectionOverlay, VideoInfoCard, ExportMenu. Utility functions in `utils/helpers.ts`. TypeScript types in `types/index.ts` mirror backend Pydantic schemas.
+11. **Frontend**: Dashboard.tsx (~280 lines) orchestrates all state and renders imported components from `components/`. Component files (20 files): icons, Sidebar, Header, SlideOutPanel, ParameterPanel, PipelineBar, VideoSection, VideoPlayer, VideoSummaryCard, VideoSearchCard, DetectionPanel, DetectionTimeline, HistoryPanelContent, SettingsPage, DetectionOverlay, VideoInfoCard, ExportMenu, RightPanel. Hooks are in `hooks/` (8 files: useDetectionData/HEVCCapability/ParameterForm/ProxyStatus/Search/StreamReady/VideoPolling). Utility functions in `utils/helpers.ts`. TypeScript types in `types/index.ts` mirror backend Pydantic schemas.
 12. **Detection gate pattern**: New perception modules that are optional should follow the dual-gate pattern: config-level enable/disable (`plugins.{name}.backend: yolo` vs `null`) AND per-video toggle (`detection_enabled` in PipelineParams). Gate function checks both. This allows server-wide opt-out while letting users control per-video.
 13. **Canvas overlay pattern**: The DetectionOverlay uses a `canvas` with `pointerEvents: "none"` for pure rendering, with click/mousemove handlers attached via native `addEventListener` to the parent container. This allows clicks to pass through to video controls while still enabling bbox interaction.
 14. **Video format handling (v0.13)**: Video format processing is TWO-LAYER — remux (container standardization, `-c copy` stream copy, audio → AAC if needed) and proxy (codec compatibility, NVENC H.264, lazy on-demand). Probe is synchronous during upload (<100ms). Remux and proxy are async (asyncio.create_task). Stream endpoint routes via `FormatService.get_stream_target(video_id, hevc_ok)`. Frontend detects HEVC support via `canPlayType()` and passes `hevc_ok` query param. Proxy is NEVER eager-generated — only triggered when a non-HEVC client requests the video.

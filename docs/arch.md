@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.16 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.17 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -221,7 +221,7 @@ main.py
         │     ├─ services/video_service.py
         │     │     └─ pipeline/engine.py (DAG executor)
         │     │           ├─ pipeline/operations.py (ALL_OPERATIONS)
-        │     │           ├─ pipeline/runners/*.py (15 operation runners)
+        │     │           ├─ pipeline/runners/*.py (16 operation runners)
         │     │           ├─ utils/video_util.py          (keyframe extraction, clip export)
         │     │           ├─ utils/metadata.py            (video metadata extraction)
         │     │           └─ plugins/factory.py
@@ -268,20 +268,28 @@ frontend/
   │   ├─ mockData.ts       ← Pipeline 阶段定义 + computePipelineStages()
   │   ├─ services/api.ts   ← API 调用封装 + 轮询工具函数
   │   ├─ types/index.ts    ← TypeScript 类型定义 (镜像 backend schemas)
-  │   └─ components/       ← 子组件目录
-  │       ├─ LeftSidebar        ← 深蓝导航栏: 页面切换 + 面板开关
+  │   ├─ hooks/            ← 8 个自定义 hooks
+  │   │   ├─ useDetectionData, useHEVCCapability, useParameterForm
+  │   │   ├─ useProxyStatus, useSearch, useStreamReady, useVideoPolling
+  │   └─ components/       ← 20 个子组件
+  │       ├─ Sidebar            ← 深色渐变导航栏: 页面切换 + 面板开关
+  │       ├─ Header             ← 顶部栏: logo + 动画标题 + 上传按钮
+  │       ├─ SlideOutPanel      ← 侧滑面板容器 (参数/历史记录)
+  │       ├─ RightPanel         ← 右侧区域编排 (检测/搜索/摘要/信息)
+  │       ├─ VideoSection       ← 中间列编排 (播放器/时间轴/进度栏)
+  │       ├─ VideoPlayer        ← 视频播放器封装 + 格式覆盖层
   │       ├─ ParameterPanel     ← 侧滑参数面板: 四级联动
   │       ├─ PipelineBar        ← 动态阶段进度条 (根据开关渲染对应节点)
   │       ├─ VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮
   │       ├─ VideoSearchCard    ← 语义搜索面板 (索引未开启时置灰)
-  │       ├─ HistoryPanelContent← 历史记录列表 (搜索+自动刷新+缩略图)
+  │       ├─ HistoryPanelContent← 历史记录列表 (搜索+折叠删除动画)
   │       ├─ SettingsPage       ← 系统设置: 存储路径 + API 密钥管理
   │       ├─ DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+交互)
-  │       ├─ DetectionPanel     ← 物体列表 (分类筛选+缩略图+导出按钮)
+  │       ├─ DetectionPanel     ← 物体列表 (分类筛选+缩略图 hover+导出)
   │       ├─ DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
-  │       ├─ VideoInfoCard      ← 视频元数据信息卡片
+  │       ├─ VideoInfoCard      ← 视频元数据 + 来源分析 + AI 检测
   │       ├─ ExportMenu         ← 导出菜单 (视频片段或节点)
-  │       └─ icons.tsx          ← 18+ SVG 图标
+  │       └─ icons.tsx          ← 20+ SVG 图标
   ├─ package.json          ← React 19, Vite 6, Tailwind 4
   ├─ vite.config.ts        ← Vite 配置 + /api 代理到 localhost:8000
   └─ tsconfig.json
@@ -354,7 +362,7 @@ Semantic Search: POST /api/v1/search/semantic
              match_paths, caption, similarity, thumbnail_url,
              track_id?, class_name?, bbox?}
 
-core/search.py 提供的 6 种检索函数:
+core/search.py 提供的 6 种异步检索函数:
   1. frame_vector_search      — 帧级精确搜索 (frame_embeddings)
   2. chunk_vector_search      — 窗口过程语义搜索 (chunks)
   3. text_vector_search       — 文本语义搜索 (scenes.text_embedding, 含 caption+ocr+transcript)
@@ -489,9 +497,9 @@ plate_detections
 React 19 + Vite 6 + Tailwind CSS 4
   │
   ├── App.tsx                ← 根组件
-  ├── Dashboard.tsx          ← 主工作台 (~400 行, 状态编排 + render)
+  ├── Dashboard.tsx          ← 主工作台 (~280 行, 状态编排 + render)
   ├── components/
-  │   ├── LeftSidebar        ← 深蓝导航栏: 页面切换 + 面板开关
+  │   ├── Sidebar            ← 深色渐变导航栏: 页面切换 + 面板开关
   │   ├── ParameterPanel     ← 侧滑参数面板: 四级联动 (L1场景/L2感知/L3功能/L4高级)
   │   ├── PipelineBar        ← 动态阶段进度条 (根据开关渲染对应节点)
   │   ├── VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮
@@ -501,7 +509,7 @@ React 19 + Vite 6 + Tailwind CSS 4
   │   ├── DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+选中)
   │   ├── DetectionPanel     ← 物体列表 (分类筛选+缩略图 hover+导出按钮)
   │   ├── DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
-  │   ├── VideoInfoCard      ← 视频元数据信息卡片
+  │   ├── VideoInfoCard      ← 视频元数据 + 来源分析 + AI 检测
   │   ├── ExportMenu         ← 导出菜单 (视频片段或节点)
   │   └── icons.tsx          ← 20+ SVG 图标
   ├── utils/helpers.ts       ← fmtDuration, fmtDate, formatSec
@@ -568,7 +576,7 @@ Vite 开发代理:
 
 | Module | Status | Note |
 |---|---|---|
-| Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 15 ops, search/summary decoupled, gates/deps, events-driven |
+| Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 16 ops, search/summary decoupled, gates/deps, events-driven |
 | Track Encoding (crop→embed) | ✅ | runners/track_encode.py: 最佳帧 crop → Qwen3-VL-Embedding 2048-dim。跳过头尾帧 FFmpeg fallback（直接使用 cache 帧），长视频 track_encode ~43s |
 | Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
 | License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
@@ -594,10 +602,10 @@ Vite 开发代理:
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
 | Settings API + Keys | ✅ | core/settings_service.py, GET/PUT /api/v1/settings |
-| Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 15 components incl Detection/Timeline/Metadata/Export |
+| Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 20 components + 8 hooks incl Detection/Timeline/Metadata/Export |
 | Config Schema | ✅ | Pydantic v2 validation for config.yaml |
 | Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |
-| DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration, 8 tables |
+| DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration, 11 tables |
 | TransNetV2 Segmenter | ✅ | Neural scene boundary detection |
 | faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
 | OCR | 📋 | PaddleOCR available as plate recognition alternative (plugins/plate/paddle_plate.py) |
