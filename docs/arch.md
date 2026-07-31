@@ -1,6 +1,6 @@
 # Cerno Architecture
 
-> Version: 0.19 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.20 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 
 ## System Data Flow
@@ -93,9 +93,10 @@ L2: Perception Modules (6 switches, 1 grayed)
   ├─ detection_enabled → YOLO11 + BoT-SORT object detection (dual-gated: config + per-video)
   └─ grounding_enabled → Florence-2 grounding (always grayed, plugin not implemented)
 
-L3: Function Switches (2)
+L3: Function Switches (3)
   ├─ search_index_enabled → 4-path encoding for semantic search (frame+chunk+text+track)
-  └─ summary_enabled      → global structured summary
+  ├─ summary_enabled      → global structured summary
+  └─ track_stitch_enabled → 全局 tracklet 缝合（合并被遮挡/缩放/切换拆分的同一身份 track）
 
 L4: Advanced Params (7)
   ├─ language, sample_fps, segment_threshold
@@ -109,7 +110,8 @@ Validation: PipelineParams model_validator in core/schemas.py
   ● vision+audio both OFF → reject
   ● search+summary both OFF → reject
 
-Incremental: Only L3 switches can be toggled on completed videos
+Incremental: Only L3 switches (summary_enabled / search_index_enabled) can be toggled on completed videos
+  → track_stitch_enabled change requires new video record（需重跑检测路径）
   → summary_mode change requires new video record (POST /videos/reuse)
   → runs run_incremental() → skips completed phases
 ```
@@ -191,6 +193,15 @@ Encode Frames（与 caption/summary 同批并行，Persist 前执行）
   │     -c copy 流复制 → 480p 5fps 预处理 → encode_video → chunks 表
   │     自适应窗口: ≤5s 不切, 5-60s 窗口=时长/2, >60s 窗口=30s/步长=15s
   └─ c. 文本语义路 (runners/text_encode.py): encode_text(caption+ocr+transcript) → ctx.text_embedding
+
+Track 语义路 (runners/track_encode.py, depends detection+frame_encode, v0.20)
+  ├─ Phase 1: 读 detection 缓存的 640×384 track crop（每 2s 一帧, 零 FFmpeg seek）
+  │    → 每 track 挑 20%/50%/80% 附近 3 帧 → Qwen3-VL-Embedding → mean pool 成 1 向量
+  ├─ Phase 2: 全局 tracklet 缝合 (L3 track_stitch_enabled 控制)
+  │    → cosine 相似度矩阵 (同类 + sim≥0.85 + 时序不重叠)
+  │    → 时序检查用 segments 真实片段, MAX_OVERLAP_SEC=1.0 + HIGH_SIM_OVERRIDE=0.90 容忍双跟踪伪影
+  │    → 合并更新 tracks / frame_detections / track_embeddings
+  └─ → track_embeddings 表
 
   ↓
 
@@ -287,7 +298,7 @@ frontend/
   │       ├─ DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+交互)
   │       ├─ DetectionPanel     ← 物体列表 (分类筛选+缩略图 hover+导出)
   │       ├─ DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
-  │       ├─ VideoInfoCard      ← 视频元数据 + 来源分析 + AI 检测
+  │       ├─ VideoInfoCard      ← 视频元数据 + 来源分析
   │       ├─ ExportMenu         ← 导出菜单 (视频片段或节点)
   │       └─ icons.tsx          ← 20+ SVG 图标
   ├─ package.json          ← React 19, Vite 6, Tailwind 4
@@ -301,8 +312,7 @@ utils/
 
 services/
   ├─ video_service.py      ← Pipeline 调用与后台调度
-  ├─ export_service.py     ← 导出业务逻辑 (clip/frames/track/thumbnails zip)
-  └─ ai_detect_service.py  ← AICheck CLI 调用封装 (subprocess aic --deep)
+  └─ export_service.py     ← 导出业务逻辑 (clip/frames/track/thumbnails zip)
 ```
 
 ## Plugin System
@@ -394,12 +404,12 @@ videos
   ├─ file_path, file_name, file_size, duration
   ├─ content_type, language
   ├─ perception: audio/vision/ocr/grounding/caption/detection_enabled, detection_classes
-  ├─ function: search_index_enabled, summary_enabled, summary_mode
+  ├─ function: search_index_enabled, summary_enabled, summary_mode, track_stitch_enabled
   ├─ advanced: sample_fps, segment_threshold, caption_with_context, summary_detail
   ├─ summary (JSONB)
   ├─ metadata_json (JSONB)          — 缓存的完整技术元数据（首次提取后后续 <1ms）
   ├─ source_analysis (JSONB)        — 视频来源分析：类型/置信度/证据链/监控品牌
-  ├─ ai_detect_result (JSONB)       — AI 生成检测结果（AICheck 输出，含 signals/verdict）
+  ├─ ai_detect_result (JSONB)       — [残留] AI 生成检测结果（AICheck 服务已移除，此列保留但恒为 not_run）
   ├─ status_detail (管道实时操作描述)
   ├─ group_id (UUID FK → video_groups.id, nullable, v0.19) — NULL=单视频未分组
   └─ created_at, updated_at
@@ -486,7 +496,7 @@ plate_detections
 | GET | /api/v1/videos/{id}/stream | 视频流式播放 (支持 Range) |
 | GET | /api/v1/videos/{id}/thumbnail/{scene_index} | 场景缩略图 |
 | DELETE | /api/v1/videos/{id} | 删除视频 (CASCADE) |
-| GET | /api/v1/videos/{id}/metadata | 视频元数据 + 来源分析 + AI 检测 (支持 ?verbose=true, 自动缓存) |
+| GET | /api/v1/videos/{id}/metadata | 视频元数据 + 来源分析 (支持 ?verbose=true, 自动缓存) |
 | GET | /api/v1/settings | 获取系统设置 (API key 状态) |
 | PUT | /api/v1/settings | 更新系统设置 (保存 API key) |
 | GET | /api/v1/settings/pipeline | 获取 Pipeline 配置 (编码预设等全局默认值) |
@@ -527,7 +537,7 @@ React 19 + Vite 6 + Tailwind CSS 4
   │   ├── DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+选中)
   │   ├── DetectionPanel     ← 物体列表 (分类筛选+缩略图 hover+导出按钮) + 独立视频选择器 (组感知)
   │   ├── DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
-  │   ├── VideoInfoCard      ← 视频元数据 + 来源分析 + AI 检测
+  │   ├── VideoInfoCard      ← 视频元数据 + 来源分析
   │   ├── ExportMenu         ← 导出菜单 (视频片段或节点)
   │   └── icons.tsx          ← 20+ SVG 图标
   ├── labels.ts              ← YOLO COCO 类名英→中映射 + 统一颜色表
@@ -587,7 +597,7 @@ Vite 开发代理:
 | **Three-tier metadata extraction** | pymediainfo (full tech) → exiftool (GPS/device) → ffprobe (fallback), graceful degradation |
 | **Metadata cached to DB** | Extracted metadata stored in Video.metadata_json JSONB column. First request: live extraction + cache; subsequent requests: <1ms fast path from DB. Cache versioned via _METADATA_CACHE_VERSION. |
 | **Multi-video group (v0.19)** | Batch upload creates VideoGroup; concurrent per-file processing (semaphore=5, independent DB sessions); PUT /params on one video triggers same params + pipeline for all pending siblings; frontend history stacked cards + Header dropdown switching + search scope selector + independent detection panel |
-| **AICheck deep scan on upload** | AICheck CLI --deep auto-runs on upload/register/reuse as async task. Covers metadata + SEI + C2PA + pixel-level watermark. Results in Video.ai_detect_result JSONB, displayed in frontend VideoInfoCard. Non-blocking — upload completes immediately. |
+| **Global ReID tracklet stitch (v0.20)** | 双层 ReID: 在线 BoT-SORT ReID (with_reid + yolo26n-cls) 处理遮挡/交叉 + 全局缝合 (detection 缓存 640×384 crop, track_encode 零 seek 读取 → mean pool → cosine 合并)。时序检查用 segments 真实检测片段而非生命周期，容忍 ≤1s 双跟踪伪影（缩放/切换/遮挡边缘），L3 track_stitch_enabled 开关 |
 | **Source analysis rule engine** | classify_video_source() uses EXIF device data + file naming patterns + media structure (resolution/fps/audio) to classify origin. No ML dependency — pure heuristics, <10ms. Triggers on first GET /metadata, caches result. |
 | **Class-local track numbering** | Display shows sequential class-local IDs (person 1, car 2) while API uses raw track_id internally |
 | **Per-video face/plate toggles** | Sub-switches under detection_enabled in parameter panel. Surveillance preset defaults both ON. Three-level gate: config backend + detection_enabled + face_enabled/plate_enabled |
@@ -601,7 +611,8 @@ Vite 开发代理:
 | Module | Status | Note |
 |---|---|---|
 | Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 15 ops, search/summary decoupled, gates/deps, events-driven |
-| Track Encoding (crop→embed) | ✅ | runners/track_encode.py: 最佳帧 crop → Qwen3-VL-Embedding 2048-dim。跳过头尾帧 FFmpeg fallback（直接使用 cache 帧），长视频 track_encode ~43s |
+| Track Encoding (crop→embed) | ✅ | runners/track_encode.py: 读检测缓存多帧 640×384 crop（零 FFmpeg seek）→ mean pool → Qwen3-VL-Embedding 2048-dim。长视频友好（track_encode 不随 track 数 seek 爆炸） |
+| Global ReID Tracklet Stitch | ✅ | track_encode Phase 2: cosine ≥0.85 + 同类 + 时序不重叠（segments 真实片段, MAX_OVERLAP_SEC=1.0 + HIGH_SIM_OVERRIDE=0.90 容忍双跟踪伪影）；L3 track_stitch_enabled 开关 |
 | Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
 | License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
@@ -613,7 +624,7 @@ Vite 开发代理:
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
 | Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
 | Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT, 10fps 独立帧率（与 search 共享 NVDEC 流）, dual-gate control |
-| AI Generation Detection | ✅ | services/ai_detect_service.py: AICheck CLI --deep, auto-run on upload/register/reuse, results in Video.ai_detect_result JSONB, frontend VideoInfoCard display |
+| AI Generation Detection | ❌ 已移除 | services/ai_detect_service.py + utils/ai_detect/ 已删除, upload 不再触发 AICheck。残留: ai_detect_result DB 列 + schema + 前端展示（恒为 not_run） |
 | Video Source Analysis | ✅ | utils/video_source.py: 规则引擎 classify_video_source(), phone/camera/screen_recording/surveillance/non_camera_source, 基于 EXIF + file naming + media structure, 首次 GET /metadata 触发, 结果缓存到 DB |
 | Metadata Extraction + Cache | ✅ | utils/metadata.py: 三级提取 (pymediainfo→exiftool→ffprobe); 结果缓存到 Video.metadata_json 列, 后续请求 <1ms 返回; ?verbose=true 查看原始数据 |
 | Clip Export | ✅ | services/export_service.py: 流复制 (-c copy) 极速导出 |
@@ -623,7 +634,7 @@ Vite 开发代理:
 | Scene Thumbnails Export | ✅ | 全部/指定场景缩略图 → zip |
 | Multi-Format Support | ✅ | 两层: remux (-c copy) + proxy (NVENC H.264, 按需) |
 | Performance Optimizations | ✅ | embedder 可配置 3 档 (336-672), PIL resize 8线程并行, batch 512, NVDEC MJPEG pipe 默认启用, keyframes→frame_encode 生产者-消费者并发, float32 |
-| API Routes | ✅ | 28 endpoints: +batch upload +face/data +face/thumbnail +metadata cache +source_analysis +ai_detect |
+| API Routes | ✅ | 28 endpoints: +batch upload +face/data +face/thumbnail +metadata cache +source_analysis |
 | Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值 |
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |

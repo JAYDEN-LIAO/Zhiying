@@ -1,7 +1,7 @@
 """
 core/interfaces.py
 ═══════════════════════════════════════════════════════════
-所有 AI 算法模块的抽象接口层 — 8 个 ABC（v0.8）。
+所有 AI 算法模块的抽象接口层 — 10 个 ABC（v0.8）。
 
 ⚠️  异步 / 同步边界 — 硬性约定
 ────────────────────────────────────────────────────────
@@ -89,6 +89,7 @@ class VideoContext:
     frame_detections: list[dict] | None = None   # detection runner 产出
     tracks: list[dict] | None = None              # detection runner 产出
     track_best_frames: dict | None = None          # {track_id: {frame, bbox, timestamp, conf}}
+    track_crop_cache: dict[int, list] = field(default_factory=dict)  # {track_id: [(timestamp, crop_ndarray), ...]} — 检测时缓存, track_encode 零 seek
     track_embeddings: list[dict] | None = None     # track_encode runner 产出
     face_identities: list[dict] | None = None      # face runner 产出 — 聚类后的人脸身份
     face_detections: list[dict] | None = None      # face runner 产出 — 逐次人脸检出记录

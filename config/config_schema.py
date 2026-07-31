@@ -56,6 +56,7 @@ class AppConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     plugins: dict[str, PluginConfig] = Field(default_factory=dict)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    model_config = ConfigDict(extra="allow")
 
 
 # ═══════════════════════════════════════════════════════════

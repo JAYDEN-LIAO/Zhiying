@@ -12,7 +12,7 @@ const SCENE_PRESETS: Record<string, {
   label: string;
   desc: string;
   modules: { vision: boolean; audio: boolean; ocr: boolean; caption: boolean; detection: boolean };
-  functions: { searchIndex: boolean; summary: boolean };
+  functions: { searchIndex: boolean; summary: boolean; trackStitch: boolean };
   faceEnabled?: boolean;
   plateEnabled?: boolean;
 }> = {
@@ -20,19 +20,19 @@ const SCENE_PRESETS: Record<string, {
     label: "通用",
     desc: "均衡模式，适合未知内容类型",
     modules: { vision: true, audio: false, ocr: false, caption: true, detection: false },
-    functions: { searchIndex: true, summary: true },
+    functions: { searchIndex: true, summary: true, trackStitch: true },
   },
   meeting: {
     label: "会议",
     desc: "以语音和对话为核心（含课堂、访谈、教程）",
     modules: { vision: true, audio: true, ocr: true, caption: true, detection: false },
-    functions: { searchIndex: true, summary: true },
+    functions: { searchIndex: true, summary: true, trackStitch: true },
   },
   surveillance: {
     label: "监控",
     desc: "固定机位，无音频轨道，纯视觉分析",
     modules: { vision: true, audio: false, ocr: false, caption: true, detection: true },
-    functions: { searchIndex: true, summary: false },
+    functions: { searchIndex: true, summary: false, trackStitch: true },
     faceEnabled: true,
     plateEnabled: true,
   },
@@ -40,7 +40,7 @@ const SCENE_PRESETS: Record<string, {
     label: "文字识别",
     desc: "扫描视频中的文件、聊天截图、票据、PPT 等文字",
     modules: { vision: true, audio: false, ocr: true, caption: false, detection: false },
-    functions: { searchIndex: true, summary: false },
+    functions: { searchIndex: true, summary: false, trackStitch: true },
   },
 };
 
@@ -132,7 +132,7 @@ export function ParameterPanel({
   });
   const [functions, setFunctions] = useState<Record<string, boolean>>(() => {
     const saved = loadCustomParams();
-    if (saved?.functions) return saved.functions as Record<string, boolean>;
+    if (saved?.functions) return { trackStitch: true, ...saved.functions as Record<string, boolean> };
     const preset = SCENE_PRESETS["general"];
     return { ...preset.functions };
   });
@@ -171,6 +171,7 @@ export function ParameterPanel({
     g.detection = !MODULE_AVAILABLE.detection || !modules.vision;
     // 功能开关
     g.summary = !modules.caption;
+    g.trackStitch = !modules.detection;  // 依赖物体检测
     // 高级参数
     g.sampleFps = !modules.vision;
     g.detectionClasses = !modules.detection;
@@ -267,6 +268,7 @@ export function ParameterPanel({
       search_index_enabled: functions.searchIndex,
       summary_enabled: functions.summary,
       summary_mode: summaryMode,
+      track_stitch_enabled: functions.trackStitch,
       language: "auto",
       sample_fps: advanced.sampleFps,
       segment_threshold: advanced.segmentThreshold,
@@ -590,6 +592,7 @@ export function ParameterPanel({
             {([
               { key: "searchIndex", label: "搜索索引", hint: "建立向量索引，支持语义搜索" },
               { key: "summary", label: "智能摘要", hint: grayed.summary ? "依赖画面描述" : "生成全局结构化摘要" },
+              { key: "trackStitch", label: "跟踪片段缝合", hint: grayed.trackStitch ? "依赖物体检测" : "合并被遮挡分开的同一身份轨道（全局重识别）" },
             ] as const).map((fn) => {
               const isOn = functions[fn.key];
               const isGrayed = grayed[fn.key];

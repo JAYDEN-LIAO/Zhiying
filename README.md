@@ -67,13 +67,13 @@ curl -X POST -H "Content-Type: application/json" \
 | Frontend Labels Chinese Localization | 统一 labels.ts 映射中心，zh()/zhLabel()/colorOf() 函数 | ✅ |
 | Incremental Processing | summary/search re-run on completed videos | ✅ |
 | Video Source Analysis | Rule engine: phone/camera/screen_recording/surveillance/non_camera_source | ✅ |
-| AI Generation Detection | AICheck CLI (metadata+SEI+C2PA+像素级深度分析), auto-run on upload | ✅ |
+| Global ReID Tracklet Stitching | 合并被遮挡/缩放/镜头切换拆分的同一身份 track（在线 ReID + 全局缝合双层） | ✅ |
 | Metadata Caching | Extracted metadata cached to DB (fast path <1ms on repeat requests) | ✅ |
 
 ## Architecture Overview
 
 ```
-Upload → Probe + AICheck(quick) → Pipeline (DAG) → DB → Search → Frontend
+Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
          ├─ Duration detection (ffprobe)
          ├─ [搜索路径]  Search Encode @1fps — 与 detection 共享 NVDEC 流 (队列消费)
          ├─ [摘要路径]  Scene Segmentation (TransNetV2) + Audio Transcription (faster-whisper)
@@ -93,8 +93,8 @@ Upload → Probe + AICheck(quick) → Pipeline (DAG) → DB → Search → Front
          │    └─ Person crop → SCRFD detect → ArcFace R50 512d embed → identity clustering
          ├─ License Plate (可选 — 三门控: config + detection_enabled + plate_enabled):
          │    └─ Vehicle crop → HyperLPR3 detect + recognize → plate text + type + confidence
-         ├─ AICheck (deep, async on upload): AICheck CLI --deep
-         │    └─ AI generation detection → metadata+SEI+C2PA+watermark signals
+         ├─ Global ReID Stitch (track_encode Phase 2, L3 可开关):
+         │    └─ 检测缓存多帧 crop → mean pool → cosine 合并同一身份 tracklet
          ├─ Source Analysis (rule engine, on first GET /metadata):
          │    └─ classify_video_source() → phone/camera/surveillance/non_camera
          └─ Shared GPU models (embedder 启动时预加载; captioner 按需加载):
@@ -113,7 +113,7 @@ Upload → Probe + AICheck(quick) → Pipeline (DAG) → DB → Search → Front
 - **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, 4-level parameter panel (含速度预设), summary mode selector, settings page (含 Pipeline 调优), **multi-video group** support (history stack/expand, header switching, cross-video search, independent detection panel)
 - **Export API** — clip export (stream copy), frame export (zip), track segment export (zip), scene thumbnail export (zip), track thumbnail download
 - **Video metadata extraction** — three-tier extraction (pymediainfo → exiftool → ffprobe), GPS/device/codec info via GET /metadata endpoint, results cached to DB (fast path <1ms on repeat requests)
-- **AI Generation Detection** — AICheck CLI `--deep` auto-run on upload, covers metadata + SEI + C2PA + pixel-level watermark analysis, results in `Video.ai_detect_result` JSONB (displayed in frontend VideoInfoCard)
+- **Global ReID Tracklet Stitching (v0.20)** — 双层 ReID：在线 BoT-SORT ReID（`with_reid: true` + `yolo26n-cls.pt` 特征, 遮挡/交叉保持身份）+ 全局缝合（detection 每 2s 缓存 640×384 track crop → track_encode 零 seek 读取 → mean pool → cosine ≥0.85 合并同一身份 tracklet, 容忍镜头缩放/切换的双跟踪伪影）。L3 `track_stitch_enabled` 开关控制
 - **Video Source Analysis** — rule engine classifies video origin: phone/camera/screen_recording/surveillance/non_camera_source, based on EXIF + file naming + media structure heuristics, results cached to DB via `Video.source_analysis`
 
 ## Tech Stack
@@ -127,7 +127,7 @@ Upload → Probe + AICheck(quick) → Pipeline (DAG) → DB → Search → Front
 | Database | PostgreSQL 17 + pgvector 0.8 |
 | Vector Embedding | Qwen3-VL-Embedding-8B (local GPU) |
 | Object Detection | YOLO11s (local GPU) |
-| Object Tracking | BoT-SORT (motion-only with_reid=false, 10fps, track_buffer=120, match_thresh=0.4) |
+| Object Tracking | BoT-SORT + 在线 ReID (with_reid=true, model="auto"→yolo26n-cls.pt, 10fps, track_buffer=45, match_thresh=0.5) |
 | Captioning | Qwen3-VL-8B (local GPU, default) / Qwen-VL-Max (API, vlm_llm mode) |
 | Summarization | Pure Python aggregator (default) / DeepSeek Chat (API, vlm_llm mode) |
 | Scene Segmentation | TransNetV2 / Time-based (fixed interval) |
@@ -197,7 +197,6 @@ cerno/
 │   ├── video_service.py  # Video processing orchestration
 │   ├── format_service.py # Multi-format support (probe/remux/proxy, lazy on-demand)
 │   ├── export_service.py # Export business logic (clip/frames/track/thumbnails)
-│   └── ai_detect_service.py # AICheck CLI wrapper (subprocess aic --deep)
 ├── utils/                # FFmpeg tools + metadata extraction
 │   ├── video_util.py     # FFmpeg subprocess helpers (extract audio/keyframes/duration)
 │   ├── metadata.py       # Video metadata extraction (pymediainfo/exiftool/ffprobe)
@@ -234,9 +233,10 @@ cerno/
 
 ## Development Status
 
+- **v0.20 — Dual-layer ReID (Online + Global Stitch)**: 在线 BoT-SORT ReID（`with_reid: true`, model="auto"→yolo26n-cls.pt, appearance_thresh 0.6, track_buffer 45, match_thresh 0.5 — 遮挡/交叉保持身份, 轨迹稳定）; 全局 tracklet 缝合（detection 每 2s 缓存 640×384 track crop → track_encode 零 FFmpeg seek, 挑 20/50/80% 多帧 mean pool → cosine ≥0.85 合并, 用 segments 真实检测片段做时序检查, MAX_OVERLAP_SEC=1.0 + HIGH_SIM_OVERRIDE=0.90 容忍缩放/切换/遮挡边缘双跟踪伪影）; L3 `track_stitch_enabled` 参数 + 前端"跟踪片段缝合"开关; 完成后修改需新建记录; 长视频友好（track_encode 不随 track 数 seek 爆炸, 只剩编码成本）。
 - **v0.19 — Multi-Video Group Processing**: 批量上传 POST /videos/upload/batch（并发处理，信号量5，独立 DB session）；VideoGroup 模型 + videos.group_id FK；组参数同步（PUT /params 时自动同步到同组 all pending 视频）；前端分组历史卡片堆叠/展开动画 + Header 组内切换下拉 + 搜索范围选择器（当前/组内/全部）+ DetectionPanel 独立视频选择器 + 搜索结果跨视频跳转；summary one_liner 改为时间轴链格式。
 - **v0.18 — Universal Image Search + Frontend Chinese Labels**: 通用图搜 POST /search/image（Qwen3-VL-Embedding 2048-dim → frame_embeddings，独立 search_image_only 路径跳过帧聚类和 scene 信息补充）；前端标签中文化 labels.ts（统一 ZH_LABELS + CLASS_COLORS，4 组件改为 zh()/zhLabel()/colorOf() 显示中文）；图搜结果点击跳转不自动播放（end=null 语义控制）。
-- **v0.17 — AI Detection + Source Analysis + Metadata Cache**: AICheck CLI --deep 自动全面检测（metadata+SEI+C2PA+像素级水印）；来源分析规则引擎 classify_video_source（phone/camera/screen_recording/surveillance/non_camera_source/unknown）；元数据缓存到 DB metadata_json 列（首次 <1ms 返回）；GET /metadata 返回 source_analysis + ai_detect；VideoInfoCard 展示来源分析 + AI 检测；参数面板 face/plate 子开关增量修改。
+- **v0.17 — Source Analysis + Metadata Cache**: 来源分析规则引擎 classify_video_source（phone/camera/screen_recording/surveillance/non_camera_source/unknown）；元数据缓存到 DB metadata_json 列（首次 <1ms 返回）；GET /metadata 返回 source_analysis；VideoInfoCard 展示来源分析；参数面板 face/plate 子开关增量修改。（注: AI 生成检测 AICheck 已移除 — 服务文件与触发逻辑删除，ai_detect_result DB 列/schema/前端展示残留保留但恒为 not_run）
 - **v0.16 — Single NVDEC stream + Performance + Speed Presets**: 单 NVDEC 流供 detection 与 search_encode 共享（队列消费 1fps→64帧即编）；生产者-消费者并发（帧提取与 YOLO 推理重叠）；移除全局 ReID + FFmpeg fallback 抽帧（track_encode 257s→43s）；NVDEC MJPEG pipe 默认启用；embedder 逐行 L2 归一化 + float32 + PIL 8 线程并行；batch_size 512；三档速度预设 (fast/balanced/precise) 控制分辨率 336-672；前端处理速度控件 + Pipeline 调优页。
 - **v0.14 — Search/Summary Decoupling + Preload**: Search and summary paths fully decoupled — new `search_encode` operation (self-extracting frames @1fps + batch encoding) runs parallel to summary pipeline, depends only on duration. Captioner preloaded at startup alongside embedder (shared instances, no per-pipeline load/unload). Configurable encode batch size (pipeline.encode_batch_size). NVDEC hardware decoding support (optional, pipeline.use_nvdec). 15 operations, 11 DB tables, 10 plugin ABCs.
 - **v0.10 — Track encoding + crop embedding**: TrackEncodeRunner (最佳帧 crop + Qwen3-VL-Embedding 2048-dim). 5-path semantic search (frame+chunk+text+label+track). track 搜索独立去重, 返回具体物体 (class_name#id + crop 缩略图). EventDrivenScheduler: 异步事件驱动替代拓扑分批.

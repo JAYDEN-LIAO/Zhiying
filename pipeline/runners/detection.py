@@ -30,6 +30,26 @@ from utils.video_util import stream_frames
 
 logger = logging.getLogger(__name__)
 
+CROP_EXPAND_RATIO = 1.3      # bbox 外扩比例 (每边 15%) — 与 track_encode 一致
+CROP_INTERVAL = 2.0          # track crop 缓存间隔 (秒) — 每 track 每 2s 存一帧供 track_encode
+
+
+def _expand_crop(frame: np.ndarray, bbox: dict) -> np.ndarray:
+    """bbox 外扩 30% 后裁剪，clamp 到画面边界。与 track_encode 版本一致。"""
+    h, w = frame.shape[:2]
+    x1, y1 = bbox["x1"], bbox["y1"]
+    x2, y2 = bbox["x2"], bbox["y2"]
+
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    bw, bh = (x2 - x1) * CROP_EXPAND_RATIO, (y2 - y1) * CROP_EXPAND_RATIO
+
+    nx1 = max(0, int((cx - bw / 2) * w))
+    nx2 = min(w, int((cx + bw / 2) * w))
+    ny1 = max(0, int((cy - bh / 2) * h))
+    ny2 = min(h, int((cy + bh / 2) * h))
+
+    return frame[ny1:ny2, nx1:nx2]
+
 
 class DetectionRunner(OperationRunner):
     """检测与追踪执行器 — 流式抽帧 → YOLO11 track() → 结果累加。
@@ -263,11 +283,15 @@ class DetectionRunner(OperationRunner):
                         "first_seen": float(timestamp),
                         "last_seen": float(timestamp),
                         "frame_count": 1,
+                        "segments": [{"start": float(timestamp), "end": float(timestamp)}],
                     }
                 else:
                     trk = tracks_map[tid]
                     trk["last_seen"] = float(timestamp)
                     trk["frame_count"] += 1
+                    # 延长最后一段
+                    if trk["segments"]:
+                        trk["segments"][-1]["end"] = float(timestamp)
 
                 # 维护最佳帧缓存（检测分辨率 640×384，track_encode 裁剪质量足够）
                 conf = t["confidence"]
@@ -278,6 +302,17 @@ class DetectionRunner(OperationRunner):
                         "timestamp": float(timestamp),
                         "conf": conf,
                     }
+
+                # 维护 track crop 缓存（每 CROP_INTERVAL 秒一帧，track_encode 零 seek 读取）
+                buf = pctx.ctx.track_crop_cache.get(tid)
+                if buf is None:
+                    buf = []
+                    pctx.ctx.track_crop_cache[tid] = buf
+                last_ts = buf[-1][0] if buf else -1e9
+                if timestamp - last_ts >= CROP_INTERVAL:
+                    crop = _expand_crop(frames[i], t["bbox"])
+                    if crop.size > 0 and crop.shape[0] > 4 and crop.shape[1] > 4:
+                        buf.append((float(timestamp), crop))
 
 
 def _get_search_target(pctx, pipeline_cfg: dict) -> tuple[int, int]:

@@ -181,6 +181,10 @@ class Video(Base):
         Boolean, default=True, nullable=False,
         comment="搜索索引建立开关（3-path 编码）",
     )
+    track_stitch_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False,
+        comment="全局重识别缝合开关（合并被遮挡分开的同一身份 track）",
+    )
     sample_fps: Mapped[float] = mapped_column(
         Float, default=1.0, nullable=False,
         comment="分割器采样帧率 0.5~3.0",
