@@ -55,6 +55,38 @@ SURVEILLANCE_BRANDS: dict[str, list[str]] = {
 
 
 # ═══════════════════════════════════════════════════════════
+# 文件头魔数 → 监控品牌（内容级签名，不依赖文件名/元数据）
+# ═══════════════════════════════════════════════════════════
+# 签名表：后续发现新品牌签名在此追加。每个条目 (签名名, 魔数字节, 品牌 key)。
+# 已验证：
+#   "IMKH" — 海康威视 DVR/NVR 导出的 H.264/H.265 PS 封装文件头（魔数 49 4D 4B 48）。
+#           调查中在 ch01_20260721000000.mp4（实际为 MPEG-PS 容器）文件头命中。
+VENDOR_MAGIC: list[tuple[str, bytes, str]] = [
+    ("IMKH", b"IMKH", "hikvision"),
+]
+
+
+def read_video_header(file_path: str, size: int = 16) -> bytes:
+    """读取视频文件头部字节用于魔数嗅探；文件不可读返回 b''。"""
+    try:
+        with open(file_path, "rb") as f:
+            return f.read(size)
+    except OSError:
+        return b""
+
+
+def detect_surveillance_brand_by_magic(header: bytes) -> tuple[str | None, str | None]:
+    """通过文件头魔数判断监控品牌。返回 (brand, method)，未命中 (None, None)。
+
+    相比 filename_pattern，magic_bytes 是内容级签名：文件名被改动/重命名后依然可靠。
+    """
+    for _name, magic, brand in VENDOR_MAGIC:
+        if header.startswith(magic):
+            return brand, "magic_bytes"
+    return None, None
+
+
+# ═══════════════════════════════════════════════════════════
 # 辅助函数
 # ═══════════════════════════════════════════════════════════
 
@@ -91,6 +123,7 @@ def classify_video_source(
     exif_data: dict[str, Any] | None = None,
     file_name: str = "",
     media_info: dict[str, Any] | None = None,
+    file_header: bytes | None = None,
 ) -> dict[str, Any]:
     """视频来源分类主入口。
 
@@ -98,6 +131,7 @@ def classify_video_source(
         exif_data: exiftool 原始 JSON 输出的解析 dict（含 Make/Model/GPS/旋转等）。
         file_name: 原始文件名。
         media_info: pymediainfo 提取的流信息（含编码器名、分辨率等）。
+        file_header: 视频文件头部字节（魔数嗅探用，品牌判断最可靠依据）。
 
     Returns:
         {source_type, source_label, confidence, evidence, surveillance_brand?, surveillance_method?}
@@ -166,7 +200,16 @@ def classify_video_source(
                 evidence.append(f"编码器软件特征: {', '.join(sorted(matched))}")
                 return _result("screen_recording", "medium", evidence)
 
-    # ── P1: 监控文件名 → surveillance ──
+    # ── P1: 监控品牌 → surveillance（魔数优先，其次文件名） ──
+    brand, method = None, None
+    if file_header:
+        brand, method = detect_surveillance_brand_by_magic(file_header)
+        if brand:
+            magic_name = next((n for n, _m, b in VENDOR_MAGIC if b == brand), "?")
+            evidence.append(
+                f"文件头魔数 {magic_name}（{_SURVEILLANCE_BRAND_LABELS.get(brand, brand)} NVR 导出签名）"
+            )
+            return _result("surveillance", "high", evidence, brand, method)
     brand, method = _check_surveillance_pattern(file_name_str)
     if brand:
         evidence.append(f"文件名匹配 {brand} 模式")
@@ -212,12 +255,19 @@ def classify_video_source(
 
 
 def classify_surveillance_brand(
-    file_name: str, exif_data: dict[str, Any] | None = None
+    file_name: str,
+    exif_data: dict[str, Any] | None = None,
+    file_header: bytes | None = None,
 ) -> tuple[str | None, str | None]:
     """判断监控品牌。返回 (brand, method)，未命中则 (None, None)。
 
-    优先级: 文件名模式 > 元数据特征 > 编码器特征。
+    优先级: 文件头魔数 > 文件名模式 > 元数据特征。
     """
+    # P0: 文件头魔数（内容级，最可靠）
+    if file_header:
+        brand, method = detect_surveillance_brand_by_magic(file_header)
+        if brand:
+            return brand, method
     # P1: 文件名模式
     brand, method = _check_surveillance_pattern(file_name)
     if brand:

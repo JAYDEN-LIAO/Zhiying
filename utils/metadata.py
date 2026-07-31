@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # immutable once extracted (files never change), so no TTL needed.
 # Bump this version when the metadata schema or extraction logic changes
 # in a way that makes cached data invalid.
-_METADATA_CACHE_VERSION = 3
+_METADATA_CACHE_VERSION = 4  # v4: 来源分析接入文件头魔数嗅探 + 修复 file_name 传递（原为 UUID 存储名）
 
 _metadata_cache: dict[str, dict] = {}
 

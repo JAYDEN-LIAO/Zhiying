@@ -127,6 +127,12 @@ export function VideoPlayer({
             </svg>
           </div>
           <span className="vp-text">上传或选择视频开始分析</span>
+          <span className="vp-drag-hint">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3v12" /><path d="m7 8 5-5 5 5" /><path d="M5 21h14" />
+            </svg>
+            或将视频直接拖入窗口上传
+          </span>
         </div>
       )}
     </div>

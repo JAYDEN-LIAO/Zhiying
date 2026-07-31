@@ -176,8 +176,14 @@ export function HistoryPanelContent({
           /* ══ Normal mode: group cards + single video cards ══ */
           historyGroups.map((group) => {
             if (group.type === "group") {
+              const groupDeleting = group.videos.some(v => deletingIds.has(v.id));
               return (
-                <div key={group.groupId} className="mb-2">
+                <div key={group.groupId}
+                  className={`overflow-hidden transition-all duration-500 ease-out ${
+                    groupDeleting
+                      ? "max-h-0 opacity-0 -translate-x-full scale-y-0 mb-0"
+                      : "max-h-[200px] opacity-100 translate-x-0 scale-y-100 mb-2"
+                  }`}>
                   {/* Group card — click to drill in + auto-select first video */}
                   <div className="cursor-pointer" onClick={() => {
                     onSelect(group.videos[0].id, group.groupId ?? undefined);

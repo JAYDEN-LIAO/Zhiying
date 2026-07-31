@@ -214,7 +214,9 @@ function SourceAnalysisItems({ sa }: { sa: SourceAnalysis }) {
       {sa.surveillance_method && (
         <div className="vif-item">
           <span className="vif-lbl">识别方式</span>
-          <span className="vif-val">{sa.surveillance_method}</span>
+          <span className="vif-val">
+            {METHOD_LABELS[sa.surveillance_method] ?? sa.surveillance_method}
+          </span>
         </div>
       )}
     </>
@@ -290,6 +292,10 @@ function AIDetectFallback({ ad }: { ad: AIDetectResult }) {
 const BRAND_LABELS: Record<string, string> = {
   hikvision: "海康威视", dahua: "大华", ezviz: "萤石", reolink: "Reolink",
   xiaomi: "小米", tplink: "TP-Link", uniview: "宇视", generic_ip: "通用网络摄像头", unknown: "未知",
+};
+
+const METHOD_LABELS: Record<string, string> = {
+  magic_bytes: "文件头魔数", filename_pattern: "文件名模式", metadata: "元数据特征",
 };
 
 function formatBytes(bytes: number): string {

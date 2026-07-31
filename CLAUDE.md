@@ -62,7 +62,7 @@ services/format_service.py — 格式兼容: probe(ffprobe) / remux(容器标准
 services/export_service.py — 导出业务逻辑 (clip/frames/track/thumbnails zip)
 utils/video_util.py        — FFmpeg 工具函数 + stream_frames() (NVDEC MJPEG pipe / cv2 fallback)
 utils/metadata.py          — 视频元数据提取 (pymediainfo → exiftool → ffprobe 三级)
-utils/video_source.py      — 视频来源分析: 规则引擎分类 phone/camera/surveillance/...
+utils/video_source.py      — 视频来源分析: 规则引擎分类 phone/camera/surveillance/... + 监控品牌（文件头魔数嗅探 IMKH→海康威视, magic_bytes>filename>metadata）
 config/config.yaml         — Main config: server/db/storage/plugins/pipeline (detection_fps:10, batch:128)
 config/config_schema.py    — Pydantic config validation
 config/prompts.yaml        — Caption/Summarizer/Grounding prompt templates

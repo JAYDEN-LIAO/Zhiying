@@ -678,7 +678,7 @@ async def get_video_metadata_endpoint(
     from utils.metadata import get_video_metadata as extract_metadata
 
     result = await db.execute(
-        select(Video.file_path, Video.metadata_json,
+        select(Video.file_path, Video.file_name, Video.metadata_json,
                Video.source_analysis, Video.ai_detect_result)
         .where(Video.id == video_id)
     )
@@ -716,11 +716,15 @@ async def get_video_metadata_endpoint(
         "has_audio": len(meta.get("audio_streams") or []) > 0,
         "audio_codec": _as.get("codec"),
     }
-    from utils.video_source import classify_video_source
+    from utils.video_source import classify_video_source, read_video_header
+    # file_name 用原始上传名（row.file_name），而非存储路径 basename（UUID 重命名后
+    # 会丢失 ch01_20260721000000.mp4 这类监控命名模式 → 品牌判断失效）。
+    # file_header 用魔数嗅探品牌（内容级签名，改名后依然可靠）。
     source_analysis = classify_video_source(
         exif_data=meta.get("device"),
-        file_name=os.path.basename(file_path),
+        file_name=row.file_name,
         media_info=_media_info,
+        file_header=read_video_header(file_path),
     )
     if source_analysis:
         asyncio.create_task(_cache_source_analysis(

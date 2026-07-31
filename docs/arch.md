@@ -598,7 +598,7 @@ Vite 开发代理:
 | **Metadata cached to DB** | Extracted metadata stored in Video.metadata_json JSONB column. First request: live extraction + cache; subsequent requests: <1ms fast path from DB. Cache versioned via _METADATA_CACHE_VERSION. |
 | **Multi-video group (v0.19)** | Batch upload creates VideoGroup; concurrent per-file processing (semaphore=5, independent DB sessions); PUT /params on one video triggers same params + pipeline for all pending siblings; frontend history stacked cards + Header dropdown switching + search scope selector + independent detection panel |
 | **Global ReID tracklet stitch (v0.20)** | 双层 ReID: 在线 BoT-SORT ReID (with_reid + yolo26n-cls) 处理遮挡/交叉 + 全局缝合 (detection 缓存 640×384 crop, track_encode 零 seek 读取 → mean pool → cosine 合并)。时序检查用 segments 真实检测片段而非生命周期，容忍 ≤1s 双跟踪伪影（缩放/切换/遮挡边缘），L3 track_stitch_enabled 开关 |
-| **Source analysis rule engine** | classify_video_source() uses EXIF device data + file naming patterns + media structure (resolution/fps/audio) to classify origin. No ML dependency — pure heuristics, <10ms. Triggers on first GET /metadata, caches result. |
+| **Source analysis rule engine** | classify_video_source() uses EXIF device data + file naming patterns + media structure (resolution/fps/audio) + **文件头魔数嗅探**（VENDOR_MAGIC: `IMKH`→海康威视）to classify origin + surveillance brand. No ML dependency — pure heuristics, <10ms. Brand priority: magic_bytes > filename_pattern > metadata. Triggers on first GET /metadata, caches result. |
 | **Class-local track numbering** | Display shows sequential class-local IDs (person 1, car 2) while API uses raw track_id internally |
 | **Per-video face/plate toggles** | Sub-switches under detection_enabled in parameter panel. Surveillance preset defaults both ON. Three-level gate: config backend + detection_enabled + face_enabled/plate_enabled |
 | **Face image search (ArcFace 512d)** | Separate search endpoint (POST /search/face) using ArcFace R50 512-dim vectors, not the shared Qwen3-VL 2048-dim embedder. Image-to-identity matching, not text-to-face |
@@ -625,7 +625,7 @@ Vite 开发代理:
 | Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
 | Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT, 10fps 独立帧率（与 search 共享 NVDEC 流）, dual-gate control |
 | AI Generation Detection | ❌ 已移除 | services/ai_detect_service.py + utils/ai_detect/ 已删除, upload 不再触发 AICheck。残留: ai_detect_result DB 列 + schema + 前端展示（恒为 not_run） |
-| Video Source Analysis | ✅ | utils/video_source.py: 规则引擎 classify_video_source(), phone/camera/screen_recording/surveillance/non_camera_source, 基于 EXIF + file naming + media structure, 首次 GET /metadata 触发, 结果缓存到 DB |
+| Video Source Analysis | ✅ | utils/video_source.py: 规则引擎 classify_video_source(), phone/camera/screen_recording/surveillance/non_camera_source, 基于 EXIF + file naming + media structure + 文件头魔数嗅探（IMKH→海康威视, magic_bytes 内容级签名）, 首次 GET /metadata 触发, 结果缓存到 DB |
 | Metadata Extraction + Cache | ✅ | utils/metadata.py: 三级提取 (pymediainfo→exiftool→ffprobe); 结果缓存到 Video.metadata_json 列, 后续请求 <1ms 返回; ?verbose=true 查看原始数据 |
 | Clip Export | ✅ | services/export_service.py: 流复制 (-c copy) 极速导出 |
 | Frames Export | ✅ | 指定时间戳帧序列 → zip 打包 |

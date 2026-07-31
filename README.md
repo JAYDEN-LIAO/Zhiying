@@ -66,7 +66,7 @@ curl -X POST -H "Content-Type: application/json" \
 | Track Crop Embedding (track search) | `POST /api/v1/search/semantic` (track path) | ✅ |
 | Frontend Labels Chinese Localization | 统一 labels.ts 映射中心，zh()/zhLabel()/colorOf() 函数 | ✅ |
 | Incremental Processing | summary/search re-run on completed videos | ✅ |
-| Video Source Analysis | Rule engine: phone/camera/screen_recording/surveillance/non_camera_source | ✅ |
+| Video Source Analysis | Rule engine: phone/camera/screen_recording/surveillance/non_camera_source + 监控品牌识别（文件头魔数嗅探 IMKH→海康威视）| ✅ |
 | Global ReID Tracklet Stitching | 合并被遮挡/缩放/镜头切换拆分的同一身份 track（在线 ReID + 全局缝合双层） | ✅ |
 | Metadata Caching | Extracted metadata cached to DB (fast path <1ms on repeat requests) | ✅ |
 
@@ -114,7 +114,7 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 - **Export API** — clip export (stream copy), frame export (zip), track segment export (zip), scene thumbnail export (zip), track thumbnail download
 - **Video metadata extraction** — three-tier extraction (pymediainfo → exiftool → ffprobe), GPS/device/codec info via GET /metadata endpoint, results cached to DB (fast path <1ms on repeat requests)
 - **Global ReID Tracklet Stitching (v0.20)** — 双层 ReID：在线 BoT-SORT ReID（`with_reid: true` + `yolo26n-cls.pt` 特征, 遮挡/交叉保持身份）+ 全局缝合（detection 每 2s 缓存 640×384 track crop → track_encode 零 seek 读取 → mean pool → cosine ≥0.85 合并同一身份 tracklet, 容忍镜头缩放/切换的双跟踪伪影）。L3 `track_stitch_enabled` 开关控制
-- **Video Source Analysis** — rule engine classifies video origin: phone/camera/screen_recording/surveillance/non_camera_source, based on EXIF + file naming + media structure heuristics, results cached to DB via `Video.source_analysis`
+- **Video Source Analysis** — rule engine classifies video origin: phone/camera/screen_recording/surveillance/non_camera_source, based on EXIF + file naming + media structure heuristics + **文件头魔数嗅探**（如 Hikvision `IMKH` 签名，内容级、改名后依然可靠；优先级 魔数 > 文件名 > 元数据）, results cached to DB via `Video.source_analysis`
 
 ## Tech Stack
 

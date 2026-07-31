@@ -237,43 +237,94 @@ export default function Dashboard() {
     }
   }, [currentVideoId, videoGroups, detectionVideoId]);
 
-  /* ── Upload (v0.19 支持多选) ── */
-  const handleUpload = useCallback(() => {
-    // 从设置页点"开始"时先切回工作台
+  /* ── 上传文件 (单/多, Header 选择与拖拽共用) ── */
+  const handleFiles = useCallback(async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
+    // 从设置页拖入/点"开始"时先切回工作台
     setCurrentPage("dashboard");
     setActivePanel(null);
+    setIsUploading(true);
+    try {
+      if (files.length === 1) {
+        const result = await api.upload(files[0]);
+        setCurrentVideoId(result.id);
+        setCurrentVideo(result);
+      } else {
+        const results = await api.uploadBatch(files);
+        setCurrentVideoId(results[0].id);
+        setCurrentVideo(results[0]);
+        setVideoGroups(prev => [...prev, {
+          groupId: results[0].group_id!,
+          videoIds: results.map(r => r.id),
+        }]);
+      }
+      setListKey((k) => k + 1);
+      setHasPendingParams(true);
+      setActivePanel("params");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "上传失败");
+    }
+    setIsUploading(false);
+  }, []);
+
+  /* ── Upload (v0.19 支持多选) ── */
+  const handleUpload = useCallback(() => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".mp4,.mov,.avi,.mkv,.webm";
     input.multiple = true;
-    input.onchange = async () => {
-      const files = input.files;
-      if (!files || files.length === 0) return;
-      setIsUploading(true);
-      try {
-        if (files.length === 1) {
-          const result = await api.upload(files[0]);
-          setCurrentVideoId(result.id);
-          setCurrentVideo(result);
-        } else {
-          const results = await api.uploadBatch(Array.from(files));
-          setCurrentVideoId(results[0].id);
-          setCurrentVideo(results[0]);
-          setVideoGroups(prev => [...prev, {
-            groupId: results[0].group_id!,
-            videoIds: results.map(r => r.id),
-          }]);
-        }
-        setListKey((k) => k + 1);
-        setHasPendingParams(true);
-        setActivePanel("params");
-      } catch (err) {
-        alert(err instanceof Error ? err.message : "上传失败");
-      }
-      setIsUploading(false);
+    input.onchange = () => {
+      handleFiles(input.files ?? []);
+      input.value = ""; // 允许重复选择同一文件
     };
     input.click();
-  }, []);
+  }, [handleFiles]);
+
+  /* ── 拖拽上传 (单个/多个视频直接拖入窗口) ── */
+  const [dragActive, setDragActive] = useState(false);
+  const dragDepthRef = useRef(0);
+
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types?.includes("Files");
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepthRef.current += 1;
+      setDragActive(true);
+    };
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); // 必须阻止默认行为才能触发 drop
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+      if (dragDepthRef.current === 0) setDragActive(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      dragDepthRef.current = 0;
+      setDragActive(false);
+      const files = e.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+      // 过滤出视频文件 (与上传 input accept 一致)
+      const videos = Array.from(files).filter(
+        (f) => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name) || f.type.startsWith("video/"),
+      );
+      if (videos.length > 0) handleFiles(videos);
+    };
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [handleFiles]);
 
   /* ── Labels for stats bar ── */
   const ctLabel: Record<string, string> = { general: "通用", meeting: "会议", surveillance: "监控", text_recognition: "文字识别", custom: "自定义" };
@@ -403,6 +454,19 @@ export default function Dashboard() {
         </>
       ) : (
         <SettingsPage />
+      )}
+
+      {/* ── 拖拽上传遮罩 ── */}
+      {dragActive && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none">
+          <div className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl border-2 border-dashed border-blue-400 bg-blue-950/70 shadow-2xl">
+            <svg className="w-10 h-10 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3v12" /><path d="m7 8 5-5 5 5" /><path d="M5 21h14" />
+            </svg>
+            <div className="text-white text-lg font-semibold">松开以上传视频</div>
+            <div className="text-white/60 text-sm">支持单个或多个视频 · MP4 / MOV / AVI / MKV / WEBM</div>
+          </div>
+        </div>
       )}
     </div>
   );
