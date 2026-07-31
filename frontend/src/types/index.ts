@@ -254,12 +254,25 @@ export interface Track {
   last_seen: number;
   frame_count: number;
   segments?: { start: number; end: number }[];
+  /* ── v0.22: 后端预计算缩略图信息（替代前端 getThumbBbox 全表扫描） ── */
+  best_thumb_ts?: number;
+  best_bbox?: { x1: number; y1: number; x2: number; y2: number };
+  thumbnail_url?: string | null;
 }
 
 export interface DetectionData {
   has_detection: boolean;
   tracks: Track[];
-  detections: Record<string, Detection[]>;  // key: integer timestamp string
+  // v0.22 (S2): 删除全量 detections dict —— Overlay 改走 /detection/detections 时间窗按需加载
+}
+
+/* ── Detection time window (v0.22, GET /detection/detections) ── */
+
+export interface DetectionRange {
+  has_detection: boolean;
+  start_sec: number;
+  end_sec: number;
+  detections: Record<string, Detection[]>;  // key: 0.1s 精度时间戳字符串
 }
 
 /* ── Face Recognition ── */
@@ -276,18 +289,10 @@ export interface FaceIdentity {
   best_thumbnail_url: string | null;
 }
 
-export interface FaceDetectionItem {
-  identity_id: number | null;
-  track_id: number;
-  bbox: { x1: number; y1: number; x2: number; y2: number };
-  quality: number;
-  thumbnail_url: string | null;
-}
-
 export interface FaceData {
   has_face: boolean;
   identities: FaceIdentity[];
-  detections: Record<string, FaceDetectionItem[]>;  // key: timestamp string
+  // v0.22 (S1): 删除 per-frame detections 字段——后端不再返回（前端零消费，防大 JSON 炸弹）
 }
 
 /* ── License Plate Recognition ── */

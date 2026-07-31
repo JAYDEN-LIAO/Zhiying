@@ -2,10 +2,13 @@
    DetectionOverlay — Canvas-only bbox + trail rendering
    Renders: YOLO detection bboxes, plate bboxes, face bboxes.
    State (selectedTrackId) lifted to Dashboard for cross-component sync.
+
+   v0.22 (S2): 改按需区间加载（useDetectionRanges），不再持有全量 detections。
    ════════════════════════════════════════════════════════════ */
 
 import { useEffect, useRef, useCallback } from "react";
-import type { DetectionData, Detection } from "../types";
+import type { Detection } from "../types";
+import { useDetectionRanges } from "../hooks/useDetectionRanges";
 import { colorOf, zhLabel } from "../labels";
 const SELECTED_COLOR = "#FFD700";
 
@@ -13,25 +16,24 @@ interface Props {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   videoId: string;
   enabled: boolean;
-  data: DetectionData | null;
+  hasDetection: boolean;
   selectedTrackId: number | null;
   onTrackSelect: (trackId: number, className: string) => void;
 }
 
-export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTrackId, onTrackSelect }: Props) {
+export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, selectedTrackId, onTrackSelect }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
+  const { get, version } = useDetectionRanges(videoId, videoRef, enabled, hasDetection);
 
   /* ── Draw callback: interpolation + trails + bboxes ── */
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
-    if (!canvas || !video || !enabled || !data?.has_detection) {
+    if (!canvas || !video || !enabled || !hasDetection) {
       return;
     }
     // ★ Draw current frame then only schedule next frame when playing
-    // Without this check the rAF loop keeps running during pause (wasteful).
-    // With it removed below we still draw once so bboxes appear on initial load.
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
@@ -65,8 +67,8 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
     const ceil = Math.ceil(currentTime / step) * step;
     const t = (currentTime - floor) / (ceil - floor || step);
 
-    const floorDets = data.detections[floor.toFixed(1)] ?? [];
-    const ceilDets = data.detections[ceil.toFixed(1)] ?? [];
+    const floorDets = get(floor);
+    const ceilDets = get(ceil);
 
     // Build lookup maps
     const floorMap = new Map<number, Detection>();
@@ -103,9 +105,8 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
       const points: { x: number; y: number }[] = [{ x: curCx, y: curCy }];
       let gapCount = 0;
       for (let s = 1; s <= TRAIL_DURATION / TRAIL_STEP; s++) {
-        const tKey = (currentTime - s * TRAIL_STEP).toFixed(1);
-        const pastDets = data.detections[tKey];
-        if (!pastDets) { gapCount++; if (gapCount > MAX_GAP) break; continue; }
+        const pastDets = get(currentTime - s * TRAIL_STEP);
+        if (!pastDets.length) { gapCount++; if (gapCount > MAX_GAP) break; continue; }
         const past = pastDets.find((d) => d.track_id === det.track_id);
         if (!past) { gapCount++; if (gapCount > MAX_GAP) break; continue; }
         gapCount = 0;
@@ -157,15 +158,14 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
     }
     ctx.globalAlpha = 1.0;
 
-    ctx.globalAlpha = 1.0;
     // Only schedule next frame when playing (avoids waste during pause)
     if (!video.paused) {
       rafRef.current = requestAnimationFrame(draw);
     }
-  }, [data, selectedTrackId, videoRef]);
+  }, [enabled, hasDetection, get, selectedTrackId, videoRef]);
 
   useEffect(() => {
-    if (!data?.has_detection) return;
+    if (!hasDetection) return;
 
     // Initial draw
     rafRef.current = requestAnimationFrame(draw);
@@ -176,13 +176,19 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
       cancelAnimationFrame(rafRef.current);
       rafRef.current = requestAnimationFrame(draw);
     };
+    // 暂停态 seek 后立即重绘（区间数据可能已在 get 里，先画已有；数据到达后 version++ 再触发）
+    const onSeeked = () => {
+      requestAnimationFrame(draw);
+    };
     video?.addEventListener("play", onPlay);
+    video?.addEventListener("seeked", onSeeked);
 
     return () => {
       cancelAnimationFrame(rafRef.current);
       video?.removeEventListener("play", onPlay);
+      video?.removeEventListener("seeked", onSeeked);
     };
-  }, [data, draw]);
+  }, [hasDetection, draw, version]);
 
   /* ── Coord transform ── */
   const toFrameCoord = useCallback(
@@ -209,7 +215,7 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
   /* ── Click → select track ── */
   const handleClick = useCallback(
     (e: MouseEvent) => {
-      if (!data?.has_detection) return;
+      if (!hasDetection) return;
       const fc = toFrameCoord(e.clientX, e.clientY);
       if (!fc || fc.fx < 0 || fc.fx > 1 || fc.fy < 0 || fc.fy > 1) {
         onTrackSelect(-1, "");
@@ -217,8 +223,7 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
       }
       const video = videoRef.current;
       const currentTime = video?.currentTime ?? 0;
-      const tsKey = (Math.round(currentTime * 10) / 10).toFixed(1);
-      const dets = data.detections[tsKey] ?? [];
+      const dets = get(currentTime);
       let best: Detection | null = null;
       let bestArea = Infinity;
       for (const d of dets) {
@@ -230,29 +235,28 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
       if (best) onTrackSelect(best.track_id, best.class_name);
       else onTrackSelect(-1, "");
     },
-    [data, videoRef, toFrameCoord, onTrackSelect],
+    [hasDetection, videoRef, toFrameCoord, get, onTrackSelect],
   );
 
   const handleMouseMove = useCallback(
     (e: MouseEvent) => {
       const parent = canvasRef.current?.parentElement;
-      if (!data?.has_detection) { if (parent) parent.style.cursor = "default"; return; }
+      if (!hasDetection) { if (parent) parent.style.cursor = "default"; return; }
       const fc = toFrameCoord(e.clientX, e.clientY);
       if (!fc || fc.fx < 0 || fc.fx > 1 || fc.fy < 0 || fc.fy > 1) {
         if (parent) parent.style.cursor = "default"; return;
       }
       const video = videoRef.current;
-      const tsKey = (Math.round((video?.currentTime ?? 0) * 10) / 10).toFixed(1);
-      const dets = data.detections[tsKey] ?? [];
+      const dets = get(video?.currentTime ?? 0);
       const hit = dets.some((d) => fc.fx >= d.bbox.x1 && fc.fx <= d.bbox.x2 && fc.fy >= d.bbox.y1 && fc.fy <= d.bbox.y2);
       if (parent) parent.style.cursor = hit ? "crosshair" : "default";
     },
-    [data, videoRef, toFrameCoord],
+    [hasDetection, videoRef, toFrameCoord, get],
   );
 
   useEffect(() => {
     const parent = canvasRef.current?.parentElement;
-    if (!parent || !data?.has_detection) return;
+    if (!parent || !hasDetection) return;
     parent.addEventListener("click", handleClick);
     parent.addEventListener("mousemove", handleMouseMove);
     return () => {
@@ -260,9 +264,9 @@ export function DetectionOverlay({ videoRef, videoId, enabled, data, selectedTra
       parent.removeEventListener("mousemove", handleMouseMove);
       parent.style.cursor = "";
     };
-  }, [data, handleClick, handleMouseMove]);
+  }, [hasDetection, handleClick, handleMouseMove]);
 
-  if (!enabled || !data?.has_detection) return null;
+  if (!enabled || !hasDetection) return null;
 
   return (
     <canvas

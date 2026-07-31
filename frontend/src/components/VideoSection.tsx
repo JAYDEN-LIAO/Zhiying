@@ -55,7 +55,6 @@ export function VideoSection({
         isUploading={isUploading}
         detectionEnabled={detectionEnabled}
         hasDetection={hasDetection && detectionEnabled && !!detectionData?.has_detection}
-        detectionData={detectionData}
         selectedTrackId={selectedTrackId}
         proxyStatus={proxyStatus}
         videoRef={videoRef}
@@ -71,6 +70,7 @@ export function VideoSection({
         onTrackSelect={onTrackSelect}
         data={detectionData}
         faceData={faceData}
+        streamReady={streamReady}
       />
 
       {/* Pipeline Bar */}

@@ -11,6 +11,7 @@ import type {
   PipelineParams,
   SettingsData,
   DetectionData,
+  DetectionRange,
   FaceData,
   PlateData,
   FaceSearchResult,
@@ -179,9 +180,16 @@ export const api = {
     return request<ProxyStatus>(`${BASE}/videos/${videoId}/proxy-status`);
   },
 
-  /* ── Detection data ── */
-  fetchDetectionData(videoId: string) {
-    return request<DetectionData>(`${BASE}/videos/${videoId}/detection/data`);
+  /* ── Detection tracks (轻量摘要，v0.22) ── */
+  fetchDetectionTracks(videoId: string) {
+    return request<DetectionData>(`${BASE}/videos/${videoId}/detection/tracks`);
+  },
+
+  /* ── Detection time window (Overlay 按需加载，v0.22) ── */
+  fetchDetectionRange(videoId: string, startSec: number, endSec: number) {
+    return request<DetectionRange>(
+      `${BASE}/videos/${videoId}/detection/detections?start_sec=${startSec}&end_sec=${endSec}`,
+    );
   },
 
   /* ── Face search ── */

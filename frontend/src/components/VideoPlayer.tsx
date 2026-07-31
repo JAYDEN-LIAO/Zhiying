@@ -5,7 +5,7 @@
 import { RefObject, useEffect } from "react";
 import { api } from "../services/api";
 import { DetectionOverlay } from "./DetectionOverlay";
-import type { VideoResponse, DetectionData, ProxyStatus } from "../types";
+import type { VideoResponse, ProxyStatus } from "../types";
 
 interface Props {
   videoId: string | null;
@@ -15,7 +15,6 @@ interface Props {
   isUploading: boolean;
   detectionEnabled: boolean;
   hasDetection: boolean;
-  detectionData: DetectionData | null;
   selectedTrackId: number | null;
   proxyStatus: ProxyStatus | null;
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -30,7 +29,6 @@ export function VideoPlayer({
   isUploading,
   detectionEnabled,
   hasDetection,
-  detectionData,
   selectedTrackId,
   proxyStatus,
   videoRef,
@@ -88,13 +86,13 @@ export function VideoPlayer({
             </video>
           )}
 
-          {/* Detection overlay */}
+          {/* Detection overlay (v0.22: 内部按需区间加载，不再接收全量 detections) */}
           {streamReady && hasDetection && (
             <DetectionOverlay
               videoRef={videoRef}
               videoId={videoId}
               enabled={detectionEnabled}
-              data={detectionData}
+              hasDetection={hasDetection}
               selectedTrackId={selectedTrackId}
               onTrackSelect={onTrackSelect}
             />

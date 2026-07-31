@@ -30,7 +30,7 @@ export function useDetectionData(
       return;
     }
 
-    api.fetchDetectionData(videoId)
+    api.fetchDetectionTracks(videoId)
       .then((d) => setDetectionData(d))
       .catch(() => setDetectionData(null));
 
