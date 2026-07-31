@@ -259,6 +259,7 @@ async def _handle_thumbnail_export(
 async def export_track_thumbnail(
     video_id: uuid.UUID, track_id: int,
     request: Request, db: AsyncSession = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
     display_id: int = Query(default=None, description="前端类内序号，用于文件名"),
 ) -> FileResponse:
     """导出 track 物体的全尺寸裁剪图（JPEG 下载）。"""
@@ -298,6 +299,8 @@ async def export_track_thumbnail(
     safe_name = sanitize_filename(os.path.splitext(file_name)[0])
     label = display_id or track_id
     cls = track.class_name
+    if background_tasks is not None:
+        background_tasks.add_task(_cleanup_file, out_path)
     return _file_response(out_path, f"{safe_name}_{cls}_{label}_{format_ts(thumb_ts)}.jpg", "image/jpeg")
 
 

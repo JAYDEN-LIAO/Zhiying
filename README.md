@@ -69,6 +69,8 @@ curl -X POST -H "Content-Type: application/json" \
 | Video Source Analysis | Rule engine: phone/camera/screen_recording/surveillance/non_camera_source + 监控品牌识别（文件头魔数嗅探 IMKH→海康威视）| ✅ |
 | Global ReID Tracklet Stitching | 合并被遮挡/缩放/镜头切换拆分的同一身份 track（在线 ReID + 全局缝合双层） | ✅ |
 | Metadata Caching | Extracted metadata cached to DB (fast path <1ms on repeat requests) | ✅ |
+| Storage Hygiene (v0.21) | 删除视频 = DB 级联 + 磁盘文件全回收（引用计数, reuse 共享安全, 空组自动清理, 处理中守卫 409） | ✅ |
+| Orphan Storage Sweep | `POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` | ✅ |
 
 ## Architecture Overview
 
@@ -97,24 +99,20 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
          │    └─ 检测缓存多帧 crop → mean pool → cosine 合并同一身份 tracklet
          ├─ Source Analysis (rule engine, on first GET /metadata):
          │    └─ classify_video_source() → phone/camera/surveillance/non_camera
+         ├─ StorageManager (v0.21): 删除即清盘 + 孤儿清扫
+         │    ├─ 引用追踪: 以 DB 三列 (file/remux/proxy) 判定, reuse 共享安全
+         │    ├─ 删除守卫: processing/running → 409; 空组同事务清理
+         │    └─ sweep: 磁盘 vs DB 对账 (附属目录按 video_id, mtime 保护上传竞态)
          └─ Shared GPU models (embedder 启动时预加载; captioner 按需加载):
               ├─ Qwen3-VL-Embedding-8B (embedder, FP16, ~16GB, preloaded)
               ├─ Qwen3-VL-8B-Instruct (captioner, BF16, ~16GB, on-demand)
               └─ SCRFD + ArcFace R50 (face recognizer, ONNX, preloaded)
 ```
 
-- **Declarative pipeline** orchestrated by `PipelineEngine` (DAG executor), with 4-path frame/chunk/text/track encoding + face recognition + license plate recognition (15 operations total). Search and summary paths fully decoupled — `search_encode` (gated by `not v.summary_enabled`) shares a single NVDEC stream with `detection` (detection pushes 1fps sampled frames to search queue, search_encode encodes in batches of 64). Producer-consumer pattern (`asyncio.Queue`) for frame extraction vs YOLO inference overlap. NVDEC MJPEG pipe for GPU-accelerated frame extraction.
-- **10 abstract plugin interfaces** with dynamic factory loading
-- **PostgreSQL + pgvector** with 12 tables: video_groups, videos, scenes, transcripts, frame_embeddings, chunks, frame_detections, tracks, track_embeddings, face_identities, face_detections, plate_detections
-- **7-path parallel semantic search**: frame (1fps precision) + chunk (process semantics) + text (caption+ocr+transcript semantics) + label (JSONB @> entities) + track (crop cross-modal embedding) + plate (Levenshtein + ILIKE); **face image search**: POST /search/face (upload image → ArcFace 512d identity matching); **universal image search**: POST /search/image (upload any image → Qwen3-VL-Embedding 2048-dim → frame_embeddings cosine match, no clustering per-frame results)
-- **4-level parameter system**: Scene Type → Perception Modules → Function Switches → Advanced Params (含 encode_profile 速度预设: fast/balanced/precise), with face/plate sub-switches under detection
-- **Multi-format video support** — two-layer: container remux (-c copy, instant) + codec proxy (NVENC H.264, lazy on-demand). Frontend canPlayType() HEVC detection + smart stream routing (hevc_ok param). Probe sync (<100ms), remux/proxy async — upload never blocked.
-- **Pipeline real-time status** — each phase writes human-readable progress descriptions (`status_detail`) to the database, displayed in the frontend in real time
-- **React frontend** with video player, pipeline progress bar with real-time status details, semantic search with thumbnail results, 4-level parameter panel (含速度预设), summary mode selector, settings page (含 Pipeline 调优), **multi-video group** support (history stack/expand, header switching, cross-video search, independent detection panel)
-- **Export API** — clip export (stream copy), frame export (zip), track segment export (zip), scene thumbnail export (zip), track thumbnail download
-- **Video metadata extraction** — three-tier extraction (pymediainfo → exiftool → ffprobe), GPS/device/codec info via GET /metadata endpoint, results cached to DB (fast path <1ms on repeat requests)
-- **Global ReID Tracklet Stitching (v0.20)** — 双层 ReID：在线 BoT-SORT ReID（`with_reid: true` + `yolo26n-cls.pt` 特征, 遮挡/交叉保持身份）+ 全局缝合（detection 每 2s 缓存 640×384 track crop → track_encode 零 seek 读取 → mean pool → cosine ≥0.85 合并同一身份 tracklet, 容忍镜头缩放/切换的双跟踪伪影）。L3 `track_stitch_enabled` 开关控制
-- **Video Source Analysis** — rule engine classifies video origin: phone/camera/screen_recording/surveillance/non_camera_source, based on EXIF + file naming + media structure heuristics + **文件头魔数嗅探**（如 Hikvision `IMKH` 签名，内容级、改名后依然可靠；优先级 魔数 > 文件名 > 元数据）, results cached to DB via `Video.source_analysis`
+- **声明式 DAG 引擎** — 15 个操作注册在 `pipeline/operations.py`（gate 条件 + 依赖边），EventDrivenScheduler 事件驱动执行；搜索/摘要路径解耦，与 detection 共享单 NVDEC 流（生产者-消费者并发）。
+- **插件化** — 10 个插件 ABC + 工厂动态加载（config.yaml 换后端零代码改动）；4 条编码路径（frame/chunk/text/track）+ 7 路检索 + 人脸/车牌 + 4 级参数系统。
+- **存储卫生 (v0.21)** — 删除即清盘（DB 级联 + 引用追踪）+ 孤儿清扫（`POST /maintenance/sweep` / `scripts/sweep_storage.py`）。
+- **架构细节见 `docs/arch.md`**（Pipeline Detail / Database Schema / API Endpoints / Key Design Decisions）。
 
 ## Tech Stack
 
@@ -152,9 +150,7 @@ cerno/
 │   ├── face_routes.py    # Face data + thumbnail endpoints
 │   ├── plate_routes.py   # Plate data + thumbnail endpoints
 │   ├── export_routes.py  # Export: clip / frames / track / thumbnails (7 endpoints)
-│   ├── face_routes.py    # Face data + thumbnail endpoints
-│   ├── plate_routes.py   # Plate data + thumbnail endpoints
-│   └── maintenance_routes.py  # (stub) planned health/reindex endpoints
+│   └── maintenance_routes.py  # 存储清扫: POST /maintenance/sweep + GET /maintenance/storage
 ├── core/                 # DB models, schemas, search, config
 │   ├── db.py             # Async engine, init_db(), incremental migration
 │   ├── models.py         # ORM: Video, Scene, Transcript, FrameEmbedding, Chunk
@@ -166,6 +162,7 @@ cerno/
 │   ├── prompt_loader.py  # Prompt template loader
 │   ├── status_tracker.py # Pipeline progress persistence
 │   ├── settings_service.py # API key management (settings.json backed)
+│   ├── storage_manager.py # 存储管理: 路径解析/引用追踪/删除清盘/孤儿清扫
 │   └── exceptions.py     # Custom exceptions
 ├── config/               # Configuration
 │   ├── config.yaml       # Main config (server/db/storage/plugins/pipeline)
@@ -227,21 +224,14 @@ cerno/
 ├── models/               # Local model weights (gitignored)
 ├── data/                 # Video storage & artifacts (gitignored)
 ├── config/               # YAML config, prompts, schema
-├── tests/                # Test suite (30+ test files)
+├── scripts/              # 运维工具: sweep_storage.py 存储清扫 CLI (默认 dry-run, --apply 执行)
 └── docs/                 # Design documents + search architecture docs
 ```
 
 ## Development Status
 
-- **v0.20 — Dual-layer ReID (Online + Global Stitch)**: 在线 BoT-SORT ReID（`with_reid: true`, model="auto"→yolo26n-cls.pt, appearance_thresh 0.6, track_buffer 45, match_thresh 0.5 — 遮挡/交叉保持身份, 轨迹稳定）; 全局 tracklet 缝合（detection 每 2s 缓存 640×384 track crop → track_encode 零 FFmpeg seek, 挑 20/50/80% 多帧 mean pool → cosine ≥0.85 合并, 用 segments 真实检测片段做时序检查, MAX_OVERLAP_SEC=1.0 + HIGH_SIM_OVERRIDE=0.90 容忍缩放/切换/遮挡边缘双跟踪伪影）; L3 `track_stitch_enabled` 参数 + 前端"跟踪片段缝合"开关; 完成后修改需新建记录; 长视频友好（track_encode 不随 track 数 seek 爆炸, 只剩编码成本）。
-- **v0.19 — Multi-Video Group Processing**: 批量上传 POST /videos/upload/batch（并发处理，信号量5，独立 DB session）；VideoGroup 模型 + videos.group_id FK；组参数同步（PUT /params 时自动同步到同组 all pending 视频）；前端分组历史卡片堆叠/展开动画 + Header 组内切换下拉 + 搜索范围选择器（当前/组内/全部）+ DetectionPanel 独立视频选择器 + 搜索结果跨视频跳转；summary one_liner 改为时间轴链格式。
-- **v0.18 — Universal Image Search + Frontend Chinese Labels**: 通用图搜 POST /search/image（Qwen3-VL-Embedding 2048-dim → frame_embeddings，独立 search_image_only 路径跳过帧聚类和 scene 信息补充）；前端标签中文化 labels.ts（统一 ZH_LABELS + CLASS_COLORS，4 组件改为 zh()/zhLabel()/colorOf() 显示中文）；图搜结果点击跳转不自动播放（end=null 语义控制）。
-- **v0.17 — Source Analysis + Metadata Cache**: 来源分析规则引擎 classify_video_source（phone/camera/screen_recording/surveillance/non_camera_source/unknown）；元数据缓存到 DB metadata_json 列（首次 <1ms 返回）；GET /metadata 返回 source_analysis；VideoInfoCard 展示来源分析；参数面板 face/plate 子开关增量修改。（注: AI 生成检测 AICheck 已移除 — 服务文件与触发逻辑删除，ai_detect_result DB 列/schema/前端展示残留保留但恒为 not_run）
-- **v0.16 — Single NVDEC stream + Performance + Speed Presets**: 单 NVDEC 流供 detection 与 search_encode 共享（队列消费 1fps→64帧即编）；生产者-消费者并发（帧提取与 YOLO 推理重叠）；移除全局 ReID + FFmpeg fallback 抽帧（track_encode 257s→43s）；NVDEC MJPEG pipe 默认启用；embedder 逐行 L2 归一化 + float32 + PIL 8 线程并行；batch_size 512；三档速度预设 (fast/balanced/precise) 控制分辨率 336-672；前端处理速度控件 + Pipeline 调优页。
-- **v0.14 — Search/Summary Decoupling + Preload**: Search and summary paths fully decoupled — new `search_encode` operation (self-extracting frames @1fps + batch encoding) runs parallel to summary pipeline, depends only on duration. Captioner preloaded at startup alongside embedder (shared instances, no per-pipeline load/unload). Configurable encode batch size (pipeline.encode_batch_size). NVDEC hardware decoding support (optional, pipeline.use_nvdec). 15 operations, 11 DB tables, 10 plugin ABCs.
-- **v0.10 — Track encoding + crop embedding**: TrackEncodeRunner (最佳帧 crop + Qwen3-VL-Embedding 2048-dim). 5-path semantic search (frame+chunk+text+label+track). track 搜索独立去重, 返回具体物体 (class_name#id + crop 缩略图). EventDrivenScheduler: 异步事件驱动替代拓扑分批.
-- **v0.9 — YOLO detection + tracking**: YOLO11s + BoT-SORT (10fps 独立帧率, dual-gate). 前端 DetectionOverlay (Canvas bbox + 插值 + 拖尾) + DetectionPanel (物体列表 + 分类筛选) + DetectionTimeline (时间轴 + 播放头 + 选中滚动). demo 验证通过.
-- **v0.8 — DAG architecture refactor**: 声明式操作 DAG 引擎 (11 operations + gate-driven orchestration). 操作注册表 (pipeline/operations.py) + runners 目录. StatusTracker 动态权重. API 路由拆分. QC 模块移除.
-- **v0.7 — Summary architecture overhaul**: 双模式摘要系统 — native_video (Qwen2.5-VL-7B 本地 GPU 原生视频理解 + 纯 Python 聚合) / vlm_llm (传统 VLM+LLM, API 驱动). 前端 summary_mode 选择器. Embedder 全局共享.
-- **v0.6 — Search architecture consolidation**: 3-path semantic search (frame+text+chunk), 废弃全文/混合/模糊检索, encode_text 扩大至 caption+ocr+transcript, 路径感知排序.
-- **Planned**: Grounding (Florence-2), Health/Reindex endpoints
+- **v0.21 — Storage Hygiene & Management**: 删除视频 = DB 级联 + 磁盘全回收（StorageManager 按 DB 引用追踪，reuse 共享文件只在最后引用删除时清理，空组同事务自动清理，处理中守卫 409 + `RUNNING_VIDEOS` 注册表闭合竞态）；批量 DELETE 替代 ORM 全量 load（删大视频性能修复）；`POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` 孤儿清扫（sweep 按 video_id 判定附属目录、mtime 保护上传竞态）；trackthumb 导出泄漏修复；人脸/检测/车牌缩略图缺失 404 兜底；前端删除二次确认 + processing 禁用 + 释放空间提示。
+- **v0.20 — Dual-layer ReID**: 在线 BoT-SORT ReID（`with_reid` + yolo26n-cls 特征, 遮挡/交叉保持身份）+ 全局 tracklet 缝合（detection 缓存 crop → mean pool → cosine ≥0.85 合并同一身份, segments 时序检查, L3 `track_stitch_enabled` 开关）。长视频友好（track_encode 零 seek）。
+- **v0.19 — Multi-Video Group**: 批量上传 + VideoGroup 分组 + 组参数同步启动 + 前端历史堆叠/展开 + 组内切换 + 跨视频搜索 + 独立检测面板。
+- **v0.18 — Universal Image Search + 中文化**: `POST /search/image` 通用图搜（独立 `search_image_only` 路径，帧不聚类精确到秒）+ 前端标签中文化 labels.ts。
+- **Planned**: Grounding (Florence-2), OCR

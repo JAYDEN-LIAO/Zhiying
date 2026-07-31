@@ -143,7 +143,7 @@ export const api = {
 
   /* ── Delete a video ── */
   deleteVideo(videoId: string) {
-    return request<void>(`${BASE}/videos/${videoId}`, { method: "DELETE" });
+    return request<{ freed_bytes: number }>(`${BASE}/videos/${videoId}`, { method: "DELETE" });
   },
 
   /* ── Semantic search ── */

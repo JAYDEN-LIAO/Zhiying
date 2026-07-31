@@ -5,6 +5,7 @@ api/face_routes.py
 """
 
 import io
+import os
 import uuid
 import logging
 
@@ -133,6 +134,8 @@ async def get_face_thumbnail(
         raise HTTPException(status_code=404, detail="Video not found")
 
     file_path: str = row[0]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Video file not found on disk")
 
     # 通过 identity_id 查找最佳帧参数
     if identity_id is not None and timestamp is None:

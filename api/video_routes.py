@@ -23,7 +23,7 @@ from core.schemas import (
 )
 from core.models import Video, VideoGroup, VideoStatus
 from core.repository import create_video, get_video_with_relations, list_videos, delete_video
-from services.video_service import VideoService
+from services.video_service import VideoService, RUNNING_VIDEOS
 
 logger = logging.getLogger(__name__)
 
@@ -522,14 +522,31 @@ async def list_all_videos(
 @router.delete("/videos/{video_id}")
 async def delete_video_endpoint(
     video_id: uuid.UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-) -> APIResponse[None]:
-    """删除视频及其关联数据（scenes, transcript 通过外键 CASCADE 自动清除）。"""
-    deleted = await delete_video(db, video_id)
-    if not deleted:
+) -> APIResponse[dict]:
+    """删除视频记录 + 关联 DB 数据（级联）+ 磁盘产物，返回释放字节数。
+
+    - DB: 批量 DELETE videos 行，子表由 ON DELETE CASCADE 级联清除，
+      同事务内完成空组清理。
+    - 磁盘: StorageManager 按 videos 表剩余引用判定清理
+      （reuse 共享文件只在最后一个引用删除时才真正 unlink）。
+    - 守卫: 正在跑管道的视频（status=processing 或 RUNNING_VIDEOS 注册）
+      返回 409 —— 防止删除导致后台管道在 status 更新时崩溃。
+    """
+    result = await db.execute(select(Video).where(Video.id == video_id))
+    video = result.scalar_one_or_none()
+    if video is None:
         raise HTTPException(status_code=404, detail="Video not found")
-    logger.info("[API] Video deleted: %s", video_id)
-    return APIResponse(data=None)
+    if video.status == VideoStatus.PROCESSING or video_id in RUNNING_VIDEOS:
+        raise HTTPException(
+            status_code=409,
+            detail="视频正在处理中，无法删除，请稍后再试",
+        )
+    storage_manager = getattr(request.app.state, "storage_manager", None)
+    freed_bytes = await delete_video(db, video, storage_manager)
+    logger.info("[API] Video deleted: %s (freed %.1f MB)", video_id, freed_bytes / 1e6)
+    return APIResponse(data={"freed_bytes": freed_bytes})
 
 
 @router.get("/videos/{video_id}/status")

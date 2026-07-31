@@ -5,6 +5,7 @@ api/detection_routes.py
 """
 
 import io
+import os
 import uuid
 import logging
 
@@ -124,6 +125,8 @@ async def get_detection_thumbnail(
         raise HTTPException(status_code=404, detail="Video not found")
 
     file_path: str = row[0]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Video file not found on disk")
     frame = await extract_keyframe_to_memory(file_path, timestamp)
 
     # 可选裁剪

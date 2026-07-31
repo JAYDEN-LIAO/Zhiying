@@ -22,6 +22,10 @@ from pipeline.engine import PipelineEngine
 
 logger = logging.getLogger(__name__)
 
+# 运行中的视频 id 集合 — 闭合 PUT /params 返回后、后台任务置 PROCESSING 之前
+# 的窗口竞态（删除守卫使用）。单进程内有效（uvicorn 默认单 worker）。
+RUNNING_VIDEOS: set[uuid.UUID] = set()
+
 
 class VideoService:
     """视频业务服务 — 创建记录与 Pipeline 后台调度。"""
@@ -53,7 +57,13 @@ class VideoService:
     async def incremental_process(self, video_id: uuid.UUID, added_modalities: set[str]) -> None:
         """增量后台任务：对已完成的视频补跑指定功能阶段。"""
         logger.info("[VideoService] Incremental %s for video %s", added_modalities, video_id)
+        RUNNING_VIDEOS.add(video_id)
+        try:
+            await self._incremental_process(video_id, added_modalities)
+        finally:
+            RUNNING_VIDEOS.discard(video_id)
 
+    async def _incremental_process(self, video_id: uuid.UUID, added_modalities: set[str]) -> None:
         async with self.db_session_factory() as session:
             result = await session.execute(
                 select(Video).where(Video.id == video_id)
@@ -86,7 +96,13 @@ class VideoService:
     async def process_video(self, video_id: uuid.UUID) -> None:
         """后台任务入口：加载视频 → Pipeline → 完成/失败。"""
         logger.info("[VideoService] Starting pipeline for video %s", video_id)
+        RUNNING_VIDEOS.add(video_id)
+        try:
+            await self._process_video(video_id)
+        finally:
+            RUNNING_VIDEOS.discard(video_id)
 
+    async def _process_video(self, video_id: uuid.UUID) -> None:
         async with self.db_session_factory() as session:
             result = await session.execute(
                 select(Video).where(Video.id == video_id)

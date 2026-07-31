@@ -11,6 +11,13 @@ const ctLabel: Record<string, string> = {
   general: "通用", meeting: "会议", surveillance: "监控", text_recognition: "文字识别",
 };
 
+const fmtBytes = (n: number) => {
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0, v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+};
+
 interface Props {
   videos: VideoListItem[];
   currentVideoId: string | null;
@@ -30,19 +37,38 @@ export function HistoryPanelContent({
   const [searchQuery, setSearchQuery] = useState("");
 
   const handleDelete = async (id: string) => {
+    const v = videos.find(x => x.id === id);
+    if (v?.status === "processing") return; // 按钮已禁用，双保险
+    if (!confirm(`确定删除「${v?.file_name ?? id}」？\n将同时清除数据库记录与磁盘文件，不可恢复。`)) return;
     setDeletingIds((prev) => new Set(prev).add(id));
-    try { await api.deleteVideo(id); setTimeout(() => onDelete(id), 250); }
-    catch { setDeletingIds((prev) => { const next = new Set(prev); next.delete(id); return next; }); }
+    try {
+      const res = await api.deleteVideo(id);
+      const freed = res?.freed_bytes ?? 0;
+      if (freed > 0) alert(`已删除，释放 ${fmtBytes(freed)} 磁盘空间`);
+      setTimeout(() => onDelete(id), 250);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "删除失败";
+      alert(`删除失败: ${msg}`);
+      setDeletingIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
+    }
   };
 
   const handleGroupDelete = async (groupVideos: VideoListItem[]) => {
-    if (!confirm("确定整组删除？")) return;
+    if (groupVideos.some(v => v.status === "processing")) {
+      alert("组内有视频正在处理中，请等待完成后删除");
+      return;
+    }
+    if (!confirm(`确定整组删除 ${groupVideos.length} 个视频？\n将同时清除数据库记录与磁盘文件，不可恢复。`)) return;
     const ids = groupVideos.map(v => v.id);
     setDeletingIds((prev) => { const n = new Set(prev); ids.forEach(id => n.add(id)); return n; });
     try {
-      await Promise.all(ids.map(id => api.deleteVideo(id)));
+      const results = await Promise.all(ids.map(id => api.deleteVideo(id)));
+      const freed = results.reduce((s, r) => s + (r?.freed_bytes ?? 0), 0);
+      if (freed > 0) alert(`已删除，释放 ${fmtBytes(freed)} 磁盘空间`);
       setTimeout(() => { ids.forEach(id => onDelete(id)); }, 250);
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "删除失败";
+      alert(`删除失败: ${msg}`);
       setDeletingIds((prev) => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; });
     }
   };
@@ -133,7 +159,9 @@ export function HistoryPanelContent({
                   </span>
                   <span className="text-[9px] text-gray-400">{fmtDate(v.created_at)}</span>
                 </div>
-                <button onClick={(e) => { e.stopPropagation(); handleDelete(v.id); }} className="text-gray-300 hover:text-red-500 transition-colors cursor-pointer">
+                <button onClick={(e) => { e.stopPropagation(); handleDelete(v.id); }} disabled={v.status === "processing"}
+                  title={v.status === "processing" ? "处理中，无法删除" : "删除视频"}
+                  className="text-gray-300 hover:text-red-500 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-300">
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
                 </button>
               </div>
@@ -219,7 +247,10 @@ export function HistoryPanelContent({
                           </div>
                           <div className="flex items-center justify-between mt-1">
                             <span className="text-[9px] text-gray-400">{fmtDate(group.videos[0].created_at)}</span>
-                            <button onClick={(e) => { e.stopPropagation(); handleGroupDelete(group.videos); }} className="text-gray-300 hover:text-red-500 transition-colors cursor-pointer" title="删除整组">
+                            <button onClick={(e) => { e.stopPropagation(); handleGroupDelete(group.videos); }}
+                              disabled={group.videos.some(v => v.status === "processing")}
+                              title={group.videos.some(v => v.status === "processing") ? "组内有视频处理中" : "删除整组"}
+                              className="text-gray-300 hover:text-red-500 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-300">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
                             </button>
                           </div>

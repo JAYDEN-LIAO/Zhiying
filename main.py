@@ -93,6 +93,11 @@ async def lifespan(app: FastAPI):
     app.state.format_service = FormatService(config, AsyncSessionLocal)
     logger.info("FormatService ready")
 
+    # 存储管理器 — 删除时清盘 + 孤儿清扫（路径解析/引用追踪/卫生对账）
+    from core.storage_manager import StorageManager
+    app.state.storage_manager = StorageManager(config)
+    logger.info("StorageManager ready")
+
     yield
     await engine.dispose()
     logger.info("Cerno engine shut down.")

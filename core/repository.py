@@ -10,11 +10,14 @@ core/repository.py
 import uuid
 import logging
 
-from sqlalchemy import select, update, insert
+from sqlalchemy import select, update, insert, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from core.models import Video, Scene, VideoStatus, FrameEmbedding, Chunk, FrameDetection, Track
+from core.models import (
+    Video, Scene, VideoStatus, FrameEmbedding, Chunk, FrameDetection, Track,
+    VideoGroup,
+)
 from core.schemas import VideoCreate
 
 logger = logging.getLogger(__name__)
@@ -169,23 +172,54 @@ async def save_video_artifacts(
 # 删除
 # ──────────────────────────────────────────────────────────
 
-async def delete_video(session: AsyncSession, video_id: uuid.UUID) -> bool:
-    """删除视频记录（scenes 和 transcript 通过 CASCADE 自动清除）。"""
-    result = await session.execute(
-        select(Video).where(Video.id == video_id)
-    )
-    video = result.scalar_one_or_none()
-    if video is None:
-        return False
-    await session.delete(video)
+async def delete_video(
+    session: AsyncSession,
+    video: Video,
+    storage_manager=None,
+) -> int:
+    """删除视频记录并清理磁盘产物，返回释放字节数。
+
+    - DB: 批量 DELETE videos 行，子表（scenes/transcript/embeddings/detections/...）
+      由 DB 级 ON DELETE CASCADE 级联清除 —— 避免 ORM cascade 把 10 万+ 子行
+      全量 load 进内存再逐条删。
+    - 空组: 同事务内统计组内剩余视频，为 0 则删除 group 行（闭合并发删除竞态）。
+    - 磁盘: 删除 commit 后调用 storage_manager.remove_video_artifacts，
+      按 videos 表剩余引用判定清理原始/remux/proxy 文件 + 缩略图/音频/chunk 目录。
+      文件清理非致命（DB 已删，即使磁盘删除失败也返回成功）。
+    """
+    # delete 前捕获路径（expire_on_commit=False，delete 后实例不可再访问）
+    video_id = video.id
+    file_path = video.file_path
+    remuxed_path = video.remuxed_path
+    proxy_path = video.proxy_path
+    group_id = video.group_id
+
     try:
+        await session.execute(delete(Video).where(Video.id == video_id))
+
+        # 同事务空组清理：最后一条视频删除后，组内已无剩余视频 → 删空组
+        if group_id is not None:
+            remaining = await session.scalar(
+                select(func.count(Video.id)).where(Video.group_id == group_id)
+            )
+            if remaining == 0:
+                await session.execute(
+                    delete(VideoGroup).where(VideoGroup.id == group_id)
+                )
+
         await session.commit()
         logger.info("[Repo] Video deleted: %s", video_id)
-        return True
     except Exception:
         await session.rollback()
         logger.exception("[Repo] Failed to delete video %s", video_id)
         raise
+
+    freed = 0
+    if storage_manager is not None:
+        freed = await storage_manager.remove_video_artifacts(
+            session, video_id, file_path, remuxed_path, proxy_path
+        )
+    return freed
 
 
 # ──────────────────────────────────────────────────────────

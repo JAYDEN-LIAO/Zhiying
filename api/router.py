@@ -13,6 +13,7 @@ from api.detection_routes import router as detection_router
 from api.export_routes import router as export_router
 from api.face_routes import router as face_router
 from api.plate_routes import router as plate_router
+from api.maintenance_routes import router as maintenance_router
 
 router = APIRouter(prefix="/api/v1")
 
@@ -23,3 +24,4 @@ router.include_router(detection_router, prefix="/videos")
 router.include_router(export_router, prefix="/videos")
 router.include_router(face_router, prefix="/videos")
 router.include_router(plate_router, prefix="/videos")
+router.include_router(maintenance_router)

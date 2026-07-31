@@ -46,18 +46,25 @@ openai>=1.12.0
 # ══════════════════════════════════════════════
 ultralytics>=8.3.0
 
+#  Scene segmentation (默认分段器, config.yaml segmenter.backend: transnetv2)
+# ══════════════════════════════════════════════
+transnetv2-pytorch>=1.0
+
 # ══════════════════════════════════════════════
 #  Face recognition (SCRFD + ArcFace R50)
 # ══════════════════════════════════════════════
 insightface>=0.7.3
 onnxruntime>=1.18.0
 
+#  License plate recognition — hyperlpr3 是主后端 (ONNX Runtime)
 # ══════════════════════════════════════════════
-#  License plate recognition (PaddleOCR)
-# ══════════════════════════════════════════════
+hyperlpr3>=0.1
 paddlepaddle>=2.6.0
-paddleocr>=2.7.0
+paddleocr>=2.7.0          # 备选车牌后端 (paddle_plate.py)
 
+#  Speech transcription — opt-in (config.yaml transcriber.backend: null 默认禁用)
+#  需要语音转写时取消注释:
+#  faster-whisper>=1.0
 # ══════════════════════════════════════════════
 #  Video metadata extraction
 # ══════════════════════════════════════════════
