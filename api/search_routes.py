@@ -43,6 +43,10 @@ async def search_semantic(
     """
     t0 = time.monotonic()
 
+    # searchless 部署（未装 Embedding）→ 语义搜索不可用，返回友好错误
+    if getattr(request.app.state, "embedder", None) is None:
+        raise HTTPException(status_code=400, detail="语义搜索未启用：本部署未安装 Embedding 模型（searchless 模式）")
+
     se = getattr(request.app.state, "_searcher", None)
     if se is None:
         from pipeline.search_engine import SearchEngine
@@ -172,7 +176,7 @@ async def search_image(
     min_similarity: float = 0.3,
     request: Request = None,
 ) -> APIResponse[SearchResults]:
-    """上传任意图片 → Qwen3-VL-Embedding 2048-dim → 与 frame_embeddings 表向量匹配。
+    """上传任意图片 → Qwen3-VL-Embedding 4096-dim → 与 frame_embeddings 表向量匹配。
 
     和人脸搜索不同：整图直接编码，不检测/不切割图片内容。
 
@@ -197,7 +201,7 @@ async def search_image(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
 
-    # Qwen3-VL-Embedding 编码 → 2048-dim 向量
+    # Qwen3-VL-Embedding 编码 → 4096-dim 向量
     vec = await embedder.encode_image(image)
 
     # 初始化 SearchEngine

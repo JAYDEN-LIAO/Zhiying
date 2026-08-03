@@ -9,6 +9,7 @@ vLLM 部署于独立服务端口（默认 8010），提供 /v1/chat/completions 
 
 import json
 import logging
+import os
 
 from openai import AsyncOpenAI
 
@@ -37,6 +38,9 @@ class VLLMSummarizer(BaseSummarizer):
         api_key: str = "not-needed",
         **kwargs,
     ):
+        # 兜底：配置里的占位 key 无效时回退到环境变量（前端设置页注入）
+        if not api_key or api_key in ("placeholder", "not-needed"):
+            api_key = os.environ.get("DEEPSEEK_API_KEY") or "not-needed"
         self.client = AsyncOpenAI(
             base_url=base_url,
             api_key=api_key,

@@ -14,7 +14,7 @@ from collections import Counter
 
 from core.interfaces import Scene
 from core.schemas import VideoSummary
-from pipeline.runners.base import OperationRunner, PipelineContext
+from pipeline.runners.base import OperationRunner, PipelineContext, effective_summary_mode
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class SummaryRunner(OperationRunner):
             logger.info("[SummaryRunner] No scenes, skipping")
             return
 
-        mode = getattr(pctx.video, "summary_mode", "native_video")
+        mode = effective_summary_mode(pctx.video, pctx.config)
 
         if mode == "vlm_llm":
             await self._run_llm(pctx, scenes)

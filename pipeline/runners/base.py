@@ -16,6 +16,25 @@ from core.models import Video
 from core.prompt_loader import PromptLoader
 
 
+def effective_summary_mode(video, config) -> str:
+    """解析视频实际生效的摘要模式。
+
+    native_video 依赖本地 caption 模型（Qwen3-VL-8B 等）；
+    当配置的 captioner 后端是 qwen_api（无本地模型）时，把 native_video
+    强制视为 vlm_llm，避免部署机缺模型导致空图 API 调用或管道失败。
+
+    有本地 caption 模型的开发机（captioner.backend != qwen_api）不受影响。
+    """
+    mode = getattr(video, "summary_mode", "native_video")
+    if mode == "native_video":
+        captioner_backend = (
+            config.get("plugins", {}).get("captioner", {}).get("backend")
+        )
+        if captioner_backend == "qwen_api":
+            return "vlm_llm"
+    return mode
+
+
 @dataclass
 class PipelineContext:
     """所有 runner 执行所需的共享状态。

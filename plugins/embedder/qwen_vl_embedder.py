@@ -3,7 +3,7 @@ plugins/embedder/qwen_vl_embedder.py
 ═══════════════════════════════════════════════════════════
 Qwen3-VL-Embedding 向量编码插件。
 
-图像 / 文本 / 视频 → 2048 维归一化嵌入向量。
+图像 / 文本 / 视频 → 4096 维归一化嵌入向量。
 模型推理通过 asyncio.to_thread 投递线程池，不阻塞事件循环。
 
 编码方式：
@@ -80,7 +80,7 @@ class QwenVLEmbedder(BaseEmbedder):
     # ═════════════════════════════════════════════════════════
 
     async def encode_image(self, image: np.ndarray) -> list[float]:
-        """将图像编码为 2048 维单位向量。"""
+        """将图像编码为 4096 维单位向量。"""
         if image.ndim == 2:
             image = np.stack([image] * 3, axis=-1)
         elif image.shape[2] == 4:
@@ -96,7 +96,7 @@ class QwenVLEmbedder(BaseEmbedder):
             raise
 
     async def encode_text(self, text: str) -> list[float]:
-        """将文本编码为 2048 维单位向量。"""
+        """将文本编码为 4096 维单位向量。"""
         try:
             vector = await asyncio.to_thread(
                 self._sync_encode_text, text,
@@ -130,7 +130,7 @@ class QwenVLEmbedder(BaseEmbedder):
             target_size: 可选 (w, h) 覆盖默认编码分辨率，用于速度预设。
 
         Returns:
-            list[list[float]] — 每帧 2048 维归一化向量，顺序与输入一致。
+            list[list[float]] — 每帧 4096 维归一化向量，顺序与输入一致。
         """
         # 统一通道数
         processed = []
@@ -277,7 +277,7 @@ class QwenVLEmbedder(BaseEmbedder):
         )
         # embeddings shape: (batch_size, hidden_dim)
 
-        # GPU → CPU float32 (2048-dim cos similarity 不需要 float64 精度)
+        # GPU → CPU float32 (4096-dim cos similarity 不需要 float64 精度)
         return embeddings.cpu().to(torch.float32).numpy().tolist()
 
     def _sync_encode_video(

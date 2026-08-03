@@ -401,7 +401,7 @@ class SearchEngine:
           - 仅支持 frame + track 两种搜索路径
 
         Args:
-            vec:             来自 encode_image() 的 2048-dim 向量。
+            vec:             来自 encode_image() 的 4096-dim 向量。
             video_ids:       限定视频范围，None=全库。
             search_types:    启用路径 ["frame","track"]，默认全开。
             top_k:           最终返回条数。

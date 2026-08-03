@@ -33,6 +33,10 @@ curl -X POST -H "Content-Type: application/json" \
 > **Note on API Keys**: Place keys in a `.env` file at project root (gitignored).  
 > Keys are only required when using the `vlm_llm` summary mode; the default `native_video` mode runs entirely on local GPU.
 
+## Windows 部署
+
+部署脚本统一放在 `deploy/`。两种模式（`full` 全功能 / `searchless` 无向量检索）、环境要求、模型清单、坑位审计与 Linux/Windows 差异，详见 **[`deploy/deploy.md`](deploy/deploy.md)**。
+
 ## Core Features
 
 | Feature | Endpoint | Status |
@@ -55,13 +59,13 @@ curl -X POST -H "Content-Type: application/json" \
 | Face Recognition | SCRFD + ArcFace R50 (512d) identity clustering | ✅ |
 | License Plate Recognition | HyperLPR3 (ONNX Runtime) detection + text recognition | ✅ |
 | Face Image Search | `POST /api/v1/search/face` (upload image → ArcFace 512d) | ✅ |
-| Universal Image Search | `POST /api/v1/search/image` (upload any image → Qwen3-VL-Embedding 2048-dim → frame_embeddings) | ✅ |
+| Universal Image Search | `POST /api/v1/search/image` (upload any image → Qwen3-VL-Embedding 4096-dim → frame_embeddings) | ✅ |
 | Plate Text Search | `POST /api/v1/search/semantic` (plate path, Levenshtein + ILIKE) | ✅ |
 | Track Thumbnail Download | `GET /api/v1/videos/{id}/export/track/{tid}/thumbnail` | ✅ |
 | Track Video Export (zip) | `GET/POST /api/v1/videos/{id}/export/track/{tid}` | ✅ |
 | Video Clip Export | `GET/POST /api/v1/videos/{id}/export/clip` | ✅ |
 | Scene Thumbnails Export (zip) | `GET/POST /api/v1/videos/{id}/export/thumbnails` | ✅ |
-| System Settings (API keys + Pipeline) | `GET/PUT /api/v1/settings` + `GET /api/v1/settings/pipeline` | ✅ |
+| System Settings (API 服务 + 存储路径) | `GET/PUT /api/v1/settings`（API 密钥/端点/模型 + 存储路径，保存即运行时生效）+ `GET /api/v1/settings/pipeline` | ✅ |
 | Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 (unified objects view + face toggle) | ✅ |
 | Track Crop Embedding (track search) | `POST /api/v1/search/semantic` (track path) | ✅ |
 | Frontend Labels Chinese Localization | 统一 labels.ts 映射中心，zh()/zhLabel()/colorOf() 函数 | ✅ |
@@ -125,7 +129,7 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 | Database | PostgreSQL 17 + pgvector 0.8 |
 | Vector Embedding | Qwen3-VL-Embedding-8B (local GPU) |
 | Object Detection | YOLO11s (local GPU) |
-| Object Tracking | BoT-SORT + 在线 ReID (with_reid=true, model="auto"→yolo26n-cls.pt, 10fps, track_buffer=45, match_thresh=0.5) |
+| Object Tracking | BoT-SORT + 在线 ReID (with_reid=true, model="auto"→检测骨干特征直通, 10fps, track_buffer=45, match_thresh=0.5) |
 | Captioning | Qwen3-VL-8B (local GPU, default) / Qwen-VL-Max (API, vlm_llm mode) |
 | Summarization | Pure Python aggregator (default) / DeepSeek Chat (API, vlm_llm mode) |
 | Scene Segmentation | TransNetV2 / Time-based (fixed interval) |
@@ -161,7 +165,7 @@ cerno/
 │   ├── config_loader.py  # YAML + .env loading with env var overrides
 │   ├── prompt_loader.py  # Prompt template loader
 │   ├── status_tracker.py # Pipeline progress persistence
-│   ├── settings_service.py # API key management (settings.json backed)
+│   ├── settings_service.py # 设置管理: API密钥/服务商端点与模型/存储路径 (settings.json backed)
 │   ├── storage_manager.py # 存储管理: 路径解析/引用追踪/删除清盘/孤儿清扫
 │   └── exceptions.py     # Custom exceptions
 ├── config/               # Configuration
@@ -231,7 +235,7 @@ cerno/
 
 - **v0.21 — Storage Hygiene & Management**: 删除视频 = DB 级联 + 磁盘全回收（StorageManager 按 DB 引用追踪，reuse 共享文件只在最后引用删除时清理，空组同事务自动清理，处理中守卫 409 + `RUNNING_VIDEOS` 注册表闭合竞态）；批量 DELETE 替代 ORM 全量 load（删大视频性能修复）；`POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` 孤儿清扫（sweep 按 video_id 判定附属目录、mtime 保护上传竞态）；trackthumb 导出泄漏修复；人脸/检测/车牌缩略图缺失 404 兜底；前端删除二次确认 + processing 禁用 + 释放空间提示。
 - **维护记录**: 清理废弃的前端 `DetectionContext`/`mockData`，进度阶段统一由 `/pipeline/operations` 按视频参数动态返回；补充 Python、前端缓存及本地环境文件的忽略规则。
-- **v0.20 — Dual-layer ReID**: 在线 BoT-SORT ReID（`with_reid` + yolo26n-cls 特征, 遮挡/交叉保持身份）+ 全局 tracklet 缝合（detection 缓存 crop → mean pool → cosine ≥0.85 合并同一身份, segments 时序检查）。长视频友好（track_encode 零 seek）。
+- **v0.20 — Dual-layer ReID**: 在线 BoT-SORT ReID（`with_reid` + 检测骨干特征直通, 遮挡/交叉保持身份）+ 全局 tracklet 缝合（detection 缓存 crop → mean pool → cosine ≥0.85 合并同一身份, segments 时序检查）。长视频友好（track_encode 零 seek）。
 - **v0.19 — Multi-Video Group**: 批量上传 + VideoGroup 分组 + 组参数同步启动 + 前端历史堆叠/展开 + 组内切换 + 跨视频搜索 + 独立检测面板。
 - **v0.18 — Universal Image Search + 中文化**: `POST /search/image` 通用图搜（独立 `search_image_only` 路径，帧不聚类精确到秒）+ 前端标签中文化 labels.ts。
 - **Planned**: Grounding (Florence-2), OCR

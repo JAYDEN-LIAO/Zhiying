@@ -10,6 +10,7 @@ import base64
 import io
 import json
 import logging
+import os
 
 import httpx
 import numpy as np
@@ -40,6 +41,9 @@ class QwenAPICaptioner(BaseCaptioner):
         max_new_tokens: int = 256,
         **kwargs,
     ):
+        # 兜底：配置里的占位 key 无效时回退到环境变量（前端设置页注入）
+        if not api_key or api_key == "placeholder":
+            api_key = os.environ.get("DASHSCOPE_API_KEY", "")
         if not api_key:
             logger.warning("[QwenAPICaptioner] api_key is empty")
         self.base_url = base_url.rstrip("/")

@@ -357,7 +357,7 @@ class Scene(Base):
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(4096),
         nullable=True,
-        comment="关键帧图像编码向量(Qwen3-VL-Embedding-2B输出2048维) — DEPRECATED",
+        comment="关键帧图像编码向量(Qwen3-VL-Embedding-8B输出4096维) — DEPRECATED",
     )
     text_embedding: Mapped[list[float] | None] = mapped_column(
         Vector(4096),
@@ -486,7 +486,7 @@ class FrameEmbedding(Base):
     )
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(4096), nullable=True,
-        comment="encode_image(单帧) 编码, 2048 维",
+        comment="encode_image(单帧) 编码, 4096 维",
     )
     thumbnail_path: Mapped[str | None] = mapped_column(
         String(1024), nullable=True, comment="帧缩略图路径, 仅 keyframe 有值",
@@ -538,7 +538,7 @@ class Chunk(Base):
     )
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(4096), nullable=True,
-        comment="encode_video(窗口内全部帧) 原生编码, 2048 维",
+        comment="encode_video(窗口内全部帧) 原生编码, 4096 维",
     )
     thumbnail_path: Mapped[str | None] = mapped_column(
         String(1024), nullable=True, comment="窗口中间帧缩略图路径",

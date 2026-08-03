@@ -33,6 +33,48 @@ from core.interfaces import BasePlateRecognizer
 
 logger = logging.getLogger(__name__)
 
+def _enable_onnx_cuda() -> None:
+    """让 hyperlpr3 硬编码的 CPU 推理升级为 CUDA（若可用）。
+
+    hyperlpr3 的 MultiTaskDetectorORT 把 providers 写死为
+    `['CPUExecutionProvider']`，即使装了 onnxruntime-gpu 也会白跑 CPU。
+    此补丁在 CUDA provider 可用时，把这种显式 CPU-only 的请求升级为 CUDA 优先；
+    会话创建失败时回退 CPU。CUDA 不可用时整体 no-op。幂等：只打一次。
+
+    由于 hyperlpr3 在 __init__ 内部 `import onnxruntime as ort` 后调用
+    `ort.InferenceSession(...)`，对全局 InferenceSession.__init__ 打补丁即可覆盖。
+    insightface 等其它 ONNX 调用方传入的是显式 CUDA 列表，不受影响。
+    """
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        return
+    try:
+        available = ort.get_available_providers()
+    except Exception:
+        return
+    if "CUDAExecutionProvider" not in available:
+        return  # 未装 onnxruntime-gpu → 保持 CPU，安全 no-op
+
+    _orig = ort.InferenceSession.__init__
+    if getattr(_orig, "_cerno_onnx_cuda", False):
+        return  # 已打补丁
+
+    def _patched(self, *args, **kwargs):
+        if kwargs.get("providers") == ["CPUExecutionProvider"]:
+            kwargs["providers"] = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            try:
+                _orig(self, *args, **kwargs)
+                return
+            except Exception:
+                kwargs["providers"] = ["CPUExecutionProvider"]  # CUDA 初始化失败 → 回退 CPU
+        _orig(self, *args, **kwargs)
+
+    _patched._cerno_onnx_cuda = True
+    ort.InferenceSession.__init__ = _patched
+    logger.info("[HyperLPR] ONNX CUDA patch applied (onnxruntime-gpu detected)")
+
+
 # HyperLPR3 车牌类型整数常量 → Cerno 字符串标签
 # 常量定义见 hyperlpr3.common.typedef
 _PLATE_TYPE_INT_MAP: dict[int, str] = {
@@ -80,6 +122,7 @@ class HyperLPRPlateRecognizer(BasePlateRecognizer):
 
     def _load(self) -> None:
         """加载 HyperLPR3 模型（ONNX Runtime，自动下载模型文件）。"""
+        _enable_onnx_cuda()  # hyperlpr3 硬编码 CPU provider → CUDA 可用时升级
         from hyperlpr3 import LicensePlateCatcher
         from hyperlpr3.common.typedef import DETECT_LEVEL_LOW, DETECT_LEVEL_HIGH
 

@@ -11,6 +11,7 @@ import type {
   SearchResults,
   PipelineParams,
   SettingsData,
+  SettingsUpdate,
   DetectionData,
   DetectionRange,
   FaceData,
@@ -242,11 +243,11 @@ export const api = {
     return request<SettingsData>(`${BASE}/settings`);
   },
 
-  updateSettings(api_keys: Record<string, string>) {
+  updateSettings(payload: SettingsUpdate) {
     return request<SettingsData>(`${BASE}/settings`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api_keys }),
+      body: JSON.stringify(payload),
     });
   },
 

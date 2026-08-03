@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from core.config_loader import load_config
 from core.models import Video
 from core.schemas import FormatInfo
 
@@ -70,7 +71,11 @@ class FormatService:
     def __init__(self, config: dict, db_session_factory: async_sessionmaker[AsyncSession]):
         self.config = config
         self.db_session_factory = db_session_factory
-        self._video_dir = config.get("storage", {}).get("video_dir", "data/videos")
+
+    @property
+    def _video_dir(self) -> str:
+        """视频目录（动态读取，设置页改存储路径后 remux/proxy 即时落新路径）。"""
+        return load_config().get("storage", {}).get("video_dir", "data/videos")
 
     # ── 探测 ─────────────────────────────────────────────
 

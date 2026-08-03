@@ -207,7 +207,7 @@ Semantic Search: POST /api/v1/search/semantic — query → embedder.encode_text
      frame (1fps 精确秒) / chunk (滑窗, 默认关) / text (caption+ocr+transcript 语义)
      label (JSONB @> entities) / track (crop 跨模态, 返回具体物体) / plate (Levenshtein + ILIKE)
   → Face 图搜: POST /search/face — 图片 → ArcFace 512d → face_identities cosine
-  → 通用图搜: POST /search/image — 图片 → Qwen3-VL 2048-dim → frame_embeddings
+  → 通用图搜: POST /search/image — 图片 → Qwen3-VL 4096-dim → frame_embeddings
      (专用 search_image_only 路径: 帧不聚类, 每帧独立精确到秒, 不补 scene 信息)
   → 合并去重: 帧簇(间隔≤4s)优先, chunk/text 与帧重叠丢弃, track 按 (video_id, track_id) 去重
   返回: {precision_level, precise_start/end, match_paths, thumbnail_url, track_id?, bbox?}
@@ -242,7 +242,7 @@ videos
 scenes
   ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
   ├─ scene_index, start_sec, end_sec, keyframe_path
-  ├─ text_embedding (Vector 2048)    — caption+ocr+transcript 语义向量
+  ├─ text_embedding (Vector 4096)    — caption+ocr+transcript 语义向量
   ├─ ocr_text, aligned_transcript, caption, prev_caption
   ├─ entities (JSONB)
   └─ created_at
@@ -256,13 +256,13 @@ transcripts
 frame_embeddings
   ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
   ├─ scene_index, timestamp_sec
-  ├─ embedding (Vector 2048), thumbnail_path, is_keyframe
+  ├─ embedding (Vector 4096), thumbnail_path, is_keyframe
   └─ created_at
 
 chunks
   ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
   ├─ scene_index, chunk_index, start_sec, end_sec
-  ├─ embedding (Vector 2048), thumbnail_path
+  ├─ embedding (Vector 4096), thumbnail_path
   └─ created_at
 
 frame_detections
@@ -279,7 +279,7 @@ tracks
 
 track_embeddings
   ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
-  ├─ track_id, class_name, embedding (Vector 2048)
+  ├─ track_id, class_name, embedding (Vector 4096)
   ├─ timestamp_sec, bbox (JSONB)
   └─ created_at
 
@@ -322,8 +322,8 @@ plate_detections
 | GET | /api/v1/videos/{id}/thumbnail/{scene_index} | 场景缩略图 |
 | DELETE | /api/v1/videos/{id} | 删除视频 (CASCADE) |
 | GET | /api/v1/videos/{id}/metadata | 视频元数据 + 来源分析 (支持 ?verbose=true, 自动缓存) |
-| GET | /api/v1/settings | 获取系统设置 (API key 状态) |
-| PUT | /api/v1/settings | 更新系统设置 (保存 API key) |
+| GET | /api/v1/settings | 获取系统设置 (API 密钥/服务商端点与模型/存储路径) |
+| PUT | /api/v1/settings | 更新系统设置 (三者皆可，保存即运行时生效) |
 | GET | /api/v1/settings/pipeline | 获取 Pipeline 配置 (编码预设等全局默认值) |
 | GET | /api/v1/pipeline/operations | 查询启用的操作列表 + 进度范围 |
 | GET | /api/v1/videos/{id}/detection/data | 逐帧检测框 + 追踪轨迹 JSON |
@@ -334,7 +334,7 @@ plate_detections
 | GET | /api/v1/videos/{id}/plate/thumbnail | 车牌缩略图 |
 | POST | /api/v1/search/semantic | 语义搜索 (六路并行：frame+chunk+text+label+track+plate) |
 | POST | /api/v1/search/face | 人脸图片搜索 (multipart image → ArcFace 512d) |
-| POST | /api/v1/search/image | 通用图搜 (multipart image → Qwen3-VL-Embedding 2048-dim → frame_embeddings) |
+| POST | /api/v1/search/image | 通用图搜 (multipart image → Qwen3-VL-Embedding 4096-dim → frame_embeddings) |
 | POST | /api/v1/videos/{id}/export/clip | 导出视频片段 (JSON) |
 | GET | /api/v1/videos/{id}/export/clip | 导出视频片段/单帧 (query params) |
 | POST | /api/v1/videos/{id}/export/frames | 导出帧 zip (兼容) |
@@ -360,7 +360,7 @@ React 19 + Vite 6 + Tailwind CSS 4
   │   ├── VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮
   │   ├── VideoSearchCard    ← 语义/图搜/人脸搜索面板 (索引未开启时置灰) + 搜索范围选择器 (组感知)
   │   ├── HistoryPanelContent← 历史记录列表 (搜索+自动刷新+缩略图+参数摘要, 删除二次确认+processing禁用+释放空间提示) + 组卡片堆叠/展开
-  │   ├── SettingsPage       ← 系统设置: 存储路径 + API 密钥管理
+  │   ├── SettingsPage       ← 系统设置: 存储路径 + API 服务（端点/模型/密钥）
   │   ├── DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+选中)
   │   ├── DetectionPanel     ← 物体列表 (分类筛选+缩略图 hover+导出按钮) + 独立视频选择器 (组感知)
   │   ├── DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
@@ -396,7 +396,7 @@ Vite 开发代理:
 |---|---|
 | **Plugin + Factory** | config.yaml 换后端零代码改动 |
 | **pgvector over 独立向量库** | 部署简单、事务一致 |
-| **本地 GPU Embedder** | 每场景/帧 2048-dim 编码，API 延迟不可接受 |
+| **本地 GPU Embedder** | 每场景/帧 4096-dim 编码，API 延迟不可接受 |
 | **双模式摘要** | native_video 本地 GPU + 纯 Python 聚合（零成本）/ vlm_llm API 备选 |
 | **FFmpeg pipe → 内存** | 帧不落盘，减 I/O |
 | **TransNetV2 分段** | 神经镜头边界检测优于固定间隔 |
@@ -418,7 +418,7 @@ Vite 开发代理:
 | **全局 ReID 缝合 (v0.20)** | 在线 with_reid + 全局 cosine ≥0.85 合并（segments 时序检查）|
 | **来源分析规则引擎** | EXIF + 文件名 + 文件头魔数（IMKH→海康），无 ML 依赖 <10ms |
 | **人脸/车牌开关** | 三门控: config + detection_enabled + face/plate_enabled |
-| **图搜双通道** | 人脸 ArcFace 512d / 通用 Qwen3-VL 2048-dim（帧不聚类精确到秒）|
+| **图搜双通道** | 人脸 ArcFace 512d / 通用 Qwen3-VL 4096-dim（帧不聚类精确到秒）|
 | **存储卫生 (v0.21)** | 删除 = DB 级联 + 引用追踪清盘；孤儿清扫手动（dry-run 默认）防误删 |
 
 ## Current Status
@@ -426,14 +426,14 @@ Vite 开发代理:
 | Module | Status | Note |
 |---|---|---|
 | Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 15 ops, search/summary decoupled, gates/deps, events-driven |
-| Track Encoding (crop→embed) | ✅ | runners/track_encode.py: 读检测缓存多帧 640×384 crop（零 FFmpeg seek）→ mean pool → Qwen3-VL-Embedding 2048-dim。长视频友好（track_encode 不随 track 数 seek 爆炸） |
+| Track Encoding (crop→embed) | ✅ | runners/track_encode.py: 读检测缓存多帧 640×384 crop（零 FFmpeg seek）→ mean pool → Qwen3-VL-Embedding 4096-dim。长视频友好（track_encode 不随 track 数 seek 爆炸） |
 | Global ReID Tracklet Stitch | ✅ | track_encode Phase 2: cosine ≥0.85 + 同类 + 时序不重叠（segments 真实片段, MAX_OVERLAP_SEC=1.0 + HIGH_SIM_OVERRIDE=0.90 容忍双跟踪伪影） |
 | Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
 | License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
 | Plate Text Search | ✅ | core/search.py plate_text_search — Levenshtein edit distance + ILIKE substring |
 | Semantic Search (7-path) | ✅ | frame + chunk + text + label + track + plate + image 并行召回, plate 独立 ILIKE |
-| Universal Image Search | ✅ | POST /api/v1/search/image — Qwen3-VL-Embedding 2048-dim → frame_embeddings, 独立 search_image_only() 路径 (帧不聚类、不补 scene、每帧独立精确到秒) |
+| Universal Image Search | ✅ | POST /api/v1/search/image — Qwen3-VL-Embedding 4096-dim → frame_embeddings, 独立 search_image_only() 路径 (帧不聚类、不补 scene、每帧独立精确到秒) |
 | Frontend Chinese Labels | ✅ | frontend/src/labels.ts — 统一 ZH_LABELS (80 COCO 类)+zh()/zhLabel()/colorOf(), 消除 3 份重复 CLASS_COLORS |
 | Frame-level Encoding | ✅ | runners/frame_encode.py: batch encode 4 frames |
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
@@ -455,7 +455,7 @@ Vite 开发代理:
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
 | Storage Hygiene (v0.21) | ✅ | core/storage_manager.py: 删除即清盘 (DB 级联 + 引用追踪) + 删除守卫 409 + 空组清理; POST /maintenance/sweep 清扫 + scripts/sweep_storage.py CLI; trackthumb 泄漏修复; 缩略图缺失 404 兜底 |
 | Multi-Video Group (v0.19) | ✅ | POST /videos/upload/batch; VideoGroup ORM; 组参数同步; frontend 历史堆叠/展开/切换/跨视频搜索/独立检测面板 |
-| Settings API + Keys | ✅ | core/settings_service.py, GET/PUT /api/v1/settings |
+| Settings API (Keys + Providers + Storage) | ✅ | core/settings_service.py, GET/PUT /api/v1/settings（API 密钥/端点/模型 + 存储路径，settings.json backed，运行时生效） |
 | Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 20 components + 8 hooks + labels.ts incl Detection/Timeline/Metadata/Export/ImageSearch |
 | Config Schema | ✅ | Pydantic v2 validation for config.yaml |
 | Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |

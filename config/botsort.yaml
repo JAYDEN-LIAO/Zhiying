@@ -18,5 +18,5 @@ gmc_method: sparseOptFlow
 with_reid: true
 proximity_thresh: 0.5       # IoU 门控：位置远于 0.5 → 禁止 ReID 匹配
 appearance_thresh: 0.6      # 表观门控：cos_distance > 0.4 → 拒绝（严格防过度合并）
-model: "auto"               # fallback 到 yolo26n-cls 提取特征
+model: "auto"               # ultralytics 8.4 起 = 检测骨干特征直通，无需独立 ReID 模型
 fuse_score: true

@@ -21,6 +21,7 @@ from core.schemas import (
     VideoCreate, VideoResponse, VideoListItem, VideoGroupResponse,
     PipelineParams, ContentType,
 )
+from core.config_loader import load_config
 from core.models import Video, VideoGroup, VideoStatus
 from core.repository import create_video, get_video_with_relations, list_videos, delete_video
 from services.video_service import VideoService, RUNNING_VIDEOS
@@ -76,7 +77,7 @@ async def upload_video(
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[VideoResponse]:
     """上传视频文件，创建 Video 记录（status=pending），不自动启动 Pipeline。"""
-    config: dict = request.app.state.config
+    config: dict = load_config()
     video_dir = config.get("storage", {}).get("video_dir", "/home/cerno/data/videos")
     os.makedirs(video_dir, exist_ok=True)
 
@@ -163,7 +164,7 @@ async def upload_videos_batch(
 
     每个文件使用独立的 DB session 并发处理，避免 SQLAlchemy session 并发冲突。
     """
-    config: dict = request.app.state.config
+    config: dict = load_config()
     video_dir = config.get("storage", {}).get("video_dir", "/home/cerno/data/videos")
     os.makedirs(video_dir, exist_ok=True)
 
@@ -287,7 +288,7 @@ async def reuse_video(
     )
     video = await create_video(db, dto)
 
-    config: dict = request.app.state.config
+    config: dict = load_config()
     db_session_factory = request.app.state.db_session_factory
     service = VideoService(
         config=config,
@@ -347,7 +348,7 @@ async def update_video_params(
         await db.commit()
         await db.refresh(video)
 
-        config: dict = request.app.state.config
+        config: dict = load_config()
         db_session_factory = request.app.state.db_session_factory
         service = VideoService(
             config=config,
@@ -470,7 +471,7 @@ async def update_video_params(
         await db.commit()
         await db.refresh(video)
 
-        config: dict = request.app.state.config
+        config: dict = load_config()
         db_session_factory = request.app.state.db_session_factory
         service = VideoService(
             config=config,

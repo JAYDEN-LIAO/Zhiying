@@ -14,7 +14,7 @@ import logging
 import os
 import re
 
-from pipeline.runners.base import OperationRunner, PipelineContext
+from pipeline.runners.base import OperationRunner, PipelineContext, effective_summary_mode
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class CaptionRunner(OperationRunner):
             return
             return
 
-        mode = getattr(pctx.video, "summary_mode", "native_video")
+        mode = effective_summary_mode(pctx.video, pctx.config)
 
         # vlm_llm 模式需要切换 captioner backend
         if mode == "vlm_llm":
@@ -169,17 +169,23 @@ class CaptionRunner(OperationRunner):
     async def _ensure_api_captioner(self, pctx) -> None:
         """vlm_llm 模式：加载 API captioner 替换 local captioner。
 
+        端点 / 模型名 / 密钥均取自有效配置（config.yaml + settings.json 设置页覆盖），
+        不再硬编码，便于设置页调整服务商。
         不污染 pctx.config（操作副本），只在 pctx.plugins 中替换。
         """
         from plugins.factory import load_plugin
         import copy
 
         api_cfg = copy.deepcopy(pctx.config)
-        api_cfg["plugins"]["captioner"]["backend"] = "qwen_api"
-        api_cfg["plugins"]["captioner"]["params"] = {
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "api_key": os.environ.get("DASHSCOPE_API_KEY", ""),
-            "model_name": "qwen-vl-max",
+        cap_cfg = api_cfg.setdefault("plugins", {}).setdefault("captioner", {})
+        cap_cfg["backend"] = "qwen_api"
+        params = cap_cfg.get("params") or {}
+        cap_cfg["params"] = {
+            "base_url": params.get(
+                "base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ),
+            "api_key": params.get("api_key") or os.environ.get("DASHSCOPE_API_KEY", ""),
+            "model_name": params.get("model_name", "qwen-vl-max"),
         }
         api_captioner = await load_plugin(api_cfg, "captioner")
         if api_captioner:

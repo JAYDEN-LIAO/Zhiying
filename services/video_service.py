@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.models import Video
 from core.schemas import VideoCreate, VideoResponse
+from core.config_loader import load_config
 from core.repository import create_video
 from core.status_tracker import StatusTracker
 from pipeline.engine import PipelineEngine
@@ -76,7 +77,7 @@ class VideoService:
 
         try:
             engine = PipelineEngine(
-                config=self.config,
+                config=load_config(),
                 db_session_factory=self.db_session_factory,
                 video=video,
                 shared_embedder=self.embedder,
@@ -115,7 +116,7 @@ class VideoService:
 
         try:
             engine = PipelineEngine(
-                config=self.config,
+                config=load_config(),
                 db_session_factory=self.db_session_factory,
                 video=video,
                 shared_embedder=self.embedder,

@@ -188,6 +188,30 @@ app = FastAPI(
 app.add_middleware(JSONGZipMiddleware, minimum_size=1024)
 
 
+@app.get("/health", tags=["system"])
+async def health_check() -> JSONResponse:
+    """轻量启动检查，供 Windows 启动脚本和 Electron 调用。
+
+    除服务存活外，额外探测数据库连通性（SELECT 1，1s 超时），
+    方便部署脚本判断"服务起来了、但数据库还没就绪"的情况。
+    """
+    import asyncio
+
+    from sqlalchemy import text as sa_text
+
+    database = "ok"
+    try:
+        async with asyncio.timeout(1.0):
+            async with AsyncSessionLocal() as session:
+                await session.execute(sa_text("SELECT 1"))
+    except Exception:
+        database = "unreachable"
+
+    body = {"status": "ok", "service": "cerno", "database": database}
+    code = 200 if database == "ok" else 503
+    return JSONResponse(status_code=code, content=body)
+
+
 # ──────────────────────────────────────────────────────────
 # 全局异常处理器
 # ──────────────────────────────────────────────────────────

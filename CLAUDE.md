@@ -79,6 +79,7 @@ frontend/src/services/api.ts — API wrapper + polling helper (getVideoStreamUrl
 frontend/src/types/index.ts — TypeScript types (mirrors backend schemas + ProxyStatus)
 frontend/src/services/api.ts — Pipeline stages from `/pipeline/operations` (backend computes enabled operations)
 scripts/sweep_storage.py   — 存储卫生清扫 CLI (默认 dry-run 只报告, --apply 执行, --json 机器可读)
+deploy/                    — Windows 部署套件: setup_windows.ps1 / start_windows.ps1 / download_models.py / write_windows_config.py / deploy.md（生成 config/config.windows.yaml，经 CERNO_CONFIG 加载，不改 config.yaml）
 ```
 
 ## Data Flow
@@ -112,7 +113,8 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 
 - **异步规则**: 所有插件接口 async; 同步模型推理 / cv2 等 C 调用 MUST 用 `asyncio.to_thread()`（关键帧 cv2 循环是范本）。
 - **Config-driven**: 插件后端由 `config.yaml` `plugins.{name}.backend` 选择，`null`=禁用; API key 只在 `.env`/环境变量（`core/config_loader.py` `_ENV_OVERRIDES`）。
-- **向量维度**: 2048（人脸 512）; 无 pgvector HNSW（超 2000 上限，demo 规模全扫描 <1ms）。
+- **设置运行时生效**: 前端设置页 `GET/PUT /settings` 读写 `data/settings.json`（`{api_keys, providers{base_url,model}, storage{video_dir,artifact_dir}}`）；`core/config_loader._apply_settings_overrides` 每次 `load_config()` 覆盖进配置，保存时清 `lru_cache` → **无需重启**。上传路由/FormatService/VideoService 均用新鲜 `load_config()`（勿用启动时 `app.state.config` 快照）。
+- **向量维度**: 4096（人脸 512）; 无 pgvector HNSW（超 2000 上限，demo 规模全扫描 <1ms）。
 - **共享 embedder**: 启动时预载到 `app.state.embedder`，业务逻辑禁用 `load_plugin("embedder")`; captioner 按需加载。
 - **增量迁移**: `init_db()` 用 `ADD COLUMN IF NOT EXISTS` 演进 schema。
 - **4 级参数系统**: L1 场景 → L2 感知模块 → L3 功能开关 → L4 高级参数; detection 双门控（config backend + per-video），face/plate 三门控（+face_enabled/plate_enabled）。
@@ -120,7 +122,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **摘要双模式**: native_video（本地 GPU + Python 聚合器, 默认）/ vlm_llm（API）; 切换封装在 runner 内部; `summary_mode` 变更需新建记录（不可增量）。
 - **多格式两层**: remux（容器标准化, -c copy）+ proxy（NVENC h264, 按需懒生成）; 管道优先读 remuxed; proxy 永不主动生成。
 - **NVDEC**: MJPEG pipe（~100KB/帧）默认启用，自动 fallback cv2。
-- **ReID 双层**: 在线 BoT-SORT with_reid（yolo26n-cls 特征）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠）; 缝合完成后修改需新建记录。
+- **ReID 双层**: 在线 BoT-SORT with_reid（model=auto → 检测骨干特征直通, ultralytics 8.4 起不再下载独立 ReID 模型）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠）; 缝合完成后修改需新建记录。
 - **编码预设**: fast/balanced/precise 三档控制分辨率 + batch（336×224 / 504×336 / 672×448）。
 - **存储卫生**: 删除必须走 `repository.delete_video`（StorageManager 清盘, 勿直接 `session.delete`）; 新增落盘路径必须登记进 `core/storage_manager.py`; 孤儿清扫手动（maintenance 端点/CLI, dry-run 默认）。判定: 视频文件按 DB 三列引用集合, 附属目录按 `video_id ∈ videos 表` —— 绝不用 scenes.keyframe_path（persist 窗口期会误删）。删除守卫: PROCESSING 或 `RUNNING_VIDEOS` → 409。
 
@@ -130,13 +132,13 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 |---|---|---|
 | `video_groups` | id(UUID PK), name, created_at, updated_at | 视频分组 — 批量上传时自动创建，组内单个视频删除自动清理空组 |
 | `videos` | id, status, progress, status_detail, summary(JSONB), content_type, summary_mode (native_video/vlm_llm), perception switches (vision/audio/ocr/grounding/caption/detection_enabled/summary_enabled), function switches (search_index_enabled), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail, encode_profile), language, format fields (container_format, video_codec, audio_codec, has_audio, remuxed_path, proxy_path, proxy_status, proxy_progress), **group_id(UUID FK → video_groups.id)** | Video master |
-| `scenes` | id, video_id(FK), scene_index, text_embedding(Vector2048), caption, ocr_text, aligned_transcript, entities(JSONB) | Core search grain (text_embedding = caption+ocr+transcript 语义) |
+| `scenes` | id, video_id(FK), scene_index, text_embedding(Vector4096), caption, ocr_text, aligned_transcript, entities(JSONB) | Core search grain (text_embedding = caption+ocr+transcript 语义) |
 | `transcripts` | id, video_id(FK, UNIQUE), full_text, words(JSONB) | Speech transcripts |
-| `frame_embeddings` | id, video_id(FK), timestamp_sec, embedding(Vector2048), is_keyframe | 1fps frame vectors |
-| `chunks` | id, video_id(FK), chunk_index, start_sec, end_sec, embedding(Vector2048) | Sliding window vectors |
+| `frame_embeddings` | id, video_id(FK), timestamp_sec, embedding(Vector4096), is_keyframe | 1fps frame vectors |
+| `chunks` | id, video_id(FK), chunk_index, start_sec, end_sec, embedding(Vector4096) | Sliding window vectors |
 | `frame_detections` | id, video_id(FK), track_id, timestamp_sec, class_name, confidence, bbox(JSONB) | Per-frame YOLO detection results (10fps, indexed by timestamp) |
 | `tracks` | id, video_id(FK), track_id, class_name, first_seen, last_seen, frame_count, segments(JSONB) | BoT-SORT cross-frame track summaries |
-| `track_embeddings` | id, video_id(FK), track_id, class_name, embedding(Vector2048), timestamp_sec, bbox(JSONB) | Track crop cross-modal vectors, for track-path search |
+| `track_embeddings` | id, video_id(FK), track_id, class_name, embedding(Vector4096), timestamp_sec, bbox(JSONB) | Track crop cross-modal vectors, for track-path search |
 | `face_identities` | id, video_id(FK), identity_label, face_embedding(Vector512), face_count, first_seen, last_seen, avg_quality, best_face_bbox(JSONB) | Clustered face identities (ArcFace R50 512d), "人物 A/B/C..." |
 | `face_detections` | id, video_id(FK), identity_id(FK), track_id, timestamp_sec, bbox(JSONB), quality_score, face_embedding(Vector512) | Per-frame face detections, linked to YOLO person tracks |
 | `plate_detections` | id, video_id(FK), track_id, class_name, timestamp_sec, plate_text, plate_type, char_confidences(JSONB), bbox(JSONB), detection_confidence | HyperLPR3 license plate recognition results (per-vehicle-track, pre-ReID merge) |
@@ -156,7 +158,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | 4级参数 + 增量处理 | ✅ | core/schemas.py, engine.py run_incremental() |
 | 前端 Dashboard (20 组件 + 8 hooks) | ✅ | Dashboard.tsx, components/ |
 | 元数据 / 来源分析 / 导出 | ✅ | utils/metadata.py, video_source.py, export_service.py |
-| Settings API + API key | ✅ | core/settings_service.py |
+| Settings API + API key | ✅ | core/settings_service.py — GET/PUT /settings（API 密钥/服务商端点与模型/存储路径，settings.json backed） |
 | OCR / Grounding | ⬜ Shell | plugins/ocr/, plugins/grounding/ |
 | Health / Reindex | 🔶 部分 | maintenance_routes.py (存储清扫已上, 健康检查待办) |
 
@@ -170,7 +172,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 4. **Config-driven design + operation registration**: when adding a new perception module, write a runner class in `pipeline/runners/`, add one `Operation(...)` entry to `pipeline/operations.py` `ALL_OPERATIONS`. For new plugin backends, register in `plugins/factory.py` `CATEGORY_MAP` / `_MODULE_OVERRIDES` / `_CLASS_OVERRIDES`. No hardcoded model references in business logic.
 5. **Sync vs Async**: all `core/interfaces.py` methods are `async def`. If your plugin runs synchronous model inference, wrap it with `asyncio.to_thread()`. Never call `model.predict()` directly in an async function.
 6. **Search paths**: `config_loader.py` and `prompt_loader.py` use `Path(__file__).resolve().parent.parent` to locate the project root. Keep this convention.
-7. **Vector dimension**: 2048. All vector columns (scenes.text_embedding, frame_embeddings.embedding, chunks.embedding, track_embeddings.embedding) use `Vector(2048)`. Face embeddings use `Vector(512)` (ArcFace R50). No pgvector HNSW/IVFFlat index (2048 > 2000 limit, but full scan is fine for demo scale).
+7. **Vector dimension**: 4096. All vector columns (scenes.text_embedding, frame_embeddings.embedding, chunks.embedding, track_embeddings.embedding) use `Vector(4096)`. Face embeddings use `Vector(512)` (ArcFace R50). No pgvector HNSW/IVFFlat index (4096 > 2000 limit, but full scan is fine for demo scale).
 8. **Four encoding paths**: Frame (encode_image), Chunk (config-gated, default disabled, -c copy + encode_video), Text (encode_text). All three reuse the shared embedder.
 9. **When adding new dependencies**: add to `requirements.txt` AND to `Dockerfile`.
 10. **Search result format**: All results include `precision_level` (frame/chunk/text/label), `precise_start/end` (text 也有 scene 起止作为锚点), `match_paths`, and `thumbnail_url`. Merge 时帧簇优先，text 与非重叠帧的 text 按路径权重排序。图搜使用独立 `search_image_only()` 路径：帧不做时间聚类、不补充 scene 信息，`precise_end=None` 表示单帧精确匹配。

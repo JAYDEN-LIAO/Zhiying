@@ -240,8 +240,33 @@ export interface ApiKeyInfo {
   masked_value: string | null;
 }
 
+export interface ProviderInfo {
+  id: string;
+  label: string;
+  base_url: string;
+  model: string;
+}
+
+export interface StorageInfo {
+  video_dir: string;
+  artifact_dir: string;
+}
+
 export interface SettingsData {
   api_keys: Record<string, ApiKeyInfo>;
+  providers: Record<string, ProviderInfo>;
+  storage: StorageInfo;
+}
+
+export interface ProviderSettingsEdit {
+  base_url?: string;
+  model?: string;
+}
+
+export interface SettingsUpdate {
+  api_keys?: Record<string, string>;
+  providers?: Record<string, ProviderSettingsEdit>;
+  storage?: Partial<StorageInfo>;
 }
 
 /* ── Detection & Tracking ── */

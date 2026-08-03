@@ -115,8 +115,23 @@ class ReuseRequest(BaseModel):
 # 设置 DTO
 # ═══════════════════════════════════════════════════════════
 
+class ProviderSettings(BaseModel):
+    """API 服务商配置：端点 + 模型名（密钥走 api_keys）。"""
+    base_url: str | None = Field(default=None, description="服务端点")
+    model: str | None = Field(default=None, description="模型名")
+
+
+class StorageSettings(BaseModel):
+    """存储路径配置（settings.json 覆盖 config.yaml）。"""
+    video_dir: str | None = Field(default=None, description="视频目录")
+    artifact_dir: str | None = Field(default=None, description="制品目录")
+
+
 class SettingsKeysRequest(BaseModel):
+    """系统设置更新请求：API 密钥 / 服务商端点与模型 / 存储路径。"""
     api_keys: dict[str, str] = Field(default_factory=dict, description="API key 映射表: {id: value}")
+    providers: dict[str, ProviderSettings] = Field(default_factory=dict, description="服务商配置: {id: {base_url, model}}")
+    storage: StorageSettings | None = Field(default=None, description="存储路径覆盖")
 
 
 # ═══════════════════════════════════════════════════════════

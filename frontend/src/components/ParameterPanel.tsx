@@ -47,7 +47,9 @@ const SCENE_PRESETS: Record<string, {
 const CONTENT_TYPES = Object.entries(SCENE_PRESETS).map(([value, { label }]) => ({ value, label }));
 
 
-const MODULE_AVAILABLE: Record<string, boolean> = {
+// 模块可用性默认值（audio/ocr 需后端插件启用才可点）。
+// 挂载时通过 /settings/pipeline 按部署配置覆盖（如部署机启用 faster-whisper 转录）。
+const DEFAULT_MODULE_AVAILABLE: Record<string, boolean> = {
   audio: false,
   ocr: false,
   detection: true,
@@ -164,21 +166,48 @@ export function ParameterPanel({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  /* ── 模块可用性：按部署配置覆盖默认值 ── */
+  const [moduleAvailable, setModuleAvailable] = useState<Record<string, boolean>>({ ...DEFAULT_MODULE_AVAILABLE });
+
+  /* ── 挂载时拉取部署配置：插件可用性 + 默认摘要模式 ── */
+  useEffect(() => {
+    fetch("/api/v1/settings/pipeline")
+      .then((r) => r.json())
+      .then((d) => {
+        const data = d?.data;
+        if (!data) return;
+        if (data.plugins) {
+          setModuleAvailable({
+            audio: !!data.plugins.transcriber,
+            ocr: !!data.plugins.ocr,
+            detection: !!data.plugins.detector,
+            face: !!data.plugins.face,
+            plate: !!data.plugins.plate,
+          });
+        }
+        if (data.default_summary_mode) {
+          setSummaryMode((cur) => (cur === "native_video" ? data.default_summary_mode : cur));
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ── 计算置灰状态 ── */
   const grayed = useMemo(() => {
     const g: Record<string, boolean> = {};
     // 插件不可用
-    g.audio = !MODULE_AVAILABLE.audio;
-    g.ocr = !MODULE_AVAILABLE.ocr || !modules.vision;
+    g.audio = !moduleAvailable.audio;
+    g.ocr = !moduleAvailable.ocr || !modules.vision;
     g.caption = !modules.vision;
-    g.detection = !MODULE_AVAILABLE.detection || !modules.vision;
+    g.detection = !moduleAvailable.detection || !modules.vision;
     // 功能开关
     g.summary = !modules.caption;
     // 高级参数
     g.sampleFps = !modules.vision;
     g.detectionClasses = !modules.detection;
     return g;
-  }, [modules, functions]);
+  }, [modules, functions, moduleAvailable]);
 
   /* ── 自定义参数自动保存 ── */
   useEffect(() => {
@@ -404,9 +433,9 @@ export function ParameterPanel({
             {([
               { key: "vision" as ModuleKey, label: "视觉分析", hint: "帧处理总开关" },
               { key: "audio" as ModuleKey, label: "音频转录", hint: grayed.audio ? "插件未启用" : "语音转文字" },
-              { key: "ocr" as ModuleKey, label: "文字识别", hint: grayed.ocr ? (MODULE_AVAILABLE.ocr ? "依赖视觉分析" : "插件未启用") : "提取画面文字" },
+              { key: "ocr" as ModuleKey, label: "文字识别", hint: grayed.ocr ? (moduleAvailable.ocr ? "依赖视觉分析" : "插件未启用") : "提取画面文字" },
               { key: "caption" as ModuleKey, label: "画面描述", hint: grayed.caption ? "依赖视觉分析" : "VLM 场景描述" },
-              { key: "detection" as ModuleKey, label: "物体检测", hint: grayed.detection ? (MODULE_AVAILABLE.detection ? "依赖视觉分析" : "插件未启用") : "YOLO11 逐帧检测与 ByteTrack 追踪" },
+              { key: "detection" as ModuleKey, label: "物体检测", hint: grayed.detection ? (moduleAvailable.detection ? "依赖视觉分析" : "插件未启用") : "YOLO11 逐帧检测与 ByteTrack 追踪" },
             ] as const).map((mod) => {
               const isOn = modules[mod.key];
               const isGrayed = grayed[mod.key];
@@ -542,21 +571,21 @@ export function ParameterPanel({
           {/* 人脸识别子开关 — 检测开启时显示 */}
           {modules.detection && (
             <div className={`mt-2 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
-              !MODULE_AVAILABLE.face ? "border-gray-150 bg-gray-50/30 opacity-40" : "border-purple-300 bg-purple-50/30"
+              !moduleAvailable.face ? "border-gray-150 bg-gray-50/30 opacity-40" : "border-purple-300 bg-purple-50/30"
             }`}>
               <div className="flex items-center justify-between">
                 <div className="flex-1 min-w-0">
-                  <span className={`text-[11px] font-medium block ${!MODULE_AVAILABLE.face ? "text-gray-400" : "text-gray-600"}`}>
+                  <span className={`text-[11px] font-medium block ${!moduleAvailable.face ? "text-gray-400" : "text-gray-600"}`}>
                     人脸识别
                   </span>
                   <span className="text-[10px] text-gray-500 truncate block">
-                    {MODULE_AVAILABLE.face ? "SCRFD 检测 + ArcFace 身份聚类" : "插件未启用"}
+                    {moduleAvailable.face ? "SCRFD 检测 + ArcFace 身份聚类" : "插件未启用"}
                   </span>
                 </div>
                 <Toggle
                   checked={faceEnabled}
                   onChange={() => { setFaceEnabled(!faceEnabled); setSceneType("custom"); }}
-                  disabled={!MODULE_AVAILABLE.face}
+                  disabled={!moduleAvailable.face}
                 />
               </div>
             </div>
@@ -565,21 +594,21 @@ export function ParameterPanel({
           {/* 车牌识别子开关 — 检测开启时显示 */}
           {modules.detection && (
             <div className={`mt-1.5 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
-              !MODULE_AVAILABLE.plate ? "border-gray-150 bg-gray-50/30 opacity-40" : "border-green-300 bg-green-50/30"
+              !moduleAvailable.plate ? "border-gray-150 bg-gray-50/30 opacity-40" : "border-green-300 bg-green-50/30"
             }`}>
               <div className="flex items-center justify-between">
                 <div className="flex-1 min-w-0">
-                  <span className={`text-[11px] font-medium block ${!MODULE_AVAILABLE.plate ? "text-gray-400" : "text-gray-600"}`}>
+                  <span className={`text-[11px] font-medium block ${!moduleAvailable.plate ? "text-gray-400" : "text-gray-600"}`}>
                     车牌识别
                   </span>
                   <span className="text-[10px] text-gray-500 truncate block">
-                    {MODULE_AVAILABLE.plate ? "PaddleOCR 车牌检测与文字识别" : "插件未启用"}
+                    {moduleAvailable.plate ? "HyperLPR3 车牌检测与文字识别" : "插件未启用"}
                   </span>
                 </div>
                 <Toggle
                   checked={plateEnabled}
                   onChange={() => { setPlateEnabled(!plateEnabled); setSceneType("custom"); }}
-                  disabled={!MODULE_AVAILABLE.plate}
+                  disabled={!moduleAvailable.plate}
                 />
               </div>
             </div>
