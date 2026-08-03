@@ -9,6 +9,7 @@ FastAPI 应用入口 — Cerno Video Analytics Core Engine
   3. 挂载 API 路由（/api/v1/...）
 """
 
+import gzip
 import logging
 import os
 
@@ -104,6 +105,77 @@ async def lifespan(app: FastAPI):
 
 
 # ──────────────────────────────────────────────────────────
+# 仅 JSON 响应的 gzip 压缩中间件（v0.22, S0/A4）
+# ──────────────────────────────────────────────────────────
+
+class JSONGZipMiddleware:
+    """只压缩 `application/json` 响应的 gzip 中间件。
+
+    不能全局挂 `GZipMiddleware`：
+      - `/videos/{id}/stream` 返回 206/Range 视频流 —— 压缩已压缩的 H.264 纯费 CPU，
+        且破坏播放器 seek 语义（必须原样直通，零缓冲）；
+      - `/detection/thumbnail`、`/face/thumbnail` 等 JPEG 已压缩，再压无收益。
+
+    高熵 JSON（检测数据等）压缩比 >10×，一次红利。
+    非 JSON 响应在 `http.response.start` 即直通转发，不做任何缓冲。
+    """
+
+    def __init__(self, app, minimum_size: int = 1024, compresslevel: int = 6):
+        self.app = app
+        self.minimum_size = minimum_size
+        self.compresslevel = compresslevel
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        start_message = None       # 缓存的 response.start（JSON 压缩候选）
+        body_buffer: list[bytes] = []
+        compress = False
+
+        async def send_wrapper(message):
+            nonlocal start_message, body_buffer, compress
+            if message["type"] == "http.response.start":
+                headers = dict(message["headers"])
+                content_type = headers.get(b"content-type", b"").decode("latin-1")
+                has_encoding = any(k.lower() == b"content-encoding" for k, _ in message["headers"])
+                compress = content_type.startswith("application/json") and not has_encoding
+                if compress:
+                    # 延迟转发：等 body 到齐后决定是否压缩（JSON 单块，成本可忽略）
+                    start_message = message
+                else:
+                    await send(message)   # 视频流/JPEG/其他 → 原样直通
+            elif message["type"] == "http.response.body":
+                if not compress:
+                    await send(message)
+                    return
+                body_buffer.append(message.get("body", b""))
+                if message.get("more_body", False):
+                    return
+                body = b"".join(body_buffer)
+                payload, content_encoding = body, None
+                if len(body) >= self.minimum_size:
+                    gz = gzip.compress(body, compresslevel=self.compresslevel)
+                    if len(gz) < len(body):
+                        payload, content_encoding = gz, "gzip"
+                # 改写 content-length / content-encoding（重建 header 列表，避免遍历中删除索引漂移）
+                start_message["headers"] = [
+                    (k, v) for k, v in start_message["headers"]
+                    if k.lower() not in (b"content-length", b"content-encoding")
+                ]
+                start_message["headers"].append((b"content-length", str(len(payload)).encode("latin-1")))
+                if content_encoding:
+                    start_message["headers"].append((b"content-encoding", b"gzip"))
+                await send(start_message)
+                await send({"type": "http.response.body", "body": payload, "more_body": False})
+            else:
+                await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
+# ──────────────────────────────────────────────────────────
 # App
 # ──────────────────────────────────────────────────────────
 
@@ -112,6 +184,8 @@ app = FastAPI(
     version="0.5",
     lifespan=lifespan,
 )
+
+app.add_middleware(JSONGZipMiddleware, minimum_size=1024)
 
 
 # ──────────────────────────────────────────────────────────

@@ -192,15 +192,25 @@ body {
 .tl-tick { position: absolute; top: 0; display: flex; flex-direction: column; align-items: center; }
 .tl-tick-l { width: 1px; height: 7px; background: rgba(255,255,255,0.08); }
 .tl-tick-t { font-size: 8px; color: rgba(255,255,255,0.2); font-family: var(--font-mono); line-height: 1; margin-top: 1px; }
+.tl-lanes-wrap { flex: 1; min-height: 0; position: relative; display: flex; }
 .tl-lanes { flex: 1; overflow-y: auto; position: relative; }
 .tl-lanes::-webkit-scrollbar { width: 4px; }
 .tl-lanes::-webkit-scrollbar-track { background: transparent; }
 .tl-lanes::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 2px; }
+/* 三滚动条布局：左 zoom 条 + 中 body(ruler/lanes/pan条) */
+.tl-main-row { flex: 1; min-height: 0; display: flex; flex-direction: row; }
+.tl-zoom { width: 10px; flex-shrink: 0; position: relative; cursor: ns-resize; touch-action: none; background: rgba(0,0,0,0.18); border-right: 1px solid rgba(255,255,255,0.06); }
+.tl-zoom-thumb { position: absolute; left: 1px; right: 1px; border-radius: 2px; background: rgba(255,255,255,0.16); }
+.tl-zoom-thumb:hover, .tl-zoom-thumb:active { background: rgba(255,255,255,0.3); }
+.tl-body { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+.tl-hscroll { height: 10px; flex-shrink: 0; position: relative; cursor: ew-resize; touch-action: none; background: rgba(0,0,0,0.18); border-top: 1px solid rgba(255,255,255,0.06); }
+.tl-hscroll-thumb { position: absolute; top: 1px; bottom: 1px; border-radius: 2px; background: rgba(255,255,255,0.16); }
+.tl-hscroll-thumb:hover, .tl-hscroll-thumb:active { background: rgba(255,255,255,0.3); }
 .tl-track { position: absolute; border-radius: 3px; cursor: pointer; min-width: 3px; display: flex; align-items: center; }
 .tl-track:hover { opacity: 1 !important; z-index: 2; }
 .tl-track-lbl { font-size: 8px; font-weight: 500; padding-left: 4px; color: rgba(255,255,255,0.7); text-shadow: 0 1px 3px rgba(0,0,0,0.9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tl-face { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 5px; height: 5px; border-radius: 50%; background: #fff; border: 1px solid rgba(124,58,237,0.4); z-index: 3; pointer-events: none; }
-.tl-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(255,255,255,0.6); box-shadow: 0 0 6px rgba(255,255,255,0.15); z-index: 5; pointer-events: none; }
+.tl-playhead { position: absolute; top: 0; bottom: 10px; width: 2px; background: rgba(255,255,255,0.6); box-shadow: 0 0 6px rgba(255,255,255,0.15); z-index: 5; pointer-events: none; }
 
 /* ── Pipeline bar ── */
 .pipeline-wrap { width: 100%; margin-top: 6px; flex-shrink: 0; }
@@ -312,10 +322,16 @@ body {
 }
 .dtc-filter-btn:hover { border-color: #c8ccd2; background: var(--color-surface); }
 .dtc-filter-btn .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.dtc-list { display: flex; flex-direction: column; gap: 4px; }
+.dtc-list { display: block; }
 .dtc-item { display: flex; align-items: center; gap: 10px; padding: 14px 12px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
 .dtc-item:hover { background: var(--color-surface); }
-.dtc-item.sel { background: rgba(217,119,6,0.06); border-color: rgba(217,119,6,0.15); }
+.dtc-item.sel {
+  background: rgba(255, 215, 0, 0.10);
+  border-color: rgba(255, 215, 0, 0.5);
+  box-shadow: inset 3px 0 0 #FFD700;   /* 左侧金色条，与时间轴选中色一致 */
+}
+.dtc-item.sel .dtc-id { color: #FFD700; font-weight: 700; }
+.dtc-item.sel .dtc-time { color: #B45309; font-weight: 600; }
 .dtc-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .dtc-info { flex: 1; min-width: 0; }
 .dtc-name { font-size: 12px; font-weight: 600; color: var(--color-text-primary); display: flex; align-items: center; gap: 4px; }

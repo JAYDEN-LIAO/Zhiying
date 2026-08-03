@@ -1,10 +1,12 @@
 # Detection 大规模数据渲染链路 — 完整优化方案
 
-> 状态：**方案定稿，尚未实施**（2026-07-31）。
+> 状态：**S0-S4 ✅ 已实施**（2026-07-31）。S0 gzip + rAF 暂停 + 惰性 best；S1 tracks/detections 接口拆分 + 缩略图读盘/落盘 + face 瘦身；S2 useDetectionRanges 区间加载 + Overlay 改造 + 旧端点删除；S3 DetectionPanel 虚拟滚动 + DetectionTimeline Canvas 化；S4 打磨（元素生命周期修复 + useDetectionRanges LRU 淘汰/网格化 + Timeline memo + 空筛选提示）。附：S3 上线后元素生命周期 bug 已修复（时间轴空白 / 检测栏 5 条），根因=effect 捕获元素引用但对挂载/卸载无感知，统一改为"effect 依赖=元素存在性门禁"。
 > 关联：`docs/arch.md`（架构）、`docs/format-compat-fix.md`（既有方案文档惯例）。
-> 决策：D1 Canvas 时间轴直上 ✅ | D2 缩略图复用 best_cache crop ✅ | D3 虚拟滚动手写零依赖 ✅（见 §3.1）
-> 修订：v1.1 自审查修正（落盘时机对齐缝合 / face detections 瘦身 / gzip 排除流 / 旧视频 NULL 契约 / 细节 5 项）
-> 涉及：`api/detection_routes.py`、`core/models.py`（Track）、`pipeline/runners/detection.py`、
+> 决策：D1 Canvas 时间轴直上 ✅ | D2 缩略图**惰性落盘（读盘优先 + miss→ffmpeg→写盘）** ✅ | D3 虚拟滚动手写零依赖 ✅（见 §3.1）
+> 修订：v1.1 自审查修正（落盘时机对齐缝合 / face detections 瘦身 / gzip 排除流 / 细节 5 项）
+> 修订：v1.2 影响性审查修正（best 准则改最大面积=缩略图零变化 / 旧视频惰性补算=零回退 / 缩略图入 StorageManager 目录 / S0 去 useTransition / 校验清单与影响分析表）
+> 修订：**v2.0 施工评审修正（本版）** — A2/A3 坍缩为**单一惰性路径**：`/detection/tracks` 用 SQL 惰性算 best（`frame_detections` DISTINCT ON 最大面积）+ 按 video_id 内存缓存；缩略图端点**读盘优先 + miss→ffmpeg→写盘**。**零 DB 迁移（仅加一个索引）、零 Pipeline 改动**（不再触碰 detection.py / track_encode.py / engine.py / VideoContext）。thumbnail URL 带 `track_id`（磁盘缓存文件名依赖它）。旧 `/detection/data` 去留统一为**删除**（同仓硬切）。Canvas 时间轴修正"尺寸恒定"表述（高度随 laneCount 增长，需垂直滚动）。
+> 涉及：`api/detection_routes.py`、`core/models.py`（frame_detections 加索引）、`core/db.py`、
 > `frontend/src/hooks/useDetectionData.ts`、`frontend/src/components/DetectionPanel.tsx`、
 > `DetectionTimeline.tsx`、`DetectionOverlay.tsx`、`frontend/src/types/index.ts`、`main.py`。
 
@@ -39,7 +41,7 @@
 
 ```
 useDetectionData (hooks/useDetectionData.ts:33)
-  └─ GET /detection/data (detection_routes.py:27) ── 一次性返回全部 tracks + 全部 detections JSON
+  └─ GET /detection/data (detection_routes.py:49) ── 一次性返回全部 tracks + 全部 detections JSON
        ├─ DetectionPanel.tsx:267  filtered.map(...)  → 3000 个 <button>，每个含 <img loading="lazy">
        │     └─ getThumbBbox(data, t)  :29-42  → 每个 track 遍历全部 detections key（O(n×m)）
        │     └─ <img src="/detection/thumbnail?timestamp&bbox">  → ffmpeg 实时抽帧
@@ -48,13 +50,15 @@ useDetectionData (hooks/useDetectionData.ts:33)
        └─ DetectionOverlay.tsx:26   Canvas draw → 只画当前时间 floor/ceil 两帧（✅ 唯一健壮者）
 ```
 
+> **v2.0 实测消费面**：`data.detections` 只有 Overlay（当前帧查找 `:68-69/:107/:221/:246`）和 Panel 的 `getThumbBbox`（`:33-34`，将被删除）在用；Timeline 完全不用 detections dict。这印证"接口拆分"方向——detections 本来就只服务于 Overlay。
+
 ### 2.3 问题清单（按杀伤力排序）
 
 | # | 问题 | 位置 | 杀伤力 |
 |---|---|---|---|
 | 1 | **每个 track 渲染时全表扫描找缩略图框** | `DetectionPanel.tsx:271` → `getThumbBbox:29-42` | 🔴 1.08 亿次比较/次渲染（3000×36000），render 内同步执行 |
-| 2 | **后端全量返回 + 前端全量解析** | `detection_routes.py:56-103` | 🔴 15MB JSON，parse 卡主线程；Overlay 只需当前±几秒却持有全部 |
-| 3 | **缩略图实时 ffmpeg 抽帧，无服务端缓存** | `detection_routes.py:106-150` | 🔴 3000 次 ffmpeg 进程雪崩，浏览器 6 连接排队 |
+| 2 | **后端全量返回 + 前端全量解析** | `detection_routes.py:49-103` | 🔴 15MB JSON，parse 卡主线程；Overlay 只需当前±几秒却持有全部 |
+| 3 | **缩略图实时 ffmpeg 抽帧，无服务端缓存** | `detection_routes.py:107-153` | 🔴 3000 次 ffmpeg 进程雪崩，浏览器 6 连接排队 |
 | 4 | **检测栏无虚拟滚动** | `DetectionPanel.tsx:267-348` | 🟠 3000 DOM 节点 + 各自事件 handler |
 | 5 | **时间轴一 track 一行 + 全量 DOM** | `DetectionTimeline.tsx:29-34,100-142` | 🟠 3000 lane / 42000px 容器 / 3000+ div |
 | 6 | **选中 track → 全量重渲** | `Dashboard.tsx:136-145` + 两组件无 memo | 🟠 每次选中都触发 1+5 的整棵重渲 |
@@ -71,9 +75,9 @@ useDetectionData (hooks/useDetectionData.ts:33)
 ```
 ┌─ 数据层(后端) ─────────────────────────────────────────────────┐
 │ A1 接口拆分：tracks(轻量摘要) / detections(时间窗按需)        │
-│ A2 track 摘要预计算 best_bbox + best_ts + thumbnail_url        │
-│    └─ 复用 detection.py:296-304 已有 best_cache，零额外计算     │
-│ A3 缩略图管线落盘 + 接口磁盘缓存（ffmpeg 只在首次/缺失时）      │
+│ A2 track 摘要 best_bbox + best_ts + thumbnail_url — SQL 惰性算 │
+│    └─ frame_detections DISTINCT ON 最大面积 + 按 video_id 缓存 │
+│ A3 缩略图读盘优先 + miss→ffmpeg→写盘（惰性落盘）               │
 │ A4 响应 gzip（15MB → ~1.5MB，一次性红利）                       │
 ├─ 前端数据层 ──────────────────────────────────────────────────┤
 │ B1 useDetectionData 拆分：tracks 全量拉，detections 按区间拉    │
@@ -88,7 +92,7 @@ useDetectionData (hooks/useDetectionData.ts:33)
 **分层目标**：
 - 数据层是治本 —— 前端持有的检测数据从 **15MB → 几十 KB（tracks 摘要）+ 按需区间**；
 - 渲染层是治标 —— 从 **3000 DOM → 30 行 + 1 个固定尺寸 canvas**；
-- 缩略图从 **3000 次 ffmpeg → ~0 次（读盘）**。
+- 缩略图从 **3000 次 ffmpeg → ~30-40 次（虚拟滚动兜住首开突发）+ 读盘**。
 
 ---
 
@@ -97,8 +101,10 @@ useDetectionData (hooks/useDetectionData.ts:33)
 | # | 决策点 | 结论 | 理由 |
 |---|---|---|---|
 | D1 | 时间轴渲染方案 | **直接 Canvas + zoom/pan**（C2 终局） | 一劳永逸；lane 装箱 + DOM 裁剪只是过渡态，未来仍要重写；Canvas 与已有 `DetectionOverlay` 同构，团队已有实现参照 |
-| D2 | 缩略图落盘质量 | **复用管线 `best_cache` 的 640×384 crop**（A3 方案一） | 零 ffmpeg 成本；200px 缩略图场景质量足够（`track_embeddings` 本就基于同分辨率 crop）；全分辨率备选否决 |
+| D2 | 缩略图来源 | **惰性落盘**：读盘优先 + miss→ffmpeg→写盘，**保持现 `/detection/thumbnail` 精确 bbox 裁剪逻辑** | 缩略图内容零变化（若管线期用 `_expand_crop` 1.3× 外扩写图，反而会改变现有精确 bbox 裁剪的内容，违反零回退原则）；虚拟滚动已把并发 ffmpeg 限制到 ~30-40；**不触碰 Pipeline** |
 | D3 | 检测栏虚拟滚动 | **手写固定行高虚拟列表，零新依赖**（C1 定稿） | 现 `dtc-item` 行高固定 ~60px、单列，是虚拟化最简单形态，40 行内可控；前端依赖极简（仅 react），不为此引入依赖；若日后行高动态化再评估 `@tanstack/react-virtual` |
+
+**v2.0 关键取舍**：不再做管线期预计算（best_crop_cache + merge_map 合并 + _persist 写 3 列）。理由见 A2 末尾"为什么不用管线期预计算"。
 
 ---
 
@@ -125,15 +131,17 @@ useDetectionData (hooks/useDetectionData.ts:33)
       "segments": [{ "start": 12.3, "end": 88.9 }],
       "best_thumb_ts": 45.6,
       "best_bbox": { "x1": 0.31, "y1": 0.42, "x2": 0.38, "y2": 0.68 },
-      "thumbnail_url": "/api/v1/videos/{id}/detection/thumbnail?timestamp=45.6&x1=0.31&y1=0.42&x2=0.38&y2=0.68"
+      "thumbnail_url": "/api/v1/videos/{id}/detection/thumbnail?track_id=17&timestamp=45.6&x1=0.31&y1=0.42&x2=0.38&y2=0.68"
     }
   ]
 }
 ```
 
+> **v2.0**：`thumbnail_url` 必须带 `track_id` —— A3 磁盘缓存文件名 `track_{track_id}.jpg` 依赖它。
+
 **新端点 B** `GET /api/v1/videos/{id}/detection/detections?start_sec=&end_sec=`
 
-返回**时间窗内**的逐帧框（默认窗宽 ±30s，最大 300s），Overlay 用。
+返回**时间窗内**的逐帧框（默认窗宽 ±30s，最大 300s），Overlay 用。命中现有 `ix_frame_detections_video_ts` 索引。
 
 ```json
 {
@@ -147,67 +155,74 @@ useDetectionData (hooks/useDetectionData.ts:33)
 }
 ```
 
-**兼容策略（v1.1 修正：直接替换，不保留 deprecated 双轨）**：cerno 是单体仓库（前后端同仓发布），无外部 API 消费者；`detection/data` 前端仅在 `services/api.ts` + `hooks/useDetectionData.ts` 两处调用、tests 无依赖。故**删除旧端点，前端同步改调新端点**，避免双轨维护与施工复杂度。Vite 代理无影响。
+**兼容策略（v1.1 定稿 + v2.0 统一：直接替换，删除旧端点）**：cerno 是单体仓库（前后端同仓发布），无外部 API 消费者；`detection/data` 前端仅在 `services/api.ts` + `hooks/useDetectionData.ts` 两处调用（已 grep 证实）、tests 无依赖。故**删除旧端点，前端同步改调新端点**。§5/§10 相应统一为此口径，不再保留 deprecated 双轨。
 
 改动点：
-- `detection_routes.py` — 新增两个端点，`get_detection_data` 改为内部复用；
+- `detection_routes.py` — 新增两个端点，`get_detection_data` 删除；
 - `frontend/src/services/api.ts` — `fetchDetectionTracks()`、`fetchDetectionRange(videoId, start, end)`。
 
-#### A2 track 摘要预计算 best_bbox / best_ts / thumbnail_url
+#### A2 track 摘要 best_bbox / best_ts / thumbnail_url — SQL 惰性计算 + 内存缓存
 
 **现状**：`getThumbBbox`（`DetectionPanel.tsx:29-42`）在前端对每个 track 遍历全部 detections，**1.08 亿次比较/次渲染**。
 
-**方案**：把"最佳框"计算下沉到**后端一次性算好**，前端不再扫描。
+**方案**：把"最佳框"计算下沉到**后端**，前端不再扫描。
 
-关键事实：`pipeline/runners/detection.py:296-304` 检测期间已维护 `best_cache`（每 track 最高置信度帧）：
+- **计算来源**：`frame_detections` 表——它已是**缝合后最终 track_id**（track_encode 在写回 `pctx.ctx.frame_detections` 时已用 `merge_map` 重映射，见 `track_encode.py:264-269`），天然一致，**不需要处理 merge_map 时序**。
+- **一条 SQL 按最大面积取每 track 最佳帧**（与现 `getThumbBbox` 准则完全一致 → 缩略图内容零变化）：
 
-```python
-if tid not in best_cache or conf > best_cache[tid]["conf"]:
-    best_cache[tid] = {
-        "frame": frames[i], "bbox": t["bbox"],
-        "timestamp": float(timestamp), "conf": conf,
-    }
+```sql
+SELECT DISTINCT ON (track_id) track_id, timestamp_sec, bbox
+FROM frame_detections
+WHERE video_id = :vid
+ORDER BY track_id,
+  ((bbox->>'x2')::float - (bbox->>'x1')::float)
+  * ((bbox->>'y2')::float - (bbox->>'y1')::float) DESC
 ```
 
-**落盘时机（v1.1 修正：必须在 track_stitch 缝合之后，不是 detection persist）**：
-`track_encode._stitch_tracks` 会用 `merge_map`（`track_encode.py:192-248`）把被合并 track 的 `track_id` 重映射到主 track，并把 segments/last_seen/frame_count 并入主 track——若在缝合前按旧 track_id 写入，缩略图/best 信息会变孤儿或错位。做法：
-1. 检测期间把每 track **最佳帧 crop 存入 `pctx`**（与 `track_crop_cache` 并列，如 `pctx.ctx.best_crop_cache[tid] = (ts, crop, conf)`）——这是把 best_cache 的帧带过缝合期的关键，保持"零 ffmpeg"；
-2. **track_encode 缝合完成后**：用 `merge_map` 对 `best_crop_cache` 合并（merge 组内取置信度最高帧），按**最终** track_id 写 `best_thumb_ts` / `best_bbox` 入库并落盘缩略图。
+- **缓存**：按 `video_id` 的内存缓存（简单 LRU，上限 ~64 视频）。`frame_detections` 在管道完成后不可变（track 不会在不建新记录的情况下重缝合），**无失效窗口**；删除视频后对应 key 不再被访问（tracks 端点先查 video 存在性，404 兜底）。
+- **索引**：给 `frame_detections` 加 `(video_id, track_id)` 复合索引（现仅 `ix_frame_detections_video_ts`），DISTINCT ON 按 track 分组受益。见 §6。
 
 改动点：
-- `pipeline/runners/detection.py` — 最佳帧 crop 存入 `pctx.ctx.best_crop_cache`；
-- `pipeline/runners/track_encode.py`（缝合完成后）— merge_map 合并 best_crop_cache → 写库 + 落盘缩略图；
-- `api/detection_routes.py` — `tracks` 端点回读两列并拼 `thumbnail_url`；**对 best_* 为 NULL 的旧视频 track，返回 `best_bbox=null, thumbnail_url=null`**（前端落色点分支，§C1）；
-- `frontend/src/components/DetectionPanel.tsx` — **删除 `getThumbBbox` 与 `:271` 调用**，改用 `track.thumbnail_url`；无 `thumbnail_url` 时显示现有 `dtc-dot` 色点。
+- `api/detection_routes.py` — 新增 DISTINCT ON 查询 + LRU 缓存；tracks 端点拼 `thumbnail_url`（含 `track_id`）；
+- `core/models.py` + `core/db.py` — frame_detections 加 `(video_id, track_id)` 索引；
+- `frontend/src/components/DetectionPanel.tsx` — **删除 `getThumbBbox` 与 `:271` 调用**，改用 `track.thumbnail_url`。后端恒返回真实 URL，**前端不需要任何 NULL 分支**。
 
-#### A3 缩略图管线落盘 + 接口磁盘缓存
+**为什么不用管线期预计算（v2.0 修正，替代原 best_crop_cache + _persist 写 3 列方案）**：
 
-**现状**：`detection_routes.py:127` 每次请求都 `extract_keyframe_to_memory`（ffmpeg seek）。3000 次 ffmpeg。
+管线期方案（检测期存 best crop → track_encode 缝合后用 merge_map 合并 → `_persist` 写 `best_thumb_ts/best_bbox/thumb_path` 三列 → 旧视频再走惰性兜底）会引入：
 
-**方案（D2 定稿 + v1.1 修正：管线落盘，复用 best crop，零 ffmpeg 成本，落盘时机对齐缝合）**：
+1. **两条并行代码路径**（新视频管线写 / 旧视频惰性算）维护同一份数据，未来每个改动都要同步两处；
+2. **触碰刚稳定（v0.20 缝合）的热路径**：`_stitch_tracks` 当前不返回 `merge_map`（需改签名），`detection.py` 要新增 best-crop 缓存——耦合面大、回归风险高；
+3. **`bulk_insert_tracks` 是 `ON CONFLICT DO NOTHING`**（`repository.py:354`）——重跑管线时 `best_*` 列不会更新，等于新视频也依赖惰性兜底；
+4. **缩略图内容会变**：管线期若用 `_expand_crop`（1.3× 外扩，`detection.py:37-51`）写图，而现端点按**精确 bbox** 裁剪（`detection_routes.py:133-139`）——内容不一致，违背"零回退"原则；
+5. **额外显存**：best_crop_cache 每 track 一帧 crop，长视频下 `track_crop_cache` 本身已很大，再叠加加重管线内存。
 
-1. **管线落盘**：检测期间把每 track 最佳帧 crop 存入 `pctx.ctx.best_crop_cache`（见 A2 步骤 1）；**track_encode 缝合完成后**用 `merge_map` 合并 → 按最终 track_id `resize(200)` → JPEG → 写 `data/track_thumbs/{video_id}/{track_id}.jpg`。
-   - 复用 `_expand_crop`（`detection.py:37`）的裁剪逻辑；
-   - 质量：200px 缩略图场景 640×384 crop 足够（`track_embeddings` 本就基于同分辨率 crop）。全分辨率备选已否决——长视频每 track 一次 ffmpeg 的额外成本不值；
-   - **缝合迁移**：被合并 track 的缩略图不单独写盘（merge_map 已把 best 归并到主 track），最终缩略图集合与 `tracks` 表一一对应；
-   - 目录 `data/track_thumbs/` 与视频存储同级，删除视频时级联清理（`api/video_routes.py` DELETE 分支）。
+惰性路径用现成的 `frame_detections` 表，**零 Pipeline 改动、零 DB 迁移（仅索引）、零 VideoContext 字段**，正确性由构造保证（post-stitch 一致）。唯一代价：每视频一次性 DISTINCT ON 查询（~100ms，缓存后消失）。
 
-2. **接口读盘优先**：`GET /detection/thumbnail` 命中 `thumb_path` 直接返回文件字节（带现有 `Cache-Control: max-age=86400`）；miss 才走现有 ffmpeg 逻辑，生成后写盘供下次。
+#### A3 缩略图读盘优先 + 惰性落盘
+
+**现状**：`detection_routes.py:130` 每次请求都 `extract_keyframe_to_memory`（ffmpeg seek）。3000 次 ffmpeg。
+
+**方案（D2 定稿：惰性落盘，无管线改动）**：
+
+1. **读盘优先**：URL 带 `track_id` → 磁盘路径 `{thumbnail_dir}/{track_id}.jpg`（`thumbnail_dir(video_id)` = `{artifact_dir}/thumbnails/{video_id}`，`storage_manager.py:74-75`）。命中 → 直接返回文件字节（带现有 `Cache-Control: public, max-age=86400`）。
+2. **miss → ffmpeg → 写盘**：走现有逻辑（ffmpeg seek + **精确 bbox 裁剪** + 200px LANCZOS，与现行为完全一致），生成后写入 `{thumbnail_dir}/track_{track_id}.jpg`，返回图像。写入 best-effort，失败仍返回（下次再补）。
+3. **并发雪崩已被 C1 虚拟滚动消除**：视口 ~30-40 行 → 首开最多 ~30-40 次 ffmpeg（一次性，之后全读盘），不再有 3000 并发。
+4. **存储卫生零新登记**：目录在 StorageManager 管控内——删除视频 `_safe_rmtree(thumbnail_dir)`（`storage_manager.py:142`）+ 孤儿清扫按 video_id 判定（`:210-227`），`track_*` 文件自动被覆盖。
 
 改动点：
-- `pipeline/runners/track_encode.py`（缝合完成后）— 缩略图落盘 + `thumb_path` 入库（与 A2 同一处，一次遍历完成）；
-- `api/detection_routes.py:106-150` — 读盘优先分支；
-- 存储根路径从 config `storage` 读取（不硬编码）。
+- `api/detection_routes.py:107-153` — 读盘优先分支 + miss 写盘；经 `request.app.state.storage_manager` 取目录；
+- **无 Pipeline 改动、无 StorageManager 改动**。
 
 #### A4 响应压缩
 
-**现状**：`main.py` 无任何压缩中间件，15MB JSON 原样传输。
+**现状**：`main.py` 无任何压缩中间件（已核实 `:110` 起 app、`:145` include_router，无 middleware），15MB JSON 原样传输。
 
 **方案（v1.1 修正：必须排除视频流与二进制）**：`main.py` 挂 `GZipMiddleware(minimum_size=1024)`（starlette 内置，零依赖），但**不能全局压**：
 - `/videos/{id}/stream` 返回 206/Range 视频流——全局压缩会压已压缩的 H.264（纯费 CPU）且破坏播放器 seek 语义；
 - `/detection/thumbnail`、`/face/thumbnail` 等 JPEG 已压缩，再压无收益。
 
-实现：自定义轻量中间件（继承 `GZipMiddleware` 或在其中加判定），**仅当响应 `media_type == "application/json"` 时压缩**。高熵 JSON 压缩比 >10×，一次性红利。main.py 目前无任何 middleware（`:110` 起 app，`:145` include_router），加在此处即可。
+实现：自定义轻量中间件（继承 `GZipMiddleware` 或在其中加判定），**仅当响应 `media_type == "application/json"` 时压缩**。高熵 JSON 压缩比 >10×，一次性红利。
 
 ### Phase B — 前端数据层
 
@@ -218,7 +233,7 @@ if tid not in best_cache or conf > best_cache[tid]["conf"]:
 **方案**：
 - `tracks`：一次 `fetchDetectionTracks()`（轻量，常驻 state）；
 - `detections`：不再预拉全量，由 Overlay 按区间请求（见 B2）；
-- **`face/data` 瘦身（v1.1 修正）**：`face_routes.py:71-80` 目前全量返回 per-frame `detections`，但前端**完全不用**（已 grep 证实：人脸 tab 只读 `identities`，Overlay 不渲染人脸框）。长视频 + 人脸开启时这是与 detection 同级的第二颗 15MB 炸弹。修正：face/data 接口**只返回 `identities`，删除 `detections` 字段**（前端 `FaceData` 类型同步删）；若未来要画人脸框，再按 A1 的区间模式补；
+- **`face/data` 瘦身（v1.1 修正）**：`face_routes.py:71-80` 目前全量返回 per-frame `detections`，但前端**完全不用**（v2.0 已 grep 复核：`faceData.detections` 零引用；人脸 tab 只读 `identities`，Overlay 不渲染人脸框）。长视频 + 人脸开启时这是与 detection 同级的第二颗 15MB 炸弹。修正：face/data 接口**只返回 `identities`，删除 `detections` 字段**（前端 `FaceData` 类型同步删）；若未来要画人脸框，再按 A1 的区间模式补；
 - `PlateData` 保持现状（per-track 聚合，量级 = 车辆 track 数，前端 `plateByTrack` 真实使用）。
 
 `DetectionData` 类型（`types/index.ts:259-263`）拆分：
@@ -282,7 +297,7 @@ export interface DetectionRange {
 
 **v1.1 补充细节**：
 - **listRef 被两个 tab 共用**（`DetectionPanel.tsx:59-63` objects、`:354` faces）——虚拟化与 `scrollToIndex` 只对 objects tab 生效；faces tab 行数 = identity 数（量小），保持普通渲染；
-- **缩略图 NULL 兜底**：`track.thumbnail_url == null`（旧视频无 best_*）时渲染现有 `dtc-dot` 色点分支（`:292-294`），不显示 `<img>`——删掉 `getThumbBbox` 后旧视频零功能回退。
+- **缩略图来源（v2.0）**：`track.thumbnail_url` 恒有值——惰性路径对**全部视频**（新旧统一）生效，前端删除 `getThumbBbox` 后直接用它即可，现有 `dtc-dot` 色点分支仅作极端 fallback 保留，不承担功能。
 
 > 不引库的理由：单列固定行高场景手写 40 行内可控且稳定；项目前端依赖极简（仅 react），避免新增依赖与网络安装成本。若日后行高动态化（如可变高度缩略图），再评估 `@tanstack/react-virtual`（此时其 `measureElement` 动态测量价值才显现）。
 
@@ -324,13 +339,13 @@ function packLanes(tracks: Track[]): Layout {
   }
   return { rects, laneCount: laneEnd.length };
 }
-// 拥挤人群场景 laneCount 会接近 track 数 → 高度 = laneCount × LANE_H，
-// 但配合 ③ 时间视口，画布尺寸恒定，不再有 42000px 容器。
 ```
+
+> **v2.0 修正**：时间缩放只降低**水平**密度，不降低 lane 数——拥挤人群场景 `laneCount` 仍可能接近 track 数，画布**高度** = `laneCount × LANE_H` 仍会增长。处理：Canvas 高度设上限（如 480px）+ **垂直滚动**，或直接接受高画布（Canvas 本身扛得住，无 DOM 节点）。不再声称"画布尺寸恒定"；"恒定"仅对宽度/时间视口成立。
 
 **③ 时间视口（核心，zoom/pan 的引擎）**
 
-- canvas 尺寸 = 容器尺寸（固定，非 42000px）；维护 `[viewStart, viewEnd]`；
+- canvas 宽度 = 容器宽度（固定，非 42000px）；维护 `[viewStart, viewEnd]`；
 - 时间↔像素映射（两条纯函数，一切绘制/命中都走它）：
   ```ts
   timeToX = t => (t - viewStart) / (viewEnd - viewStart) * canvasW;
@@ -380,25 +395,26 @@ function render() {
 
 | 接口 | 变更 | 说明 |
 |---|---|---|
-| `GET /detection/tracks` | **新增** | track 摘要 + 预计算缩略图信息，几十 KB |
+| `GET /detection/tracks` | **新增** | track 摘要 + 惰性计算 best_bbox/best_ts/thumbnail_url，几十 KB |
 | `GET /detection/detections?start_sec&end_sec` | **新增** | 时间窗逐帧框，Overlay 用 |
-| `GET /detection/thumbnail` | **改** | 读盘优先，miss 才 ffmpeg + 落盘 |
-| `GET /detection/data` | **保留 deprecated** | 内部复用新查询，旧前端兼容 |
+| `GET /detection/thumbnail` | **改** | 读盘优先 + miss→ffmpeg→写盘；URL 带 track_id |
+| `GET /detection/data` | **删除** | 唯一消费者（api.ts + useDetectionData.ts）同仓同步迁移，无外部消费者（v2.0 统一口径，不保留 deprecated） |
 | `GET /videos/` 列表、`GET /videos/{id}` | 不变 | — |
 
 ---
 
 ## 6. DB 迁移
 
-按 `core/db.py` 增量迁移模式（`ALTER TABLE ADD COLUMN IF NOT EXISTS`），Track 表加 3 列：
+**v2.0：无新列、无新表。** 唯一变更是给 `frame_detections` 加一个复合索引（`core/db.py` 增量迁移模式 `CREATE INDEX IF NOT EXISTS`）：
 
 ```sql
-ALTER TABLE tracks ADD COLUMN IF NOT EXISTS best_thumb_ts DOUBLE PRECISION;   -- 最佳帧时间戳
-ALTER TABLE tracks ADD COLUMN IF NOT EXISTS best_bbox JSONB;                  -- 最佳框(归一化 0-1)
-ALTER TABLE tracks ADD COLUMN IF NOT EXISTS thumb_path TEXT;                  -- 落盘缩略图路径(可空)
+CREATE INDEX IF NOT EXISTS ix_frame_detections_video_track
+  ON frame_detections (video_id, track_id);
 ```
 
-无新表。旧数据（已完成视频）缩略图走接口 miss → ffmpeg → 落盘的惰性路径自动补齐，无需重跑管线；`best_thumb_ts/best_bbox` 为 NULL 时前端用 `first_seen` 兜底。
+- 服务 A2 的 DISTINCT ON 分组查询；
+- 服务 A1 的区间查询已有 `ix_frame_detections_video_ts`，无需新增。
+- 旧数据（已完成视频）与新增量**统一走惰性路径**，无任何 NULL 分支、无需重跑管线。
 
 ---
 
@@ -407,7 +423,7 @@ ALTER TABLE tracks ADD COLUMN IF NOT EXISTS thumb_path TEXT;                  --
 | 层 | 依赖 | 说明 |
 |---|---|---|
 | 前端 | **无新增** | 虚拟滚动手写（固定行高，零依赖）；Canvas 为浏览器原生 API |
-| 后端 | 无新增 | gzip 为 starlette 内置；缩略图落盘复用 PIL |
+| 后端 | 无新增 | gzip 为 starlette 内置；缩略图复用现有 ffmpeg + PIL 逻辑 |
 
 ---
 
@@ -416,26 +432,31 @@ ALTER TABLE tracks ADD COLUMN IF NOT EXISTS thumb_path TEXT;                  --
 ```
 S0 快速红利（无依赖，先上）
   ├─ A4 gzip（main.py，JSON-only 中间件）
-  ├─ C3 rAF 暂停 + useTransition
-  └─ A2 + C1 前置：后端 tracks 带 best_bbox/best_ts → 前端删 getThumbBbox
-         └─ 依赖：§6 DB 迁移 + track_encode 缝合后写入（v1.1 对齐）
-         └─ 旧视频 best_* = NULL → 前端落色点分支，零回退
+  ├─ C3 rAF 暂停（useTransition 已从 S0 移除，v1.2——收益小且有边界风险，留到 S3 虚拟滚动后数据量大时才有真实收益）
+  └─ A2 后端 tracks 带 best_bbox/best_ts（SQL 惰性 + LRU 缓存）→ 前端删 getThumbBbox
+         └─ 依赖：§6 frame_detections 索引（无它也能跑，首次全扫 ~100ms 后进缓存）
 
-S1 数据层（依赖 S0）
+S1 数据层（依赖 S0）✅ 已实施
   ├─ A1 接口拆分（tracks / detections 时间窗）
-  ├─ A3 缩略图落盘 + 读盘优先
-  └─ 旧 /detection/data 改为复用
+  ├─ A3 缩略图读盘优先 + 惰性落盘
+  └─ ⚠️ 实施修正：旧 /detection/data **暂留**（Overlay 唯一数据源，删它需等 S2 前端迁移后零消费者再删）
 
-S2 前端数据层（依赖 S1）
-  ├─ B1 useDetectionData 拆分
-  └─ B2 useDetectionRanges 滑动窗口 + Overlay 改造
+S2 前端数据层（依赖 S1）✅ 已实施
+  ├─ B1 useDetectionData 拆分（tracks 走 /detection/tracks，DetectionData 删 detections）
+  ├─ B2 useDetectionRanges 滑动窗口 + Overlay 改造（±30s + 预取 + LRU，seeked 立即重绘）
+  └─ 删除旧 /detection/data（同仓硬切，已 grep 零残留；CLAUDE.md 文件地图同步更新）
 
-S3 渲染层（依赖 S2）
-  ├─ C1 DetectionPanel 虚拟滚动 + TrackRow memo
-  └─ C2 DetectionTimeline Canvas 化（lane packing + 时间视口 + zoom/pan）
+S3 渲染层（依赖 S2）✅ 已实施
+  ├─ C1 DetectionPanel 虚拟滚动 + TrackRow memo（手写固定行高 68px，滚动窗口 + overscan，选中居中/filter 回顶）
+  └─ C2 DetectionTimeline Canvas 化（buildRects lane packing + 时间视口 + 垂直 lane 虚拟化 + 命中检测）
+      └─ ⚠️ 实施偏差：zoom 改为 **Ctrl/Cmd+滚轮**（普通滚轮保留垂直滚动——否则 3000 lane 无法滚轮上下滚；原生非被动 wheel 监听 preventDefault）
 
-S4 打磨
-  └─ 性能指标回归、长视频实测、hover/选中/导出回归
+S4 打磨 ✅ 已实施
+  ├─ 元素生命周期修复：时间轴空白 / 检测栏 5 条（effect 依赖 = hasTracks/listVisible 门禁，与 JSX 共用变量防漂移；每轮新建 ResizeObserver 消灭陈旧闭包；playhead 依赖 streamReady/videoId）
+  ├─ useDetectionRanges：LRU 淘汰同步清除 loadedKeys（revisit 重新拉取）+ 30s 网格窗口（播放中 ~30s 一次请求，替代 ~1s 一次）
+  ├─ DetectionTimeline memo（props 全稳定，跳过 4s 轮询无关重渲染）
+  └─ Panel 空筛选提示（切视频后陈旧 filter 命中空类）
+  └─ 待做：§9 性能指标回归、长视频实测、hover/选中/导出回归（浏览器侧）
 ```
 
 每阶段可独立上线且不回退体验：S0 已解决"点开检测栏卡死"的 80%（getThumbBbox 删除 + gzip）；S1/S2 解决"长视频整体流畅"；S3 是时间轴终局形态。
@@ -450,17 +471,64 @@ S4 打磨
 | 检测栏滚动 | 60fps，缩略图不雪崩 | 滚动期间无长任务；Network 无 >50 并发缩略图 |
 | Overlay 内存/传输 | detections 峰值 < 2MB（按需区间） | Network + Memory 面板 |
 | 缩略图后端成本 | ffmpeg 调用趋近 0（读盘） | 后端日志 / CPU |
-| 时间轴交互 | 缩放/平移/hover 流畅，画布恒定尺寸 | 实测 |
+| 时间轴交互 | 缩放/平移/hover 流畅，画布宽度恒定 | 实测 |
+
+## 9.1 每阶段独立校验（v1.2 + v2.0）
+
+> 现状：项目**无 tests 目录**（CLAUDE.md 所述 30+ 测试文件实际不存在，已复核）、前端无 test script，只有 `tsc -b` + `vite build`。故每阶段校验 = 前端类型/构建闸门 + 后端 curl 冒烟 + 手动回归。是否新建 pytest 基建为独立决策，不混入本方案。
+
+| 阶段 | 校验操作 | 通过标准 |
+|---|---|---|
+| **S0** | `curl -H "Accept-Encoding: gzip" -I <JSON接口>` | `Content-Encoding: gzip`；同法打 `/stream`、`/thumbnail` → **无** gzip |
+| | 浏览器暂停视频 | playhead 位置正确且不再持续重绘（无 rAF 活动） |
+| | `init_db()` 跑两次 | 幂等无错（`CREATE INDEX IF NOT EXISTS`） |
+| | `curl /detection/tracks` | 新视频与**旧视频**（此前已处理）都返回 best_thumb_ts/best_bbox/thumbnail_url；二次请求走缓存 |
+| | `npx tsc -b` + 手动 | 检测栏缩略图正常；删除 getThumbBbox 后无类型错误 |
+| **S1** | 全仓 `grep /detection/data` | 零残留（后端删端点 + 前端同步改） |
+| | `npx tsc -b` | 通过（接口类型变更，漏改必编译错） |
+| | curl 两个新端点 | `/detection/tracks` 量小；`/detection/detections?start_sec&end_sec` 区间正确 |
+| | curl `/face/data` | 无 detections 字段；前端人脸 tab 正常 |
+| | `/detection/thumbnail?track_id=..` 两次请求 | `thumbnails/{video_id}/track_{track_id}.jpg` 存在；第二次不触发 ffmpeg（读盘） |
+| | **删除一个视频** | 缩略图目录被 StorageManager 清空（验证存储卫生集成） |
+| **S2** | 播放 / seek / 来回 seek | 区间按需加载、LRU 命中（Network 无重复/无全量大 JSON） |
+| | 组切换 `detectionVideoId` | 缓存清空并重新加载 |
+| | Overlay | 播放/暂停/seek bbox 正常；插值/trail 连续（buffer 生效）；点击命中/悬停正常 |
+| **S3** | 虚拟滚动 | 滚动流畅（无长任务）；滚动到底/顶；filter 后从顶开始；选中居中；faces tab 不回归 |
+| | Canvas 时间轴**功能对照清单**（每项与现 DOM 版对比） | ① ruler 刻度自适应 ② 条颜色/选中金色高亮 ③ hover tooltip（类名+frame_count+时间段）一致 ④ 点击 seek（条内比例 `start + ratio×(end-start)`，复刻 `DetectionTimeline.tsx:120-127`）⑤ face markers 位置 ⑥ playhead 播放移/暂停停 ⑦ 选中 pan 到 first_seen 居中 ⑧ zoom/pan 不破坏默认全片视图 ⑨ `wPct > 3` 才显示标签 |
+| **S4** | §9 性能指标 + 非长视频（几百 track）全量回归 | 达标 |
+
+## 9.2 对原有功能影响分析（v1.2 + v2.0）
+
+> 原则：任何改动不允许回退原有功能；影响只允许为零或正面。⚠️ 项已在方案中缓解。
+
+| 改动点 | 影响判定 | 说明 |
+|---|---|---|
+| gzip（JSON-only） | ✅ 零 | 浏览器透明解压；已排除 stream/JPEG |
+| playhead rAF 暂停 | ✅ 正面 | 暂停时值不变，不再白耗 rAF |
+| frame_detections 加索引 | ✅ 零 | `CREATE INDEX IF NOT EXISTS`，纯增量 |
+| 惰性 best 计算 | ✅ 零 | SQL 最大面积准则与现 `getThumbBbox` 完全一致（缩略图内容不变）；对全部视频统一生效，无新旧分支 |
+| 删 getThumbBbox | ✅ 零 | 后端恒返回 thumbnail_url，前端无 NULL 分支 |
+| 删旧 `/detection/data` | ✅ 零 | 唯一消费者已确认（api.ts + useDetectionData.ts），同仓同步迁移 |
+| face 删 detections | ✅ 零 + 正面 | 前端全目录 grep 证实不用；tsc 闸门兜底 |
+| 缩略图读盘优先/惰性落盘 | ✅ 零 + 正面 | 保持现 ffmpeg + 精确 bbox 裁剪行为（内容不变）；目录在 StorageManager 管控内，删除/清扫自动；miss→写盘等价于现行为 |
+| Overlay 区间加载 | ⚠️ **唯一 UX 小回退（已缓解）** | seek 到未加载区间短暂空绘（几百 ms）——"15MB 首开卡 3s → 秒级可用"的权衡；预取 buffer 缓解，文档明示 |
+| 虚拟滚动 | ✅ 等价 + 正面 | filter 重置 / 选中居中 / faces tab 已覆盖 |
+| Canvas 时间轴 | ✅ 等价 + 正面 | 交互逐项对照复刻（§9.1 S3 清单）；zoom/pan 为新增能力 |
+
+---
 
 ## 10. 风险与回滚
 
 | 风险 | 缓解 |
 |---|---|
+| 惰性 best 计算首次查询成本 | 按 video_id LRU 缓存（一次视频一次，~100ms）；`(video_id, track_id)` 索引兜底 |
+| 惰性缩略图首开 ffmpeg 突发 | C1 虚拟滚动兜住（视口 ~30-40 行）；miss 一次落盘后全读盘；Cache-Control 已设 |
 | 虚拟滚动滚动条/高度测量 bug | 固定行高 + `measureElement` 兜底；保留非虚拟 fallback flag |
 | Canvas 命中检测误触 | 命中检测与绘制共用同一 `buildRects()`，单一事实源；hover 高亮 + click 分离 |
-| 接口拆分破坏旧前端 | 旧 `/detection/data` 保留 deprecated，前端两步走（先加新端点，后删旧调用） |
+| Canvas 高度随 laneCount 增长 | 高度上限 + 垂直滚动；时间缩放不降 lane 数（v2.0 已修正表述） |
 | 缩略图落盘质量低于全分辨率 | 200px 缩略图场景 640×384 crop 足够；不满意再升级为管线内单次 ffmpeg |
-| 已完成视频缺 best_* 字段 | NULL 兜底 `first_seen` + 惰性补写 |
+| 接口拆分破坏旧前端 | 同仓硬切：S0 先加新端点，S1 删旧调用；tsc 闸门兜漏改 |
+| `frame_detections` 表极大（10 万+）时 DISTINCT ON | 有索引 + LRU 缓存；超出再评估物化/分页 |
 
 ---
 
@@ -473,9 +541,11 @@ S4 打磨
 | 时间轴一 track 一行 | `frontend/src/components/DetectionTimeline.tsx:29-34` |
 | 时间轴全量 DOM | `frontend/src/components/DetectionTimeline.tsx:100-142` |
 | playhead rAF 无暂停 | `frontend/src/components/DetectionTimeline.tsx:62-71` |
-| 后端全量返回 | `api/detection_routes.py:56-103` |
-| 缩略图实时 ffmpeg | `api/detection_routes.py:106-150` |
-| best_cache（可复用） | `pipeline/runners/detection.py:296-304` |
-| crop 缓存（可复用） | `pipeline/runners/detection.py:306-315` |
+| 后端全量返回 | `api/detection_routes.py:49-103` |
+| 缩略图实时 ffmpeg + 精确 bbox 裁剪 | `api/detection_routes.py:107-153`（裁剪 `:133-139`） |
+| frame_detections 现有索引 | `core/models.py:606-609`（仅 `ix_frame_detections_video_ts`） |
+| bulk_insert_tracks ON CONFLICT | `core/repository.py:342-363` |
+| thumbnail_dir（落盘目录） | `core/storage_manager.py:74-75`、删除清盘 `:142`、清扫 `:210-227` |
 | 全量数据加载 | `frontend/src/hooks/useDetectionData.ts:33` |
 | 选中全量重渲 | `frontend/src/Dashboard.tsx:136-145` |
+| _expand_crop（1.3× 外扩，仅用于 crop 缓存） | `pipeline/runners/detection.py:37-51`、`:313` |

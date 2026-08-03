@@ -226,6 +226,13 @@ async def init_db():
             ON plate_detections (video_id, track_id)
         """))
 
+        # ── 增量迁移 v0.22: frame_detections (video_id, track_id) 复合索引 ──
+        # 服务 /detection/tracks 的 DISTINCT ON 每 track 最大面积 bbox 惰性计算
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_frame_detections_video_track
+            ON frame_detections (video_id, track_id)
+        """))
+
         # ── 增量迁移 v0.13: 视频格式兼容字段 ──
         await conn.execute(text("""
             ALTER TABLE videos

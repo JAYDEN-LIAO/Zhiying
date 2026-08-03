@@ -24,7 +24,7 @@ export function useDetectionRanges(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   enabled: boolean,
   hasDetection: boolean,
-): { get: (ts: number) => Detection[]; version: number } {
+): { get: (ts: number) => Detection[]; version: number; ensure: (ts: number) => void; hasLoadedRange: (ts: number) => boolean } {
   const rangesRef = useRef<DetectionRange[]>([]);
   const loadedKeys = useRef<Set<string>>(new Set());
   const inflight = useRef<Set<string>>(new Set());
@@ -115,5 +115,14 @@ export function useDetectionRanges(
     return [];
   }, []);
 
-  return { get, version };
+  // 查询某个时间戳对应的 30s 窗口是否已加载（点击命中判定用：数据已就绪却未命中 → 立即反选；
+  // 未就绪 → 挂 pending 等 version 到达后重试）
+  const hasLoadedRange = useCallback((ts: number): boolean => {
+    const grid = Math.floor(ts / GRID_SEC) * GRID_SEC;
+    const start = Math.max(0, grid - 31);
+    const end = grid + 31 + 30;
+    return loadedKeys.current.has(rangeKey(start, end));
+  }, [rangeKey]);
+
+  return { get, version, ensure: ensureWindow, hasLoadedRange };
 }

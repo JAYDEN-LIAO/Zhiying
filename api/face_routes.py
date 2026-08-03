@@ -17,7 +17,7 @@ from PIL import Image
 
 from api.deps import get_db
 from api.schemas import APIResponse
-from core.models import FaceIdentity, FaceDetection, Video
+from core.models import FaceIdentity, Video
 from utils.video_util import extract_keyframe_to_memory
 
 logger = logging.getLogger(__name__)
@@ -30,20 +30,20 @@ async def get_face_data(
     video_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """获取视频的人脸身份列表和逐帧检测数据。
+    """获取视频的人脸身份列表。
+
+    v0.22 (S1): 删除 per-frame detections 字段——前端零消费（已 grep 证实），
+    长视频 + 人脸开启时是与 detection 同级的大 JSON 炸弹。若未来要画人脸框，
+    按 /detection/detections 的区间模式补。
 
     返回格式：
     {
       "has_face": bool,
       "identities": [{id, label, face_count, first_seen, last_seen,
                        avg_quality, best_thumbnail_url}, ...],
-      "detections": {
-        "12.3": [{identity_id, track_id, bbox, quality}, ...],
-        ...
-      }
     }
     """
-    # 1. 查询身份
+    # 查询身份（唯一数据源，per-identity 聚合，量级远小于 per-frame）
     stmt_ids = (
         select(FaceIdentity)
         .where(FaceIdentity.video_id == video_id)
@@ -52,20 +52,10 @@ async def get_face_data(
     result = await db.execute(stmt_ids)
     db_identities = list(result.scalars().all())
 
-    # 2. 查询逐帧检测
-    stmt_dets = (
-        select(FaceDetection)
-        .where(FaceDetection.video_id == video_id)
-        .order_by(FaceDetection.timestamp_sec)
-    )
-    det_result = await db.execute(stmt_dets)
-    db_dets = list(det_result.scalars().all())
-
-    if not db_identities and not db_dets:
+    if not db_identities:
         return APIResponse(data={
             "has_face": False,
             "identities": [],
-            "detections": {},
         })
 
     # 3. 构建身份摘要
@@ -87,27 +77,9 @@ async def get_face_data(
         for fi in db_identities
     ]
 
-    # 4. 构建按时间戳分组的 detections dict（0.1s 精度）
-    detections_by_ts: dict[str, list[dict]] = {}
-    for d in db_dets:
-        ts_key = f"{d.timestamp_sec:.1f}"
-        detections_by_ts.setdefault(ts_key, []).append({
-            "identity_id": d.identity_id,
-            "track_id": d.track_id,
-            "bbox": d.bbox,
-            "quality": d.quality_score,
-            "thumbnail_url": (
-                f"/api/v1/videos/{video_id}/face/thumbnail"
-                f"?timestamp={d.timestamp_sec}"
-                f"&x1={d.bbox['x1']}&y1={d.bbox['y1']}"
-                f"&x2={d.bbox['x2']}&y2={d.bbox['y2']}"
-            ) if d.bbox else None,
-        })
-
     return APIResponse(data={
         "has_face": True,
         "identities": identities_data,
-        "detections": detections_by_ts,
     })
 
 

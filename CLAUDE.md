@@ -15,7 +15,7 @@ api/settings_routes.py     — System settings (API keys) endpoints
 api/router.py              — Assembles sub-routers under /api/v1 prefix
 api/deps.py                — FastAPI dependency injection (get_db)
 api/schemas.py             — Shared API DTOs (APIResponse, search/status models, ProxyStatusResponse)
-api/detection_routes.py    — Detection data API endpoint (GET /videos/{id}/detection/data)
+api/detection_routes.py    — Detection data API (GET tracks 摘要 + detections 时间窗 + thumbnail, v0.22)
 api/export_routes.py       — Export endpoints: clip/frames/track/thumbnails (7 endpoints, GET+POST)
 api/face_routes.py          — Face data API (GET face/data + face/thumbnail)
 api/plate_routes.py         — Plate data API (GET plate/data + plate/thumbnail)

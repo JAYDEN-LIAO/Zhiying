@@ -222,7 +222,12 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     const idx = filteredRef.current.findIndex((t) => t.track_id === selectedTrackId);
     if (idx < 0) return;
     const el = listRef.current;
-    el.scrollTop = Math.max(0, idx * ROW_STEP - (el.clientHeight - ROW_H) / 2);
+    const target = Math.max(0, idx * ROW_STEP - (el.clientHeight - ROW_H) / 2);
+    // 同步 DOM + state：仅设 el.scrollTop 时滚动事件会被 handleListScroll 的 rAF 节流丢弃
+    // （pending 中该事件直接 return）→ scrollTop state 不更新 → 虚拟窗口不含选中行 → 面板「跳不到位」。
+    if (scrollRaf.current) { cancelAnimationFrame(scrollRaf.current); scrollRaf.current = 0; }
+    el.scrollTop = target;
+    setScrollTop(target);
   }, [selectedTrackId, showFaces]);
 
   /* ── 筛选/切 tab/切视频 → 回顶（同时复位 state 与 DOM，消除陈旧滚动位置）── */
@@ -423,7 +428,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
             style={{ position: "relative", overflowY: "auto", flex: 1, minHeight: 0 }}
             onScroll={handleListScroll}
           >
-            <div style={{ height: filtered.length * ROW_STEP, position: "relative" }}>
+            <div style={{ height: filtered.length * ROW_STEP, position: "relative", flexShrink: 0 }}>
               {filtered.slice(startIdx, endIdx).map((t, i) => {
                 const idx = startIdx + i;
                 const color = colorOf(t.class_name);

@@ -605,6 +605,8 @@ class FrameDetection(Base):
 
     __table_args__ = (
         Index("ix_frame_detections_video_ts", "video_id", "timestamp_sec"),
+        # v0.22: 每 track 最大面积 bbox 查询（/detection/tracks 惰性 best）
+        Index("ix_frame_detections_video_track", "video_id", "track_id"),
         {"comment": "逐帧检测结果表 — 1fps 采样，前端逐帧查询 bbox"},
     )
 
