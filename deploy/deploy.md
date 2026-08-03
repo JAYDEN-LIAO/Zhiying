@@ -18,7 +18,7 @@
 
 生成物：
 - `config/config.windows.yaml` — 部署专用配置（绝对路径 + API 摘要模式 + 面板置灰功能关闭）
-- `.venv/` — Python 3.12 虚拟环境
+- `.venv/` — Python 3.12/3.13 虚拟环境（自动探测，`-PythonVersion` 可覆盖）
 - `models/` — yolo + embedding
 - `data/settings.json` — API key（前端设置页同源写入）
 - `data/backend.log` — 后端日志
@@ -30,14 +30,14 @@
 | 依赖 | 校验方式 | 缺失后果 |
 |---|---|---|
 | **NVIDIA GPU + 驱动** | `nvidia-smi` 可执行，且列得出 GPU | 无法做 embedding/检测/人脸/车牌推理 |
-| **驱动 ≥ 550 / CUDA 12.x** | `nvidia-smi` 的 "CUDA Version" | torch cu124 wheel 无法用 GPU |
+| **驱动 ≥ 550 / CUDA 12.x** | `nvidia-smi` 的 "CUDA Version" | torch 按驱动自动选源，过旧无法用 GPU |
 | **FFmpeg（CUDA 版）** | `ffmpeg -encoders` 含 `h264_nvenc`；`-decoders` 含 `h264_cuvid` | NVDEC 硬解/NVENC 转码**静默回退 CPU**（性能骤降） |
-| **Python 3.12** | `py -3.12 --version`（Launcher） | — |
+| **Python 3.12 / 3.13** | `py -0p` 可探测（setup 自动选用，`-PythonVersion` 可覆盖） | — |
 | **Docker Desktop** | `docker info`（守护进程在运行） | 无法起数据库 |
 
 安装命令（PowerShell）：
 ```powershell
-winget install Python.Python.3.12
+winget install Python.Python.3.13   # 或 3.12（勾选 py launcher）
 winget install Docker.DockerDesktop        # 记得启动并等待引擎就绪
 winget install Gyan.FFmpeg                 # 完整版（含 CUDA/NVENC/NVDEC）
 # NVIDIA 驱动：GeForce Experience 或 winget install Nvidia.GeForceExperience
@@ -70,9 +70,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 ## 4. 安装流程（setup_windows.ps1 内部步骤）
 
 1. **前置检查**：GPU(nvidia-smi) / ffmpeg CUDA / Docker / Python / 驱动版本 —— 缺一即中断。
-2. **venv**：`py -3.12 -m venv .venv`（已存在则跳过）。
+2. **venv**：自动探测 Python（3.13→3.12→3.11），`py -<ver> -m venv .venv`（已存在则跳过）。
 3. **依赖（关键顺序）**：
-   - `pip install torch --index-url https://download.pytorch.org/whl/cu124` ← **必须用官方 CUDA 源**，pip 默认给 Windows 装的是 CPU 版 torch；
+   - 安装 CUDA 版 PyTorch：**按驱动 CUDA 版本自动选源**（≥12.6→cu126 / ≥12.4→cu124 / ≥12.1→cu121），必须用 PyTorch 官方源（pip 默认给 Windows 装 CPU 版）；**torch 已可用则跳过**；
    - `pip install -r requirements.txt`；
    - `pip uninstall -y onnxruntime && pip install onnxruntime-gpu` ← **否则人脸/车牌静默跑 CPU**；
    - 实测 `torch.cuda.is_available() == True`，否则中断。
@@ -129,7 +129,7 @@ storage→storage 路径）；`PUT /settings` 保存后**同步 env + 清 config
 
 | # | 风险 | 现状 | 处置 |
 |---|---|---|---|
-| 1 | **pip 默认装 CPU 版 torch** | Windows `pip install torch` 给 CPU 版 | ✅ setup 用 cu124 官方源 + 实测 `torch.cuda.is_available()` |
+| 1 | **pip 默认装 CPU 版 torch** | Windows `pip install torch` 给 CPU 版 | ✅ setup 按驱动 CUDA 自动选源 + 实测 `torch.cuda.is_available()`，已可用则跳过 |
 | 2 | **onnxruntime 默认 CPU 版** → insightface/hyperlpr3 静默跑 CPU | requirements 里 `onnxruntime`（CPU） | ✅ setup 卸载后装 `onnxruntime-gpu` |
 | 3 | **hyperlpr3 硬编码 CPU provider** | `MultiTaskDetectorORT` 写死 `['CPUExecutionProvider']`，光装 gpu 版也没用 | ✅ `plugins/plate/hyperlpr_plate.py` 打 CUDA 升级补丁（CUDA 不可用时安全 no-op，幂等） |
 | 4 | **ffmpeg 缺 CUDA → NVDEC 静默回退 cv2 解码 / NVENC 静默回退 libx264 编码** | `video_util`/`format_service` 都有软回退 | ✅ setup 硬校验 `h264_nvenc` + `h264_cuvid`，缺失即中断 |
@@ -152,7 +152,7 @@ storage→storage 路径）；`PUT /settings` 保存后**同步 env + 清 config
 
 | 维度 | Linux 开发机 | Windows 部署机 | 影响 / 现状 |
 |---|---|---|---|
-| **torch 安装** | `pip install torch` = CUDA 版 | `pip install torch` = **CPU 版** | 必须用 cu124 官方源（setup 已处理） |
+| **torch 安装** | `pip install torch` = CUDA 版 | `pip install torch` = **CPU 版** | 按驱动 CUDA 自动选源（setup 已处理） |
 | **onnxruntime** | 默认 CPU 版 | 默认 CPU 版 | 需 `onnxruntime-gpu`（setup 已处理） |
 | **Docker** | Linux 原生 | Docker Desktop（Linux 虚拟机跑容器） | 仅用 `db` 服务 + named volume，行为一致；`app` 服务不用 |
 | **路径分隔符** | `/` | `\`（Python 双兼容） | 代码用 `pathlib`/`os.path`；配置统一 forward-slash，Windows 兼容 |
@@ -192,7 +192,7 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 
 | 症状 | 原因 / 处理 |
 |---|---|
-| `torch.cuda.is_available()` False | 驱动过旧 / 装了 CPU 版 torch。`pip uninstall torch` 后重跑 setup 或手动 `pip install torch --index-url .../cu124` |
+| `torch.cuda.is_available()` False | 驱动过旧 / 装了 CPU 版 torch。升级驱动，或 `pip uninstall torch` 后重跑 setup（自动按驱动选源） |
 | `/health` 返回 503 `database:unreachable` | db 容器未就绪。`docker logs cerno_postgres` |
 | 人脸/车牌速度极慢 | onnxruntime 还是 CPU 版。确认 `.venv` 里是 `onnxruntime-gpu`；hyperlpr 补丁日志应有 "ONNX CUDA patch applied" |
 | 抽帧/转码 CPU 占用高 | ffmpeg 无 CUDA。`ffmpeg -encoders \| findstr nvenc`，重装 Gyan.FFmpeg |

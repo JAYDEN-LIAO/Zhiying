@@ -15,6 +15,8 @@ Cerno Windows 部署向导
 特点：
   - 交互式（可跳过/重试/断点续传，失败可重跑继续）
   - 幂等：已完成的步骤自动跳过
+  - 智能探测：Python 版本自动选用 3.13→3.12→3.11；torch 按驱动 CUDA 版本选源；
+    已可用的 torch / onnxruntime-gpu 直接复用（不重复下载）
   - 绝不覆盖 .env；API key 只写 data/settings.json（或之后在设置页填）
   - 模型完整性校验，缺什么补什么
 
@@ -23,7 +25,7 @@ Cerno Windows 部署向导
   .\deploy\setup_windows.ps1
   .\deploy\setup_windows.ps1 -Mode full -NonInteractive
   .\deploy\setup_windows.ps1 -Mode searchless -SkipModels
-  .\deploy\setup_windows.ps1 -DownloadRetries 5
+  .\deploy\setup_windows.ps1 -PythonVersion 3.13        # 手动指定（默认自动探测）
 #>
 
 param(
@@ -34,7 +36,7 @@ param(
     [switch]$NoDb,
     [switch]$SkipConfig,
     [int]$DownloadRetries = 3,
-    [string]$PythonVersion = "3.12",
+    [string]$PythonVersion = "",   # 空 = 自动探测（3.13→3.12→3.11）
     [switch]$StartAfter
 )
 
@@ -93,6 +95,39 @@ function Require-Command([string]$Name, [string]$Hint) {
 function Invoke-Checked([string]$FilePath, [string[]]$ArgumentList, [string]$FailureMessage) {
     & $FilePath @ArgumentList
     if ($LASTEXITCODE -ne 0) { throw $FailureMessage }
+}
+
+function Get-BestPythonVersion {
+    <# 探测可用 Python：优先 3.13（与开发机一致），其次 3.12/3.11。 #>
+    if ($PythonVersion -ne "") {
+        & py "-$PythonVersion" --version 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "指定的 Python $PythonVersion 不可用（py -$PythonVersion --version 失败）。" }
+        return $PythonVersion
+    }
+    $installed = @()
+    (& py -0p 2>$null) | ForEach-Object {
+        if ($_ -match '-V:([0-9]+\.[0-9]+)') { $installed += $Matches[1] }
+    }
+    foreach ($pref in "3.13", "3.12", "3.11") {
+        if ($installed -contains $pref) { return $pref }
+    }
+    if ($installed.Count -gt 0) {
+        $best = ($installed | Sort-Object { [version]$_ } -Descending)[0]
+        Write-Warn "未找到 3.13/3.12，自动使用 Python $best"
+        return $best
+    }
+    throw "未检测到 Python 3.11/3.12/3.13。请从 python.org 安装 3.12 或 3.13（勾选 py launcher）。"
+}
+
+function Get-TorchIndex([string]$DriverCuda) {
+    <# 按驱动支持的最大 CUDA 版本，选兼容的 PyTorch CUDA 源。
+       最终是否可用仍由 torch.cuda.is_available() 实测兜底。 #>
+    if (-not $DriverCuda) { return "https://download.pytorch.org/whl/cu124" }
+    $v = [version]$DriverCuda
+    if ($v -ge [version]"12.6") { return "https://download.pytorch.org/whl/cu126" }
+    if ($v -ge [version]"12.4") { return "https://download.pytorch.org/whl/cu124" }
+    if ($v -ge [version]"12.1") { return "https://download.pytorch.org/whl/cu121" }
+    throw "驱动过旧（CUDA $DriverCuda < 12.1）。请升级 NVIDIA 驱动到 550+（CUDA 12.x）后重跑。"
 }
 
 function Wait-DatabaseHealthy([int]$TimeoutSeconds = 180) {
@@ -163,8 +198,8 @@ Require-Command "py" "请先安装 Python Launcher（python.org 安装时勾选�
 Require-Command "docker" "请先安装并启动 Docker Desktop。"
 Require-Command "ffmpeg" "FFmpeg 是必装依赖（转码/抽帧/导出/流媒体都依赖它）。安装：winget install Gyan.FFmpeg 后重开终端。"
 Require-Command "nvidia-smi" "未检测到 NVIDIA GPU / CUDA 驱动。Cerno 依赖 GPU 推理（Embedding/检测/人脸/车牌），请安装 NVIDIA 驱动（建议 CUDA 12.x，驱动 ≥550）。"
-& py "-$PythonVersion" --version
-if ($LASTEXITCODE -ne 0) { throw "未找到 Python $PythonVersion，可用 -PythonVersion 参数覆盖。" }
+$pythonVer = Get-BestPythonVersion
+Write-Ok "Python $pythonVer"
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     & docker info *> $null
     if ($LASTEXITCODE -ne 0) {
@@ -176,7 +211,7 @@ $gpuName = & nvidia-smi --query-gpu=name --format=csv,noheader | Select-Object -
 $cudaVer = (& nvidia-smi 2>$null | Select-String "CUDA Version" | Select-Object -First 1).ToString().Trim()
 Write-Ok "GPU: $gpuName"
 if ($cudaVer) { Write-Ok $cudaVer }
-# cu124 wheel 需要驱动 ≥ 550.54；驱动过旧时给出明确提示（不硬拦，安装后会用 torch 实测）
+# 记录驱动最大 CUDA 版本，供 deps 步骤按兼容性选 torch 源；过旧给出提示（最终由 torch 实测兜底）
 $driverCuda = ([regex]::Match($cudaVer, "CUDA Version:\s*([0-9.]+)")).Groups[1].Value
 if ($driverCuda -and [version]$driverCuda -lt [version]"12.0") {
     Write-Warn "当前驱动支持的 CUDA 版本为 $driverCuda，建议升级驱动到 550+（CUDA 12.x）以获得 PyTorch 兼容。"
@@ -199,9 +234,9 @@ Write-Step "2/9" "Python 虚拟环境"
 if (Test-Path $VenvPython) {
     Write-Info "虚拟环境已存在，跳过创建。"
 } else {
-    & py "-$PythonVersion" -m venv (Join-Path $ProjectRoot ".venv")
+    & py "-$pythonVer" -m venv (Join-Path $ProjectRoot ".venv")
     if ($LASTEXITCODE -ne 0) { throw "虚拟环境创建失败。" }
-    Write-Ok "已创建 .venv (Python $PythonVersion)"
+    Write-Ok "已创建 .venv (Python $pythonVer)"
 }
 
 # [3/9] 依赖（含 CUDA 版 PyTorch）
@@ -210,13 +245,28 @@ if ($SkipDependencies) {
     Write-Info "已跳过（-SkipDependencies）。"
 } else {
     Invoke-Checked $VenvPython @("-m", "pip", "install", "--upgrade", "pip") "pip 升级失败。"
-    Write-Info "安装 CUDA 版 PyTorch（cu124）——pip 默认装 CPU 版，必须用 PyTorch 官方源 ..."
-    Invoke-Checked $VenvPython @("-m", "pip", "install", "torch", "--index-url", "https://download.pytorch.org/whl/cu124") "CUDA PyTorch 安装失败。"
+    # ── torch：已可用（CUDA 实测 True）则直接复用，否则按驱动 CUDA 版本选源安装 ──
+    Write-Info "检查现有 PyTorch GPU 支持 ..."
+    $torchOk = (& $VenvPython -c "import torch; print(torch.cuda.is_available())" 2>$null | Select-Object -First 1)
+    if ("$torchOk" -eq "True") {
+        Write-Ok "PyTorch 已可用（CUDA），跳过安装。"
+    } else {
+        $torchIndex = Get-TorchIndex $driverCuda
+        Write-Info "安装 CUDA 版 PyTorch（$torchIndex）——pip 默认装 CPU 版，必须用 PyTorch 官方源 ..."
+        Invoke-Checked $VenvPython @("-m", "pip", "install", "torch", "--index-url", $torchIndex) "CUDA PyTorch 安装失败。"
+    }
     Write-Info "安装其余依赖（首次可能需要数分钟）..."
     Invoke-Checked $VenvPython @("-m", "pip", "install", "-r", (Join-Path $ProjectRoot "requirements.txt")) "Python 依赖安装失败。"
-    Write-Info "替换 onnxruntime → onnxruntime-gpu（否则人脸/车牌会静默跑 CPU）..."
-    Invoke-Checked $VenvPython @("-m", "pip", "uninstall", "-y", "onnxruntime") "onnxruntime 卸载失败。"
-    Invoke-Checked $VenvPython @("-m", "pip", "install", "onnxruntime-gpu") "onnxruntime-gpu 安装失败（人脸/车牌将回退 CPU 推理）。"
+    # ── onnxruntime：有 CUDA provider 则复用，否则替换为 onnxruntime-gpu ──
+    Write-Info "检查 onnxruntime CUDA 支持（人脸/车牌需要）..."
+    $ortOk = (& $VenvPython -c "import onnxruntime as ort; print('CUDAExecutionProvider' in ort.get_available_providers())" 2>$null | Select-Object -First 1)
+    if ("$ortOk" -eq "True") {
+        Write-Ok "onnxruntime-gpu 已可用，跳过替换。"
+    } else {
+        Write-Info "替换 onnxruntime → onnxruntime-gpu（否则人脸/车牌会静默跑 CPU）..."
+        Invoke-Checked $VenvPython @("-m", "pip", "uninstall", "-y", "onnxruntime") "onnxruntime 卸载失败。"
+        Invoke-Checked $VenvPython @("-m", "pip", "install", "onnxruntime-gpu") "onnxruntime-gpu 安装失败（人脸/车牌将回退 CPU 推理）。"
+    }
     Write-Info "验证 PyTorch GPU 可用性 ..."
     & $VenvPython -c "import torch; assert torch.cuda.is_available(), 'cuda-unavailable'; print('torch', torch.__version__, '| cuda', torch.version.cuda, '| device', torch.cuda.get_device_name(0))"
     if ($LASTEXITCODE -ne 0) {
