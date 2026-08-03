@@ -69,7 +69,6 @@ async def upload_video(
     summary_enabled: bool = Form(True),
     summary_mode: str = Form("native_video"),
     search_index_enabled: bool = Form(True),
-    track_stitch_enabled: bool = Form(True),
     sample_fps: float = Form(1.0),
     segment_threshold: float = Form(0.5),
     caption_with_context: bool = Form(True),
@@ -118,7 +117,6 @@ async def upload_video(
         summary_enabled=summary_enabled,
         summary_mode=summary_mode,
         search_index_enabled=search_index_enabled,
-        track_stitch_enabled=track_stitch_enabled,
         sample_fps=sample_fps,
         segment_threshold=segment_threshold,
         caption_with_context=caption_with_context,
@@ -155,7 +153,6 @@ async def upload_videos_batch(
     summary_enabled: bool = Form(True),
     summary_mode: str = Form("native_video"),
     search_index_enabled: bool = Form(True),
-    track_stitch_enabled: bool = Form(True),
     sample_fps: float = Form(1.0),
     segment_threshold: float = Form(0.5),
     caption_with_context: bool = Form(True),
@@ -224,7 +221,6 @@ async def upload_videos_batch(
                 summary_enabled=summary_enabled,
                 summary_mode=summary_mode,
                 search_index_enabled=search_index_enabled,
-        track_stitch_enabled=track_stitch_enabled,
                 sample_fps=sample_fps,
                 segment_threshold=segment_threshold,
                 caption_with_context=caption_with_context,
@@ -284,7 +280,6 @@ async def reuse_video(
         summary_enabled=payload.summary_enabled,
         summary_mode=payload.summary_mode,
         search_index_enabled=payload.search_index_enabled,
-        track_stitch_enabled=payload.track_stitch_enabled,
         sample_fps=payload.sample_fps,
         segment_threshold=payload.segment_threshold,
         caption_with_context=payload.caption_with_context,
@@ -341,7 +336,6 @@ async def update_video_params(
                 summary_enabled=payload.summary_enabled,
                 summary_mode=payload.summary_mode,
                 search_index_enabled=payload.search_index_enabled,
-                track_stitch_enabled=payload.track_stitch_enabled,
                 language=payload.language,
                 sample_fps=payload.sample_fps,
                 segment_threshold=payload.segment_threshold,
@@ -391,7 +385,6 @@ async def update_video_params(
                         summary_enabled=payload.summary_enabled,
                         summary_mode=payload.summary_mode,
                         search_index_enabled=payload.search_index_enabled,
-                        track_stitch_enabled=payload.track_stitch_enabled,
                         language=payload.language,
                         sample_fps=payload.sample_fps,
                         segment_threshold=payload.segment_threshold,
@@ -425,7 +418,6 @@ async def update_video_params(
             "summary_enabled": video.summary_enabled,
             "summary_mode": video.summary_mode,
             "search_index_enabled": video.search_index_enabled,
-            "track_stitch_enabled": video.track_stitch_enabled,
         }
 
         new = {
@@ -446,14 +438,12 @@ async def update_video_params(
             "summary_enabled": payload.summary_enabled,
             "summary_mode": payload.summary_mode,
             "search_index_enabled": payload.search_index_enabled,
-            "track_stitch_enabled": payload.track_stitch_enabled,
         }
 
         non_l3_keys = {"content_type", "vision_enabled", "audio_enabled", "ocr_enabled",
                        "caption_enabled", "detection_enabled", "detection_classes",
                        "language", "sample_fps",
-                       "segment_threshold", "caption_with_context", "summary_detail",
-                       "summary_mode", "track_stitch_enabled"}
+                       "segment_threshold", "caption_with_context", "summary_detail", "summary_mode"}
         l3_keys = {"summary_enabled", "search_index_enabled"}
 
         non_l3_changed = {k for k in non_l3_keys if old.get(k) != new.get(k)}

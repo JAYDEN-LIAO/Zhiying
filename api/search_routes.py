@@ -276,15 +276,22 @@ async def get_pipeline_operations(
     config = load_config()
     enabled = [op for op in ALL_OPERATIONS if op.gate(video, config)]
 
-    step = 1.0 / len(enabled) if enabled else 1.0
+    total_weight = sum(op.progress_weight if op.progress_weight > 0 else 1.0 for op in enabled) or 1.0
+    cumulative = 0.0
     ops_data: list[dict] = []
     for i, op in enumerate(enabled):
+        weight = op.progress_weight if op.progress_weight > 0 else 1.0
+        start = cumulative / total_weight
+        end = (cumulative + weight) / total_weight
+        if i == len(enabled) - 1:
+            end = 1.0
         ops_data.append({
             "name": op.name,
             "label": op.label,
             "description": op.description,
-            "progress_start": round(i * step, 2),
-            "progress_end": round((i + 1) * step, 2) if i < len(enabled) - 1 else 1.0,
+            "progress_start": round(start, 4),
+            "progress_end": round(end, 4),
         })
+        cumulative += weight
 
     return APIResponse(data=ops_data)

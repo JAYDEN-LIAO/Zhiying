@@ -42,12 +42,12 @@ class FrameEncodeRunner(OperationRunner):
         target_h = profile.get("encode_height", 336)
         target_size: tuple[int, int] = (target_w, target_h)
 
-        estimated_total = max(1, int(pctx.ctx.duration or 0))
+        expected_total: int | None = None
 
         await pctx.tracker.update("frame_encode", sub_progress=0.0)
         logger.info(
-            "[FrameEncodeRunner] Consuming from frame_queue, profile=%s, %dx%d, batch=%d, ~%d frames",
-            profile_name, target_w, target_h, batch_size, estimated_total,
+            "[FrameEncodeRunner] Consuming from frame_queue, profile=%s, %dx%d, batch=%d, ~%s frames",
+            profile_name, target_w, target_h, batch_size, "unknown",
         )
 
         all_frame_rows: list[dict] = []
@@ -59,6 +59,10 @@ class FrameEncodeRunner(OperationRunner):
             item = await queue.get()
             if item is None:  # sentinel — keyframes 完成
                 break
+            if isinstance(item, tuple) and len(item) == 2 and item[0] == "__total__":
+                expected_total = max(1, int(item[1]))
+                logger.info("[FrameEncodeRunner] Expected queue frames: %d", expected_total)
+                continue
 
             scene_idx, ts, frame = item
             batch_frames.append(frame)
@@ -70,10 +74,11 @@ class FrameEncodeRunner(OperationRunner):
                 )
                 all_frame_rows.extend(rows)
                 total_encoded += len(batch_frames)
-                await pctx.tracker.update(
-                    "frame_encode",
-                    sub_progress=min(total_encoded / estimated_total, 0.99),
-                )
+                if expected_total is not None:
+                    await pctx.tracker.update(
+                        "frame_encode",
+                        sub_progress=min(total_encoded / expected_total, 0.99),
+                    )
                 batch_frames = []
                 batch_meta = []
 

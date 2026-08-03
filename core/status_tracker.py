@@ -1,12 +1,13 @@
 """
 core/status_tracker.py
 ═══════════════════════════════════════════════════════════
-Pipeline 进度持久化 — 动态权重 + 操作内子进度插值。
+Pipeline 进度持久化 — 动态权重 + 各操作真实子进度聚合。
 
-v0.8: 根据 operations 的 progress_weight 按比例分配进度范围，
-      支持 sub_progress（0.0~1.0）在操作内部平滑推进。
+根据本次启用的 operations 权重聚合各操作的真实子进度，
+      并行操作的进度统一计算为加权总进度。
 """
 
+import asyncio
 from datetime import datetime, timezone
 
 from sqlalchemy import update
@@ -62,42 +63,38 @@ class StatusTracker:
         self._ops = operations or []
         self._ranges: dict[str, tuple[float, float]] = {}  # op.name → (start, end)
         self._descriptions: dict[str, str] = {}
+        self._weights: dict[str, float] = {}
+        self._op_progress: dict[str, float] = {}
+        self._overall_progress = 0.0
+        self._lock = asyncio.Lock()
         self._compute_weights()
 
     # ── 权重计算 ──
 
     def _compute_weights(self) -> None:
-        """按 progress_weight 比例分配每个 operation 的进度范围。
-
-        例: duration(0.02) + segmentation(0.15) + keyframes(0.15) + caption(0.20)
-             → ranges = {
-                 "duration":     (0.00, 0.04),
-                 "segmentation": (0.04, 0.33),
-                 "keyframes":    (0.33, 0.62),
-                 "caption":      (0.62, 1.00),
-               }
-        caption 权重最大 → 占据最大的进度条区间 → 缓慢推进，不会冻住。
-        """
+        """根据本次实际启用的 operations 建立权重和进度状态。"""
         if not self._ops:
             self._ranges = {k: (v, v) for k, v in self.PHASE_WEIGHTS.items()}
             self._descriptions = dict(self.PHASE_DESCRIPTIONS)
             return
 
-        total_weight = sum(op.progress_weight for op in self._ops)
-        if total_weight <= 0:
-            total_weight = float(len(self._ops))
+        raw_weights = {
+            op.name: (op.progress_weight if op.progress_weight > 0 else 1.0)
+            for op in self._ops
+        }
+        total_weight = sum(raw_weights.values()) or 1.0
+        self._weights = {name: weight / total_weight for name, weight in raw_weights.items()}
+        self._op_progress = {op.name: 0.0 for op in self._ops}
 
         cumulative = 0.0
-        for op in self._ops:
-            w = op.progress_weight if op.progress_weight > 0 else (1.0 / len(self._ops))
+        for i, op in enumerate(self._ops):
             start = cumulative / total_weight
-            end = (cumulative + w) / total_weight
-            # 最后一个操作强制到 1.0，避免浮点误差
-            if op is self._ops[-1]:
+            end = (cumulative + raw_weights[op.name]) / total_weight
+            if i == len(self._ops) - 1:
                 end = 1.0
             self._ranges[op.name] = (round(start, 4), round(end, 4))
             self._descriptions[op.name] = op.description or op.label or op.name
-            cumulative += w
+            cumulative += raw_weights[op.name]
 
     # ── 进度更新 ──
 
@@ -108,60 +105,64 @@ class StatusTracker:
         sub_progress: float | None = None,
         description: str | None = None,
     ) -> None:
-        """更新进度。
-
-        Args:
-            phase: 阶段名（对应 Operation.name）。
-            progress: 绝对值 0.0~1.0。为 None 时从范围表计算。
-            sub_progress: 操作内部进度 0.0~1.0。
-                          给定后，progress = start + sub_progress * (end - start)。
-            description: 进度描述文本。
-        """
-        if progress is not None:
-            val = progress
-        elif sub_progress is not None:
-            start, end = self._ranges.get(phase, (0.0, 1.0))
-            sub = max(0.0, min(1.0, sub_progress))
-            val = start + sub * (end - start)
-        else:
-            # 无 sub_progress：使用该操作范围的起始值
-            val = self._ranges.get(phase, (0.0, 1.0))[0]
-
-        if description is None:
-            description = self._descriptions.get(phase, phase)
-
-        async with self.db_session_factory() as session:
-            await session.execute(
-                update(Video)
-                .where(Video.id == self.video_id)
-                .values(
-                    progress=round(val, 4),
-                    status_detail=description,
-                    updated_at=datetime.now(timezone.utc),
+        """记录 operation 子进度，并持久化所有启用 operation 的加权总进度。"""
+        async with self._lock:
+            if sub_progress is not None and phase in self._op_progress:
+                sub = max(0.0, min(1.0, sub_progress))
+                # 单个 operation 只允许前进，避免并行更新造成进度回退。
+                self._op_progress[phase] = max(self._op_progress[phase], sub)
+                val = sum(
+                    self._weights[name] * self._op_progress[name]
+                    for name in self._op_progress
                 )
-            )
-            await session.commit()
+            elif progress is not None:
+                val = max(0.0, min(1.0, progress))
+            elif sub_progress is not None:
+                start, end = self._ranges.get(phase, (0.0, 1.0))
+                sub = max(0.0, min(1.0, sub_progress))
+                val = start + sub * (end - start)
+            else:
+                val = self._overall_progress
+
+            self._overall_progress = max(self._overall_progress, val)
+            if description is None:
+                description = self._descriptions.get(phase, phase)
+
+            async with self.db_session_factory() as session:
+                await session.execute(
+                    update(Video)
+                    .where(Video.id == self.video_id)
+                    .values(
+                        progress=round(self._overall_progress, 4),
+                        status_detail=description,
+                        updated_at=datetime.now(timezone.utc),
+                    )
+                )
+                await session.commit()
 
     # ── 最终状态 ──
 
     async def mark_completed(self) -> None:
         """标记视频处理完成。"""
-        await self._set_status(VideoStatus.COMPLETED, progress=1.0)
+        async with self._lock:
+            self._overall_progress = 1.0
+            await self._set_status(VideoStatus.COMPLETED, progress=1.0)
 
     async def mark_failed(self, error: str) -> None:
-        """标记视频处理失败。"""
-        async with self.db_session_factory() as session:
-            await session.execute(
-                update(Video)
-                .where(Video.id == self.video_id)
-                .values(
-                    status=VideoStatus.FAILED,
-                    error_message=error,
-                    progress=self._ranges.get("completed", (1.0, 1.0))[0],
-                    updated_at=datetime.now(timezone.utc),
+        """标记视频处理失败，保留失败时的真实进度。"""
+        async with self._lock:
+            async with self.db_session_factory() as session:
+                await session.execute(
+                    update(Video)
+                    .where(Video.id == self.video_id)
+                    .values(
+                        status=VideoStatus.FAILED,
+                        error_message=error,
+                        progress=round(self._overall_progress, 4),
+                        updated_at=datetime.now(timezone.utc),
+                    )
                 )
-            )
-            await session.commit()
+                await session.commit()
 
     async def _set_status(self, status: VideoStatus, progress: float) -> None:
         async with self.db_session_factory() as session:

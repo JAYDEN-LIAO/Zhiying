@@ -43,7 +43,6 @@ export interface VideoListItem {
   summary_enabled: boolean;
   summary_mode: string;
   search_index_enabled: boolean;
-  track_stitch_enabled: boolean;
   sample_fps: number;
   language: string;
   encode_profile: string | null;
@@ -112,7 +111,6 @@ export interface VideoResponse {
   summary_enabled: boolean;
   summary_mode: string;
   search_index_enabled: boolean;
-  track_stitch_enabled: boolean;
   sample_fps: number;
   segment_threshold: number;
   caption_with_context: boolean;
@@ -146,6 +144,14 @@ export interface VideoStatusResponse {
   phase_description: string | null;
   error_message: string | null;
   updated_at: string | null;
+}
+
+export interface PipelineStage {
+  name: string;
+  label: string;
+  description: string;
+  progress_start: number;
+  progress_end: number;
 }
 
 /* ── Search (POST /api/v1/search/semantic) ── */
@@ -210,7 +216,6 @@ export interface PipelineParams {
   search_index_enabled: boolean;
   summary_enabled: boolean;
   summary_mode: string;
-  track_stitch_enabled: boolean;
   language: string;
   sample_fps: number;
   segment_threshold: number;

@@ -68,11 +68,19 @@ const TrackRow = memo(function TrackRow({
   onDownloadThumb, onDownloadTrack,
 }: TrackRowProps) {
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       data-track-id={track.track_id}
-      className={`dtc-item ${isSel ? "sel" : ""}`}
+      className={`dtc-item `}
       style={{ width: "100%" }}
       onClick={() => onTrackSelect(track.track_id, track.class_name, track.first_seen)}
+      onKeyDown={(e) => {
+        if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          onTrackSelect(track.track_id, track.class_name, track.first_seen);
+        }
+      }}
     >
       {bbox && tUrl ? (
         <div className="w-10 h-10 rounded-md shrink-0 overflow-hidden bg-gray-100 flex items-center justify-center cursor-pointer"
@@ -131,7 +139,7 @@ const TrackRow = memo(function TrackRow({
           </>
         )}
       </div>
-    </button>
+    </div>
   );
 });
 

@@ -71,11 +71,6 @@ async def init_db():
         """))
         await conn.execute(text("""
             ALTER TABLE videos
-            ADD COLUMN IF NOT EXISTS track_stitch_enabled boolean
-                DEFAULT true NOT NULL
-        """))
-        await conn.execute(text("""
-            ALTER TABLE videos
             ADD COLUMN IF NOT EXISTS sample_fps double precision
                 DEFAULT 1.0 NOT NULL
         """))

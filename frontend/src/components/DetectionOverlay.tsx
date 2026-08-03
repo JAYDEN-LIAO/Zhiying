@@ -25,7 +25,6 @@ interface Props {
 export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, selectedTrackId, onTrackSelect }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
-  const downPausedRef = useRef<boolean | null>(null);   // 点击前播放状态（供 bbox 点击后补偿视频切换）
   const pendingClickRef = useRef<{ x: number; y: number; t: number } | null>(null);
   const onTrackSelectRef = useRef(onTrackSelect); onTrackSelectRef.current = onTrackSelect;
   const { get, version, ensure, hasLoadedRange } = useDetectionRanges(videoId, videoRef, enabled, hasDetection);
@@ -239,31 +238,38 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
     [toFrameCoord, videoRef, interpolatedAt],
   );
 
-  /* ── press（pointerdown/mousedown，document capture）：按下即选中。
-     监听挂在 document capture —— 任何鼠标事件都必经 document，视频原生控件（shadow DOM）
-     无论怎么吞事件都拦不住这一层；再用坐标过滤只处理视频容器内的按下。
-     命中 bbox → 立即选中 + preventDefault/stopPropagation（拦掉视频内部 toggle）；
-     未命中且数据未就绪 → 挂 pending 等 version 重试。── */
-  const handlePress = useCallback(
+  /* ── click（document capture）：bbox 点击选中。
+     click 是唯一能穿透 <video controls> 原生控件到达 DOM 的事件（pointerdown/mousedown
+     会被视频原生控件在更底层吃掉）；配合 render 里的透明捕获层，点击正常到达这里。
+     命中 bbox → 选中 + preventDefault/stopPropagation（阻止原生播放/暂停切换）；
+     未命中且数据未就绪 → 挂 pending 等 version 重试；空点击 → 模拟原生播放/暂停切换。── */
+  const handleClick = useCallback(
     (e: MouseEvent) => {
       if (!hasDetection) return;
       const container = canvasRef.current?.parentElement;
       if (!container) return;
       const rect = container.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
-      // 只在视频容器内的按下处理（document capture 会收到全页面 press，需坐标过滤）
+      // 只在视频容器内的点击处理（document capture 会收到全页面 click，需坐标过滤）
       if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
       const video = videoRef.current;
       const currentTime = video?.currentTime ?? 0;
-      ensure(currentTime); // 数据空档兜底：确保按下时刻窗口已加载（已加载则 no-op）
+      ensure(currentTime); // 数据空档兜底：确保点击时刻窗口已加载（已加载则 no-op）
       const best = pickTrack(e.clientX, e.clientY, currentTime);
-      // eslint-disable-next-line no-console
-      console.log(`[DIAG] press(${e.type}) @(${e.clientX},${e.clientY}) t=${currentTime} best=${best ? best.track_id : null} paused=${video?.paused}`);
       if (best) {
-        e.preventDefault();
+        e.preventDefault();   // 阻止视频原生点击暂停/播放
         e.stopPropagation();
-        downPausedRef.current = video?.paused ?? null; // 记录按下前播放状态，release 后补偿
+        const wasPaused = video?.paused ?? null;
         onTrackSelect(best.track_id, best.class_name);
+        // 保险：若 preventDefault 未阻止原生 toggle，下一帧恢复播放状态
+        if (video && wasPaused !== null) {
+          requestAnimationFrame(() => {
+            if (video.paused !== wasPaused) {
+              if (wasPaused) video.pause();
+              else video.play().catch(() => {});
+            }
+          });
+        }
       } else if (!hasLoadedRange(currentTime)) {
         // 数据未就绪（刚 seek/快进，窗口还在路上）：记 pending，version 到达后重试；超时兜底反选。
         pendingClickRef.current = { x: e.clientX, y: e.clientY, t: currentTime };
@@ -273,28 +279,16 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
             onTrackSelectRef.current(-1, "");
           }
         }, 500);
+      } else {
+        // 空点击（点击捕获层盖住视频，视频原生手势收不到）→ 模拟原生行为：播放/暂停切换 + 反选
+        if (video) {
+          if (video.paused) video.play().catch(() => {});
+          else video.pause();
+        }
+        onTrackSelect(-1, "");
       }
     },
     [hasDetection, ensure, hasLoadedRange, pickTrack, onTrackSelect],
-  );
-
-  /* ── release（pointerup/mouseup，capture）：保险——若 press 的 preventDefault 未阻止原生 toggle，
-     把播放状态恢复回按下前（不拦截事件流，纯补偿）。── */
-  const handleRelease = useCallback(
-    () => {
-      const wasPaused = downPausedRef.current;
-      if (wasPaused === null) return;
-      downPausedRef.current = null;
-      const video = videoRef.current;
-      if (!video) return;
-      requestAnimationFrame(() => {
-        if (video.paused !== wasPaused) {
-          if (wasPaused) video.pause();
-          else video.play().catch(() => {});
-        }
-      });
-    },
-    [],
   );
 
   const handleMove = useCallback(
@@ -325,33 +319,39 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
 
   useEffect(() => {
     if (!hasDetection) return;
-    // press/release 挂 document（capture）—— 任何按下都必经 document，视频原生控件拦不住；
-    // move 挂父容器（bubble，crosshair）。pointer + mouse 双挂（pointerdown 被 preventDefault 后会抑制兼容 mouse 事件，不会双发）。
-    document.addEventListener("pointerdown", handlePress, true);
-    document.addEventListener("mousedown", handlePress, true);
-    document.addEventListener("pointerup", handleRelease, true);
-    document.addEventListener("mouseup", handleRelease, true);
+    // click 挂 document（capture）—— click 是唯一能穿透 <video controls> 原生控件到达 DOM 的事件
+    // （pointerdown/mousedown 会被视频原生控件在更底层吃掉，document capture 都收不到）。
+    // move 挂父容器（bubble，crosshair）。
+    document.addEventListener("click", handleClick, true);
     const parent = canvasRef.current?.parentElement;
     parent?.addEventListener("pointermove", handleMove);
     parent?.addEventListener("mousemove", handleMove);
     return () => {
-      document.removeEventListener("pointerdown", handlePress, true);
-      document.removeEventListener("mousedown", handlePress, true);
-      document.removeEventListener("pointerup", handleRelease, true);
-      document.removeEventListener("mouseup", handleRelease, true);
+      document.removeEventListener("click", handleClick, true);
       parent?.removeEventListener("pointermove", handleMove);
       parent?.removeEventListener("mousemove", handleMove);
       if (parent) parent.style.cursor = "";
     };
     // enabled 也进依赖：enabled 翻转（canvas 挂载/卸载）时重挂监听，避免幽灵失效
-  }, [hasDetection, enabled, handlePress, handleRelease, handleMove]);
+  }, [hasDetection, enabled, handleClick, handleMove]);
 
   if (!enabled || !hasDetection) return null;
 
   return (
-    <canvas
-      ref={canvasRef}
-      style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none", zIndex: 0 }}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none", zIndex: 0 }}
+      />
+      {/* 点击捕获层：普通 DOM 元素，覆盖视频内容区（底部留 44px 给原生控制条）。
+         <video controls> 的原生手势把视频区域的点击拦截在 UA shadow DOM 内、不派发到 document，
+         所以必须用这个透明层接住点击，让它正常到达 document 的 click 监听。 */}
+      <div
+        style={{
+          position: "absolute", top: 0, left: 0, right: 0, bottom: 44,
+          zIndex: 1, pointerEvents: "auto", cursor: "inherit", background: "transparent",
+        }}
+      />
+    </>
   );
 }

@@ -118,15 +118,10 @@ class TrackEncodeRunner(OperationRunner):
         for tid, vecs in track_feats.items():
             pooled[tid] = np.mean(vecs, axis=0).tolist()
 
-        # ── Phase 2: 全局 tracklet 缝合（可配置开关）──
+        # ── Phase 2: 全局 tracklet 缝合（固定开启）──
         frame_dets = pctx.ctx.frame_detections or []
-        stitch_enabled = getattr(pctx.video, "track_stitch_enabled", True)
-        if stitch_enabled:
-            new_tracks, new_frame_dets = self._stitch_tracks(tracks, frame_dets, pooled)
-            logger.info("[TrackEncode] Track stitching enabled")
-        else:
-            new_tracks, new_frame_dets = tracks, frame_dets
-            logger.info("[TrackEncode] Track stitching DISABLED by config")
+        new_tracks, new_frame_dets = self._stitch_tracks(tracks, frame_dets, pooled)
+        logger.info("[TrackEncode] Track stitching enabled")
 
         # ── 构建最终的 track_embeddings ──
         track_embeddings: list[dict] = []

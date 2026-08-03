@@ -39,7 +39,6 @@ export function HistoryPanelContent({
   const handleDelete = async (id: string) => {
     const v = videos.find(x => x.id === id);
     if (v?.status === "processing") return; // 按钮已禁用，双保险
-    if (!confirm(`确定删除「${v?.file_name ?? id}」？\n将同时清除数据库记录与磁盘文件，不可恢复。`)) return;
     setDeletingIds((prev) => new Set(prev).add(id));
     try {
       const res = await api.deleteVideo(id);
@@ -58,7 +57,7 @@ export function HistoryPanelContent({
       alert("组内有视频正在处理中，请等待完成后删除");
       return;
     }
-    if (!confirm(`确定整组删除 ${groupVideos.length} 个视频？\n将同时清除数据库记录与磁盘文件，不可恢复。`)) return;
+    // 整组删除不再二次确认
     const ids = groupVideos.map(v => v.id);
     setDeletingIds((prev) => { const n = new Set(prev); ids.forEach(id => n.add(id)); return n; });
     try {

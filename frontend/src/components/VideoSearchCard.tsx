@@ -218,9 +218,9 @@ export function VideoSearchCard({
         {resultCount > 0 && <span className="major-card-badge">{resultCount} 条</span>}
       </div>
 
-      <div className="major-card-bd">
+      <div className="major-card-bd" style={{ scrollbarGutter: "stable" }}>
         {/* Search: scope dropdown + input + icons in one row */}
-        <div className="relative">
+        <div className="relative w-full min-w-0 h-[34px]">
           {/* Scope dropdown (inside input left) */}
           {searchScopeVisible && (
             <>
@@ -261,9 +261,9 @@ export function VideoSearchCard({
 
           {/* Search input */}
           <input
-            className={`w-full rounded-lg border border-gray-300 bg-gray-50 text-gray-900 outline-none transition-all
+            className={`block w-full min-w-0 h-full box-border rounded-lg border border-gray-300 bg-gray-50 text-gray-900 outline-none transition-colors
               focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 placeholder:text-gray-400
-              text-[12px] py-2 ${searchScopeVisible ? 'pl-[100px] pr-16' : 'px-3'}`}
+              text-[12px] py-0 ${searchScopeVisible ? 'pl-[100px] pr-16' : 'px-3'}`}
             type="text" value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
@@ -273,7 +273,7 @@ export function VideoSearchCard({
           {/* Image search (inside input right) */}
           <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageSearch} className="hidden" />
           <button onClick={() => imageInputRef.current?.click()} disabled={imageSearching}
-            className={`absolute ${searching ? 'right-1' : 'right-7'} top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-600 flex items-center justify-center transition-colors disabled:opacity-50`} title="以图搜图">
+            className="absolute right-7 top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-600 flex items-center justify-center transition-colors disabled:opacity-50" title="以图搜图">
             {imageSearching ? <span className="inline-block w-3 h-3 border-2 border-emerald-300 border-t-emerald-500 rounded-full animate-spin" /> : (
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
@@ -290,9 +290,9 @@ export function VideoSearchCard({
             )}
           </button>
 
-          {/* Text search spinner (replaces face button position) */}
+          {/* Text search spinner（放在通用图搜按钮左侧，避免盖住图搜/人脸搜） */}
           {searching && (
-            <span className="absolute right-1 top-1/2 -translate-y-1/2 inline-block w-3.5 h-3.5 border-2 border-blue-300 border-t-blue-500 rounded-full animate-spin" />
+            <span className="absolute right-14 top-1/2 -translate-y-1/2 inline-block w-3.5 h-3.5 border-2 border-blue-300 border-t-blue-500 rounded-full animate-spin" />
           )}
         </div>
 

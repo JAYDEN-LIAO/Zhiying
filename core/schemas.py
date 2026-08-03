@@ -115,7 +115,6 @@ class VideoCreate(BaseModel):
 
     # ── 参数层新增 (v0.6) ──
     search_index_enabled: bool  = Field(default=True)
-    track_stitch_enabled: bool  = Field(default=True, description="全局重识别缝合：合并被遮挡分开的同一身份 track")
     sample_fps: float           = Field(default=1.0, ge=0.5, le=3.0)
     segment_threshold: float    = Field(default=0.5, ge=0.2, le=0.8)
     caption_with_context: bool  = Field(default=True)
@@ -147,7 +146,6 @@ class PipelineParams(BaseModel):
     search_index_enabled: bool = Field(default=True)
     summary_enabled: bool      = Field(default=True)
     summary_mode: str          = Field(default="native_video", pattern=r"^(native_video|vlm_llm)$")
-    track_stitch_enabled: bool = Field(default=True, description="全局重识别缝合：合并被遮挡分开的同一身份 track")
 
     # L4: 高级参数
     language: str               = Field(default="auto", pattern=r"^(auto|zh|en|ja|ko)$")
@@ -239,7 +237,6 @@ class VideoResponse(BaseModel):
     segment_threshold: float
     caption_with_context: bool
     summary_detail: str
-    track_stitch_enabled: bool
 
     status_detail: str | None      = None
 
@@ -285,7 +282,6 @@ class VideoListItem(BaseModel):
     summary_enabled: bool          = True
     summary_mode: str              = "native_video"
     search_index_enabled: bool     = True
-    track_stitch_enabled: bool     = True
     sample_fps: float              = 1.0
     language: str                  = "auto"
 

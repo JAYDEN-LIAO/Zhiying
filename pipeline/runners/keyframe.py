@@ -25,11 +25,17 @@ class KeyframeRunner(OperationRunner):
         scenes = pctx.ctx.scenes
         if not scenes:
             logger.info("[KeyframeRunner] No scenes, skipping")
+            frame_queue = getattr(pctx, "frame_queue", None)
+            if frame_queue is not None:
+                await frame_queue.put(None)
             return
 
         duration = pctx.ctx.duration
         if not duration or duration <= 0:
             logger.warning("[KeyframeRunner] No valid duration, skipping")
+            frame_queue = getattr(pctx, "frame_queue", None)
+            if frame_queue is not None:
+                await frame_queue.put(None)
             return
 
         summary_mode = getattr(pctx.video, "summary_mode", "native_video")
@@ -57,8 +63,14 @@ class KeyframeRunner(OperationRunner):
         # ── 流式抽帧 + 分发到 scene 对象和 frame_queue ──
         video_path = pctx.ctx.file_path
         frame_queue: object | None = getattr(pctx, "frame_queue", None)
+        expected_frames = sum(scene_idx is not None for scene_idx in second_to_scene)
+        if frame_queue is not None:
+            # 先发送准确总量，消费者据此计算实际编码进度。
+            await frame_queue.put(("__total__", expected_frames))
         frame_idx = 0
         extracted = 0
+        progress_stride = max(1, total_seconds // 100)
+
 
         try:
             async for frame in stream_frames(
@@ -82,6 +94,11 @@ class KeyframeRunner(OperationRunner):
                         await frame_queue.put((scene_idx, ts, frame))
 
                 frame_idx += 1
+                if frame_idx % progress_stride == 0:
+                    await pctx.tracker.update(
+                        "keyframes",
+                        sub_progress=min(frame_idx / max(1, total_seconds), 0.99),
+                    )
         finally:
             # 确保消费者收到结束信号（即使异常也会发送）
             if frame_queue is not None:

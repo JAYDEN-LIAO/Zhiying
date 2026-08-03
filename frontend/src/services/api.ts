@@ -7,6 +7,7 @@ import type {
   VideoListItem,
   VideoResponse,
   VideoStatusResponse,
+  PipelineStage,
   SearchResults,
   PipelineParams,
   SettingsData,
@@ -60,6 +61,10 @@ export const api = {
     return request<VideoStatusResponse>(`${BASE}/videos/${videoId}/status`);
   },
 
+  getPipelineOperations(videoId: string) {
+    return request<PipelineStage[]>(BASE + "/pipeline/operations?video_id=" + encodeURIComponent(videoId));
+  },
+
   /* ── Batch upload multiple videos (v0.19) ── */
   async uploadBatch(files: File[], params?: Partial<PipelineParams>): Promise<VideoResponse[]> {
     const form = new FormData();
@@ -81,7 +86,6 @@ export const api = {
     form.append("face_enabled", String(params?.face_enabled ?? false));
     form.append("plate_enabled", String(params?.plate_enabled ?? false));
     form.append("search_index_enabled", String(params?.search_index_enabled ?? true));
-    form.append("track_stitch_enabled", String(params?.track_stitch_enabled ?? true));
     form.append("sample_fps", String(params?.sample_fps ?? 1.0));
     form.append("segment_threshold", String(params?.segment_threshold ?? 0.5));
     form.append("caption_with_context", String(params?.caption_with_context ?? true));
@@ -112,7 +116,6 @@ export const api = {
     form.append("face_enabled", String(params?.face_enabled ?? false));
     form.append("plate_enabled", String(params?.plate_enabled ?? false));
     form.append("search_index_enabled", String(params?.search_index_enabled ?? true));
-    form.append("track_stitch_enabled", String(params?.track_stitch_enabled ?? true));
     form.append("sample_fps", String(params?.sample_fps ?? 1.0));
     form.append("segment_threshold", String(params?.segment_threshold ?? 0.5));
     form.append("caption_with_context", String(params?.caption_with_context ?? true));

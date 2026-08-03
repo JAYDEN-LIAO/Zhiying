@@ -100,7 +100,6 @@ L2: Perception Modules (6 switches, 1 grayed)
 L3: Function Switches (3)
   ├─ search_index_enabled → 4-path encoding for semantic search (frame+chunk+text+track)
   ├─ summary_enabled      → global structured summary
-  └─ track_stitch_enabled → 全局 tracklet 缝合（合并被遮挡/缩放/切换拆分的同一身份 track）
 
 L4: Advanced Params (7)
   ├─ language, sample_fps, segment_threshold
@@ -115,7 +114,6 @@ Validation: PipelineParams model_validator in core/schemas.py
   ● search+summary both OFF → reject
 
 Incremental: Only L3 switches (summary_enabled / search_index_enabled) can be toggled on completed videos
-  → track_stitch_enabled change requires new video record（需重跑检测路径）
   → summary_mode change requires new video record (POST /videos/reuse)
   → runs run_incremental() → skips completed phases
 ```
@@ -140,7 +138,7 @@ Keyframe 消费 4 链路:
 Caption 双模式: native_video (Qwen3-VL-8B 本地 GPU 原生视频理解 → 结构化 JSON) / vlm_llm (Qwen-VL-Max API 看图)
 Summary 双模式: native_video (纯 Python 聚合器, 无 API 成本) / vlm_llm (DeepSeek API)
 Track 语义路 (track_encode): 读 detection 缓存 640×384 crop (每 2s, 零 FFmpeg seek)
-  → 挑 20%/50%/80% 3 帧 → mean pool → cosine ≥0.85 + 同类 + 时序不重叠 全局缝合 (L3 开关)
+  → 挑 20%/50%/80% 3 帧 → mean pool → cosine ≥0.85 + 同类 + 时序不重叠 全局缝合
   → track_embeddings 表
 Persist: bulk_insert_scenes + insert transcript + update videos (duration/summary/status_detail)
 ```
@@ -167,7 +165,7 @@ core/  models.py (12 表) · schemas.py (DTO) · repository.py (数据访问) ·
        search.py (6 检索) · db.py (引擎/init_db) · config_loader.py · prompt_loader.py
        status_tracker.py (进度) · interfaces.py (10 插件 ABC) · exceptions.py
 config/  config.yaml (server/db/storage/plugins/pipeline) · config_schema.py · prompts.yaml
-frontend/  Dashboard.tsx + components/ (20) + hooks/ (8) + labels.ts + services/api.ts + types/ + mockData.ts
+frontend/  Dashboard.tsx + components/ (20) + hooks/ (8) + labels.ts + services/api.ts + types/
 utils/  video_util.py (FFmpeg) · metadata.py (三级元数据) · video_source.py (来源规则引擎)
 services/  video_service.py (管道调度) · format_service.py (remux/proxy) · export_service.py
 ```
@@ -231,7 +229,7 @@ videos
   ├─ file_path, file_name, file_size, duration
   ├─ content_type, language
   ├─ perception: audio/vision/ocr/grounding/caption/detection_enabled, detection_classes
-  ├─ function: search_index_enabled, summary_enabled, summary_mode, track_stitch_enabled
+  ├─ function: search_index_enabled, summary_enabled, summary_mode
   ├─ advanced: sample_fps, segment_threshold, caption_with_context, summary_detail
   ├─ summary (JSONB)
   ├─ metadata_json (JSONB)          — 缓存的完整技术元数据（首次提取后后续 <1ms）
@@ -373,7 +371,7 @@ React 19 + Vite 6 + Tailwind CSS 4
   ├── utils/helpers.ts       ← fmtDuration, fmtDate, formatSec
   ├── services/api.ts        ← API 封装 + 轮询工具函数 + 下载辅助 + uploadBatch()
   ├── types/index.ts         ← TypeScript 类型定义 (镜像 backend schemas, +VideoGroup)
-  └── mockData.ts            ← Pipeline 阶段定义 + computePipelineStages()
+  └── services/api.ts        ← Pipeline 阶段通过 `/pipeline/operations` 动态获取
 
 数据流:
   Dashboard mount → GET /api/v1/videos/ 拉取列表
@@ -417,7 +415,7 @@ Vite 开发代理:
 | **GET+POST 双导出** | POST 供编程调用，GET 供浏览器直接下载 |
 | **三级元数据 + DB 缓存** | pymediainfo→exiftool→ffprobe；缓存后 <1ms |
 | **多视频分组 (v0.19)** | 批量上传 + 组参数同步 + 跨视频搜索 |
-| **全局 ReID 缝合 (v0.20)** | 在线 with_reid + 全局 cosine ≥0.85 合并（segments 时序检查, L3 开关）|
+| **全局 ReID 缝合 (v0.20)** | 在线 with_reid + 全局 cosine ≥0.85 合并（segments 时序检查）|
 | **来源分析规则引擎** | EXIF + 文件名 + 文件头魔数（IMKH→海康），无 ML 依赖 <10ms |
 | **人脸/车牌开关** | 三门控: config + detection_enabled + face/plate_enabled |
 | **图搜双通道** | 人脸 ArcFace 512d / 通用 Qwen3-VL 2048-dim（帧不聚类精确到秒）|
@@ -429,7 +427,7 @@ Vite 开发代理:
 |---|---|---|
 | Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 15 ops, search/summary decoupled, gates/deps, events-driven |
 | Track Encoding (crop→embed) | ✅ | runners/track_encode.py: 读检测缓存多帧 640×384 crop（零 FFmpeg seek）→ mean pool → Qwen3-VL-Embedding 2048-dim。长视频友好（track_encode 不随 track 数 seek 爆炸） |
-| Global ReID Tracklet Stitch | ✅ | track_encode Phase 2: cosine ≥0.85 + 同类 + 时序不重叠（segments 真实片段, MAX_OVERLAP_SEC=1.0 + HIGH_SIM_OVERRIDE=0.90 容忍双跟踪伪影）；L3 track_stitch_enabled 开关 |
+| Global ReID Tracklet Stitch | ✅ | track_encode Phase 2: cosine ≥0.85 + 同类 + 时序不重叠（segments 真实片段, MAX_OVERLAP_SEC=1.0 + HIGH_SIM_OVERRIDE=0.90 容忍双跟踪伪影） |
 | Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
 | License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |

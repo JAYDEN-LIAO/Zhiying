@@ -28,6 +28,7 @@ export function useDetectionRanges(
   const rangesRef = useRef<DetectionRange[]>([]);
   const loadedKeys = useRef<Set<string>>(new Set());
   const inflight = useRef<Set<string>>(new Set());
+  const generationRef = useRef(0);
   const [version, setVersion] = useState(0);
 
   const rangeKey = useCallback((start: number, end: number) => {
@@ -38,11 +39,13 @@ export function useDetectionRanges(
     async (start: number, end: number) => {
       if (!videoId || !enabled || !hasDetection) return;
       const key = rangeKey(start, end);
-      if (loadedKeys.current.has(key) || inflight.current.has(key)) return;
-      inflight.current.add(key);
+      const requestKey = videoId + ":" + key;
+      if (loadedKeys.current.has(key) || inflight.current.has(requestKey)) return;
+      const generation = generationRef.current;
+      inflight.current.add(requestKey);
       try {
         const data = await api.fetchDetectionRange(videoId, start, end);
-        if (!data) return;
+        if (!data || generation !== generationRef.current) return;
         const dkey = rangeKey(data.start_sec, data.end_sec);
         // 重叠去重（预取与补拉可能重叠）：同 key 替换，新段追加
         const merged = [
@@ -60,7 +63,7 @@ export function useDetectionRanges(
         loadedKeys.current.add(dkey);
         setVersion((v) => v + 1);
       } finally {
-        inflight.current.delete(key);
+        inflight.current.delete(requestKey);
       }
     },
     [videoId, enabled, hasDetection, rangeKey],
@@ -94,6 +97,7 @@ export function useDetectionRanges(
 
   // 组切换 / 禁用 → 清空缓存
   useEffect(() => {
+    generationRef.current += 1;
     if (!videoId || !enabled || !hasDetection) {
       rangesRef.current = [];
       loadedKeys.current.clear();

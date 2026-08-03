@@ -77,7 +77,7 @@ frontend/src/labels.ts        — COCO 类名英→中映射 + 统一颜色表 (
 frontend/src/utils/helpers.ts — Shared helpers (fmtDuration, fmtDate, formatSec)
 frontend/src/services/api.ts — API wrapper + polling helper (getVideoStreamUrl hevc_ok, getProxyStatus)
 frontend/src/types/index.ts — TypeScript types (mirrors backend schemas + ProxyStatus)
-frontend/src/mockData.ts   — Pipeline stage definitions + computePipelineStages() dynamic function
+frontend/src/services/api.ts — Pipeline stages from `/pipeline/operations` (backend computes enabled operations)
 scripts/sweep_storage.py   — 存储卫生清扫 CLI (默认 dry-run 只报告, --apply 执行, --json 机器可读)
 ```
 
@@ -120,7 +120,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **摘要双模式**: native_video（本地 GPU + Python 聚合器, 默认）/ vlm_llm（API）; 切换封装在 runner 内部; `summary_mode` 变更需新建记录（不可增量）。
 - **多格式两层**: remux（容器标准化, -c copy）+ proxy（NVENC h264, 按需懒生成）; 管道优先读 remuxed; proxy 永不主动生成。
 - **NVDEC**: MJPEG pipe（~100KB/帧）默认启用，自动 fallback cv2。
-- **ReID 双层**: 在线 BoT-SORT with_reid（yolo26n-cls 特征）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠, L3 `track_stitch_enabled`）; 缝合完成后修改需新建记录。
+- **ReID 双层**: 在线 BoT-SORT with_reid（yolo26n-cls 特征）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠）; 缝合完成后修改需新建记录。
 - **编码预设**: fast/balanced/precise 三档控制分辨率 + batch（336×224 / 504×336 / 672×448）。
 - **存储卫生**: 删除必须走 `repository.delete_video`（StorageManager 清盘, 勿直接 `session.delete`）; 新增落盘路径必须登记进 `core/storage_manager.py`; 孤儿清扫手动（maintenance 端点/CLI, dry-run 默认）。判定: 视频文件按 DB 三列引用集合, 附属目录按 `video_id ∈ videos 表` —— 绝不用 scenes.keyframe_path（persist 窗口期会误删）。删除守卫: PROCESSING 或 `RUNNING_VIDEOS` → 409。
 
@@ -129,7 +129,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | Table | Key Columns | Purpose |
 |---|---|---|
 | `video_groups` | id(UUID PK), name, created_at, updated_at | 视频分组 — 批量上传时自动创建，组内单个视频删除自动清理空组 |
-| `videos` | id, status, progress, status_detail, summary(JSONB), content_type, summary_mode (native_video/vlm_llm), perception switches (vision/audio/ocr/grounding/caption/detection_enabled/summary_enabled), function switches (search_index_enabled, **track_stitch_enabled**), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail, encode_profile), language, format fields (container_format, video_codec, audio_codec, has_audio, remuxed_path, proxy_path, proxy_status, proxy_progress), **group_id(UUID FK → video_groups.id)** | Video master |
+| `videos` | id, status, progress, status_detail, summary(JSONB), content_type, summary_mode (native_video/vlm_llm), perception switches (vision/audio/ocr/grounding/caption/detection_enabled/summary_enabled), function switches (search_index_enabled), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail, encode_profile), language, format fields (container_format, video_codec, audio_codec, has_audio, remuxed_path, proxy_path, proxy_status, proxy_progress), **group_id(UUID FK → video_groups.id)** | Video master |
 | `scenes` | id, video_id(FK), scene_index, text_embedding(Vector2048), caption, ocr_text, aligned_transcript, entities(JSONB) | Core search grain (text_embedding = caption+ocr+transcript 语义) |
 | `transcripts` | id, video_id(FK, UNIQUE), full_text, words(JSONB) | Speech transcripts |
 | `frame_embeddings` | id, video_id(FK), timestamp_sec, embedding(Vector2048), is_keyframe | 1fps frame vectors |

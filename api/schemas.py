@@ -105,7 +105,6 @@ class ReuseRequest(BaseModel):
     summary_enabled: bool = True
     summary_mode: str = "native_video"
     search_index_enabled: bool = True
-    track_stitch_enabled: bool = True
     sample_fps: float = Field(default=1.0, ge=0.5, le=3.0)
     segment_threshold: float = Field(default=0.5, ge=0.2, le=0.8)
     caption_with_context: bool = True

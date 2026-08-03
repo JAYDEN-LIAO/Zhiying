@@ -7,8 +7,7 @@ import { RefObject } from "react";
 import { VideoPlayer } from "./VideoPlayer";
 import { DetectionTimeline } from "./DetectionTimeline";
 import { PipelineBar } from "./PipelineBar";
-import type { VideoResponse, DetectionData, FaceData, ProxyStatus } from "../types";
-import type { PipelineSwitches } from "../mockData";
+import type { VideoResponse, DetectionData, FaceData, ProxyStatus, PipelineStage } from "../types";
 
 interface Props {
   videoId: string | null;
@@ -23,7 +22,7 @@ interface Props {
   selectedTrackId: number | null;
   classFilter: string | null;
   proxyStatus: ProxyStatus | null;
-  pipelineSwitches: PipelineSwitches;
+  pipelineStages: PipelineStage[];
   videoRef: RefObject<HTMLVideoElement | null>;
   onTrackSelect: (trackId: number, className: string, seekTo?: number) => void;
 }
@@ -41,7 +40,7 @@ export function VideoSection({
   selectedTrackId,
   classFilter,
   proxyStatus,
-  pipelineSwitches,
+  pipelineStages,
   videoRef,
   onTrackSelect,
 }: Props) {
@@ -78,7 +77,7 @@ export function VideoSection({
         <PipelineBar
           progress={video?.progress ?? 0}
           statusDetail={video?.status_detail}
-          switches={pipelineSwitches}
+          stages={pipelineStages}
           subtitle={video?.status === "pending" ? "等待参数配置..." : null}
         />
       </div>

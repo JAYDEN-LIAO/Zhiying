@@ -1,12 +1,12 @@
 /* ════════════════════════════════════════════════════════════
    Dashboard — slim orchestrator (v2.0)
    Layout: Sidebar | Header | VideoSection + RightPanel
-   State management: custom hooks + DetectionContext
+   State management: custom hooks
    ════════════════════════════════════════════════════════════ */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api } from "./services/api";
-import type { VideoListItem, VideoResponse, VideoGroup } from "./types";
+import type { VideoListItem, VideoResponse, VideoGroup, PipelineStage } from "./types";
 import { fmtDuration } from "./utils/helpers";
 import { IconDownload } from "./components/icons";
 import { ExportMenu } from "./components/ExportMenu";
@@ -33,6 +33,7 @@ export default function Dashboard() {
   /* ── Video selection ── */
   const [currentVideoId, setCurrentVideoId] = useState<string | null>(null);
   const [currentVideo, setCurrentVideo] = useState<VideoResponse | null>(null);
+  const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
   const [videos, setVideos] = useState<VideoListItem[]>([]);
   const [listKey, setListKey] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
@@ -102,9 +103,13 @@ export default function Dashboard() {
   // Detection video sync (v0.19 — 独立于当前播放视频)
   useEffect(() => {
     if (!detectionVideoId) { setDetectionVideo(null); return; }
-    const found = videos.find(v => v.id === detectionVideoId);
-    if (found) api.getVideo(detectionVideoId).then(setDetectionVideo);
-  }, [detectionVideoId, videos]);
+    let cancelled = false;
+    setDetectionVideo(null);
+    api.getVideo(detectionVideoId)
+      .then((data) => { if (!cancelled) setDetectionVideo(data); })
+      .catch(() => { if (!cancelled) setDetectionVideo(null); });
+    return () => { cancelled = true; };
+  }, [detectionVideoId]);
 
   // Detection data (使用 detectionVideoId，若未设置则跟随 currentVideoId)
   const actualDetectionId = detectionVideoId ?? currentVideoId;
@@ -117,17 +122,18 @@ export default function Dashboard() {
     actualDetectionPlate,
   );
 
-  // Pipeline switches
-  const pipelineSwitches = useMemo(() => {
-    if (!currentVideo) return { vision_enabled: true, audio_enabled: false, caption_enabled: true, search_index_enabled: true, summary_enabled: true };
-    return {
-      vision_enabled: currentVideo.vision_enabled,
-      audio_enabled: currentVideo.audio_enabled,
-      caption_enabled: currentVideo.caption_enabled,
-      search_index_enabled: currentVideo.search_index_enabled,
-      summary_enabled: currentVideo.summary_enabled,
-    };
-  }, [currentVideo]);
+  // Pipeline plan comes from the backend gate/weight calculation.
+  useEffect(() => {
+    if (!currentVideoId) {
+      setPipelineStages([]);
+      return;
+    }
+    let cancelled = false;
+    api.getPipelineOperations(currentVideoId)
+      .then((stages) => { if (!cancelled) setPipelineStages(stages); })
+      .catch(() => { if (!cancelled) setPipelineStages([]); });
+    return () => { cancelled = true; };
+  }, [currentVideoId, currentVideo?.updated_at]);
 
   /* ── Track selection state ── */
   const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
@@ -206,6 +212,7 @@ export default function Dashboard() {
 
   const handleDelete = useCallback((deletedId: string) => {
     if (currentVideoId === deletedId) { setCurrentVideoId(null); setCurrentVideo(null); }
+    if (detectionVideoId === deletedId) { setDetectionVideoId(null); setDetectionVideo(null); }
     // ★ 同步清理 videoGroups
     setVideoGroups(prev => {
       const updated = prev.map(g => ({
@@ -214,7 +221,7 @@ export default function Dashboard() {
       })).filter(g => g.videoIds.length > 0);
       return updated;
     });
-  }, [currentVideoId]);
+  }, [currentVideoId, detectionVideoId]);
 
   /* ── Group video switch (v0.19) ── */
   const handleGroupVideoSwitch = useCallback((videoId: string) => {
@@ -425,7 +432,7 @@ export default function Dashboard() {
               hasDetection={showDetection} detectionData={detectionData}
               faceData={faceData} selectedTrackId={selectedTrackId}
               classFilter={classFilter} proxyStatus={proxyStatus}
-              pipelineSwitches={pipelineSwitches} videoRef={videoRef}
+              pipelineStages={pipelineStages} videoRef={videoRef}
               onTrackSelect={handleTrackSelect}
             />
           </main>
@@ -440,9 +447,6 @@ export default function Dashboard() {
             detectionVideoId={detectionVideoId}
             onDetectionVideoChange={(vid) => {
               setDetectionVideoId(vid);
-              // 同步 detectionVideo 对象
-              if (vid) api.getVideo(vid).then(setDetectionVideo);
-              else setDetectionVideo(null);
             }}
             onGroupVideoSwitch={handleGroupVideoSwitch}
             onSeekTo={(start, end) => {

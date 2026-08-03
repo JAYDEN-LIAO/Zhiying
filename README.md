@@ -217,8 +217,7 @@ cerno/
 │   │   ├── utils/helpers.ts  # Shared helpers (fmtDuration, fmtDate, formatSec)
 │   │   ├── labels.ts        # YOLO COCO 类名英→中映射 + 颜色表
 │   │   ├── services/api.ts
-│   │   ├── types/index.ts
-│   │   └── mockData.ts   # Pipeline stage definitions + computePipelineStages()
+│   │   └── types/index.ts
 │   ├── package.json
 │   └── vite.config.ts
 ├── models/               # Local model weights (gitignored)
@@ -231,7 +230,8 @@ cerno/
 ## Development Status
 
 - **v0.21 — Storage Hygiene & Management**: 删除视频 = DB 级联 + 磁盘全回收（StorageManager 按 DB 引用追踪，reuse 共享文件只在最后引用删除时清理，空组同事务自动清理，处理中守卫 409 + `RUNNING_VIDEOS` 注册表闭合竞态）；批量 DELETE 替代 ORM 全量 load（删大视频性能修复）；`POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` 孤儿清扫（sweep 按 video_id 判定附属目录、mtime 保护上传竞态）；trackthumb 导出泄漏修复；人脸/检测/车牌缩略图缺失 404 兜底；前端删除二次确认 + processing 禁用 + 释放空间提示。
-- **v0.20 — Dual-layer ReID**: 在线 BoT-SORT ReID（`with_reid` + yolo26n-cls 特征, 遮挡/交叉保持身份）+ 全局 tracklet 缝合（detection 缓存 crop → mean pool → cosine ≥0.85 合并同一身份, segments 时序检查, L3 `track_stitch_enabled` 开关）。长视频友好（track_encode 零 seek）。
+- **维护记录**: 清理废弃的前端 `DetectionContext`/`mockData`，进度阶段统一由 `/pipeline/operations` 按视频参数动态返回；补充 Python、前端缓存及本地环境文件的忽略规则。
+- **v0.20 — Dual-layer ReID**: 在线 BoT-SORT ReID（`with_reid` + yolo26n-cls 特征, 遮挡/交叉保持身份）+ 全局 tracklet 缝合（detection 缓存 crop → mean pool → cosine ≥0.85 合并同一身份, segments 时序检查）。长视频友好（track_encode 零 seek）。
 - **v0.19 — Multi-Video Group**: 批量上传 + VideoGroup 分组 + 组参数同步启动 + 前端历史堆叠/展开 + 组内切换 + 跨视频搜索 + 独立检测面板。
 - **v0.18 — Universal Image Search + 中文化**: `POST /search/image` 通用图搜（独立 `search_image_only` 路径，帧不聚类精确到秒）+ 前端标签中文化 labels.ts。
 - **Planned**: Grounding (Florence-2), OCR
