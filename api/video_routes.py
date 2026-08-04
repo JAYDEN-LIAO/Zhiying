@@ -355,6 +355,7 @@ async def update_video_params(
             db_session_factory=db_session_factory,
             embedder=request.app.state.embedder,
             captioner=getattr(request.app.state, "captioner", None),
+            detector=getattr(request.app.state, "detector", None),
         )
         background_tasks.add_task(service.process_video, video.id)
         logger.info("[Params] video=%s full pipeline starting", video_id)
@@ -478,6 +479,7 @@ async def update_video_params(
             db_session_factory=db_session_factory,
             embedder=request.app.state.embedder,
             captioner=getattr(request.app.state, "captioner", None),
+            detector=getattr(request.app.state, "detector", None),
         )
         background_tasks.add_task(service.incremental_process, video.id, l3_turned_on)
 

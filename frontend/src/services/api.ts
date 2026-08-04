@@ -12,6 +12,7 @@ import type {
   PipelineParams,
   SettingsData,
   SettingsUpdate,
+  PipelinePreset,
   DetectionData,
   DetectionRange,
   FaceData,
@@ -249,6 +250,35 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+  },
+
+  /* ── 参数预设（v0.22） ── */
+  getPresets() {
+    return request<PipelinePreset[]>(`${BASE}/settings/presets`);
+  },
+
+  createPreset(name: string) {
+    return request<PipelinePreset>(`${BASE}/settings/presets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  renamePreset(id: string, name: string) {
+    return request<PipelinePreset>(`${BASE}/settings/presets/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  deletePreset(id: string) {
+    return request<{ deleted: string }>(`${BASE}/settings/presets/${id}`, { method: "DELETE" });
+  },
+
+  applyPreset(id: string) {
+    return request<PipelinePreset>(`${BASE}/settings/presets/${id}/apply`, { method: "POST" });
   },
 
   /* ── Video metadata ── */

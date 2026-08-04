@@ -10,6 +10,7 @@ VideoService 作为 Pipeline 的调用方，负责:
 
 import uuid
 import logging
+import asyncio
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -27,6 +28,33 @@ logger = logging.getLogger(__name__)
 # 的窗口竞态（删除守卫使用）。单进程内有效（uvicorn 默认单 worker）。
 RUNNING_VIDEOS: set[uuid.UUID] = set()
 
+# ── 并发管道限制 — 低显存机器（如 24GB）防组批量并发 OOM ──
+# config pipeline.max_concurrent_videos：0 = 不限（默认）；>0 时同一时刻最多 N 个管道在跑。
+# 静态权重是共享单实例不会翻倍，但激活峰值按并发数叠加，故需限流。
+_pipeline_limit: int = 0
+_pipeline_sem: asyncio.Semaphore | None = None
+_pipeline_sem_lock = asyncio.Lock()
+
+
+async def _acquire_pipeline_slot(config: dict) -> asyncio.Semaphore | None:
+    """按配置获取并发管道信号量；0=不限返回 None；限制变化时重建信号量。"""
+    global _pipeline_limit, _pipeline_sem
+    limit = int((config.get("pipeline", {}) or {}).get("max_concurrent_videos", 0) or 0)
+    if limit <= 0:
+        return None
+    async with _pipeline_sem_lock:
+        if _pipeline_limit != limit:
+            _pipeline_limit = limit
+            _pipeline_sem = asyncio.Semaphore(limit)
+        sem = _pipeline_sem
+    await sem.acquire()
+    return sem
+
+
+def _release_pipeline_slot(sem: asyncio.Semaphore | None) -> None:
+    if sem is not None:
+        sem.release()
+
 
 class VideoService:
     """视频业务服务 — 创建记录与 Pipeline 后台调度。"""
@@ -37,11 +65,13 @@ class VideoService:
         db_session_factory: async_sessionmaker[AsyncSession],
         embedder=None,
         captioner=None,
+        detector=None,
     ):
         self.config = config
         self.db_session_factory = db_session_factory
         self.embedder = embedder
         self.captioner = captioner
+        self.detector = detector
 
     async def create_and_process(
         self,
@@ -60,7 +90,11 @@ class VideoService:
         logger.info("[VideoService] Incremental %s for video %s", added_modalities, video_id)
         RUNNING_VIDEOS.add(video_id)
         try:
-            await self._incremental_process(video_id, added_modalities)
+            sem = await _acquire_pipeline_slot(load_config())
+            try:
+                await self._incremental_process(video_id, added_modalities)
+            finally:
+                _release_pipeline_slot(sem)
         finally:
             RUNNING_VIDEOS.discard(video_id)
 
@@ -82,6 +116,7 @@ class VideoService:
                 video=video,
                 shared_embedder=self.embedder,
                 shared_captioner=self.captioner,
+                shared_detector=self.detector,
             )
             await engine.run_incremental(added_modalities)
         except Exception as e:
@@ -99,7 +134,12 @@ class VideoService:
         logger.info("[VideoService] Starting pipeline for video %s", video_id)
         RUNNING_VIDEOS.add(video_id)
         try:
-            await self._process_video(video_id)
+            # 并发上限（0=不限）：组批量上传会并发启动多个管道，激活峰值叠加需限流
+            sem = await _acquire_pipeline_slot(load_config())
+            try:
+                await self._process_video(video_id)
+            finally:
+                _release_pipeline_slot(sem)
         finally:
             RUNNING_VIDEOS.discard(video_id)
 
@@ -121,6 +161,7 @@ class VideoService:
                 video=video,
                 shared_embedder=self.embedder,
                 shared_captioner=self.captioner,
+                shared_detector=self.detector,
             )
             await engine.run()
         except Exception as e:

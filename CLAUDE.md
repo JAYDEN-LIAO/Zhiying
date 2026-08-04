@@ -2,20 +2,20 @@
 
 ## One-Line Summary
 
-Cerno 是 **视频分析引擎**（v0.21）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统控制管道；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。架构细节见 `docs/arch.md`。
+Cerno 是 **视频分析引擎**（v0.22）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。`deploy/` 提供 Windows 裸机一键安装（从零部署）。架构细节见 `docs/arch.md`。
 
 ## Quick File Map
 
 ```
-main.py                    — FastAPI app, lifespan, exception handlers, shared embedder (captioner on-demand)
+main.py                    — FastAPI app, lifespan, exception handlers, shared embedder + shared detector (app.state, detector 模型懒加载)
 api/routes.py              — Transitional re-export (endpoints split into sub-routers)
 api/video_routes.py        — Video CRUD + upload (probe同步+异步remux/proxy) + stream (hevc_ok智能路由) + proxy-status + thumbnail
 api/search_routes.py       — Semantic search + pipeline/operations endpoints
-api/settings_routes.py     — System settings (API keys) endpoints
+api/settings_routes.py     — 系统设置端点：GET/PUT /settings（密钥/服务商/存储/管道性能）+ /settings/pipeline + 参数预设 CRUD
 api/router.py              — Assembles sub-routers under /api/v1 prefix
 api/deps.py                — FastAPI dependency injection (get_db)
-api/schemas.py             — Shared API DTOs (APIResponse, search/status models, ProxyStatusResponse)
-api/detection_routes.py    — Detection data API (GET tracks 摘要 + detections 时间窗 + thumbnail, v0.22)
+api/schemas.py             — Shared API DTOs (APIResponse, search/status models, ProxyStatusResponse, PipelineSettings/Presets, v0.22)
+api/detection_routes.py    — Detection data API: GET /detection/tracks (摘要) + /detection/detections (时间窗, v0.22 替代旧 /detection/data) + thumbnail
 api/export_routes.py       — Export endpoints: clip/frames/track/thumbnails (7 endpoints, GET+POST)
 api/face_routes.py          — Face data API (GET face/data + face/thumbnail)
 api/plate_routes.py         — Plate data API (GET plate/data + plate/thumbnail)
@@ -27,7 +27,10 @@ core/search.py             — 6 search functions: frame/chunk/text/track/plate/
 core/repository.py         — Data access layer + bulk_insert_frames/chunks
 core/storage_manager.py    — 存储管理: 路径解析/引用追踪/删除清盘(remove_video_artifacts)/孤儿清扫(sweep)
 core/db.py                 — Async engine, init_db(), incremental migration (extensions: pgvector, pg_trgm, fuzzystrmatch)
-core/config_loader.py      — Loads config.yaml, merges .env secrets via _ENV_OVERRIDES
+core/config_loader.py      — Loads config.yaml + .env + data/settings.json overrides; PIPELINE_NUMERIC_SPEC/clamp_param 参数钳制; _auto_fallback_captioner 自动降级
+core/presets_service.py    — 参数预设服务 (data/presets.json): create/apply/rename/delete 命名参数快照
+core/gpu_lock.py           — 全局 GPU 推理锁: 串行化 embedder + YOLO 前向，防并发驱动故障
+core/settings_service.py   — 设置服务: data/settings.json 读写 {api_keys, providers, storage, pipeline}; API_KEY_DEFS/API_PROVIDER_DEFS; 脱敏显示
 core/prompt_loader.py      — Prompt template loader (config/prompts.yaml)
 core/status_tracker.py     — Pipeline progress + dynamic operation-based weight calculation
 core/exceptions.py         — Custom exceptions
@@ -45,19 +48,19 @@ pipeline/runners/          — 15 operation runners (one per processing unit):
   runners/frame_encode.py    — 1fps batch image encoding (embedder @336×224) → frame_embeddings
   runners/chunk_encode.py    — Sliding window video encoding → chunks (config-gated)
   runners/text_encode.py     — Text semantic encoding (gated: 有文本源才跑)
-  runners/detection.py       — YOLO11 + BoT-SORT (10fps/128batch/640px), 生产者-消费者并发, 与 search_encode 共享 NVDEC 流, 每 2s 缓存 track crop 供 track_encode
+  runners/detection.py       — YOLO11 + BoT-SORT (10fps/128batch/640px), 生产者-消费者并发, 与 search_encode 共享 NVDEC 流, 每 2s 缓存 track crop 供 track_encode (batch 128 而非 1024: 受 gpu_lock 串行, 长批会饿死 embedder)
   runners/track_encode.py    — Track crop embedding + 全局 tracklet 缝合 (读检测缓存多帧 640×384 → mean pool → cosine 合并)
   runners/face.py            — SCRFD face detection + ArcFace R50 embedding + identity clustering
   runners/plate.py           — HyperLPR3 license plate detection + text recognition
   runners/search_encode.py   — 纯搜索路径：队列消费 detection 共享流帧 1fps + 批量编码，不依赖 segmentation/keyframes
 pipeline/search_engine.py  — 7-path parallel recall (frame/chunk/text/label/track/plate + image) + scene-merge dedup, search_image_only() for no-cluster per-frame image search
 plugins/factory.py         — Dynamic plugin loader (CATEGORY_MAP, _MODULE_OVERRIDES, _CLASS_OVERRIDES)
-plugins/detector/yolo.py   — YOLO11s detector (batch GPU inference, asyncio.to_thread)
+plugins/detector/yolo.py   — YOLO11s detector (batch GPU inference 受 core/gpu_lock 串行; batch_size/imgsz 可配, asyncio.to_thread)
 plugins/face/insightface_face.py  — InsightFace SCRFD + ArcFace R50 recognizer
 plugins/plate/hyperlpr_plate.py  — HyperLPR3 license plate detector + recognizer (primary)
 plugins/plate/paddle_plate.py    — PaddleOCR license plate detector (alternative)
-plugins/embedder/qwen_vl_embedder.py — Qwen3-VL-Embedding (336×224 encode, 内存路径, 零磁盘I/O)
-services/video_service.py  — Pipeline 调用与后台调度
+plugins/embedder/qwen_vl_embedder.py — Qwen3-VL-Embedding (336×224 encode, 内存路径, 零磁盘I/O; 量化 8bit/4bit via bitsandbytes; 受 gpu_lock 串行; 相对模型路径解析到项目根)
+services/video_service.py  — Pipeline 调用与后台调度 (max_concurrent_videos 信号量限流; RUNNING_VIDEOS 注册表)
 services/format_service.py — 格式兼容: probe(ffprobe) / remux(容器标准化, -c copy) / proxy(按需h264_nvenc)
 services/export_service.py — 导出业务逻辑 (clip/frames/track/thumbnails zip)
 utils/video_util.py        — FFmpeg 工具函数 + stream_frames() (NVDEC MJPEG pipe / cv2 fallback)
@@ -73,13 +76,14 @@ frontend/src/components/    — Split components (20 files):
                               VideoSummaryCard, VideoSearchCard, HistoryPanelContent, SettingsPage,
                               DetectionOverlay, DetectionPanel, DetectionTimeline,
                               VideoInfoCard, ExportMenu, RightPanel
+                              SettingsPage 4 分区: 系统(存储/NVDEC/chunk/并发上限) + 模型参数(编码三档/YOLO/量化) + 参数预设 + API 密钥
 frontend/src/labels.ts        — COCO 类名英→中映射 + 统一颜色表 (zh/zhLabel/colorOf)
 frontend/src/utils/helpers.ts — Shared helpers (fmtDuration, fmtDate, formatSec)
 frontend/src/services/api.ts — API wrapper + polling helper (getVideoStreamUrl hevc_ok, getProxyStatus)
 frontend/src/types/index.ts — TypeScript types (mirrors backend schemas + ProxyStatus)
 frontend/src/services/api.ts — Pipeline stages from `/pipeline/operations` (backend computes enabled operations)
 scripts/sweep_storage.py   — 存储卫生清扫 CLI (默认 dry-run 只报告, --apply 执行, --json 机器可读)
-deploy/                    — Windows 部署套件: setup_windows.ps1 / start_windows.ps1 / download_models.py / write_windows_config.py / deploy.md（生成 config/config.windows.yaml，经 CERNO_CONFIG 加载，不改 config.yaml）
+deploy/                    — Windows 裸机一键安装套件: setup_windows.ps1（装 Python/FFmpeg/CUDA torch/WSL2/Docker/依赖/模型 + 自校验, 旧 start_windows.ps1 与 write_windows_config.py 已删）/ download_models.py（含 reid 组件 yolo26n-cls.pt）/ deploy.md / deploy_feedback.md（部署踩坑记录）。配置已统一：无需 config.windows.yaml / CERNO_CONFIG，后端直接 uvicorn main:app
 ```
 
 ## Data Flow
@@ -97,6 +101,14 @@ deploy/                    — Windows 部署套件: setup_windows.ps1 / start_w
     → 同事务空组清理 → commit → StorageManager 引用判定清盘 → 返回 freed_bytes
   孤儿清扫: POST /maintenance/sweep (dry_run 默认) / scripts/sweep_storage.py --apply
 
+系统设置/参数预设 (v0.22, 运行时生效):
+  GET/PUT /settings 读写 data/settings.json {api_keys, providers, storage, pipeline}
+    → pipeline 段覆盖 config.yaml（编码三档模板/检测参数/量化/并发上限, clamp_param 钳制）
+    → load_config() 每次 _apply_settings_overrides 合并, 保存清 lru_cache → 无需重启（quantization 除外）
+  GET/POST /settings/presets + PUT/DELETE /{id} + POST /{id}/apply → data/presets.json 命名快照
+  并发: pipeline.max_concurrent_videos >0 → VideoService 信号量限流同时处理的管道数
+  GPU: 所有 embedder/YOLO 前向持 core/gpu_lock 串行（防并发驱动故障）; detector 共享 app.state 单实例
+
 PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
   duration
     ├─ search_encode ← detection 共享单 NVDEC 流 (队列消费) → frame_embeddings
@@ -113,7 +125,12 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 
 - **异步规则**: 所有插件接口 async; 同步模型推理 / cv2 等 C 调用 MUST 用 `asyncio.to_thread()`（关键帧 cv2 循环是范本）。
 - **Config-driven**: 插件后端由 `config.yaml` `plugins.{name}.backend` 选择，`null`=禁用; API key 只在 `.env`/环境变量（`core/config_loader.py` `_ENV_OVERRIDES`）。
-- **设置运行时生效**: 前端设置页 `GET/PUT /settings` 读写 `data/settings.json`（`{api_keys, providers{base_url,model}, storage{video_dir,artifact_dir}}`）；`core/config_loader._apply_settings_overrides` 每次 `load_config()` 覆盖进配置，保存时清 `lru_cache` → **无需重启**。上传路由/FormatService/VideoService 均用新鲜 `load_config()`（勿用启动时 `app.state.config` 快照）。
+- **设置运行时生效**: 前端设置页 `GET/PUT /settings` 读写 `data/settings.json`（`{api_keys, providers{base_url,model}, storage{video_dir,artifact_dir}, pipeline{encode_profiles 三档模板 + 检测参数 + 开关 + 量化 + 并发上限}}`）；`core/config_loader._apply_settings_overrides` 每次 `load_config()` 覆盖进配置（数值按 `PIPELINE_NUMERIC_SPEC`/`clamp_param` 钳制），保存时清 `lru_cache` → **无需重启**（唯一例外：**quantization 启动时加载，改后需重启**）。上传路由/FormatService/VideoService 均用新鲜 `load_config()`（勿用启动时 `app.state.config` 快照）。
+- **参数预设**: `data/presets.json` 多套命名管道参数快照（`GET/POST/PUT/DELETE /settings/presets` + `POST /settings/presets/{id}/apply`），不含存储路径与 API 密钥（机器相关）；套用即写 settings.json 覆盖区运行时生效。
+- **全局 GPU 锁**: 所有 GPU 前向（embedder 4 个 encode_* 与 YOLO detect，含模型加载/tracker 初始化/批量推理）必须持 `core/gpu_lock.gpu_lock`（`async with gpu_lock`）串行——24GB 机器上 YOLO 卷积与 8bit matmul 并发会触发 GPU 驱动硬故障（蓝屏/卡死）。锁只串行 GPU 计算，不串行 NVDEC 解码/DB。detection 攒批因此用 **128**（1024 长批持锁 ~20s 会饿死 embedder）。
+- **共享单实例**: embedder 与 detector 都在启动时预载到 `app.state`（detector 模型懒加载，首次 detect 才载 ~2GB，避免每视频重载），业务逻辑经 `shared_detector` 注入 PipelineEngine，禁用 `load_plugin("detector"/"embedder")` 重复实例化；captioner 按需加载。
+- **并发管道限制**: `pipeline.max_concurrent_videos`（0=不限）→ VideoService 用 `asyncio.Semaphore` 限流同时处理的管道数（组批量上传会并发启动多管道，激活峰值按并发叠加，低显存机建议 1）。
+- **配置统一 + 自动降级**: 一份 `config/config.yaml` 通用所有机器——embedder 相对模型路径自动解析到项目根；captioner 配 `qwen3_vl` 但本地 8B 模型缺失 → `load_config()` 自动降级 `qwen_api`（DashScope，打 WARNING），摘要模式由 `runners/base.py effective_summary_mode()` 兜底 `native_video→vlm_llm`。无需 `config.windows.yaml` / `CERNO_CONFIG`（后者仅保留为自定义配置覆盖入口）。
 - **向量维度**: 4096（人脸 512）; 无 pgvector HNSW（超 2000 上限，demo 规模全扫描 <1ms）。
 - **共享 embedder**: 启动时预载到 `app.state.embedder`，业务逻辑禁用 `load_plugin("embedder")`; captioner 按需加载。
 - **增量迁移**: `init_db()` 用 `ADD COLUMN IF NOT EXISTS` 演进 schema。
@@ -122,8 +139,8 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **摘要双模式**: native_video（本地 GPU + Python 聚合器, 默认）/ vlm_llm（API）; 切换封装在 runner 内部; `summary_mode` 变更需新建记录（不可增量）。
 - **多格式两层**: remux（容器标准化, -c copy）+ proxy（NVENC h264, 按需懒生成）; 管道优先读 remuxed; proxy 永不主动生成。
 - **NVDEC**: MJPEG pipe（~100KB/帧）默认启用，自动 fallback cv2。
-- **ReID 双层**: 在线 BoT-SORT with_reid（model=auto → 检测骨干特征直通, ultralytics 8.4 起不再下载独立 ReID 模型）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠）; 缝合完成后修改需新建记录。
-- **编码预设**: fast/balanced/precise 三档控制分辨率 + batch（336×224 / 504×336 / 672×448）。
+- **ReID 双层**: 在线 BoT-SORT with_reid（`config/botsort.yaml` `model: "models/yolo26n-cls.pt"` 本地外观模型——实测 ultralytics 8.4.115 的 `auto` 仍会从 GitHub 下载，故本地预置避免运行时下载）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠）; 缝合完成后修改需新建记录。
+- **编码预设**: fast/balanced/precise 三档控制分辨率 + batch（336×224 / 504×336 / 672×448），三档模板与默认档可在设置页覆盖；embedder 支持 `quantization` none/8bit/4bit（bitsandbytes, 需重启生效）。
 - **存储卫生**: 删除必须走 `repository.delete_video`（StorageManager 清盘, 勿直接 `session.delete`）; 新增落盘路径必须登记进 `core/storage_manager.py`; 孤儿清扫手动（maintenance 端点/CLI, dry-run 默认）。判定: 视频文件按 DB 三列引用集合, 附属目录按 `video_id ∈ videos 表` —— 绝不用 scenes.keyframe_path（persist 窗口期会误删）。删除守卫: PROCESSING 或 `RUNNING_VIDEOS` → 409。
 
 ## Database Tables (12)
@@ -150,17 +167,21 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | Pipeline DAG (15 ops, EventDrivenScheduler) | ✅ | engine.py, operations.py |
 | 4-path encoding (frame/chunk/text/track) | ✅ | runners/frame_encode, chunk_encode, text_encode, track_encode |
 | Detection + Tracking (双层 ReID) | ✅ | plugins/detector/yolo.py, runners/detection.py |
+| Detection 大规模渲染重构 (v0.22) | ✅ | /detection/tracks + /detection/detections 替代旧 /detection/data; 前端虚拟滚动 + Canvas 时间轴 |
 | 7-path search + 图搜 (face/universal) | ✅ | search_engine.py, core/search.py |
 | Face / Plate 识别 | ✅ | plugins/face/insightface_face.py, plugins/plate/hyperlpr_plate.py |
 | 双模式摘要 (native_video/vlm_llm) | ✅ | runners/caption.py, summary.py |
 | 多格式兼容 (remux + lazy proxy) | ✅ | services/format_service.py |
 | 存储卫生 (v0.21) | ✅ | core/storage_manager.py, api/maintenance_routes.py, scripts/sweep_storage.py |
 | 4级参数 + 增量处理 | ✅ | core/schemas.py, engine.py run_incremental() |
-| 前端 Dashboard (20 组件 + 8 hooks) | ✅ | Dashboard.tsx, components/ |
+| 系统设置（API 密钥/服务商/存储/管道性能） | ✅ | core/settings_service.py, api/settings_routes.py — GET/PUT /settings（含 pipeline 段：编码三档模板/检测参数/量化/并发上限，settings.json backed，运行时生效） |
+| 参数预设 (v0.22) | ✅ | core/presets_service.py — GET/POST/PUT/DELETE /settings/presets + apply（data/presets.json 命名快照） |
+| 全局 GPU 锁 + 共享单实例 | ✅ | core/gpu_lock.py, main.py app.state.detector — embedder/YOLO 前向串行防驱动故障; 并发管道 max_concurrent_videos 限流 |
+| 前端 Dashboard (20 组件 + 8 hooks) | ✅ | Dashboard.tsx, components/ (SettingsPage 4 分区) |
 | 元数据 / 来源分析 / 导出 | ✅ | utils/metadata.py, video_source.py, export_service.py |
-| Settings API + API key | ✅ | core/settings_service.py — GET/PUT /settings（API 密钥/服务商端点与模型/存储路径，settings.json backed） |
+| Windows 从零部署 (v0.22) | ✅ | deploy/setup_windows.ps1 裸机一键安装器 + download_models.py (含 reid) + deploy_feedback.md; 配置统一自动降级 |
 | OCR / Grounding | ⬜ Shell | plugins/ocr/, plugins/grounding/ |
-| Health / Reindex | 🔶 部分 | maintenance_routes.py (存储清扫已上, 健康检查待办) |
+| Health / Reindex | 🔶 部分 | /health 已上, reindex 待办 |
 
 ## Agent Instructions
 
@@ -189,5 +210,6 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - Python 3.13
 - FastAPI, SQLAlchemy async, asyncpg, pgvector
 - transformers, torch (CUDA 12.4), modelscope, qwen-vl-utils
+- bitsandbytes (embedder 8bit/4bit 量化), onnxruntime-gpu (人脸/车牌 GPU 推理)
 - openai, httpx, Pillow
 - pytest, pytest-asyncio

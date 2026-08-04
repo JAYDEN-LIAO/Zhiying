@@ -1,7 +1,7 @@
 """
 core/settings_service.py
 ═══════════════════════════════════════════════════════════
-设置管理服务 — 持久化 API 密钥 / 服务商端点与模型 / 存储路径。
+设置管理服务 — 持久化 API 密钥 / 服务商端点与模型 / 存储路径 / 管道性能。
 
 存储为 data/settings.json，从 config.yaml 读取初始默认值。
 settings.json 中的值优先于 config.yaml，运行时保存即生效（清 config 缓存）。
@@ -11,7 +11,11 @@ data/settings.json 结构：
   "api_keys":   { "dashscope": "sk-...", "deepseek": "sk-..." },
   "providers":  { "dashscope": {"base_url": "...", "model": "..."},
                   "deepseek":  {"base_url": "...", "model": "..."} },
-  "storage":    { "video_dir": "...", "artifact_dir": "..." }
+  "storage":    { "video_dir": "...", "artifact_dir": "..." },
+  "pipeline":   { "encode_batch_size": 64, "encode_width": 336, "encode_height": 224,
+                  "default_encode_profile": "fast", "detection_fps": 5,
+                  "detector_batch_size": 32, "confidence_threshold": 0.4, "iou_threshold": 0.5,
+                  "use_nvdec": true, "chunk_encoding": false }
 }
 """
 
@@ -19,7 +23,13 @@ import os
 import json
 import logging
 
-from core.config_loader import load_config
+from core.config_loader import (
+    load_config,
+    PIPELINE_NUMERIC_SPEC,
+    ENCODE_PROFILE_NUMERIC_SPEC,
+    ENCODE_PROFILE_NAMES,
+    clamp_param,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -180,19 +190,66 @@ def get_current_settings() -> dict:
         "artifact_dir": saved_storage.get("artifact_dir") or storage_cfg.get("artifact_dir", "data/artifacts"),
     }
 
+    # ── 管道性能（编码三档模板 + 检测参数 + 全局开关 + 模型参数）──
+    saved_pipeline = saved.get("pipeline", {}) or {}
+    pipeline_cfg = config.get("pipeline", {}) or {}
+    config_profiles = pipeline_cfg.get("encode_profiles", {}) or {}
+    saved_profiles = saved_pipeline.get("encode_profiles") or {}
+    default_profile = pipeline_cfg.get("default_encode_profile", "balanced")
+    det_cfg = config.get("plugins", {}).get("detector", {}) or {}
+
+    # 编码三档生效值：settings.json 逐档覆盖 > config 模板
+    profiles_result: dict[str, dict] = {}
+    for prof_name in ENCODE_PROFILE_NAMES:
+        base = config_profiles.get(prof_name, {}) or {}
+        ov = saved_profiles.get(prof_name) or {}
+        profiles_result[prof_name] = {
+            "encode_width": ov.get("encode_width") or base.get("encode_width", 336),
+            "encode_height": ov.get("encode_height") or base.get("encode_height", 224),
+            "encode_batch_size": ov.get("encode_batch_size") or base.get("encode_batch_size", 512),
+        }
+
+    pipeline_result = {
+        # 编码三档模板 + 默认档
+        "encode_profiles": profiles_result,
+        "default_encode_profile": saved_pipeline.get("default_encode_profile") or default_profile,
+        # 物体检测
+        "detection_fps": saved_pipeline.get("detection_fps") or det_cfg.get("detection_fps", 10),
+        "detector_batch_size": saved_pipeline.get("detector_batch_size") or det_cfg.get("batch_size", 128),
+        "confidence_threshold": saved_pipeline.get("confidence_threshold") or det_cfg.get("confidence_threshold", 0.4),
+        "iou_threshold": saved_pipeline.get("iou_threshold") or det_cfg.get("iou_threshold", 0.5),
+        # 全局开关（布尔：显式覆盖，None 回退 config）
+        "use_nvdec": saved_pipeline.get("use_nvdec") if saved_pipeline.get("use_nvdec") is not None
+                     else pipeline_cfg.get("use_nvdec", True),
+        "chunk_encoding": saved_pipeline.get("chunk_encoding") if saved_pipeline.get("chunk_encoding") is not None
+                          else pipeline_cfg.get("chunk_encoding", False),
+        # 模型参数
+        "quantization": saved_pipeline.get("quantization")
+                        or (config.get("plugins", {}).get("embedder", {}).get("params", {}) or {}).get("quantization", "none"),
+        "yolo_imgsz": saved_pipeline.get("yolo_imgsz") or det_cfg.get("imgsz", 640),
+        "max_concurrent_videos": saved_pipeline.get("max_concurrent_videos")
+                                 if saved_pipeline.get("max_concurrent_videos") is not None
+                                 else pipeline_cfg.get("max_concurrent_videos", 0),
+    }
+
     return {
         "api_keys": api_keys_result,
         "providers": providers_result,
         "storage": storage_result,
+        "pipeline": pipeline_result,
     }
 
 
 def update_settings(payload: dict) -> bool:
-    """保存设置。payload 可含 api_keys / providers / storage，保存后运行时生效。
+    """保存设置。payload 可含 api_keys / providers / storage / pipeline，保存后运行时生效。
 
     - api_keys  {id: value}：value 为空字符串视为删除
     - providers {id: {base_url, model}}：空值忽略
     - storage   {video_dir, artifact_dir}：空值忽略
+    - pipeline  {encode_profiles(三档模板), default_encode_profile, detection_fps,
+                  detector_batch_size, yolo_imgsz, confidence_threshold, iou_threshold,
+                  use_nvdec, chunk_encoding, quantization, max_concurrent_videos}：
+                  未提及(None)=不动，显式空串("")=删除覆盖（回退 config.yaml），布尔为显式开关
     """
     data = _read_all()
 
@@ -222,6 +279,87 @@ def update_settings(payload: dict) -> bool:
                 data.get("storage", {}).pop(key, None)
             else:
                 data.setdefault("storage", {})[key] = str(val).strip()
+
+    pipeline = payload.get("pipeline") or {}
+    if isinstance(pipeline, dict):
+        # ── 编码三档模板：逐档覆盖（空字段=不覆盖，数值钳制范围+步进取整）──
+        saved_profiles = pipeline.get("encode_profiles")
+        if isinstance(saved_profiles, dict):
+            out_profiles: dict[str, dict] = {}
+            for prof_name in ENCODE_PROFILE_NAMES:
+                vals = saved_profiles.get(prof_name)
+                if not isinstance(vals, dict):
+                    continue
+                out: dict = {}
+                for field, spec in ENCODE_PROFILE_NUMERIC_SPEC.items():
+                    val = vals.get(field)
+                    if val is None or (isinstance(val, str) and not val.strip()):
+                        continue
+                    clamped = clamp_param(spec, val)
+                    if clamped is None:
+                        logger.warning("[Settings] Invalid %s.%s: %r", prof_name, field, val)
+                        continue
+                    out[field] = clamped
+                if out:
+                    out_profiles[prof_name] = out
+            if out_profiles:
+                data.setdefault("pipeline", {})["encode_profiles"] = out_profiles
+            else:
+                data.get("pipeline", {}).pop("encode_profiles", None)
+
+        # ── 数值字段（范围钳制）：显式空字符串 = 删除覆盖；未提及(None) = 保持现状 ──
+        #    每张卡只发自己的字段，未提及的键绝不能清除，否则后保存的卡会抹掉其他卡的值
+        for key, spec in PIPELINE_NUMERIC_SPEC.items():
+            val = pipeline.get(key)
+            if val is None:
+                continue  # 该卡未涉及此参数，保持已有覆盖
+            if isinstance(val, str) and not val.strip():
+                data.get("pipeline", {}).pop(key, None)
+                continue
+            clamped = clamp_param(spec, val)
+            if clamped is None:
+                logger.warning("[Settings] Invalid pipeline value for %s: %r", key, val)
+            else:
+                data.setdefault("pipeline", {})[key] = clamped
+
+        # ── 枚举字段：default_encode_profile / quantization（校验取值）──
+        #    同样：未提及(None)=不动，显式空串("")=删除覆盖
+        val = pipeline.get("default_encode_profile")
+        if val is None:
+            pass
+        elif isinstance(val, str) and not val.strip():
+            data.get("pipeline", {}).pop("default_encode_profile", None)
+        else:
+            v = str(val).strip()
+            if v in ("fast", "balanced", "precise"):
+                data.setdefault("pipeline", {})["default_encode_profile"] = v
+            else:
+                logger.warning("[Settings] Invalid default_encode_profile: %r", val)
+
+        val = pipeline.get("quantization")
+        if val is None:
+            pass
+        elif isinstance(val, str) and not val.strip():
+            data.get("pipeline", {}).pop("quantization", None)
+        else:
+            v = str(val).strip().lower()
+            if v in ("none", "8bit", "4bit"):
+                data.setdefault("pipeline", {})["quantization"] = v
+            else:
+                logger.warning("[Settings] Invalid quantization: %r", val)
+
+        # ── 布尔开关：显式 true/false 覆盖；未发送则不处理 ──
+        for key in ("use_nvdec", "chunk_encoding"):
+            val = pipeline.get(key)
+            if isinstance(val, bool):
+                data.setdefault("pipeline", {})[key] = val
+
+        # ── 兼容清理：旧的扁平编码键（v0.22 前 schema）已废弃，保存时清除 ──
+        for legacy in ("encode_batch_size", "encode_width", "encode_height"):
+            data.get("pipeline", {}).pop(legacy, None)
+
+        if not data.get("pipeline"):
+            data.pop("pipeline", None)
 
     _write_all(data)
     _invalidate()

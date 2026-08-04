@@ -32,6 +32,8 @@ logging.basicConfig(
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 # 静默 ultralytics WARNING（运动补偿 "not enough matching points" 无害）
 logging.getLogger("ultralytics").setLevel(logging.ERROR)
+# 静默 bitsandbytes WARNING（8bit 量化每次 matmul 都刷 "bf16→fp16 cast"，无害纯噪音）
+logging.getLogger("bitsandbytes").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 
@@ -84,8 +86,15 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Face recognizer disabled (backend is null)")
 
-    # 物体检测器 — 不预加载，Pipeline execution 时按需加载（YOLO11s 加载 < 1s）
-    # 一个 Pipeline 只加载一次，不存在重复实例化
+    # 物体检测器 — 共享单实例（模型懒加载，首次 detect 才载入 ~2GB）
+    # 避免每个视频重载 YOLO；配合 core/gpu_lock 与 embedder 串行，防并发驱动故障
+    logger.info("Loading shared object detector ...")
+    from plugins.factory import load_plugin as _load_det
+    app.state.detector = await _load_det(config, "detector")
+    if app.state.detector is not None:
+        logger.info("Object detector shared instance ready (model lazy)")
+    else:
+        logger.info("Object detector disabled (backend is null)")
 
     # SearchEngine 不在此处预初始化——embedder 按需加载，首次搜索时自动创建
 

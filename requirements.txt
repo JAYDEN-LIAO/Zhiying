@@ -22,7 +22,7 @@ pyyaml>=6.0.1
 # ══════════════════════════════════════════════
 #  Numerical / image
 # ══════════════════════════════════════════════
-numpy>=1.26.4
+numpy>=1.26.4,<2.4  # paddlex 3.7 要求 numpy<2.4（2.x 兼容其余栈，仅 paddlex 收紧）
 Pillow>=10.2.0
 opencv-python-headless>=4.9.0
 
@@ -54,7 +54,7 @@ transnetv2-pytorch>=1.0
 #  Face recognition (SCRFD + ArcFace R50)
 # ══════════════════════════════════════════════
 insightface>=0.7.3
-onnxruntime>=1.18.0
+onnxruntime-gpu>=1.18.0  # GPU 推理（CPU 版 onnxruntime 会让人脸/车牌静默跑 CPU）
 
 #  License plate recognition — hyperlpr3 是主后端 (ONNX Runtime)
 # ══════════════════════════════════════════════

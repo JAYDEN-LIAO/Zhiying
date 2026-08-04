@@ -199,12 +199,14 @@ class PipelineEngine:
         video: Video,
         shared_embedder=None,
         shared_captioner=None,
+        shared_detector=None,
     ):
         self.config = config
         self.db_session_factory = db_session_factory
         self.video = video
         self._shared_embedder = shared_embedder
         self._shared_captioner = shared_captioner
+        self._shared_detector = shared_detector
 
         # v0.13: 优先使用 remuxed MP4（容器 demux 效率远高于 PS/TS/AVI）
         # ASSUMPTION: remuxed 文件的帧数/时长/时间戳与原始文件一致（_c copy 流复制保证）
@@ -236,6 +238,8 @@ class PipelineEngine:
             # 注入共享实例（已在 lifespan 预加载，避免重复加载）
             if self._shared_captioner is not None:
                 self.plugins["captioner"] = self._shared_captioner
+            if self._shared_detector is not None:
+                self.plugins["detector"] = self._shared_detector
 
             # 4. 创建 tracker（动态进度权重）和 context
             tracker = StatusTracker(
@@ -349,6 +353,8 @@ class PipelineEngine:
             await self._load_plugins(enabled)
             if self._shared_captioner is not None:
                 self.plugins["captioner"] = self._shared_captioner
+            if self._shared_detector is not None:
+                self.plugins["detector"] = self._shared_detector
 
             batches = topological_batches(enabled)
             tracker = StatusTracker(
@@ -418,6 +424,8 @@ class PipelineEngine:
             needed.discard("embedder")
         if self._shared_captioner is not None:
             needed.discard("captioner")
+        if self._shared_detector is not None:
+            needed.discard("detector")
 
         for cat in needed:
             self.plugins[cat] = await load_plugin(self.config, cat)

@@ -72,7 +72,11 @@ class DetectionRunner(OperationRunner):
         # ── 独立检测帧率（与 1fps keyframe 池解耦）──
         det_cfg = pctx.config.get("plugins", {}).get("detector", {})
         detection_fps: float = det_cfg.get("detection_fps", 15)
-        _BATCH_SIZE = 1024  # 攒批大小，减少 model.predict() 调用开销
+        # 攒批大小。⚠️ 全局 GPU 锁串行化后不能用 1024：
+        #   - YOLO 持锁整批前向 ~20s，embedder 全程饿死、共享流解码被连带卡死 → 管道病态慢
+        #   - 1024 帧全量缓冲进显存（~5GB+）→ 显存撑满接近 OOM
+        #   128 帧 ≈ 2-4s 持锁，embedder 每隔几秒就能插进来，管道顺畅，显存压力大降
+        _BATCH_SIZE = 128
         duration = pctx.ctx.duration
 
         if duration is None or duration <= 0:

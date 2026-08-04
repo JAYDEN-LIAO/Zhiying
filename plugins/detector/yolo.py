@@ -18,6 +18,7 @@ import logging
 import numpy as np
 
 from core.interfaces import BaseDetector
+from core.gpu_lock import gpu_lock
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class YoloDetector(BaseDetector):
 
     架构:
       _init_tracker()     → model.track(dummy)  初始化 predictor + tracker 配置（每视频 1 次）
-      _sync_predict()     → model.predict(frames, batch=128)  公有 API，批量 GPU + 自动追踪
+      _sync_predict()     → model.predict(frames, batch=batch_size)  公有 API，批量 GPU + 自动追踪
     """
 
     def __init__(
@@ -56,11 +57,18 @@ class YoloDetector(BaseDetector):
         model: str = "yolo26s.pt",
         confidence_threshold: float = 0.4,
         iou_threshold: float = 0.5,
+        batch_size: int = 128,
+        imgsz: int = 640,
         **kwargs,
     ) -> None:
         self._model_name = model
         self._conf = confidence_threshold
         self._iou = iou_threshold
+        # 单次 predict() 的 GPU 批大小（config.yaml plugins.detector.batch_size）—
+        # 低显存机器可调小，避免 YOLO 激活峰值 OOM
+        self._batch_size = batch_size
+        # YOLO 推理分辨率（config.yaml plugins.detector.imgsz）— 低显存可 512/416，激活近似减半
+        self._imgsz = imgsz
 
         # 延迟加载 — 首次调用 detect() 时加载模型
         self._model = None
@@ -80,13 +88,16 @@ class YoloDetector(BaseDetector):
 
             track_id 由 BoT-SORT 分配，跨 batch 保持一致。
         """
-        if self._model is None:
-            await asyncio.to_thread(self._load_model)
+        # 全局 GPU 锁：与 embedder 前向互斥（YOLO 卷积 + 8bit matmul 并发会触发驱动故障）。
+        # 模型加载/tracker 初始化/批量前向都算 GPU 计算，统一锁内执行。
+        async with gpu_lock:
+            if self._model is None:
+                await asyncio.to_thread(self._load_model)
 
-        # 初始化 predictor + tracker（每个视频首次调用时触发）
-        await asyncio.to_thread(self._init_tracker)
+            # 初始化 predictor + tracker（每个视频首次调用时触发）
+            await asyncio.to_thread(self._init_tracker)
 
-        return await asyncio.to_thread(self._sync_predict, frames)
+            return await asyncio.to_thread(self._sync_predict, frames)
 
     def reset_tracker(self) -> None:
         """重置追踪器状态 — 处理新视频前调用，清除跨视频的 track ID 残留。"""
@@ -147,6 +158,7 @@ class YoloDetector(BaseDetector):
             classes=self._target_class_ids,
             persist=True,
             tracker=self._tracker_config,
+            imgsz=self._imgsz,
             verbose=False,
         ))
 
@@ -159,13 +171,14 @@ class YoloDetector(BaseDetector):
         """
         target_classes = self._target_class_ids
 
-        # 一次调用，ultralytics 内部按 batch=128 分批 GPU 推理 + 自动追踪
+        # 一次调用，ultralytics 内部按 self._batch_size 分批 GPU 推理 + 自动追踪
         results = list(self._model.predict(
             frames,
             conf=self._conf,
             iou=self._iou,
             classes=target_classes,
-            batch=128,
+            batch=self._batch_size,
+            imgsz=self._imgsz,
             verbose=False,
             stream=True,    # 流式输出，消除 ultralytics RAM 警告
         ))

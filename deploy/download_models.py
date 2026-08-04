@@ -34,6 +34,8 @@ from urllib.request import Request, urlopen
 
 EMBEDDING_MODEL_ID = "Qwen/Qwen3-VL-Embedding-8B"
 YOLO_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt"
+# BoT-SORT with_reid 外观模型（ultralytics 8.4.115 的 "auto" 仍会运行时下载，改为本地预置）
+REID_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-cls.pt"
 
 # HyperLPR3 模型版本目录（与 hyperlpr3.config.settings._MODEL_VERSION_ 对齐）
 HYPERLPR_VERSION = "20230229"
@@ -67,6 +69,14 @@ def embedding_complete(path: Path) -> bool:
 
 
 def yolo_complete(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 1_000_000
+    except OSError:
+        return False
+
+
+def reid_complete(path: Path) -> bool:
+    """ReID 外观模型 yolo26n-cls.pt（BoT-SORT with_reid 用，~5.5MB）。"""
     try:
         return path.is_file() and path.stat().st_size > 1_000_000
     except OSError:
@@ -143,6 +153,19 @@ def download_yolo(url: str, target: Path, retries: int) -> None:
 
     _retry("YOLO yolo26s.pt", retries, _do)
     print(f"[ok] YOLO model verified: {target}")
+
+
+def download_reid(url: str, target: Path, retries: int) -> None:
+    if reid_complete(target):
+        print(f"[skip] ReID model already complete: {target}")
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    def _do():
+        _download_file_resumable(url, target)
+
+    _retry("ReID yolo26n-cls.pt", retries, _do)
+    print(f"[ok] ReID model verified: {target}")
 
 
 def _download_file_resumable(url: str, target: Path) -> None:
@@ -224,7 +247,7 @@ def download_plate(retries: int) -> None:
 # ════════════════════════════════════════════════════════════════
 
 def _resolve_components(choices: list[str]) -> set[str]:
-    all_comp = {"embedding", "yolo", "face", "plate", "segmenter"}
+    all_comp = {"embedding", "yolo", "reid", "face", "plate", "segmenter"}
     result: set[str] = set()
     for c in choices:
         if c == "all":
@@ -240,6 +263,7 @@ def _verify_all(root: Path, components: set[str]) -> bool:
     checks = {
         "embedding": lambda: embedding_complete(root / "Qwen" / "Qwen3-VL-Embedding-8B"),
         "yolo": lambda: yolo_complete(root / "yolo26s.pt"),
+        "reid": lambda: reid_complete(root / "yolo26n-cls.pt"),
         "face": face_complete,
         "plate": plate_complete,
         "segmenter": segmenter_complete,
@@ -247,12 +271,13 @@ def _verify_all(root: Path, components: set[str]) -> bool:
     labels = {
         "embedding": "embedding (Qwen3-VL-Embedding-8B)",
         "yolo": "yolo (yolo26s.pt)",
+        "reid": "reid (yolo26n-cls.pt)",
         "face": "face (InsightFace buffalo_l)",
         "plate": "plate (HyperLPR3)",
         "segmenter": "segmenter (TransNetV2)",
     }
     ok = True
-    for comp in ("embedding", "yolo", "face", "plate", "segmenter"):
+    for comp in ("embedding", "yolo", "reid", "face", "plate", "segmenter"):
         if comp not in components:
             continue
         result = checks[comp]()
@@ -265,12 +290,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--component", action="append", default=[],
-        choices=["all", "embedding", "yolo", "face", "plate", "segmenter"],
+        choices=["all", "embedding", "yolo", "reid", "face", "plate", "segmenter"],
         help="要准备/校验的组件；可多次传，'all' 表示全部",
     )
     parser.add_argument("--model-root", type=Path, default=Path("models"))
     parser.add_argument("--embedding-id", default=EMBEDDING_MODEL_ID)
     parser.add_argument("--yolo-url", default=YOLO_URL)
+    parser.add_argument("--reid-url", default=REID_URL)
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
@@ -288,6 +314,8 @@ def main() -> int:
         download_embedding(root / "Qwen" / "Qwen3-VL-Embedding-8B", args.embedding_id, args.retries)
     if "yolo" in components:
         download_yolo(args.yolo_url, root / "yolo26s.pt", args.retries)
+    if "reid" in components:
+        download_reid(args.reid_url, root / "yolo26n-cls.pt", args.retries)
     if "face" in components:
         download_face(args.retries)
     if "plate" in components:

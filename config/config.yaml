@@ -29,6 +29,7 @@ plugins:
     iou_threshold: 0.5
     batch_size: 128
     detection_fps: 10
+    imgsz: 640               # YOLO 推理分辨率（低显存可 512/416，激活近似减半）
 
   # ── OCR（Demo 跳过）──
   ocr:
@@ -62,6 +63,9 @@ plugins:
       # 504×336: ~160 vision tokens/帧, 更细粒度, 速度约为 2×
       encode_width: 336
       encode_height: 224
+      # 量化：none / 8bit / 4bit — 低显存机器把 ~16GB 权重降到 ~8GB / ~4GB
+      # 需 bitsandbytes（pip install bitsandbytes）；⚠️ 启动时加载，改后需重启后端
+      quantization: "none"
 
   # ── 摘要生成 via DeepSeek API（vlm_llm 模式使用）──
   summarizer:
@@ -98,6 +102,9 @@ pipeline:
   # NVDEC 硬解 — GPU 硬件解码 + MJPEG pipe 传输 (~100KB/帧)
   # 需要 NVIDIA GPU + FFmpeg 编译 CUDA 支持；不可用时自动 fallback 到 cv2
   use_nvdec: true
+  # 并发管道上限：0 = 不限（默认）；>0 时同一时刻最多 N 个视频管道同时处理。
+  # 24GB 等低显存机器建议 1（激活峰值按并发数叠加，静态权重不叠加）
+  max_concurrent_videos: 0
 
   # ── 编码速度预设 — 控制搜索精度与处理时间的权衡 ──
   # 每个预设定义分辨率 + 批大小；逐视频可在参数面板选择

@@ -252,10 +252,56 @@ export interface StorageInfo {
   artifact_dir: string;
 }
 
+export interface EncodeProfileSettings {
+  encode_width: number;
+  encode_height: number;
+  encode_batch_size: number;
+}
+
+export interface PipelineSettings {
+  /* 编码三档模板 + 默认档 */
+  encode_profiles: Record<string, EncodeProfileSettings>;
+  default_encode_profile: string;
+  /* 物体检测 */
+  detection_fps: number;
+  detector_batch_size: number;
+  confidence_threshold: number;
+  iou_threshold: number;
+  /* 全局开关 */
+  use_nvdec: boolean;
+  chunk_encoding: boolean;
+  /* 模型参数 */
+  quantization: string;
+  yolo_imgsz: number;
+  max_concurrent_videos: number;
+}
+
+export interface EncodeProfileSettingsUpdate {
+  encode_width?: string;
+  encode_height?: string;
+  encode_batch_size?: string;
+}
+
+/* 编辑态更新载荷：数值/字符串字段为字符串，空字符串 = 删除覆盖（回退 config 默认）；布尔为显式开关 */
+export interface PipelineSettingsUpdate {
+  encode_profiles?: Record<string, EncodeProfileSettingsUpdate>;
+  default_encode_profile?: string;
+  detection_fps?: string;
+  detector_batch_size?: string;
+  confidence_threshold?: string;
+  iou_threshold?: string;
+  use_nvdec?: boolean;
+  chunk_encoding?: boolean;
+  quantization?: string;
+  yolo_imgsz?: string;
+  max_concurrent_videos?: string;
+}
+
 export interface SettingsData {
   api_keys: Record<string, ApiKeyInfo>;
   providers: Record<string, ProviderInfo>;
   storage: StorageInfo;
+  pipeline: PipelineSettings;
 }
 
 export interface ProviderSettingsEdit {
@@ -267,6 +313,16 @@ export interface SettingsUpdate {
   api_keys?: Record<string, string>;
   providers?: Record<string, ProviderSettingsEdit>;
   storage?: Partial<StorageInfo>;
+  pipeline?: PipelineSettingsUpdate;
+}
+
+/* ── 参数预设 (v0.22: 多套命名参数快照，一键套用) ── */
+
+export interface PipelinePreset {
+  id: string;
+  name: string;
+  pipeline: Record<string, unknown> | null;
+  created_at: string | null;
 }
 
 /* ── Detection & Tracking ── */

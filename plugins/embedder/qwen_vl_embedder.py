@@ -16,14 +16,18 @@ Qwen3-VL-Embedding 向量编码插件。
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 import numpy as np
 import torch
 
 from core.interfaces import BaseEmbedder
 from core.exceptions import PluginLoadError
+from core.gpu_lock import gpu_lock
 
 logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class QwenVLEmbedder(BaseEmbedder):
@@ -46,6 +50,7 @@ class QwenVLEmbedder(BaseEmbedder):
         device: str = "cuda",
         encode_width: int = 336,
         encode_height: int = 224,
+        quantization: str = "none",
         **kwargs,
     ):
         try:
@@ -57,21 +62,55 @@ class QwenVLEmbedder(BaseEmbedder):
 
         self.device = device
         self.encode_size = (encode_width, encode_height)
+        # none / 8bit / 4bit — bitsandbytes 量化，低显存机器把 ~16GB 权重降到 ~8GB / ~4GB
+        self._quantization = (quantization or "none").strip().lower()
+
+        # 相对路径 → 项目根目录（对齐 plugins/detector/yolo.py，避免依赖 cwd）。
+        # 仅当"项目根下确实存在该路径"时才改写，HF 模型 ID（如 Qwen/xxx）保持原样。
+        model_path = Path(model_name)
+        if not model_path.is_absolute():
+            candidate = _PROJECT_ROOT / model_name
+            if candidate.exists():
+                model_name = str(candidate)
 
         logger.info(
-            "[QwenVLEmbedder] Loading model %s on %s (encode %dx%d) ...",
-            model_name, device, encode_width, encode_height,
+            "[QwenVLEmbedder] Loading model %s on %s (encode %dx%d, quantization=%s) ...",
+            model_name, device, encode_width, encode_height, self._quantization,
         )
         self.processor = AutoProcessor.from_pretrained(
             model_name, trust_remote_code=True,
         )
-        self.model = AutoModel.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            dtype=torch.float16 if device == "cuda" else torch.float32,
-            device_map="auto" if device == "cuda" else None,
-            low_cpu_mem_usage=True,
-        ).to(device)
+
+        if self._quantization in ("8bit", "4bit"):
+            # 量化加载：需 bitsandbytes；device_map="auto" 承担设备分配，不能再用 .to(device)
+            try:
+                from transformers import BitsAndBytesConfig
+                import bitsandbytes  # noqa: F401 — 确保已安装
+            except ImportError as e:
+                raise PluginLoadError(
+                    f"[QwenVLEmbedder] quantization={self._quantization} 需要 bitsandbytes。"
+                    "请先安装：pip install bitsandbytes"
+                ) from e
+            self.model = AutoModel.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                device_map="auto",
+                low_cpu_mem_usage=True,
+                quantization_config=BitsAndBytesConfig(
+                    load_in_8bit=(self._quantization == "8bit"),
+                    load_in_4bit=(self._quantization == "4bit"),
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                ),
+            )
+        else:
+            self.model = AutoModel.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                dtype=torch.float16 if device == "cuda" else torch.float32,
+                device_map="auto" if device == "cuda" else None,
+                low_cpu_mem_usage=True,
+            ).to(device)
         self.model.eval()
         logger.info("[QwenVLEmbedder] Model loaded")
 
@@ -87,9 +126,11 @@ class QwenVLEmbedder(BaseEmbedder):
             image = image[:, :, :3]
 
         try:
-            vector = await asyncio.to_thread(
-                self._sync_encode_image, image,
-            )
+            # 全局 GPU 锁：与 YOLO 前向互斥，避免并发驱动故障
+            async with gpu_lock:
+                vector = await asyncio.to_thread(
+                    self._sync_encode_image, image,
+                )
             return vector
         except Exception as e:
             logger.exception("[QwenVLEmbedder] Image encoding failed")
@@ -98,9 +139,10 @@ class QwenVLEmbedder(BaseEmbedder):
     async def encode_text(self, text: str) -> list[float]:
         """将文本编码为 4096 维单位向量。"""
         try:
-            vector = await asyncio.to_thread(
-                self._sync_encode_text, text,
-            )
+            async with gpu_lock:
+                vector = await asyncio.to_thread(
+                    self._sync_encode_text, text,
+                )
             return vector
         except Exception as e:
             logger.exception("[QwenVLEmbedder] Text encoding failed")
@@ -111,9 +153,10 @@ class QwenVLEmbedder(BaseEmbedder):
     ) -> list[float]:
         """原生视频编码 — 接受视频文件路径，模型内部处理帧提取与时序融合。"""
         try:
-            vector = await asyncio.to_thread(
-                self._sync_encode_video, video_path, fps, max_frames,
-            )
+            async with gpu_lock:
+                vector = await asyncio.to_thread(
+                    self._sync_encode_video, video_path, fps, max_frames,
+                )
             return vector
         except Exception as e:
             logger.exception("[QwenVLEmbedder] Video encoding failed")
@@ -142,9 +185,11 @@ class QwenVLEmbedder(BaseEmbedder):
             processed.append(img)
 
         try:
-            vectors = await asyncio.to_thread(
-                self._sync_encode_images_batch, processed, target_size,
-            )
+            # 全局 GPU 锁：与 YOLO 前向互斥，避免并发驱动故障
+            async with gpu_lock:
+                vectors = await asyncio.to_thread(
+                    self._sync_encode_images_batch, processed, target_size,
+                )
             return vectors
         except Exception as e:
             logger.exception("[QwenVLEmbedder] Batch image encoding failed")
@@ -181,7 +226,7 @@ class QwenVLEmbedder(BaseEmbedder):
         embedding = self._pool_last_token(
             outputs.last_hidden_state, inputs["attention_mask"],
         )
-        return embedding.cpu().numpy().astype(np.float64).tolist()
+        return embedding.cpu().to(torch.float32).numpy().astype(np.float64).tolist()
 
     def _sync_encode_image(self, image: np.ndarray) -> list[float]:
         """图像嵌入：numpy → PIL Image（纯内存）→ process_vision_info → pooling_last。"""
@@ -215,7 +260,7 @@ class QwenVLEmbedder(BaseEmbedder):
         embedding = self._pool_last_token(
             outputs.last_hidden_state, inputs["attention_mask"],
         )
-        return embedding.cpu().numpy().astype(np.float64).tolist()
+        return embedding.cpu().to(torch.float32).numpy().astype(np.float64).tolist()
 
     def _sync_encode_images_batch(
         self, images: list[np.ndarray],
@@ -331,7 +376,7 @@ class QwenVLEmbedder(BaseEmbedder):
         embedding = self._pool_last_token(
             outputs.last_hidden_state, inputs["attention_mask"],
         )
-        return embedding.cpu().numpy().astype(np.float64).tolist()
+        return embedding.cpu().to(torch.float32).numpy().astype(np.float64).tolist()
 
     # ═════════════════════════════════════════════════════════
     # 共用辅助

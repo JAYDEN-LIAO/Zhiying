@@ -1,7 +1,8 @@
 # Cerno Architecture
 
-> Version: 0.21 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.22 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
+> v0.22: Windows 从零部署 + 系统设置/参数预设 + 全局 GPU 锁 + Detection 渲染重构
 
 ## System Data Flow
 
@@ -27,7 +28,7 @@
 │  │ thumbnails (GET+POST)   │ │  │   Embedder (local GPU)      │
 │  └─────────────────────────┘ │  │   encode_text("query")      │
 │  ┌─ api/detection_routes.py │  │   encode_image(frame)       │
-│  │ detection/data + thumb   │  └──────────────────────────────┘
+│  │ tracks/detections+thumb │  └──────────────────────────────┘
 │  └───────────┬──────────────┘
 │  ┌─ FormatService (v0.13)  ─┐
 │  │ probe → remux → proxy    │
@@ -36,6 +37,10 @@
 │  ┌─ StorageManager (v0.21)─┐
 │  │ delete → 批量删DB+清盘   │
 │  │ sweep → 孤儿清扫        │
+│  └──────────────────────────┘
+│  ┌─ SettingsService (v0.22) ┐
+│  │ settings.json 运行时覆盖 │
+│  │ presets.json 参数预设    │
 │  └──────────────────────────┘
 └──────────────┬─────────────┘
                │
@@ -118,16 +123,60 @@ Incremental: Only L3 switches (summary_enabled / search_index_enabled) can be to
   → runs run_incremental() → skips completed phases
 ```
 
+## Settings & Presets (v0.22)
+
+```
+系统设置 — 全局运行时生效（settings.json 覆盖 config.yaml）:
+  GET/PUT /settings 读写 data/settings.json:
+    api_keys   {dashscope, deepseek}            → 注入 env → _ENV_OVERRIDES 流入插件（脱敏显示末4位）
+    providers  {dashscope/base_url+model, deepseek/...} → 覆盖 captioner/summarizer 配置
+    storage    {video_dir, artifact_dir}         → 覆盖 storage 配置
+    pipeline   (见下)                            → 覆盖 pipeline + plugins.detector + embedder.quantization
+
+  pipeline 段:
+    encode_profiles       三档模板 {fast/balanced/precise: {encode_width, encode_height, encode_batch_size}}
+    default_encode_profile 默认档 fast/balanced/precise
+    detection_fps / detector_batch_size / confidence_threshold / iou_threshold   → plugins.detector
+    yolo_imgsz             → plugins.detector.imgsz (320-640, 32倍数)
+    use_nvdec / chunk_encoding   布尔开关
+    quantization          embedder 量化 none/8bit/4bit（⚠️ 启动时加载，改后需重启）
+    max_concurrent_videos 并发管道上限 (0=不限) → VideoService asyncio.Semaphore
+
+  core/config_loader: PIPELINE_NUMERIC_SPEC + ENCODE_PROFILE_NUMERIC_SPEC + clamp_param()
+    → 保存/应用时范围钳制 + 步进取整；空字符串 = 删除覆盖（回退 config.yaml）
+  load_config() 每次 _apply_settings_overrides 合并 → 保存清 lru_cache → 运行时生效
+  （唯一例外 quantization：启动加载，改后需重启后端）
+
+参数预设 — 多套命名参数快照，一键套用 (data/presets.json):
+  POST   /settings/presets            快照「当前生效」管道参数为新预设
+  GET    /settings/presets            列出
+  PUT    /settings/presets/{id}       重命名
+  DELETE /settings/presets/{id}       删除
+  POST   /settings/presets/{id}/apply 套用 → 写回 settings.json 覆盖区，运行时生效
+  预设只含管道性能/模型参数（编码+检测+开关+量化+并发），不含存储路径与 API 密钥（机器相关）
+
+配置统一 (v0.22, 部署): 单份 config/config.yaml 通用所有机器
+  - embedder 相对模型路径自动解析到项目根（对齐 detector，摆脱 cwd 依赖）
+  - captioner 配 qwen3_vl 但本地 8B 模型缺失 → _auto_fallback_captioner 自动降级 qwen_api (DashScope, WARNING)
+  - 摘要模式由 runners/base.py effective_summary_mode() 兜底 native_video→vlm_llm
+  - 无需 config.windows.yaml / CERNO_CONFIG（后者仅保留为自定义配置覆盖入口）
+```
+
 ## Pipeline Detail
 
 ```
 DAG 阶段流 (EventDrivenScheduler, 15 ops, 每 op 一个 asyncio 任务等待上游事件):
   duration
     ├─ search_encode (仅 summary_enabled=False) — 与 detection 共享单 NVDEC 流, 64 帧一批消费 → frame_embeddings
-    ├─ detection (10fps, 生产者-消费者) → track_encode → face / plate
+    ├─ detection (10fps, 生产者-消费者, 攒批 128) → track_encode → face / plate
     └─ segmentation → keyframes (1fps, NVDEC MJPEG pipe / cv2) → asyncio.Queue(512) 并发编码
          → caption (双模式) → summary (双模式)
   → _persist() → mark_completed()
+
+GPU 串行 (v0.22): 所有 embedder encode_* / YOLO detect 前向持 core/gpu_lock 全局锁
+  → 并发前向（YOLO cuDNN 卷积 + bitsandbytes 8bit matmul）在 24GB 机器触发驱动硬故障
+  → detection 攒批 128（约 2-4s 持锁），1024 长批持锁 ~20s 会饿死 embedder / 卡死共享流
+并发管道 (v0.22): max_concurrent_videos >0 → VideoService 信号量限流，防组批量激活峰值叠加 OOM
 
 Keyframe 消费 4 链路:
   ① frame_encode → frame_embeddings 表 (1fps 帧向量)
@@ -162,8 +211,9 @@ main.py
         └─ services/export_service.py → utils/video_util.py
 
 core/  models.py (12 表) · schemas.py (DTO) · repository.py (数据访问) · storage_manager.py (存储卫生)
-       search.py (6 检索) · db.py (引擎/init_db) · config_loader.py · prompt_loader.py
-       status_tracker.py (进度) · interfaces.py (10 插件 ABC) · exceptions.py
+       search.py (6 检索) · db.py (引擎/init_db) · config_loader.py (settings 覆盖/参数钳制/自动降级)
+       settings_service.py (设置) · presets_service.py (参数预设) · gpu_lock.py (GPU 串行锁)
+       prompt_loader.py · status_tracker.py (进度) · interfaces.py (10 插件 ABC) · exceptions.py
 config/  config.yaml (server/db/storage/plugins/pipeline) · config_schema.py · prompts.yaml
 frontend/  Dashboard.tsx + components/ (20) + hooks/ (8) + labels.ts + services/api.ts + types/
 utils/  video_util.py (FFmpeg) · metadata.py (三级元数据) · video_source.py (来源规则引擎)
@@ -188,16 +238,19 @@ config.yaml controls which backends to load:
 
   segmenter:   transnetv2    → TransNetV2 neural network scene detection
   captioner:   qwen3_vl      → local Qwen3-VL-8B video understanding (default)
-               qwen_api      → Qwen-VL-Max DashScope API (vlm_llm mode)
+               qwen_api      → Qwen-VL-Max DashScope API (vlm_llm mode; 本地模型缺失自动降级)
   embedder:    qwen3_vl_embedding_8b → local GPU model (Qwen3-VL-Embedding-8B), loaded at startup
+                                       可选 quantization none/8bit/4bit (bitsandbytes); 相对路径解析到项目根
   summarizer:  vllm          → DeepSeek API (vlm_llm mode only; native mode uses Python aggregator)
   transcriber: null          → disabled (faster-whisper plugin exists, opt-in)
-  detector:    yolo          → YOLO11s object detection (default: enabled via config)
+  detector:    yolo          → YOLO11s object detection (默认启用; batch_size/imgsz 可配; 共享单实例懒加载)
   face:        insightface   → InsightFace SCRFD + ArcFace R50 (512d)
   plate:       hyperlpr      → HyperLPR3 ONNX Runtime LPR (with PaddleOCR alternative)
   ocr:         null          → disabled (placeholder)
   grounding:   null          → disabled (placeholder)
-```
+
+所有 embedder encode_* / YOLO detect 前向持 core/gpu_lock 全局锁串行（v0.22，防并发驱动故障）
+
 
 ## Search Architecture
 
@@ -322,11 +375,17 @@ plate_detections
 | GET | /api/v1/videos/{id}/thumbnail/{scene_index} | 场景缩略图 |
 | DELETE | /api/v1/videos/{id} | 删除视频 (CASCADE) |
 | GET | /api/v1/videos/{id}/metadata | 视频元数据 + 来源分析 (支持 ?verbose=true, 自动缓存) |
-| GET | /api/v1/settings | 获取系统设置 (API 密钥/服务商端点与模型/存储路径) |
-| PUT | /api/v1/settings | 更新系统设置 (三者皆可，保存即运行时生效) |
-| GET | /api/v1/settings/pipeline | 获取 Pipeline 配置 (编码预设等全局默认值) |
+| GET | /api/v1/settings | 获取系统设置 (API 密钥/服务商端点与模型/存储路径/管道性能) |
+| PUT | /api/v1/settings | 更新系统设置 (密钥/服务商/存储/pipeline 段皆可，保存即运行时生效；量化需重启) |
+| GET | /api/v1/settings/pipeline | 获取 Pipeline 配置 (编码预设/摘要模式默认/插件可用性) |
+| GET | /api/v1/settings/presets | 列出参数预设 (v0.22) |
+| POST | /api/v1/settings/presets | 创建参数预设 (快照当前生效管道参数) |
+| PUT | /api/v1/settings/presets/{id} | 重命名参数预设 |
+| DELETE | /api/v1/settings/presets/{id} | 删除参数预设 |
+| POST | /api/v1/settings/presets/{id}/apply | 套用参数预设 (写回 settings.json 覆盖区, 运行时生效) |
 | GET | /api/v1/pipeline/operations | 查询启用的操作列表 + 进度范围 |
-| GET | /api/v1/videos/{id}/detection/data | 逐帧检测框 + 追踪轨迹 JSON |
+| GET | /api/v1/videos/{id}/detection/tracks | 追踪轨迹摘要 (v0.22 替代旧 /detection/data) |
+| GET | /api/v1/videos/{id}/detection/detections | 时间窗逐帧检测框 (v0.22, 按需区间加载) |
 | GET | /api/v1/videos/{id}/detection/thumbnail | track crop 缩略图 (bbox 裁剪) |
 | GET | /api/v1/videos/{id}/face/data | 人脸识别数据 (身份/track_id/时间戳) |
 | GET | /api/v1/videos/{id}/face/thumbnail | 人脸 crop 缩略图 |
@@ -360,7 +419,7 @@ React 19 + Vite 6 + Tailwind CSS 4
   │   ├── VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮
   │   ├── VideoSearchCard    ← 语义/图搜/人脸搜索面板 (索引未开启时置灰) + 搜索范围选择器 (组感知)
   │   ├── HistoryPanelContent← 历史记录列表 (搜索+自动刷新+缩略图+参数摘要, 删除二次确认+processing禁用+释放空间提示) + 组卡片堆叠/展开
-  │   ├── SettingsPage       ← 系统设置: 存储路径 + API 服务（端点/模型/密钥）
+  │   ├── SettingsPage       ← 系统设置 4 分区 (v0.22): 系统(存储/NVDEC/chunk/并发上限) + 模型参数(编码三档模板/默认档/量化 + YOLO 帧率/批/分辨率/阈值) + 参数预设(快照/套用/重命名/删除) + API 密钥(端点/模型/密钥)
   │   ├── DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+选中)
   │   ├── DetectionPanel     ← 物体列表 (分类筛选+缩略图 hover+导出按钮) + 独立视频选择器 (组感知)
   │   ├── DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
@@ -420,6 +479,12 @@ Vite 开发代理:
 | **人脸/车牌开关** | 三门控: config + detection_enabled + face/plate_enabled |
 | **图搜双通道** | 人脸 ArcFace 512d / 通用 Qwen3-VL 4096-dim（帧不聚类精确到秒）|
 | **存储卫生 (v0.21)** | 删除 = DB 级联 + 引用追踪清盘；孤儿清扫手动（dry-run 默认）防误删 |
+| **全局 GPU 锁 (v0.22)** | 24GB 机 YOLO 卷积 + 8bit matmul 并发触发驱动硬故障 → 单进程全局锁串行所有 GPU 前向；detection 攒批 1024→128 防饿死 embedder |
+| **共享单实例 (v0.22)** | embedder + detector 预载 app.state（detector 懒加载），业务逻辑经 shared_detector 注入，禁重复 load_plugin |
+| **并发管道限制 (v0.22)** | max_concurrent_videos 信号量限流（激活峰值按并发叠加），低显存机防组批量并发 OOM |
+| **参数预设 (v0.22)** | presets.json 命名快照一键套用，运行时生效；不含机器相关（存储路径/密钥） |
+| **从零部署 + 配置统一 (v0.22)** | setup_windows.ps1 裸机一键安装；单份 config 自动降级 captioner（本地缺失→qwen_api），effective_summary_mode 兜底摘要模式 |
+| **embedder 量化 (v0.22)** | none/8bit/4bit (bitsandbytes) 把 ~16GB 权重降到 ~8GB/~4GB；启动时加载，改后需重启 |
 
 ## Current Status
 
@@ -438,7 +503,7 @@ Vite 开发代理:
 | Frame-level Encoding | ✅ | runners/frame_encode.py: batch encode 4 frames |
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
 | Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
-| Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT, 10fps 独立帧率（与 search 共享 NVDEC 流）, dual-gate control |
+| Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT, 10fps 独立帧率（与 search 共享 NVDEC 流）, dual-gate control; 共享 app.state 单实例懒加载 + gpu_lock 串行, batch_size/imgsz 可配 |
 | AI Generation Detection | ❌ 已移除 | services/ai_detect_service.py + utils/ai_detect/ 已删除, upload 不再触发 AICheck。残留: ai_detect_result DB 列 + schema + 前端展示（恒为 not_run） |
 | Video Source Analysis | ✅ | utils/video_source.py: 规则引擎 classify_video_source(), phone/camera/screen_recording/surveillance/non_camera_source, 基于 EXIF + file naming + media structure + 文件头魔数嗅探（IMKH→海康威视, magic_bytes 内容级签名）, 首次 GET /metadata 触发, 结果缓存到 DB |
 | Metadata Extraction + Cache | ✅ | utils/metadata.py: 三级提取 (pymediainfo→exiftool→ffprobe); 结果缓存到 Video.metadata_json 列, 后续请求 <1ms 返回; ?verbose=true 查看原始数据 |
@@ -455,7 +520,12 @@ Vite 开发代理:
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
 | Storage Hygiene (v0.21) | ✅ | core/storage_manager.py: 删除即清盘 (DB 级联 + 引用追踪) + 删除守卫 409 + 空组清理; POST /maintenance/sweep 清扫 + scripts/sweep_storage.py CLI; trackthumb 泄漏修复; 缩略图缺失 404 兜底 |
 | Multi-Video Group (v0.19) | ✅ | POST /videos/upload/batch; VideoGroup ORM; 组参数同步; frontend 历史堆叠/展开/切换/跨视频搜索/独立检测面板 |
-| Settings API (Keys + Providers + Storage) | ✅ | core/settings_service.py, GET/PUT /api/v1/settings（API 密钥/端点/模型 + 存储路径，settings.json backed，运行时生效） |
+| Settings API (Keys + Providers + Storage + Pipeline) | ✅ | core/settings_service.py, GET/PUT /api/v1/settings（密钥/端点/模型 + 存储路径 + pipeline 段: 编码三档/检测参数/量化/并发上限，settings.json backed，运行时生效，量化需重启） |
+| Pipeline Presets (v0.22) | ✅ | core/presets_service.py + /settings/presets CRUD + apply（data/presets.json 命名快照，一键套用） |
+| Global GPU Lock (v0.22) | ✅ | core/gpu_lock.py — embedder/YOLO 前向全局串行（防 24GB 机并发驱动故障）; detection 攒批 128 |
+| 并发管道限制 (v0.22) | ✅ | pipeline.max_concurrent_videos → VideoService asyncio.Semaphore 限流同时处理的管道数 |
+| Embedder Quantization (v0.22) | ✅ | plugins/embedder/qwen_vl_embedder.py — none/8bit/4bit via bitsandbytes; 相对模型路径解析到项目根 |
+| Windows 从零部署 (v0.22) | ✅ | deploy/setup_windows.ps1 裸机一键安装器 + download_models.py (含 reid) + deploy_feedback.md; 单份 config 自动降级 captioner |
 | Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 20 components + 8 hooks + labels.ts incl Detection/Timeline/Metadata/Export/ImageSearch |
 | Config Schema | ✅ | Pydantic v2 validation for config.yaml |
 | Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |
@@ -464,4 +534,5 @@ Vite 开发代理:
 | faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
 | OCR | 📋 | PaddleOCR available as plate recognition alternative (plugins/plate/paddle_plate.py) |
 | Grounding | 📋 | Florence-2 shell only |
-| Health / Reindex | 🔶 | maintenance_routes.py — 存储清扫已实现, 健康检查待办 |
+| Health | ✅ | main.py GET /health → {"status":"ok","service":"cerno","database":"ok"}（含 DB 连通性） |
+| Reindex | 🔶 | 待办 |

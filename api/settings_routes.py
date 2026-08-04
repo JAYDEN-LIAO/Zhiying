@@ -1,12 +1,12 @@
 """
 api/settings_routes.py
 ═══════════════════════════════════════════════════════════
-系统设置端点 — API key 管理。
+系统设置端点 — API key / 管道性能 / 模型参数 / 参数预设。
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
-from api.schemas import APIResponse, SettingsKeysRequest
+from api.schemas import APIResponse, SettingsKeysRequest, PresetCreate, PresetRename
 
 router = APIRouter()
 
@@ -50,3 +50,57 @@ async def get_pipeline_config() -> APIResponse[dict]:
         "default_summary_mode": pipeline_cfg.get("default_summary_mode", "native_video"),
         "plugins": plugin_available,
     })
+
+
+# ═══════════════════════════════════════════════════════════
+# 参数预设 — 多套命名参数快照，一键套用
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/settings/presets")
+async def get_presets() -> APIResponse[list]:
+    """列出全部参数预设。"""
+    from core.presets_service import list_presets
+    return APIResponse(data=list_presets())
+
+
+@router.post("/settings/presets", status_code=201)
+async def create_preset(payload: PresetCreate) -> APIResponse[dict]:
+    """创建参数预设：快照当前生效的管道参数。"""
+    from core.presets_service import create_preset as _create
+    try:
+        return APIResponse(data=_create(payload.name))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/settings/presets/{preset_id}")
+async def rename_preset(preset_id: str, payload: PresetRename) -> APIResponse[dict]:
+    """重命名参数预设。"""
+    from core.presets_service import rename_preset as _rename
+    try:
+        return APIResponse(data=_rename(preset_id, payload.name))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.delete("/settings/presets/{preset_id}")
+async def delete_preset(preset_id: str) -> APIResponse[dict]:
+    """删除参数预设。"""
+    from core.presets_service import delete_preset as _delete
+    try:
+        _delete(preset_id)
+        return APIResponse(data={"deleted": preset_id})
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/settings/presets/{preset_id}/apply")
+async def apply_preset(preset_id: str) -> APIResponse[dict]:
+    """套用参数预设：写入 settings.json 覆盖区，运行时生效。"""
+    from core.presets_service import apply_preset as _apply
+    try:
+        return APIResponse(data=_apply(preset_id))
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))

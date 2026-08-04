@@ -127,11 +127,68 @@ class StorageSettings(BaseModel):
     artifact_dir: str | None = Field(default=None, description="制品目录")
 
 
+class PipelineSettings(BaseModel):
+    """管道性能配置（settings.json 覆盖 config.yaml，运行时生效）。
+
+    数值/字符串字段为 str（对齐 StorageSettings）：由 settings_service 转换并校验，
+    空字符串 = 删除覆盖，回退 config.yaml 默认值；布尔字段为显式开关（null=不处理）。
+
+    ── 编码 ──
+    encode_profiles: 编码三档模板（fast/balanced/precise 各自的分辨率 + 批大小）
+    default_encode_profile: 默认编码预设
+    ── 物体检测 ──
+    detection_fps: 检测帧率；detector_batch_size: YOLO GPU 批大小
+    confidence_threshold / iou_threshold: 检测阈值
+    ── 全局开关 ──
+    use_nvdec: NVDEC 硬解；chunk_encoding: chunk 编码
+    ── 模型参数 ──
+    quantization: Embedder 量化（需重启生效）；yolo_imgsz: YOLO 分辨率；max_concurrent_videos: 并发上限
+    """
+    # ── 编码 ──
+    encode_profiles: dict[str, dict[str, str | None]] | None = Field(
+        default=None,
+        description="编码三档模板 {fast/balanced/precise: {encode_width, encode_height, encode_batch_size}}；"
+                    "空字段=不覆盖，空字典=删除全部模板覆盖",
+    )
+    default_encode_profile: str | None = Field(default=None, description="默认编码预设 fast/balanced/precise（空字符串=删除覆盖）")
+    # ── 物体检测 ──
+    detection_fps: str | None = Field(default=None, description="物体检测帧率（帧/秒；空字符串=删除覆盖）")
+    detector_batch_size: str | None = Field(default=None, description="YOLO GPU 批大小（空字符串=删除覆盖）")
+    confidence_threshold: str | None = Field(default=None, description="检测置信度阈值 0-1（空字符串=删除覆盖）")
+    iou_threshold: str | None = Field(default=None, description="NMS IoU 阈值 0-1（空字符串=删除覆盖）")
+    # ── 全局开关 ──
+    use_nvdec: bool | None = Field(default=None, description="NVDEC 硬件解码开关（null=不处理）")
+    chunk_encoding: bool | None = Field(default=None, description="chunk 编码开关（null=不处理）")
+    # ── 模型参数 ──
+    quantization: str | None = Field(default=None, description="Embedder 量化 none/8bit/4bit（启动时加载，改后需重启；空字符串=删除覆盖）")
+    yolo_imgsz: str | None = Field(default=None, description="YOLO 推理分辨率 320-640（空字符串=删除覆盖）")
+    max_concurrent_videos: str | None = Field(default=None, description="并发管道上限，0=不限（空字符串=删除覆盖）")
+
+
+class PresetCreate(BaseModel):
+    """创建参数预设：快照当前生效的管道参数。"""
+    name: str = Field(..., min_length=1, description="预设名称")
+
+
+class PresetRename(BaseModel):
+    """重命名参数预设。"""
+    name: str = Field(..., min_length=1, description="新预设名称")
+
+
+class PresetResponse(BaseModel):
+    """参数预设响应。"""
+    id: str
+    name: str
+    pipeline: dict | None = Field(default=None, description="管道参数快照")
+    created_at: str | None = Field(default=None, description="创建时间(ISO)")
+
+
 class SettingsKeysRequest(BaseModel):
-    """系统设置更新请求：API 密钥 / 服务商端点与模型 / 存储路径。"""
+    """系统设置更新请求：API 密钥 / 服务商端点与模型 / 存储路径 / 管道性能。"""
     api_keys: dict[str, str] = Field(default_factory=dict, description="API key 映射表: {id: value}")
     providers: dict[str, ProviderSettings] = Field(default_factory=dict, description="服务商配置: {id: {base_url, model}}")
     storage: StorageSettings | None = Field(default=None, description="存储路径覆盖")
+    pipeline: PipelineSettings | None = Field(default=None, description="管道性能覆盖（编码批大小 + 检测帧率）")
 
 
 # ═══════════════════════════════════════════════════════════
