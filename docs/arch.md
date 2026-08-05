@@ -453,7 +453,7 @@ React 19 + Vite 6 + Tailwind CSS 4
   删除 → DELETE /videos/{id} (v0.21 二次确认, processing 禁用, 提示释放空间; 后端 DB 级联+磁盘清盘)
 
 Vite 开发代理:
-  /api → http://localhost:8000 (dev)
+  /api → http://localhost:8011 (dev)
 ```
 
 ## Key Design Decisions

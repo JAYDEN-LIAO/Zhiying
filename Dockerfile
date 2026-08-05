@@ -20,8 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制项目代码
 COPY . .
 
-# 暴露 FastAPI 默认服务的 8000 端口
-EXPOSE 8000
+# 暴露 FastAPI 默认服务的 8011 端口
+EXPOSE 8011
 
 # 启动命令
-CMD ["uvicorn", "main.py", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main.py", "--host", "0.0.0.0", "--port", "8011"]

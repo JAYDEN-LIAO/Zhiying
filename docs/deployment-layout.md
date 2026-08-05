@@ -46,7 +46,7 @@
 | scp / sftp | ✓ | 代码/模型传输（服务器无 rsync） |
 | git | 2.43.0 | 拉取代码 |
 | 内存/CPU | 503GiB 内存 / 80 核 | 充裕 |
-| 端口 | 8000、宿主 5432 均空闲 | zhiying 专属 |
+| 端口 | 8011、宿主 5432 均空闲 | zhiying 专属 |
 | postgres:16 镜像 | docker 已有 | **不直接复用**（与平台隔离），pgvector 用独立容器 |
 
 ### 2.2 必须新增的（不可复用）
@@ -91,7 +91,7 @@
 
 （库缓存经 HOME 重定向 → 落 /home/services/zhiying/.insightface、.hyperlpr3、.cache/，见 §6.3）
 
-nginx：Phase 1 默认**不启用**（若给 main.py 加静态托管则 8000 直连）；否则 B2 定入口时用，见 §6.5
+nginx：Phase 1 默认**不启用**（若给 main.py 加静态托管则 8011 直连）；否则 B2 定入口时用，见 §6.5
 systemd：zhiying.service（仿 qwen-25.service，CUDA_VISIBLE_DEVICES=1）
 ```
 
@@ -99,14 +99,14 @@ systemd：zhiying.service（仿 qwen-25.service，CUDA_VISIBLE_DEVICES=1）
 
 | 组件 | 方案 |
 |---|---|
-| 后端 | `uvicorn main:app`，端口 **8000**（宿主空闲），`/health` 输出 `"service":"zhiying"` |
+| 后端 | `uvicorn main:app`，端口 **8011**（宿主空闲），`/health` 输出 `"service":"zhiying"` |
 | 数据库 | docker `pgvector/pgvector:pg17`，宿主端口 **5432**（空闲），数据卷 `/home/data/zhiying/pgdata`；`init_db()` 自动建表 |
 | 前端 | `npm ci && npm run build`；`VITE_YUNZHI_MOCK=false` + `VITE_YUNZHI_HOST_ORIGIN`（B2 平台给精确 Origin 后重 build） |
 | GPU | `CUDA_VISIBLE_DEVICES=1`（GPU1；vLLM hunyuan-mt 同卡，剩 ~25.6G，只用空闲部分） |
 | captioner | 降级 `qwen_api`（DashScope），需 `.env` 配 `DASHSCOPE_API_KEY`；embedder 8bit 量化 |
 | ffmpeg | **Phase 1 复用系统 ffmpeg（CPU 兜底，零影响）**；Phase 2 可选编译 CUDA 版到独立前缀（见 §6.1） |
 | 库缓存隔离 | systemd `Environment=HOME=/home/services/zhiying` → insightface/hyperlpr3/modelscope/pip 等 `~` 缓存全落服务目录，**避开根分区**（/root 在 90% 满的 `/` 上） |
-| 前端入口 | **Phase 1 免 nginx 的前提**：给 `main.py` 加静态托管（~3 行；app 无客户端路由，`StaticFiles(directory="frontend/dist", html=True)` 挂 `/`）→ 8000 直连 `http://10.0.0.176:8000`；若不加代码则用 nginx（Phase B 确认项，见 §6.5） |
+| 前端入口 | **Phase 1 免 nginx 的前提**：给 `main.py` 加静态托管（~3 行；app 无客户端路由，`StaticFiles(directory="frontend/dist", html=True)` 挂 `/`）→ 8011 直连 `http://10.0.0.176:8011`；若不加代码则用 nginx（Phase B 确认项，见 §6.5） |
 
 ### 3.3 模型来源（推荐服务器端下载，零上传依赖）
 
@@ -114,6 +114,17 @@ systemd：zhiying.service（仿 qwen-25.service，CUDA_VISIBLE_DEVICES=1）
 - 备选：本机 `models/` 经 **scp** 上传（服务器无 rsync）
 - face（buffalo_l）/ plate（HyperLPR3 onnx）/ segmenter（TransNetV2）由各库首次运行自动缓存（HOME 重定向到服务目录）
 - **不传** `Qwen3-VL-8B-Instruct`（17G，captioner 已降级 API）
+
+### 3.4 端口清单（2026-08-05 全量扫描核实）
+
+| 端口 | 用途 | 绑定 | 状态 | firewalld |
+|---|---|---|---|---|
+| **8011** | 后端 API + 前端静态（Phase 1 免 nginx 直连） | `0.0.0.0` | 空闲 ✅ | **需放行**（Phase B 确认项，加法可回滚） |
+| **5432** | pgvector（仅本机后端连） | **`127.0.0.1`**（不暴露网络） | 空闲 ✅ | 不需要 |
+| 80 | nginx（仅 Phase B 若启用） | — | 占用（平台 web 80→3100） | 已开（http 服务） |
+| 5173 | Vite dev（本地开发，服务器不用） | — | 空闲 | — |
+
+> 平台现有端口（3100/8082/3001/15432/25432/8010/8005/8007/8009/1109…）与 zhiying 的 8011/5432 **零冲突**。需求② 平台 docker 容器回调 8011 是否需额外放行 → B2 实测决定。
 
 ## 4. 符合度评估
 
@@ -169,7 +180,7 @@ export TRANSFORMERS_CACHE=/home/model-weights
 cd /home/services/zhiying
 
 nohup /home/services/zhiying/conda-env/bin/python -m uvicorn main:app \
-  --host 0.0.0.0 --port 8000 --workers 1 \
+  --host 0.0.0.0 --port 8011 --workers 1 \
   > /home/services/zhiying/logs/server.log 2>&1 &
 wait
 ```
@@ -201,17 +212,17 @@ WantedBy=default.target
 ```bash
 docker run -d --name zhiying-pg \
   -e POSTGRES_USER=zhiying -e POSTGRES_PASSWORD=zhiying -e POSTGRES_DB=zhiying \
-  -p 5432:5432 \
+  -p 127.0.0.1:5432:5432 \
   -v /home/data/zhiying/pgdata:/var/lib/postgresql/data:Z \
   pgvector/pgvector:pg17
 ```
 
-> 账号/库名与 `config/config.yaml` 的 `db.uri`（`postgresql+asyncpg://zhiying:zhiying@localhost:5432/zhiying`）对齐。**与平台 postgres（15432/25432）完全隔离。**
+> 账号/库名与 `config/config.yaml` 的 `db.uri`（`postgresql+asyncpg://zhiying:zhiying@localhost:5432/zhiying`）对齐。**与平台 postgres（15432/25432）完全隔离。** 端口绑 **`127.0.0.1`**（后端走 localhost 连，数据库不暴露到网络）。
 > **SELinux Enforcing**：bind mount 用 `:Z`（docker relabel 该目录，只作用于 zhiying 自己的目录）；若 `:Z` 执行报错，改用 docker 命名卷（`-v zhiying-pgdata:/var/lib/postgresql/data`，完全避开 SELinux，数据仍在 /home/docker）。
 
 ### 6.5 nginx server block（Phase 1 可不使用，B2 定入口后按需启用）
 
-> **Phase 1 免 nginx 的前提**：给 `main.py` 加静态托管（app 无客户端路由，`StaticFiles(directory="frontend/dist", html=True)` 挂 `/`，~3 行，需提交进部署分支），则 8000 直连 `http://10.0.0.176:8000`，nginx 完全不碰。以下 block 仅在**不想改代码**或 B2 平台要求 https/域名/路径前缀时启用（独立 conf 新增，`nginx -t` 通过才 reload，绝不动现有 3100 block）。
+> **Phase 1 免 nginx 的前提**：给 `main.py` 加静态托管（app 无客户端路由，`StaticFiles(directory="frontend/dist", html=True)` 挂 `/`，~3 行，需提交进部署分支），则 8011 直连 `http://10.0.0.176:8011`，nginx 完全不碰。以下 block 仅在**不想改代码**或 B2 平台要求 https/域名/路径前缀时启用（独立 conf 新增，`nginx -t` 通过才 reload，绝不动现有 3100 block）。
 
 ```nginx
 server {
@@ -219,7 +230,7 @@ server {
     server_name zhiying.<域名>;   # ← B2 平台登记后确定
 
     location /api/ {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:8011;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -262,7 +273,7 @@ A6 配置改动       按 §7 清单（数据路径/软链/.env/ReID）
 
 ```
 B1 [确认]  ffmpeg 策略：先确认 Phase 1 系统 ffmpeg 可用 → 冒烟管道；性能不足再进 Phase 2 编译
-B2 [确认]  nginx / firewalld：**Phase 1 默认不用 nginx**（后端服务前端直连 8000）；如需浏览器直连 8000 加一条 firewalld 放行（加法可回滚）；平台后台 docker 回调 8000 是否需放行 → B2 实测决定
+B2 [确认]  firewalld：**Phase 1 免 nginx 必须放行 8011**——`firewall-cmd --permanent --add-port=8011/tcp && firewall-cmd --reload`（加法、可回滚，不动现有 3100/http/ssh 规则）；平台后台 docker 回调 8011 是否需额外放行 → B2 实测决定。nginx 仅 B2 平台要求时才上
 B3 [确认]  启动 zhiying.service：先 nvidia-smi 核实 GPU1 空闲显存 → 启动 → /health 冒烟
 B4 [确认]  验证：register-external + 跑管道 + /internal/yunzhi/jobs 202/进度回调
 ```
@@ -275,7 +286,7 @@ B4 [确认]  验证：register-external + 跑管道 + /internal/yunzhi/jobs 202/
 - 现有 docker 容器（yunzhi 全栈 + yanshi 演示栈）、现有 systemd 服务（vLLM/clip/ocr/rerank/glm-ocr）
 - 平台文件库（只读，`source_owned=false` 就地引用，绝不 unlink）
 - 平台 postgres（15432/25432）、GPU0（vLLM qwen-25）、系统 `/usr/bin/ffmpeg`、base conda env
-- **nginx（Phase 1 不碰、不 reload）**、**firewalld（Phase 1 不加规则）**
+- **nginx（Phase 1 不碰、不 reload）**；**firewalld 只加 8011 一条加法规则**（不动现有 3100/http/ssh）
 - 根分区 `/`：一切安装/构建/缓存/数据路径指 `/home`（根仅 6.9G）
 
 ### 🟡 新增独立（可完整回滚）
@@ -289,7 +300,7 @@ B4 [确认]  验证：register-external + 跑管道 + /internal/yunzhi/jobs 202/
 | 1 | GPU1 显存（hunyuan-mt 用，剩 ~25.6G） | 超可用显存挤到 vLLM | 加载前 `nvidia-smi` 核实；embedder 8bit ~8G + YOLO 2G，只用空闲部分；超限立即中止 |
 | 2 | nginx（80→3100 平台 web） | 配置错误/reload 失败弄挂平台入口 | **Phase 1 默认不碰**（不用 nginx）；如启用：独立 conf + `nginx -t` 通过才 reload |
 | 3 | 系统 ffmpeg（平台可能调用） | 遮蔽系统版影响其它服务 | 独立前缀 `/home/services/zhiying/ffmpeg`，只在 zhiying start.sh PATH 生效 |
-| 4 | firewalld（只开 3100/http/ssh） | 内网直连 8000 需放行 | **Phase 1 默认不加**；需直连 8000 时加一条（加法可回滚）；走 nginx:80 或平台 docker 回调实测决定 |
+| 4 | firewalld（只开 3100/http/ssh） | Phase 1 免 nginx 需浏览器直连 8011 | 加一条 `8011/tcp`（`--permanent --add-port` + `--reload`；`--reload` 仅重载永久配置，不丢现有放行；回滚用 `--remove-port`） |
 | 5 | 根分区 `/`（剩 6.9G） | **conda env / pip 缓存 / 模型下载若落 /opt 或 /root 会塞爆根分区** | **env 用 `-p` 建到 /home、CONDA_PKGS_DIRS / PIP_CACHE_DIR / HOME 全指 /home**；构建全在 /home；实时 `df -h` 监控 |
 
 ## 10. 交接注意事项
@@ -302,5 +313,5 @@ B4 [确认]  验证：register-external + 跑管道 + /internal/yunzhi/jobs 202/
 6. **零遮蔽**：CUDA ffmpeg 只进 zhiying 的 start.sh PATH；base conda env 只读不写
 7. **根分区（最重要）**：一切安装/缓存/下载/数据路径必须指 `/home`——**conda env 用 `-p` 建到 `/home/services/zhiying/conda-env`**（`/opt/miniconda3` 在只剩 6.9G 的根分区上，zhiying 的 torch 等 ~6-9G 若建到 /opt 会塞爆根分区）；conda pkgs / pip cache / HF cache 经 HOME 或环境变量指 /home
 8. **HOME 隔离**：systemd `HOME=/home/services/zhiying` → insightface/hyperlpr3/modelscope/pip 等 `~` 缓存全落服务目录（避开根分区，彻底隔离）
-9. **nginx 非必须**：Phase 1 免 nginx 需给 `main.py` 加静态托管（~3 行，无客户端路由，`StaticFiles(html=True)` 挂 `/`，需提交）；否则前端托管用 nginx（Phase B 确认项，独立 conf + `nginx -t` + 确认 reload）
+9. **前端服务方式**：Phase 1 免 nginx 需给 `main.py` 加静态托管（已提交 697e008）+ **firewalld 放行 8011**（`--add-port=8011/tcp --permanent` + `--reload`）；否则前端托管用 nginx（Phase B 确认项，独立 conf + `nginx -t` + 确认 reload）
 10. **逐项确认**：Phase B 每步（ffmpeg 策略/nginx/firewalld/启动/验证）先停下汇报，用户确认后再执行

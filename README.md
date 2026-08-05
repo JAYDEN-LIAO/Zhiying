@@ -14,21 +14,21 @@ set DEEPSEEK_API_KEY=sk-xxx    # LLM summarizer (vlm_llm mode)
 
 # 3. Start backend server
 uvicorn main:app --reload
-# 健康检查：http://localhost:8000/health  →  {"status":"ok","service":"zhiying","version":"<当前版本>","database":"ok"}
+# 健康检查：http://localhost:8011/health  →  {"status":"ok","service":"zhiying","version":"<当前版本>","database":"ok"}
 
 # 4. (New tab) Start frontend dev server
 cd frontend && npm install && npm run dev
 
 # 5. Upload a video via curl
-curl -X POST -F "file=@demo.mp4" http://localhost:8000/api/v1/videos/upload
+curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload
 
 # 6. Get summary
-curl http://localhost:8000/api/v1/videos/{video_id}
+curl http://localhost:8011/api/v1/videos/{video_id}
 
 # 7. Semantic search
 curl -X POST -H "Content-Type: application/json" \
   -d '{"query":"a man in black"}' \
-  http://localhost:8000/api/v1/search/semantic
+  http://localhost:8011/api/v1/search/semantic
 ```
 
 > **Note on API Keys**: Place keys in a `.env` file at project root (gitignored).  

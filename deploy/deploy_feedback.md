@@ -151,8 +151,8 @@
 
 | 项 | 状态 |
 |---|---|
-| 后端 | `http://127.0.0.1:8000` — `/health` 200，`{"status":"ok","service":"zhiying","database":"ok"}` |
-| 前端 | `http://localhost:5173` — Vite 6.4.3，`/api` 代理到 8000 正常 |
+| 后端 | `http://127.0.0.1:8011` — `/health` 200，`{"status":"ok","service":"zhiying","database":"ok"}` |
+| 前端 | `http://localhost:5173` — Vite 6.4.3，`/api` 代理到 8011 正常 |
 | 数据库 | `zhiying_postgres`（pgvector:pg17）容器 healthy |
 | 模型 | embedding 16GB / yolo / face / plate / segmenter **全部就绪** |
 | GPU | torch 2.13.0+cu130 真实 kernel 验证通过；embedder 16GB 已载入（显存 15.8/24.5GB） |

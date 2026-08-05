@@ -16,7 +16,7 @@ from typing import Any
 
 class ServerConfig(BaseModel):
     host: str = Field(default="0.0.0.0")
-    port: int = Field(default=8000, ge=1, le=65535)
+    port: int = Field(default=8011, ge=1, le=65535)
 
 
 class DatabaseConfig(BaseModel):
