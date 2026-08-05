@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.interfaces import VideoContext
 from core.models import Video, Scene, VideoStatus
+from core.cancellation import is_cancelled
 from core.status_tracker import StatusTracker
 from core.prompt_loader import get_prompt_loader
 from core.repository import (
@@ -278,7 +279,10 @@ class PipelineEngine:
             scheduler = EventDrivenScheduler(enabled, pctx, tracker)
             await scheduler.run()
 
-            # 6. 持久化
+            # 6. 持久化 — 视频被删除（允许删处理中记录）→ 中止，避免写已删行 FK 异常
+            if is_cancelled(self.video.id):
+                logger.info("[Pipeline] video %s deleted, aborting pipeline", self.video.id)
+                return
             await self._persist()
 
             # 卸载 captioner（仅当不是共享实例时才释放 GPU 显存）
@@ -291,6 +295,10 @@ class PipelineEngine:
             logger.info("[Pipeline] video %s completed", self.video.id)
 
         except Exception as e:
+            if is_cancelled(self.video.id):
+                # 删除落在 persist 窗口内 → 写已删行抛 FK，静默中止（不 mark_failed）
+                logger.info("[Pipeline] video %s deleted mid-run, aborting (%s)", self.video.id, e)
+                return
             logger.exception("[Pipeline] video %s failed: %s", self.video.id, e)
             tracker = StatusTracker(
                 video_id=str(self.video.id),
@@ -391,6 +399,11 @@ class PipelineEngine:
                     op.runner.run(pctx) for op in batch
                 ])
 
+            # 视频被删除 → 中止，跳过 persist/mark_completed
+            if is_cancelled(self.video.id):
+                logger.info("[Incremental] video %s deleted, aborting", self.video.id)
+                return
+
             if need_summary:
                 await self._persist_summary_only()
 
@@ -398,6 +411,9 @@ class PipelineEngine:
             logger.info("[Incremental] video %s completed", self.video.id)
 
         except Exception as e:
+            if is_cancelled(self.video.id):
+                logger.info("[Incremental] video %s deleted mid-run, aborting (%s)", self.video.id, e)
+                return
             logger.exception("[Incremental] video %s failed: %s (reverting to completed)", self.video.id, e)
             async with self.db_session_factory() as session:
                 await session.execute(

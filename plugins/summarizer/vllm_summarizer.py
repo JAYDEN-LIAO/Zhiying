@@ -78,37 +78,57 @@ class VLLMSummarizer(BaseSummarizer):
             }
 
         Raises:
-            PipelineError: API 调用失败或 JSON 解析失败。
+            PipelineError: API 调用失败或 JSON 解析失败（调用方 SummaryRunner
+                会兜底回退本地聚合，不因摘要拖垮整个管道）。
+
+        截断根治：
+          - finish_reason == "length"（响应被 max_tokens 截断）→ 自动以更大预算
+            重试，最多 3 次（max_tokens 翻倍：2048 → 4096 → 8192，上限 16384）；
+          - 重试仍截断 → _parse_json 走截断修复（补闭合引号/括号）尽力恢复结构。
         """
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                response_format={"type": "json_object"},
-            )
+        max_tokens = self.max_tokens
+        for attempt in range(1, 4):
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=self.temperature,
+                    response_format={"type": "json_object"},
+                )
 
-            content = response.choices[0].message.content
-            if not content:
-                raise PipelineError("vLLM returned empty response content")
+                content = response.choices[0].message.content
+                finish_reason = response.choices[0].finish_reason
 
-            return self._parse_json(content)
+                if not content:
+                    raise PipelineError("vLLM returned empty response content")
 
-        except PipelineError:
-            raise
-        except Exception as e:
-            logger.exception("[VLLMSummarizer] API call failed")
-            raise PipelineError(f"vLLM summarizer failed: {e}") from e
+                truncated = finish_reason == "length"
+                if truncated and attempt < 3:
+                    logger.warning(
+                        "[VLLMSummarizer] Response truncated at max_tokens=%d "
+                        "(finish_reason=length), retrying with %d",
+                        max_tokens, min(max_tokens * 2, 16384),
+                    )
+                    max_tokens = min(max_tokens * 2, 16384)
+                    continue
+
+                return self._parse_json(content, truncated=truncated)
+
+            except PipelineError:
+                raise
+            except Exception as e:
+                logger.exception("[VLLMSummarizer] API call failed")
+                raise PipelineError(f"vLLM summarizer failed: {e}") from e
 
     @staticmethod
-    def _parse_json(content: str) -> dict:
-        """尝试解析 JSON，处理 ```json ... ``` 包裹等常见情况。"""
+    def _parse_json(content: str, truncated: bool = False) -> dict:
+        """尝试解析 JSON，处理 ```json ... ``` 包裹 / 截断修复等常见情况。"""
         # 尝试直接解析
         try:
             return json.loads(content)
@@ -133,8 +153,62 @@ class VLLMSummarizer(BaseSummarizer):
             except json.JSONDecodeError:
                 pass
 
+        # 截断修复（finish_reason=length）：补闭合引号 + 补齐括号，尽力恢复结构
+        if truncated:
+            repaired = VLLMSummarizer._repair_truncated_json(content)
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError:
+                pass
+
         # 全部失败
         raise PipelineError(
             f"Failed to parse vLLM response as JSON. "
             f"Response preview: {content[:300]}"
         )
+
+    @staticmethod
+    def _repair_truncated_json(content: str) -> str:
+        """修复被 max_tokens 截断的 JSON：闭合未完成的字符串 + 补齐未闭合括号。"""
+        s = content.rstrip()
+
+        # 1. 字符串被截断（奇数个未转义引号）→ 补一个闭合引号
+        quotes_open = False
+        escaped = False
+        for ch in s:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                quotes_open = not quotes_open
+        if quotes_open:
+            s += '"'
+
+        # 2. 补齐未闭合括号（忽略字符串内部的括号）
+        stack: list[str] = []
+        pairs = {")": "(", "]": "[", "}": "{"}
+        closer = {"(": ")", "[": "]", "{": "}"}
+        in_str = False
+        escaped = False
+        for ch in s:
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch in "([{":
+                stack.append(ch)
+            elif ch in ")]}":
+                if stack and stack[-1] == pairs[ch]:
+                    stack.pop()
+        for opener in reversed(stack):
+            s += closer[opener]
+
+        return s

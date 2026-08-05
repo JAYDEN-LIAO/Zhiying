@@ -100,9 +100,18 @@ class YoloDetector(BaseDetector):
             return await asyncio.to_thread(self._sync_predict, frames)
 
     def reset_tracker(self) -> None:
-        """重置追踪器状态 — 处理新视频前调用，清除跨视频的 track ID 残留。"""
-        if self._model is not None and hasattr(self._model, "predictor"):
-            self._model.predictor = None
+        """重置追踪器状态 — 处理新视频前调用，清除跨视频的 track ID 残留。
+
+        原地 reset tracker（BYTETracker.reset()），而非把 predictor 置 None：
+        predictor 置 None 会让 _init_tracker() 再次 model.track()，从而**重复注册**
+        register_tracker 回调 → on_predict_postprocess_end 每批执行 N 次
+        （N=已处理视频数）→ 每视频逐批线性变慢 + track ID 膨胀（回归源：共享单实例）。
+        BYTETracker.reset() 清空 tracked/lost/removed + frame_id + Kalman + 全局 ID 计数器。
+        """
+        pred = getattr(self._model, "predictor", None) if self._model is not None else None
+        if pred is not None and hasattr(pred, "trackers"):
+            for t in pred.trackers:
+                t.reset()  # BOTSORT.reset(): super()(BYTETracker.reset) + gmc.reset_params()
             logger.debug("[YoloDetector] Tracker reset for new video")
 
     def set_target_classes(self, classes: list[str] | None) -> None:

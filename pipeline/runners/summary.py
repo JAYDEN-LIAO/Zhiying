@@ -159,7 +159,14 @@ class SummaryRunner(OperationRunner):
         )
 
         logger.info("[SummaryRunner] Summarizing %d scenes via LLM...", len(lines))
-        raw = await summarizer.summarize(script, system_prompt, user_prompt)
+        try:
+            raw = await summarizer.summarize(script, system_prompt, user_prompt)
+        except Exception as e:
+            # 摘要属 best-effort：LLM 失败（API / 截断 / 解析）→ 回退本地聚合，
+            # 绝不因摘要失败拖垮整个管道（摘要本就是可降级产物）
+            logger.warning("[SummaryRunner] LLM summary failed (%s), falling back to native aggregator", e)
+            await self._run_aggregate(pctx, scenes)
+            return
         await self._validate_and_store(pctx, raw)
 
     # ── 共用 ──

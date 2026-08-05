@@ -24,6 +24,7 @@ from core.schemas import (
 from core.config_loader import load_config
 from core.models import Video, VideoGroup, VideoStatus
 from core.repository import create_video, get_video_with_relations, list_videos, delete_video
+from core.cancellation import mark_cancelled, unmark_cancelled
 from services.video_service import VideoService, RUNNING_VIDEOS
 
 logger = logging.getLogger(__name__)
@@ -524,20 +525,27 @@ async def delete_video_endpoint(
       同事务内完成空组清理。
     - 磁盘: StorageManager 按 videos 表剩余引用判定清理
       （reuse 共享文件只在最后一个引用删除时才真正 unlink）。
-    - 守卫: 正在跑管道的视频（status=processing 或 RUNNING_VIDEOS 注册）
-      返回 409 —— 防止删除导致后台管道在 status 更新时崩溃。
+    - 处理中视频：允许删除。删除前登记 core.cancellation，后台管道在
+      persist 前检查到即中止（跳过写入，避免 FK 异常）。文件清理失败
+      非致命（storage_manager 逐项 try/except，DB 已删即返回成功，
+      残留文件由孤儿清扫兜底）。
     """
     result = await db.execute(select(Video).where(Video.id == video_id))
     video = result.scalar_one_or_none()
     if video is None:
         raise HTTPException(status_code=404, detail="Video not found")
-    if video.status == VideoStatus.PROCESSING or video_id in RUNNING_VIDEOS:
-        raise HTTPException(
-            status_code=409,
-            detail="视频正在处理中，无法删除，请稍后再试",
-        )
+    # 仅在「管道在跑」时登记取消（DB 删除前），管道检查到即中止；
+    # 已完成/待处理视频无后台管道，不登记（避免集合无界增长）
+    was_running = video.status == VideoStatus.PROCESSING or video_id in RUNNING_VIDEOS
+    if was_running:
+        mark_cancelled(video_id)
     storage_manager = getattr(request.app.state, "storage_manager", None)
-    freed_bytes = await delete_video(db, video, storage_manager)
+    try:
+        freed_bytes = await delete_video(db, video, storage_manager)
+    except Exception:
+        if was_running:
+            unmark_cancelled(video_id)
+        raise
     logger.info("[API] Video deleted: %s (freed %.1f MB)", video_id, freed_bytes / 1e6)
     return APIResponse(data={"freed_bytes": freed_bytes})
 

@@ -20,6 +20,7 @@ from core.schemas import VideoCreate, VideoResponse
 from core.config_loader import load_config
 from core.repository import create_video
 from core.status_tracker import StatusTracker
+from core.cancellation import unmark_cancelled
 from pipeline.engine import PipelineEngine
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,7 @@ class VideoService:
                 _release_pipeline_slot(sem)
         finally:
             RUNNING_VIDEOS.discard(video_id)
+            unmark_cancelled(video_id)
 
     async def _incremental_process(self, video_id: uuid.UUID, added_modalities: set[str]) -> None:
         async with self.db_session_factory() as session:
@@ -142,6 +144,7 @@ class VideoService:
                 _release_pipeline_slot(sem)
         finally:
             RUNNING_VIDEOS.discard(video_id)
+            unmark_cancelled(video_id)
 
     async def _process_video(self, video_id: uuid.UUID) -> None:
         async with self.db_session_factory() as session:
