@@ -2,7 +2,7 @@
 
 ## One-Line Summary
 
-Cerno 是 **视频分析引擎**（v0.22）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。`deploy/` 提供 Windows 裸机一键安装（从零部署）。架构细节见 `docs/arch.md`。
+Cerno 是 **视频分析引擎**（v0.22）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。`deploy/` 提供 Windows 裸机一键安装（从零部署）；requirements 已做多架构区分（Windows/Linux x86 装 onnxruntime-gpu，ARM64 如 DGX Spark/GB10 无该 wheel 自动装 CPU 版，人脸/车牌走 CPU）。架构细节见 `docs/arch.md`。
 
 ## Quick File Map
 
@@ -30,6 +30,7 @@ core/db.py                 — Async engine, init_db(), incremental migration (e
 core/config_loader.py      — Loads config.yaml + .env + data/settings.json overrides; PIPELINE_NUMERIC_SPEC/clamp_param 参数钳制; _auto_fallback_captioner 自动降级
 core/presets_service.py    — 参数预设服务 (data/presets.json): create/apply/rename/delete 命名参数快照
 core/gpu_lock.py           — 全局 GPU 推理锁: 串行化 embedder + YOLO 前向，防并发驱动故障
+core/cancellation.py       — 管道取消登记: 删除「处理中」视频后优雅中止（persist 前检查 is_cancelled，防写已删行 FK 异常）
 core/settings_service.py   — 设置服务: data/settings.json 读写 {api_keys, providers, storage, pipeline}; API_KEY_DEFS/API_PROVIDER_DEFS; 脱敏显示
 core/prompt_loader.py      — Prompt template loader (config/prompts.yaml)
 core/status_tracker.py     — Pipeline progress + dynamic operation-based weight calculation
@@ -95,8 +96,9 @@ deploy/                    — Windows 裸机一键安装套件: setup_windows.p
   PUT /videos/{id}/params → 校验 PipelineParams → 更新记录
     → 后台 PipelineEngine.run() (pending) / run_incremental() (completed, 仅 summary/search_index)
     → 组内 pending 兄弟同步启动 (v0.19)
-  DELETE /videos/{id} (v0.21 存储卫生)
-    → 404 守卫 → 409 守卫 (PROCESSING 或 RUNNING_VIDEOS)
+  DELETE /videos/{id} (v0.21 存储卫生; v0.22 放开处理中删除)
+    → 404 守卫
+    → 处理中 (PROCESSING/RUNNING_VIDEOS) → mark_cancelled 登记（后台管道 persist 前检查 is_cancelled 中止，防 FK 异常）
     → 批量 DELETE videos 行 (DB ON DELETE CASCADE 级联 10 张子表)
     → 同事务空组清理 → commit → StorageManager 引用判定清盘 → 返回 freed_bytes
   孤儿清扫: POST /maintenance/sweep (dry_run 默认) / scripts/sweep_storage.py --apply
@@ -141,7 +143,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **NVDEC**: MJPEG pipe（~100KB/帧）默认启用，自动 fallback cv2。
 - **ReID 双层**: 在线 BoT-SORT with_reid（`config/botsort.yaml` `model: "models/yolo26n-cls.pt"` 本地外观模型——实测 ultralytics 8.4.115 的 `auto` 仍会从 GitHub 下载，故本地预置避免运行时下载）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠）; 缝合完成后修改需新建记录。
 - **编码预设**: fast/balanced/precise 三档控制分辨率 + batch（336×224 / 504×336 / 672×448），三档模板与默认档可在设置页覆盖；embedder 支持 `quantization` none/8bit/4bit（bitsandbytes, 需重启生效）。
-- **存储卫生**: 删除必须走 `repository.delete_video`（StorageManager 清盘, 勿直接 `session.delete`）; 新增落盘路径必须登记进 `core/storage_manager.py`; 孤儿清扫手动（maintenance 端点/CLI, dry-run 默认）。判定: 视频文件按 DB 三列引用集合, 附属目录按 `video_id ∈ videos 表` —— 绝不用 scenes.keyframe_path（persist 窗口期会误删）。删除守卫: PROCESSING 或 `RUNNING_VIDEOS` → 409。
+- **存储卫生**: 删除必须走 `repository.delete_video`（StorageManager 清盘, 勿直接 `session.delete`）; 新增落盘路径必须登记进 `core/storage_manager.py`; 孤儿清扫手动（maintenance 端点/CLI, dry-run 默认）。判定: 视频文件按 DB 三列引用集合, 附属目录按 `video_id ∈ videos 表` —— 绝不用 scenes.keyframe_path（persist 窗口期会误删）。删除守卫: 404 守卫; **处理中视频允许删除**（v0.22 `core/cancellation` 登记, 管道 persist 前检查 `is_cancelled` 中止, 防写已删行 FK 异常; 已删除集合在管道结束后 `unmark_cancelled` 移除）。
 
 ## Database Tables (12)
 
@@ -180,6 +182,8 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | 前端 Dashboard (20 组件 + 8 hooks) | ✅ | Dashboard.tsx, components/ (SettingsPage 4 分区) |
 | 元数据 / 来源分析 / 导出 | ✅ | utils/metadata.py, video_source.py, export_service.py |
 | Windows 从零部署 (v0.22) | ✅ | deploy/setup_windows.ps1 裸机一键安装器 + download_models.py (含 reid) + deploy_feedback.md; 配置统一自动降级 |
+| 删除处理中 + 管道取消 (v0.22) | ✅ | core/cancellation.py — 处理中视频允许删除，删除端点登记后管道 persist 前优雅中止（防写已删行 FK 异常） |
+| 多架构 requirements (v0.22) | ✅ | 环境标记: onnxruntime-gpu (win32/x86_64/AMD64) / onnxruntime (aarch64/arm64, 无 GPU wheel 自动 CPU) |
 | OCR / Grounding | ⬜ Shell | plugins/ocr/, plugins/grounding/ |
 | Health / Reindex | 🔶 部分 | /health 已上, reindex 待办 |
 
@@ -210,6 +214,6 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - Python 3.13
 - FastAPI, SQLAlchemy async, asyncpg, pgvector
 - transformers, torch (CUDA 12.4), modelscope, qwen-vl-utils
-- bitsandbytes (embedder 8bit/4bit 量化), onnxruntime-gpu (人脸/车牌 GPU 推理)
+- bitsandbytes (embedder 8bit/4bit 量化), onnxruntime-gpu (人脸/车牌 GPU 推理; 仅 x86/Windows — ARM64 无该 wheel, requirements 环境标记自动降级 onnxruntime CPU 版)
 - openai, httpx, Pillow
 - pytest, pytest-asyncio

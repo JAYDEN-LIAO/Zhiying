@@ -2,7 +2,7 @@
 
 > Version: 0.22 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
-> v0.22: Windows 从零部署 + 系统设置/参数预设 + 全局 GPU 锁 + Detection 渲染重构
+> v0.22: Windows 从零部署 + 系统设置/参数预设 + 全局 GPU 锁 + Detection 渲染重构 + 删除处理中/管道取消 + ARM64 多架构
 
 ## System Data Flow
 
@@ -36,6 +36,8 @@
 │  └──────────────────────────┘
 │  ┌─ StorageManager (v0.21)─┐
 │  │ delete → 批量删DB+清盘   │
+│  │   └ 处理中: cancellation│
+│  │     登记 → 管道优雅中止  │
 │  │ sweep → 孤儿清扫        │
 │  └──────────────────────────┘
 │  ┌─ SettingsService (v0.22) ┐
@@ -213,6 +215,7 @@ main.py
 core/  models.py (12 表) · schemas.py (DTO) · repository.py (数据访问) · storage_manager.py (存储卫生)
        search.py (6 检索) · db.py (引擎/init_db) · config_loader.py (settings 覆盖/参数钳制/自动降级)
        settings_service.py (设置) · presets_service.py (参数预设) · gpu_lock.py (GPU 串行锁)
+       cancellation.py (管道取消登记, 删除处理中视频后优雅中止)
        prompt_loader.py · status_tracker.py (进度) · interfaces.py (10 插件 ABC) · exceptions.py
 config/  config.yaml (server/db/storage/plugins/pipeline) · config_schema.py · prompts.yaml
 frontend/  Dashboard.tsx + components/ (20) + hooks/ (8) + labels.ts + services/api.ts + types/
@@ -242,6 +245,7 @@ config.yaml controls which backends to load:
   embedder:    qwen3_vl_embedding_8b → local GPU model (Qwen3-VL-Embedding-8B), loaded at startup
                                        可选 quantization none/8bit/4bit (bitsandbytes); 相对路径解析到项目根
   summarizer:  vllm          → DeepSeek API (vlm_llm mode only; native mode uses Python aggregator)
+                               (截断自愈: finish_reason=length → max_tokens 翻倍重试 ≤3 次 + JSON 截断修复)
   transcriber: null          → disabled (faster-whisper plugin exists, opt-in)
   detector:    yolo          → YOLO11s object detection (默认启用; batch_size/imgsz 可配; 共享单实例懒加载)
   face:        insightface   → InsightFace SCRFD + ArcFace R50 (512d)
@@ -250,6 +254,9 @@ config.yaml controls which backends to load:
   grounding:   null          → disabled (placeholder)
 
 所有 embedder encode_* / YOLO detect 前向持 core/gpu_lock 全局锁串行（v0.22，防并发驱动故障）
+
+人脸/车牌 ONNX 推理依赖 onnxruntime：x86/Windows 装 onnxruntime-gpu（GPU 探针含 CUDAExecutionProvider）；
+ARM64（DGX Spark/GB10）无 onnxruntime-gpu wheel → requirements 环境标记自动装 onnxruntime CPU 版（人脸/车牌走 CPU）。
 
 
 ## Search Architecture
@@ -373,7 +380,7 @@ plate_detections
 | GET | /api/v1/videos/{id}/status | 轻量进度查询 |
 | GET | /api/v1/videos/{id}/stream | 视频流式播放 (支持 Range) |
 | GET | /api/v1/videos/{id}/thumbnail/{scene_index} | 场景缩略图 |
-| DELETE | /api/v1/videos/{id} | 删除视频 (CASCADE) |
+| DELETE | /api/v1/videos/{id} | 删除视频 (级联+清盘; 处理中可删, 管道优雅中止) |
 | GET | /api/v1/videos/{id}/metadata | 视频元数据 + 来源分析 (支持 ?verbose=true, 自动缓存) |
 | GET | /api/v1/settings | 获取系统设置 (API 密钥/服务商端点与模型/存储路径/管道性能) |
 | PUT | /api/v1/settings | 更新系统设置 (密钥/服务商/存储/pipeline 段皆可，保存即运行时生效；量化需重启) |
@@ -479,11 +486,13 @@ Vite 开发代理:
 | **人脸/车牌开关** | 三门控: config + detection_enabled + face/plate_enabled |
 | **图搜双通道** | 人脸 ArcFace 512d / 通用 Qwen3-VL 4096-dim（帧不聚类精确到秒）|
 | **存储卫生 (v0.21)** | 删除 = DB 级联 + 引用追踪清盘；孤儿清扫手动（dry-run 默认）防误删 |
+| **删除处理中 + 管道取消 (v0.22)** | 放开 PROCESSING 守卫；删除端点 `core/cancellation.mark_cancelled` 登记已删 id，管道 persist 前 `is_cancelled` 检查即中止，防写已删行 FK 异常（单进程集合, 管道结束 unmark 防膨胀） |
 | **全局 GPU 锁 (v0.22)** | 24GB 机 YOLO 卷积 + 8bit matmul 并发触发驱动硬故障 → 单进程全局锁串行所有 GPU 前向；detection 攒批 1024→128 防饿死 embedder |
 | **共享单实例 (v0.22)** | embedder + detector 预载 app.state（detector 懒加载），业务逻辑经 shared_detector 注入，禁重复 load_plugin |
 | **并发管道限制 (v0.22)** | max_concurrent_videos 信号量限流（激活峰值按并发叠加），低显存机防组批量并发 OOM |
 | **参数预设 (v0.22)** | presets.json 命名快照一键套用，运行时生效；不含机器相关（存储路径/密钥） |
 | **从零部署 + 配置统一 (v0.22)** | setup_windows.ps1 裸机一键安装；单份 config 自动降级 captioner（本地缺失→qwen_api），effective_summary_mode 兜底摘要模式 |
+| **多架构 requirements (v0.22)** | `onnxruntime-gpu` 仅 x86/Windows 有 wheel → 环境标记：win32/x86_64/AMD64 装 GPU 版，aarch64/arm64（DGX Spark/GB10）自动装 `onnxruntime` CPU 版（人脸/车牌走 CPU）；numpy 钉 `<2.4`（paddlex 3.7） |
 | **embedder 量化 (v0.22)** | none/8bit/4bit (bitsandbytes) 把 ~16GB 权重降到 ~8GB/~4GB；启动时加载，改后需重启 |
 
 ## Current Status
@@ -518,14 +527,15 @@ Vite 开发代理:
 | Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值 |
 | Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
 | Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
-| Storage Hygiene (v0.21) | ✅ | core/storage_manager.py: 删除即清盘 (DB 级联 + 引用追踪) + 删除守卫 409 + 空组清理; POST /maintenance/sweep 清扫 + scripts/sweep_storage.py CLI; trackthumb 泄漏修复; 缩略图缺失 404 兜底 |
+| Storage Hygiene (v0.21) | ✅ | core/storage_manager.py: 删除即清盘 (DB 级联 + 引用追踪) + 空组清理; POST /maintenance/sweep 清扫 + scripts/sweep_storage.py CLI; trackthumb 泄漏修复; 缩略图缺失 404 兜底 |
+| Delete-while-processing (v0.22) | ✅ | core/cancellation.py — 删除端点 mark_cancelled 登记, engine persist 前 is_cancelled 检查中止; 前端删除按钮放开 processing、去释放空间弹窗 |
 | Multi-Video Group (v0.19) | ✅ | POST /videos/upload/batch; VideoGroup ORM; 组参数同步; frontend 历史堆叠/展开/切换/跨视频搜索/独立检测面板 |
 | Settings API (Keys + Providers + Storage + Pipeline) | ✅ | core/settings_service.py, GET/PUT /api/v1/settings（密钥/端点/模型 + 存储路径 + pipeline 段: 编码三档/检测参数/量化/并发上限，settings.json backed，运行时生效，量化需重启） |
 | Pipeline Presets (v0.22) | ✅ | core/presets_service.py + /settings/presets CRUD + apply（data/presets.json 命名快照，一键套用） |
 | Global GPU Lock (v0.22) | ✅ | core/gpu_lock.py — embedder/YOLO 前向全局串行（防 24GB 机并发驱动故障）; detection 攒批 128 |
 | 并发管道限制 (v0.22) | ✅ | pipeline.max_concurrent_videos → VideoService asyncio.Semaphore 限流同时处理的管道数 |
 | Embedder Quantization (v0.22) | ✅ | plugins/embedder/qwen_vl_embedder.py — none/8bit/4bit via bitsandbytes; 相对模型路径解析到项目根 |
-| Windows 从零部署 (v0.22) | ✅ | deploy/setup_windows.ps1 裸机一键安装器 + download_models.py (含 reid) + deploy_feedback.md; 单份 config 自动降级 captioner |
+| Windows 从零部署 + 多架构 (v0.22) | ✅ | deploy/setup_windows.ps1 裸机一键安装器 + download_models.py (含 reid) + deploy_feedback.md; 单份 config 自动降级 captioner; requirements 环境标记支持 ARM64 (onnxruntime CPU) |
 | Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 20 components + 8 hooks + labels.ts incl Detection/Timeline/Metadata/Export/ImageSearch |
 | Config Schema | ✅ | Pydantic v2 validation for config.yaml |
 | Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |

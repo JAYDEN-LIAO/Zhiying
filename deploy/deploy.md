@@ -5,6 +5,8 @@
 > CUDA torch / 全部 Python 依赖 / 全部模型。装完自校验，并打印数据库/后端/前端启动指令（由你自己启动）。
 >
 > 原则：**开发机上能用的功能，部署机必须能用；所有推理尽量 GPU，禁止静默退化成 CPU。**
+>
+> 本指南以 Windows 部署为主线；项目同时支持 Linux x86 与 **ARM64（DGX Spark/GB10）**，平台间唯一硬差异是 onnxruntime（见 §6），由 `requirements.txt` 环境标记自动处理。
 
 ---
 
@@ -99,6 +101,7 @@ npm run dev
 | `torch.cuda.is_available()` True 但推理报 `no kernel image for sm_120` | **Blackwell (RTX 50xx) 装成了 cu126**。安装器按 GPU 自动选 cu130；手动装务必 `--index-url .../cu130` |
 | torchvision 报 `torchvision::nms ... CUDA backend` | torchvision 是 CPU 版（PyPI 默认拉）。需装**与 torch 同 CUDA 源**的版本（安装器已处理） |
 | 人脸/车牌速度极慢 | onnxruntime 是 CPU 版。确认 `.venv` 里是 `onnxruntime-gpu` 且探针含 `CUDAExecutionProvider` |
+| ARM64 上 `pip install onnxruntime-gpu` 失败（找不到匹配版本） | 正常——PyPI 无 aarch64 版 onnxruntime-gpu（仅 x86_64/win_amd64）。`requirements.txt` 环境标记会自动改装 `onnxruntime` CPU 版；ARM64 机器人脸/车牌走 CPU 是预期行为 |
 | 模型下载卡死 | pip/直连大文件不稳定 → 安装器用 curl 下载 + 本地安装；GitHub 源必须走代理 |
 | `pip check` 警告 `onnxruntime not installed` | 预期现象——部署用 `onnxruntime-gpu`，安装器已建虚拟 `onnxruntime` 桩，pip check 全绿 |
 | paddlex 报 numpy 版本冲突 | requirements 已钉 `numpy<2.4`（paddlex 3.7 要求） |
@@ -111,6 +114,7 @@ npm run dev
 ## 7. 维护与扩展
 
 - **模型下载**：`python deploy/download_models.py --component <x> --model-root models`（断点续传、`--verify-only` 校验）
+- **多架构依赖**：`onnxruntime-gpu` 仅 Windows/x86 Linux 有 wheel；ARM64（DGX Spark/GB10）由 requirements 环境标记自动装 `onnxruntime` CPU 版。新增带平台差异的依赖时用 PEP 508 环境标记区分（如 `; sys_platform == "win32" or platform_machine == "x86_64"`）
 - **新增会产生磁盘文件的功能** → 落盘路径模式必须登记进 `core/storage_manager.py`
 - **新增感知模块** → `pipeline/runners/` 新 runner + `pipeline/operations.py` 一个 Operation，engine 零改动
 - **完整踩坑记录** → 见 `deploy_feedback.md`
@@ -120,10 +124,10 @@ npm run dev
 | 维度 | Linux 开发机 | Windows 部署机 | 影响 |
 |---|---|---|---|
 | torch 安装 | `pip install torch`=CUDA 版 | 默认 CPU 版 | 安装器按 GPU 选源 + 实测 kernel |
-| onnxruntime | 默认 CPU | 默认 CPU | 安装器换 onnxruntime-gpu |
+| onnxruntime | x86 默认 CPU；**ARM64 无 GPU wheel** | 默认 CPU → 安装器换 onnxruntime-gpu | requirements 环境标记按平台选（win32/x86_64→GPU, aarch64/arm64→CPU） |
 | Docker | Linux 原生 | Docker Desktop (WSL2) | 仅用 `db` 服务 + named volume |
 | 路径/编码/事件循环 | — | 反斜杠/GBK/Proactor | 代码用 pathlib；安装器处理 BOM/编码 |
-| 文件删除 | 允许删打开中的文件 | **打开中的不可删** | 删除视频若在播放/转码 → StorageManager 清盘失败 → 删除守卫 409 兜底 |
+| 文件删除 | 允许删打开中的文件 | **打开中的不可删** | 处理中视频可删（v0.22 `core.cancellation` 登记，管道优雅中止）；Windows 打开中文件删除失败 → 清盘逐项 try/except 非致命，残留由孤儿清扫兜底 |
 
 ---
 

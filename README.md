@@ -41,6 +41,7 @@ curl -X POST -H "Content-Type: application/json" \
 - 一键安装器、环境要求、模型清单（embedding/yolo/**reid**/face/plate/segmenter）、代理必填与国内镜像、坑位审计与 Linux/Windows 差异，详见 **[`deploy/deploy.md`](deploy/deploy.md)**。
 - 部署实测踩坑记录（BOM 编码 / Blackwell cu130 / pip 大文件 curl 兜底 / 代理策略等）见 **[`deploy/deploy_feedback.md`](deploy/deploy_feedback.md)**。
 - 配置已统一：单份 `config/config.yaml` 通用所有机器（embedder 相对路径解析 + captioner 本地模型缺失自动降级 `qwen_api`），无需 `config.windows.yaml` / `CERNO_CONFIG`。
+- **多架构支持**：`requirements.txt` 用环境标记区分平台——Windows/Linux x86 装 `onnxruntime-gpu`（人脸/车牌 GPU），**ARM64 Linux**（DGX Spark/GB10 等，无 `onnxruntime-gpu` wheel）自动装 `onnxruntime` CPU 版，人脸/车牌走 CPU。
 
 ## Core Features
 
@@ -81,7 +82,8 @@ curl -X POST -H "Content-Type: application/json" \
 | Video Source Analysis | Rule engine: phone/camera/screen_recording/surveillance/non_camera_source + 监控品牌识别（文件头魔数嗅探 IMKH→海康威视）| ✅ |
 | Global ReID Tracklet Stitching | 合并被遮挡/缩放/镜头切换拆分的同一身份 track（在线 ReID + 全局缝合双层） | ✅ |
 | Metadata Caching | Extracted metadata cached to DB (fast path <1ms on repeat requests) | ✅ |
-| Storage Hygiene (v0.21) | 删除视频 = DB 级联 + 磁盘文件全回收（引用计数, reuse 共享安全, 空组自动清理, 处理中守卫 409） | ✅ |
+| Storage Hygiene (v0.21) | 删除视频 = DB 级联 + 磁盘文件全回收（引用计数, reuse 共享安全, 空组自动清理）| ✅ |
+| Delete-while-processing + Pipeline Cancel (v0.22) | 处理中视频**允许删除**：删除端点登记 `core.cancellation`，后台管道 persist 前检查 `is_cancelled` 优雅中止（防写已删行 FK 异常） | ✅ |
 | Orphan Storage Sweep | `POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` | ✅ |
 
 ## Architecture Overview
@@ -113,7 +115,7 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
          │    └─ classify_video_source() → phone/camera/surveillance/non_camera
          ├─ StorageManager (v0.21): 删除即清盘 + 孤儿清扫
          │    ├─ 引用追踪: 以 DB 三列 (file/remux/proxy) 判定, reuse 共享安全
-         │    ├─ 删除守卫: processing/running → 409; 空组同事务清理
+         │    ├─ 删除: 404 守卫; 处理中可删 (cancellation 登记, 管道优雅中止)
          │    └─ sweep: 磁盘 vs DB 对账 (附属目录按 video_id, mtime 保护上传竞态)
          └─ Shared GPU models (embedder + detector 预加载到 app.state; captioner 按需加载):
               ├─ Qwen3-VL-Embedding-8B (embedder, FP16, ~16GB, preloaded; 可选 8bit/4bit 量化)
@@ -181,6 +183,7 @@ cerno/
 │   ├── settings_service.py # 设置管理: API密钥/服务商端点与模型/存储路径/管道性能 (settings.json backed)
 │   ├── presets_service.py # 参数预设: 命名快照 create/apply/rename/delete (presets.json)
 │   ├── gpu_lock.py       # 全局 GPU 推理锁 (embedder/YOLO 前向串行)
+│   ├── cancellation.py   # 管道取消登记 (删除处理中视频后优雅中止, persist 前检查)
 │   ├── storage_manager.py # 存储管理: 路径解析/引用追踪/删除清盘/孤儿清扫
 │   └── exceptions.py     # Custom exceptions
 ├── config/               # Configuration
@@ -257,6 +260,8 @@ cerno/
   - **参数预设**: `data/presets.json` 多套命名管道参数快照，`/settings/presets` CRUD + apply 一键套用。
   - **全局 GPU 锁 + 共享单实例**: `core/gpu_lock.py` 串行化 embedder/YOLO 前向（24GB 机并发前向触发驱动硬故障）；detector 共享 `app.state` 单实例（懒加载 ~2GB）；detection 攒批 1024→128（长批持锁饿死 embedder）；`max_concurrent_videos` 信号量限流并发管道。
   - **Detection 渲染重构**: `/detection/data` 拆为 `/detection/tracks` + `/detection/detections`（按需时间窗）；前端 DetectionPanel 虚拟滚动 + DetectionTimeline Canvas 化；`frame_detections` 复合索引。
+  - **删除处理中 + 管道取消**: 删除端点放开 PROCESSING 守卫（处理中视频可删），`core/cancellation.py` 登记后管道 persist 前 `is_cancelled` 检查优雅中止（防写已删行 FK 异常）；前端删除按钮不再禁用 processing、去掉"释放空间"弹窗。
+  - **多架构 requirements**: `onnxruntime-gpu` 仅 Windows/x86 Linux 有 wheel；ARM64（DGX Spark/GB10）无 → 环境标记自动装 `onnxruntime` CPU 版（人脸/车牌走 CPU）；numpy 钉 `<2.4`（paddlex 3.7 要求）。
 - **v0.21 — Storage Hygiene & Management**: 删除视频 = DB 级联 + 磁盘全回收（StorageManager 按 DB 引用追踪，reuse 共享文件只在最后引用删除时清理，空组同事务自动清理，处理中守卫 409 + `RUNNING_VIDEOS` 注册表闭合竞态）；批量 DELETE 替代 ORM 全量 load（删大视频性能修复）；`POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` 孤儿清扫（sweep 按 video_id 判定附属目录、mtime 保护上传竞态）；trackthumb 导出泄漏修复；人脸/检测/车牌缩略图缺失 404 兜底；前端删除二次确认 + processing 禁用 + 释放空间提示。
 - **维护记录**: 清理废弃的前端 `DetectionContext`/`mockData`，进度阶段统一由 `/pipeline/operations` 按视频参数动态返回；补充 Python、前端缓存及本地环境文件的忽略规则。
 - **v0.20 — Dual-layer ReID**: 在线 BoT-SORT ReID（`with_reid` + 检测骨干特征直通, 遮挡/交叉保持身份）+ 全局 tracklet 缝合（detection 缓存 crop → mean pool → cosine ≥0.85 合并同一身份, segments 时序检查）。长视频友好（track_encode 零 seek）。
