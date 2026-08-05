@@ -119,12 +119,16 @@ class StorageManager:
         file_path: str,
         remuxed_path: str | None,
         proxy_path: str | None,
+        source_owned: bool = True,
     ) -> int:
         """按引用判定删除视频的全部磁盘产物，返回释放字节数。
 
         必须在视频记录删除并 commit 后调用。每个操作独立 try/except:
         FileNotFoundError 吞掉（幂等），其余仅记日志 —— 不抛出
         （DB 行已删，文件清理失败不应让删除接口返回失败）。
+
+        source_owned=False 时跳过 unlink 原始源文件（平台共享文件就地引用，
+        归平台所有，Cerno 不负责删除；remux/proxy 仍按引用清理）。
         """
         freed = 0
         referenced = await self.all_referenced_paths(session)
@@ -132,6 +136,9 @@ class StorageManager:
         # 1. 三个视频文件路径（reuse 共享 → 引用集合内才保留）
         for path in (file_path, remuxed_path, proxy_path):
             if not path:
+                continue
+            # 平台共享源文件归平台所有，Cerno 不删除
+            if path == file_path and not source_owned:
                 continue
             norm = self._resolve(path)
             if norm in referenced:

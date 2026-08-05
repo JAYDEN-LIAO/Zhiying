@@ -23,6 +23,8 @@ import { useVideoPolling } from "./hooks/useVideoPolling";
 import { useProxyStatus } from "./hooks/useProxyStatus";
 import { useDetectionData } from "./hooks/useDetectionData";
 import { useStreamReady } from "./hooks/useStreamReady";
+import { useYunzhi } from "./platform/YunzhiProvider";
+import type { YunzhiResource } from "./platform/yunzhi-bridge";
 
 export default function Dashboard() {
   /* ── Navigation & Panels ── */
@@ -48,6 +50,9 @@ export default function Dashboard() {
   const [drillGroupId, setDrillGroupId] = useState<string | null>(null);
   const [detectionVideoId, setDetectionVideoId] = useState<string | null>(null);
   const [detectionVideo, setDetectionVideo] = useState<VideoResponse | null>(null);
+
+  /* ── 云智平台 Bridge（mock=true 独立开发走本地上传；false 走平台文件库选文件） ── */
+  const { mock: yunzhiMock, selectFiles: yunzhiSelectFiles } = useYunzhi();
 
   /* ── Panel toggle (must be after currentVideo / drillGroupId declarations) ── */
   const togglePanel = useCallback((panel: PanelType) => {
@@ -275,8 +280,57 @@ export default function Dashboard() {
     setIsUploading(false);
   }, []);
 
-  /* ── Upload (v0.19 支持多选) ── */
+  /* ── 注册平台共享路径视频（云智 Bridge 选文件 → 就地引用，不上传字节） ── */
+  const registerExternal = useCallback(async (items: YunzhiResource[]) => {
+    const files = items.filter((i) => i.resourceType === "FILE" && i.absolutePath);
+    if (files.length === 0) {
+      alert("请选择文件（不是文件夹）");
+      return;
+    }
+    setCurrentPage("dashboard");
+    setActivePanel(null);
+    setIsUploading(true);
+    try {
+      if (files.length === 1) {
+        const result = await api.registerFromPath(files[0].absolutePath!, files[0].name);
+        setCurrentVideoId(result.id);
+        setCurrentVideo(result);
+      } else {
+        const results = await Promise.all(
+          files.map((f) => api.registerFromPath(f.absolutePath!, f.name))
+        );
+        setCurrentVideoId(results[0].id);
+        setCurrentVideo(results[0]);
+        if (results[0].group_id) {
+          setVideoGroups((prev) => [...prev, {
+            groupId: results[0].group_id!,
+            videoIds: results.map((r) => r.id),
+          }]);
+        }
+      }
+      setListKey((k) => k + 1);
+      setHasPendingParams(true);
+      setActivePanel("params");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "注册共享文件失败");
+    }
+    setIsUploading(false);
+  }, []);
+
+  /* ── Upload (v0.19 支持多选; 云智宿主模式走 Bridge 文件库选文件) ── */
   const handleUpload = useCallback(() => {
+    if (!yunzhiMock) {
+      // 平台宿主模式：Bridge 从文件库选文件 → 就地注册
+      void yunzhiSelectFiles()
+        .then((items) => registerExternal(items))
+        .catch((err) => {
+          if (!(err instanceof Error && /用户取消/.test(err.message))) {
+            alert(err instanceof Error ? err.message : "平台文件选择失败");
+          }
+        });
+      return;
+    }
+    // 独立开发模式：本地文件选择
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".mp4,.mov,.avi,.mkv,.webm";
@@ -286,7 +340,7 @@ export default function Dashboard() {
       input.value = ""; // 允许重复选择同一文件
     };
     input.click();
-  }, [handleFiles]);
+  }, [handleFiles, registerExternal, yunzhiMock, yunzhiSelectFiles]);
 
   /* ── 拖拽上传 (单个/多个视频直接拖入窗口) ── */
   const [dragActive, setDragActive] = useState(false);

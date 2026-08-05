@@ -114,6 +114,10 @@ class Video(Base):
     file_size: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="字节数",
     )
+    source_owned: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False,
+        comment="源文件是否归 Cerno 所有。平台共享文件就地引用时置 False，删除视频不 unlink 源文件",
+    )
     duration: Mapped[float | None] = mapped_column(
         Float, nullable=True,
         comment="视频时长(秒), QC 阶段填充",

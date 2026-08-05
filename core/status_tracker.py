@@ -8,6 +8,7 @@ Pipeline 进度持久化 — 动态权重 + 各操作真实子进度聚合。
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from sqlalchemy import update
@@ -57,9 +58,17 @@ class StatusTracker:
         video_id: str,
         db_session_factory: async_sessionmaker[AsyncSession],
         operations: list | None = None,
+        on_progress: Callable[[float, str], Awaitable[None]] | None = None,
     ):
+        """进度持久化。
+
+        on_progress: 可选回调 (overall_progress 0~1, description) → await。
+        云智自动化任务用它把 Cerno 管道进度推到平台 callback.progressUrl；
+        回调异常吞掉，不阻塞管道。
+        """
         self.video_id = video_id
         self.db_session_factory = db_session_factory
+        self._on_progress = on_progress
         self._ops = operations or []
         self._ranges: dict[str, tuple[float, float]] = {}  # op.name → (start, end)
         self._descriptions: dict[str, str] = {}
@@ -140,6 +149,13 @@ class StatusTracker:
                 )
                 await session.commit()
 
+            if self._on_progress is not None:
+                try:
+                    await self._on_progress(self._overall_progress, description)
+                except Exception:
+                    # 平台回调失败（网络抖动/超时）不阻塞管道
+                    pass
+
     # ── 最终状态 ──
 
     async def mark_completed(self) -> None:
@@ -147,6 +163,11 @@ class StatusTracker:
         async with self._lock:
             self._overall_progress = 1.0
             await self._set_status(VideoStatus.COMPLETED, progress=1.0)
+            if self._on_progress is not None:
+                try:
+                    await self._on_progress(1.0, "处理完成")
+                except Exception:
+                    pass
 
     async def mark_failed(self, error: str) -> None:
         """标记视频处理失败，保留失败时的真实进度。"""
@@ -163,6 +184,11 @@ class StatusTracker:
                     )
                 )
                 await session.commit()
+            if self._on_progress is not None:
+                try:
+                    await self._on_progress(self._overall_progress, f"处理失败: {error}")
+                except Exception:
+                    pass
 
     async def _set_status(self, status: VideoStatus, progress: float) -> None:
         async with self.db_session_factory() as session:

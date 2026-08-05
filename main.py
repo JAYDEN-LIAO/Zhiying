@@ -256,3 +256,8 @@ async def handle_unexpected_error(request: Request, exc: Exception) -> JSONRespo
 # ──────────────────────────────────────────────────────────
 
 app.include_router(router)
+
+# 云智平台扩展自动化任务接口 — 根路径挂载（不走 /api/v1，平台按应用后台地址直调）
+from api.yunzhi_routes import router as yunzhi_router
+
+app.include_router(yunzhi_router)

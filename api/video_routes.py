@@ -19,7 +19,7 @@ from api.deps import get_db
 from api.schemas import APIResponse, VideoStatusResponse, ReuseRequest
 from core.schemas import (
     VideoCreate, VideoResponse, VideoListItem, VideoGroupResponse,
-    PipelineParams, ContentType,
+    PipelineParams, ExternalVideoRegister, ContentType,
 )
 from core.config_loader import load_config
 from core.models import Video, VideoGroup, VideoStatus
@@ -133,6 +133,64 @@ async def upload_video(
     await format_service.probe_and_save(video.id, dest_path)
     # 重操作异步执行
     asyncio.create_task(format_service.process_format(video.id, dest_path))
+
+    return APIResponse(data=VideoResponse.model_validate(video))
+
+
+@router.post("/videos/register-external", status_code=201)
+async def register_external_video(
+    payload: ExternalVideoRegister,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[VideoResponse]:
+    """注册平台共享路径的视频 — 绝对路径就地引用，不上传字节（云智集成）。
+
+    源文件归平台所有（source_owned=False），删除视频时 Cerno 不 unlink 源文件
+    （StorageManager 跳过外部源文件清理）。其余流程与上传一致：
+    建 pending 记录 → 同步 probe → 异步 remux/proxy → 前端配置参数后启动 Pipeline。
+    """
+    config: dict = load_config()
+    file_path = os.path.abspath(payload.file_path)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"共享文件不存在: {file_path}")
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=400, detail=f"共享路径不是文件: {file_path}")
+    file_size = os.path.getsize(file_path)
+    if file_size <= 0:
+        raise HTTPException(status_code=400, detail=f"共享文件为空: {file_path}")
+    file_name = payload.file_name or os.path.basename(file_path)
+
+    dto = VideoCreate(
+        file_path=file_path,
+        file_name=file_name,
+        file_size=file_size,
+        source_owned=False,  # 平台共享文件归平台所有
+        content_type=payload.content_type,
+        language=payload.language,
+        audio_enabled=payload.audio_enabled,
+        vision_enabled=payload.vision_enabled,
+        ocr_enabled=payload.ocr_enabled,
+        caption_enabled=payload.caption_enabled,
+        detection_enabled=payload.detection_enabled,
+        detection_classes=payload.detection_classes,
+        face_enabled=payload.face_enabled,
+        plate_enabled=payload.plate_enabled,
+        summary_enabled=payload.summary_enabled,
+        summary_mode=payload.summary_mode,
+        search_index_enabled=payload.search_index_enabled,
+        sample_fps=payload.sample_fps,
+        segment_threshold=payload.segment_threshold,
+        caption_with_context=payload.caption_with_context,
+        summary_detail=payload.summary_detail,
+    )
+
+    video = await create_video(db, dto)
+    logger.info("[RegisterExternal] video=%s file=%s source_owned=False (platform shared)", video.id, file_name)
+
+    # 同步探测格式（<100ms），异步执行 remux + proxy
+    format_service = request.app.state.format_service
+    await format_service.probe_and_save(video.id, file_path)
+    asyncio.create_task(format_service.process_format(video.id, file_path))
 
     return APIResponse(data=VideoResponse.model_validate(video))
 

@@ -108,6 +108,13 @@ async def init_db():
             ADD COLUMN IF NOT EXISTS detection_classes jsonb
         """))
 
+        # ── 增量迁移 v0.23: 源文件所有权（平台共享文件就地引用，删除不 unlink 源文件） ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS source_owned boolean
+                DEFAULT true NOT NULL
+        """))
+
         # ── 增量迁移 v0.10: tracks.segments (ReID 合并时间片段) ──
         await conn.execute(text("""
             ALTER TABLE tracks

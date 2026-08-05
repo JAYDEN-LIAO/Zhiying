@@ -52,6 +52,7 @@ async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video:
         caption_with_context=video_dto.caption_with_context,
         summary_detail=video_dto.summary_detail,
         group_id=video_dto.group_id,
+        source_owned=video_dto.source_owned,
     )
     session.add(video)
     try:
@@ -192,6 +193,7 @@ async def delete_video(
     file_path = video.file_path
     remuxed_path = video.remuxed_path
     proxy_path = video.proxy_path
+    source_owned = getattr(video, "source_owned", True)
     group_id = video.group_id
 
     try:
@@ -217,7 +219,8 @@ async def delete_video(
     freed = 0
     if storage_manager is not None:
         freed = await storage_manager.remove_video_artifacts(
-            session, video_id, file_path, remuxed_path, proxy_path
+            session, video_id, file_path, remuxed_path, proxy_path,
+            source_owned=source_owned,
         )
     return freed
 

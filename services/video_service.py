@@ -131,22 +131,26 @@ class VideoService:
             )
             await tracker.mark_failed(f"Incremental crashed: {e}")
 
-    async def process_video(self, video_id: uuid.UUID) -> None:
-        """后台任务入口：加载视频 → Pipeline → 完成/失败。"""
+    async def process_video(self, video_id: uuid.UUID, progress_callback=None) -> None:
+        """后台任务入口：加载视频 → Pipeline → 完成/失败。
+
+        progress_callback: 可选 (progress 0~1, description)，透传给 PipelineEngine，
+        云智自动化任务用它推送平台进度。
+        """
         logger.info("[VideoService] Starting pipeline for video %s", video_id)
         RUNNING_VIDEOS.add(video_id)
         try:
             # 并发上限（0=不限）：组批量上传会并发启动多个管道，激活峰值叠加需限流
             sem = await _acquire_pipeline_slot(load_config())
             try:
-                await self._process_video(video_id)
+                await self._process_video(video_id, progress_callback)
             finally:
                 _release_pipeline_slot(sem)
         finally:
             RUNNING_VIDEOS.discard(video_id)
             unmark_cancelled(video_id)
 
-    async def _process_video(self, video_id: uuid.UUID) -> None:
+    async def _process_video(self, video_id: uuid.UUID, progress_callback=None) -> None:
         async with self.db_session_factory() as session:
             result = await session.execute(
                 select(Video).where(Video.id == video_id)
@@ -165,6 +169,7 @@ class VideoService:
                 shared_embedder=self.embedder,
                 shared_captioner=self.captioner,
                 shared_detector=self.detector,
+                progress_callback=progress_callback,
             )
             await engine.run()
         except Exception as e:

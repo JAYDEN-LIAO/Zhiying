@@ -201,6 +201,7 @@ class PipelineEngine:
         shared_embedder=None,
         shared_captioner=None,
         shared_detector=None,
+        progress_callback=None,
     ):
         self.config = config
         self.db_session_factory = db_session_factory
@@ -208,6 +209,8 @@ class PipelineEngine:
         self._shared_embedder = shared_embedder
         self._shared_captioner = shared_captioner
         self._shared_detector = shared_detector
+        # 可选进度回调 (progress 0~1, description) → 云智自动化任务推送平台进度
+        self._progress_callback = progress_callback
 
         # v0.13: 优先使用 remuxed MP4（容器 demux 效率远高于 PS/TS/AVI）
         # ASSUMPTION: remuxed 文件的帧数/时长/时间戳与原始文件一致（_c copy 流复制保证）
@@ -218,6 +221,15 @@ class PipelineEngine:
         )
         self.prompt_loader = get_prompt_loader()
         self.plugins: dict[str, object] = {}
+
+    def _new_tracker(self, operations: list | None = None) -> StatusTracker:
+        """构造 StatusTracker，注入可选进度回调（云智平台进度推送）。"""
+        return StatusTracker(
+            video_id=str(self.video.id),
+            db_session_factory=self.db_session_factory,
+            operations=operations,
+            on_progress=self._progress_callback,
+        )
 
     # ── 入口 ──
 
@@ -243,11 +255,7 @@ class PipelineEngine:
                 self.plugins["detector"] = self._shared_detector
 
             # 4. 创建 tracker（动态进度权重）和 context
-            tracker = StatusTracker(
-                video_id=str(v.id),
-                db_session_factory=self.db_session_factory,
-                operations=enabled,
-            )
+            tracker = self._new_tracker(enabled)
             # 生产者-消费者队列：keyframes → frame_encode 流式通道
             enabled_names = {op.name for op in enabled}
             frame_queue: asyncio.Queue | None = (
@@ -300,10 +308,7 @@ class PipelineEngine:
                 logger.info("[Pipeline] video %s deleted mid-run, aborting (%s)", self.video.id, e)
                 return
             logger.exception("[Pipeline] video %s failed: %s", self.video.id, e)
-            tracker = StatusTracker(
-                video_id=str(self.video.id),
-                db_session_factory=self.db_session_factory,
-            )
+            tracker = self._new_tracker()
             await tracker.mark_failed(str(e))
 
     async def run_incremental(self, added_modalities: set[str]) -> None:
@@ -365,11 +370,7 @@ class PipelineEngine:
                 self.plugins["detector"] = self._shared_detector
 
             batches = topological_batches(enabled)
-            tracker = StatusTracker(
-                video_id=str(v.id),
-                db_session_factory=self.db_session_factory,
-                operations=enabled,
-            )
+            tracker = self._new_tracker(enabled)
             enabled_names = {op.name for op in enabled}
             frame_queue: asyncio.Queue | None = (
                 asyncio.Queue(maxsize=512)
