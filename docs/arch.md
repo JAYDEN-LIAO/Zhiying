@@ -544,5 +544,12 @@ Vite 开发代理:
 | faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
 | OCR | 📋 | PaddleOCR available as plate recognition alternative (plugins/plate/paddle_plate.py) |
 | Grounding | 📋 | Florence-2 shell only |
-| Health | ✅ | main.py GET /health → {"status":"ok","service":"cerno","database":"ok"}（含 DB 连通性） |
+| Health | ✅ | main.py GET /health → {"status":"ok","service":"cerno","version":"<__version__>","database":"ok"}（含 DB 连通性 + 版本号） |
 | Reindex | 🔶 | 待办 |
+
+## 版本发布
+
+- **唯一事实来源**：`core/version.py` `__version__`（SemVer pre-1.0：MINOR=新功能，PATCH=热修）；`/health` 返回 `version` 字段，部署/回滚后 `curl /health` 即可核对服务器实际运行版本。
+- **发版**：`./bump minor|patch|0.24.0` —— 联动改 `core/version.py` + `frontend/package.json` + `package-lock.json`（含两处根版本，避免 npm ci 因版本不同步报错），随后交互式输入提交信息、确认 `git add .` commit / tag / push。机器不自动提交——每一步发布动作由你按 y 确认（不擅自动版本库）。
+- **tag 强绑定**：git tag 必须 `v<__version__>`，与 version.py 完全一致；回滚 = 服务器 `git checkout v<旧tag>` + 重启。版本与 tag 不一致时 `/health` 无法对质。
+- **多开发机**：`./bump` 是随仓库分发的 bash 启动器，任何开发机 `git pull` 后即可用（Windows 开发机用 `python scripts/bump_version.py`）。

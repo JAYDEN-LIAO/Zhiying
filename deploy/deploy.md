@@ -68,7 +68,7 @@ docker ps | findstr cerno_postgres        # 等到 healthy
 
 # 【2】后端 —— 在项目根执行
 .\.venv\Scripts\python -m uvicorn main:app --host 127.0.0.1 --port 8000
-# 健康检查：http://127.0.0.1:8000/health  →  {"status":"ok","service":"cerno","database":"ok"}
+# 健康检查：http://127.0.0.1:8000/health  →  {"status":"ok","service":"cerno","version":"0.22.0","database":"ok"}
 
 # 【3】前端
 cd frontend
@@ -117,6 +117,7 @@ npm run dev
 - **多架构依赖**：`onnxruntime-gpu` 仅 Windows/x86 Linux 有 wheel；ARM64（DGX Spark/GB10）由 requirements 环境标记自动装 `onnxruntime` CPU 版。新增带平台差异的依赖时用 PEP 508 环境标记区分（如 `; sys_platform == "win32" or platform_machine == "x86_64"`）
 - **新增会产生磁盘文件的功能** → 落盘路径模式必须登记进 `core/storage_manager.py`
 - **新增感知模块** → `pipeline/runners/` 新 runner + `pipeline/operations.py` 一个 Operation，engine 零改动
+- **版本号与发布** → 版本唯一事实来源 `core/version.py`；`/health` 返回 `version` 字段（部署/回滚后核对运行版本）；发版用 `./bump minor|patch|0.24.0`（联动改后端 + 前端 + 锁文件，交互式确认提交信息/commit/tag/push）；git tag 必须 `v<版本>` 与 version.py 一致，回滚 = `git checkout` 旧 tag + 重启
 - **完整踩坑记录** → 见 `deploy_feedback.md`
 
 ## 8. Linux / Windows 环境差异（摘要）

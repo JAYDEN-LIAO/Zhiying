@@ -14,7 +14,7 @@ set DEEPSEEK_API_KEY=sk-xxx    # LLM summarizer (vlm_llm mode)
 
 # 3. Start backend server
 uvicorn main:app --reload
-# 健康检查：http://localhost:8000/health  →  {"status":"ok","service":"cerno","database":"ok"}
+# 健康检查：http://localhost:8000/health  →  {"status":"ok","service":"cerno","version":"0.22.0","database":"ok"}
 
 # 4. (New tab) Start frontend dev server
 cd frontend && npm install && npm run dev
@@ -152,10 +152,18 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 | Video Processing | FFmpeg (asyncio subprocess) |
 | Metadata Extraction | pymediainfo + exiftool (optional) |
 
+## 版本号与发布
+
+- **版本唯一事实来源**：`core/version.py` 的 `__version__`（SemVer pre-1.0：MINOR=新功能，PATCH=热修）；`/health` 返回 `version` 字段，服务器部署后 `curl /health` 即可核对运行版本。
+- **发版**：`./bump minor`（新功能）/ `./bump patch`（修 bug）/ `./bump 0.24.0`（指定版本）。一条命令联动改 `core/version.py` + `frontend/package.json` + `package-lock.json`（含两处根版本），随后交互式让你输入提交信息、确认 `git add .` 提交、打 tag、推送——机器不擅自动手，但也不用复制粘贴命令。
+- **tag 强绑定**：git tag 必须命名为 `v<__version__>`，与 `core/version.py` 完全一致；回滚 = 服务器 `git checkout v<旧tag>` + 重启。
+- `./bump` 是随仓库分发的 bash 启动器，任何开发机 `git pull` 后即可用（Windows 开发机用 `python scripts/bump_version.py`）。
+
 ## Project Structure
 
 ```
 cerno/
+├── bump                 # 版本号一键提升启动器 (→ scripts/bump_version.py)
 ├── main.py               # FastAPI entry point
 ├── api/                  # Route definitions
 │   ├── router.py         # Route assembly (sub-routers under /api/v1)
@@ -185,7 +193,8 @@ cerno/
 │   ├── gpu_lock.py       # 全局 GPU 推理锁 (embedder/YOLO 前向串行)
 │   ├── cancellation.py   # 管道取消登记 (删除处理中视频后优雅中止, persist 前检查)
 │   ├── storage_manager.py # 存储管理: 路径解析/引用追踪/删除清盘/孤儿清扫
-│   └── exceptions.py     # Custom exceptions
+│   ├── exceptions.py     # Custom exceptions
+│   └── version.py        # 版本号单一事实来源 (__version__, /health 输出)
 ├── config/               # Configuration
 │   ├── config.yaml       # Main config (server/db/storage/plugins/pipeline + encode_profiles/quantization/max_concurrent_videos)
 │   ├── botsort.yaml      # BoT-SORT + ReID tracker 参数 (with_reid, 本地 yolo26n-cls.pt)
@@ -247,7 +256,7 @@ cerno/
 ├── data/                 # Video storage & artifacts + settings.json/presets.json (gitignored)
 ├── config/               # YAML config, prompts, schema
 ├── deploy/               # Windows 从零部署套件: setup_windows.ps1 一键安装器 / download_models.py / deploy.md / deploy_feedback.md
-├── scripts/              # 运维工具: sweep_storage.py 存储清扫 CLI (默认 dry-run, --apply 执行)
+├── scripts/              # 运维工具: sweep_storage.py 存储清扫 CLI (默认 dry-run, --apply 执行) + bump_version.py 一键版本提升
 └── docs/                 # Design documents + search architecture docs
 ```
 
