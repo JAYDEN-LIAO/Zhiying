@@ -63,7 +63,7 @@ class StatusTracker:
         """进度持久化。
 
         on_progress: 可选回调 (overall_progress 0~1, description) → await。
-        云智自动化任务用它把 Cerno 管道进度推到平台 callback.progressUrl；
+        云智自动化任务用它把 Zhiying 管道进度推到平台 callback.progressUrl；
         回调异常吞掉，不阻塞管道。
         """
         self.video_id = video_id

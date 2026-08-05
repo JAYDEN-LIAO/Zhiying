@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cerno 版本号一键提升（随仓库分发，任意开发机 git pull 后即可用）
+# Zhiying 版本号一键提升（随仓库分发，任意开发机 git pull 后即可用）
 #
 # 用法:
 #   ./bump minor        # 0.22.0 → 0.23.0（新功能：中间位 +1）

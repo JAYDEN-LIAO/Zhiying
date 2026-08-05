@@ -6,7 +6,7 @@ api/yunzhi_routes.py
 契约（对照 extension-automation-demo/server.py）:
   - 平台在文件库上传匹配 Manifest 的文件后，POST 到本服务（应用后台地址）
   - 立即 202 返回 {accepted: True, bizTaskId}，业务异步执行（不阻塞）
-  - 后台跑 Cerno 管道，进度/完成/失败通过平台提供的 callback.*Url 上报
+  - 后台跑 Zhiying 管道，进度/完成/失败通过平台提供的 callback.*Url 上报
   - Idempotency-Key 或 eventId 幂等：重复投递返回同一 bizTaskId，不重复处理
 
 注意：此路由在根路径挂载（main.py 独立 include_router，不走 /api/v1 前缀），

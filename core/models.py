@@ -116,7 +116,7 @@ class Video(Base):
     )
     source_owned: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False,
-        comment="源文件是否归 Cerno 所有。平台共享文件就地引用时置 False，删除视频不 unlink 源文件",
+        comment="源文件是否归 Zhiying 所有。平台共享文件就地引用时置 False，删除视频不 unlink 源文件",
     )
     duration: Mapped[float | None] = mapped_column(
         Float, nullable=True,

@@ -1,4 +1,4 @@
-# Cerno 部署实测反馈（deploy_feedback.md）
+# Zhiying 部署实测反馈（deploy_feedback.md）
 
 > 本文件记录在 **Windows 11 Home + RTX 5090 Laptop 24GB 全新机器** 上实测部署时发现的
 > 脚本问题、环境坑位与改进建议。随部署进展持续更新。
@@ -151,9 +151,9 @@
 
 | 项 | 状态 |
 |---|---|
-| 后端 | `http://127.0.0.1:8000` — `/health` 200，`{"status":"ok","service":"cerno","database":"ok"}` |
+| 后端 | `http://127.0.0.1:8000` — `/health` 200，`{"status":"ok","service":"zhiying","database":"ok"}` |
 | 前端 | `http://localhost:5173` — Vite 6.4.3，`/api` 代理到 8000 正常 |
-| 数据库 | `cerno_postgres`（pgvector:pg17）容器 healthy |
+| 数据库 | `zhiying_postgres`（pgvector:pg17）容器 healthy |
 | 模型 | embedding 16GB / yolo / face / plate / segmenter **全部就绪** |
 | GPU | torch 2.13.0+cu130 真实 kernel 验证通过；embedder 16GB 已载入（显存 15.8/24.5GB） |
 
@@ -175,9 +175,9 @@
 - `deploy/start_windows.ps1`：加 BOM
 - `deploy/deploy_feedback.md`：本文档（11 节）
 
-## 12. 配置统一（2026-08-04）— 不再需要 `config.windows.yaml` / `CERNO_CONFIG`
+## 12. 配置统一（2026-08-04）— 不再需要 `config.windows.yaml` / `ZHIYING_CONFIG`
 
-**背景**：部署机曾需要独立 `config/config.windows.yaml` + `CERNO_CONFIG` 环境变量才能起后端，
+**背景**：部署机曾需要独立 `config/config.windows.yaml` + `ZHIYING_CONFIG` 环境变量才能起后端，
 因为默认 `config.yaml` 指向本地 8B captioner 模型（部署机未下载）。用户希望「activate 后 uvicorn 就能跑」。
 核实后发现三个差异中两个本可消除：路径是 embedder 代码不一致（detector 会解析、embedder 不会），
 摘要模式已有 `effective_summary_mode` 自动兜底。真正的差异只有 captioner（本地模型 vs API）这一个资源选择。
@@ -188,16 +188,16 @@
 2. `core/config_loader.py` — 新增 `_auto_fallback_captioner()`：`load_config()` 时若 captioner 是
    `qwen3_vl` 但本地模型目录缺失 → 自动降级为 `qwen_api`（DashScope），打醒目 WARNING 日志；
    在 `_apply_settings_overrides` **之前**执行，让设置页注入的 base_url/model 能继承。
-3. `deploy/start_windows.ps1` — `$ConfigFile` 改为 `config/config.yaml`，不再设置 `CERNO_CONFIG`。
+3. `deploy/start_windows.ps1` — `$ConfigFile` 改为 `config/config.yaml`，不再设置 `ZHIYING_CONFIG`。
 4. 删除 `config/config.windows.yaml`。
 
 **验证结果**（纯 `uvicorn main:app`，无任何 env）：
-- `/health` 200，`{"status":"ok","service":"cerno","database":"ok"}`
+- `/health` 200，`{"status":"ok","service":"zhiying","database":"ok"}`
 - 启动日志出现：`[Config] captioner 本地模型缺失 (...) → 自动降级 captioner 为 qwen_api`
 - embedder 经相对路径成功加载（`Embedder loaded, GPU ready`）
 - `effective_summary_mode(native_video) → vlm_llm`（摘要走 DeepSeek API）
 
-**保留机制**：`CERNO_CONFIG` 环境变量仍可用作「自定义配置文件」的通用覆盖入口（机制无害）；
+**保留机制**：`ZHIYING_CONFIG` 环境变量仍可用作「自定义配置文件」的通用覆盖入口（机制无害）；
 但默认部署不再需要它。开发机有本地 8B 模型时 captioner 保持 `qwen3_vl` 不受影响。
 
 **遗留**：`deploy/deploy.md` 与 `write_windows_config.py` 仍描述旧的两配置流程，可按需更新为

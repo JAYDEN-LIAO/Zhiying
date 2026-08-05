@@ -408,7 +408,7 @@ export default function Dashboard() {
         </span>
       </div>
       <div className="relative flex-shrink-0">
-        <button onClick={() => setShowExport((v) => !v)} className="w-6 h-6 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all cursor-pointer" title="导出">
+        <button onClick={() => setShowExport((v) => !v)} className="w-6 h-6 rounded-lg flex items-center justify-center text-gray-400 hover:text-teal-600 hover:bg-teal-50 transition-all cursor-pointer" title="导出">
           <IconDownload />
         </button>
         {showExport && <div className="fixed inset-0 z-40" onClick={() => setShowExport(false)} />}
@@ -446,7 +446,7 @@ export default function Dashboard() {
                 <h2 className="font-bold text-white text-base shrink-0">历史记录</h2>
                 {drillGroupId && (
                   <button onClick={() => setDrillGroupId(null)}
-                    className="text-[11px] text-blue-300 hover:text-white cursor-pointer flex items-center gap-0.5 shrink-0 transition-colors">
+                    className="text-[11px] text-teal-300 hover:text-white cursor-pointer flex items-center gap-0.5 shrink-0 transition-colors">
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M19 12H5" /><polyline points="12 19 5 12 12 5" /></svg>
                     返回全部
                   </button>
@@ -517,8 +517,8 @@ export default function Dashboard() {
       {/* ── 拖拽上传遮罩 ── */}
       {dragActive && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none">
-          <div className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl border-2 border-dashed border-blue-400 bg-blue-950/70 shadow-2xl">
-            <svg className="w-10 h-10 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
+          <div className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl border-2 border-dashed border-teal-400 bg-teal-950/70 shadow-2xl">
+            <svg className="w-10 h-10 text-teal-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 3v12" /><path d="m7 8 5-5 5 5" /><path d="M5 21h14" />
             </svg>
             <div className="text-white text-lg font-semibold">松开以上传视频</div>

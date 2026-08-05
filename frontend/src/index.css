@@ -5,13 +5,13 @@
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
 
   /* Backgrounds */
-  --color-page-bg: #e6e9ed;
+  --color-page-bg: #f4f6f8;
   --color-surface: #eef0f3;
   --color-white: #ffffff;
 
   /* Sidebar */
-  --color-sidebar-start: #1a2740;
-  --color-sidebar-end: #141f35;
+  --color-sidebar-start: #19C7A8;
+  --color-sidebar-end: #0F8E79;
 
   /* Header */
   --color-header-bg: rgba(255, 255, 255, 0.88);
@@ -28,7 +28,7 @@
   --color-text-dim: #64748b;
 
   /* Accents */
-  --color-accent-blue: #2563eb;
+  --color-accent-blue: #04B386;
   --color-accent-green: #16a34a;
   --color-accent-amber: #d97706;
   --color-accent-purple: #7c3aed;
@@ -101,37 +101,22 @@ body {
 .sb-btn:not(.active):not(.active-green):hover svg {
   filter: drop-shadow(0 0 4px rgba(255,255,255,0.15));
 }
-/* ── Blue active (page nav: dashboard / settings) ── */
-.sb-btn.active {
-  color: #fff;
-  background: rgba(59, 130, 246, 0.35);
-  cursor: default;
-}
-.sb-btn.active::before {
-  content: ''; position: absolute; left: -4px; top: 50%;
-  transform: translateY(-50%); width: 3px; height: 20px;
-  border-radius: 0 3px 3px 0; background: #60a5fa;
-  box-shadow: 0 0 12px rgba(59, 130, 246, 0.6);
-  transition: box-shadow 0.2s ease;
-}
-.sb-btn.active:hover::before {
-  box-shadow: 0 0 18px rgba(59, 130, 246, 0.85);
-}
-/* ── Green active (panel toggle: params / history) ── */
+/* ── 选中态（对齐云智平台：明显提亮的青绿块 + 白色左指示条 + 白色图标，无圆角）
+     注意：不加 width/margin 撑出按钮——参数/历史按钮位于 overflow-hidden 折叠容器内，
+     负外边距会让左缘指示条被裁掉（只闪一下）；按钮自身宽度落在裁剪区内，指示条常驻。 ── */
+.sb-btn.active,
 .sb-btn.active-green {
   color: #fff;
-  background: rgba(16, 185, 129, 0.3);
+  border-radius: 0;                      /* 无圆角 */
+  background: rgba(255, 255, 255, 0.18); /* 白色叠底 → 明显提亮的青绿块 */
   cursor: default;
 }
+.sb-btn.active::before,
 .sb-btn.active-green::before {
-  content: ''; position: absolute; left: -4px; top: 50%;
-  transform: translateY(-50%); width: 3px; height: 20px;
-  border-radius: 0 3px 3px 0; background: #34d399;
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.5);
-  transition: box-shadow 0.2s ease;
-}
-.sb-btn.active-green:hover::before {
-  box-shadow: 0 0 18px rgba(16, 185, 129, 0.8);
+  content: ''; position: absolute; left: 0; top: 50%;
+  transform: translateY(-50%); width: 4px; height: 30px;
+  background: #fff;                     /* 白色激活指示条（垂直居中，贴按钮左缘） */
+  box-shadow: 0 0 4px rgba(255,255,255,0.6);   /* 微光提亮，确保在白亮块上可见 */
 }
 .sb-btn svg { width: 18px; height: 18px; transition: filter 0.2s; }
 .sb-div { height: 1px; background: rgba(255, 255, 255, 0.06); margin: 6px 0; }
@@ -165,10 +150,10 @@ body {
 .header-upload {
   position: absolute; right: 18px; top: 50%; transform: translateY(-50%);
   display: flex; align-items: center; gap: 5px; padding: 4px 18px; border-radius: 8px;
-  border: none; background: #1d4ed8; color: #fff; font-size: 13px; font-weight: 500;
+  border: none; background: #0d9488; color: #fff; font-size: 13px; font-weight: 500;
   cursor: pointer; font-family: var(--font-sans); letter-spacing: 0.3px;
 }
-.header-upload:hover { background: #2563eb; }
+.header-upload:hover { background: #14b8a6; }
 .header-upload svg { width: 14px; height: 14px; stroke-width: 2.5; }
 
 /* ── Main area ── */
@@ -179,8 +164,8 @@ body {
 .video-player-wrap { width: 100%; aspect-ratio: 16/9; border-radius: var(--radius-lg); overflow: hidden; background: #000; position: relative; box-shadow: 0 2px 12px rgba(0,0,0,0.08); flex-shrink: 0; border: 1px solid rgba(0,0,0,0.06); }
 .video-player-wrap video { width: 100%; height: 100%; object-fit: contain; }
 .video-placeholder { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a12 100%); }
-.vp-icon { width: 56px; height: 56px; border-radius: 50%; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(96, 165, 250, 0.28); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 28px rgba(59, 130, 246, 0.18); }
-.vp-icon svg { width: 24px; height: 24px; color: #60a5fa; }
+.vp-icon { width: 56px; height: 56px; border-radius: 50%; background: rgba(20, 184, 166, 0.12); border: 1px solid rgba(52, 211, 153, 0.28); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 28px rgba(20, 184, 166, 0.18); }
+.vp-icon svg { width: 24px; height: 24px; color: #2dd4bf; }
 .vp-text { font-size: 15px; font-weight: 600; color: rgba(255,255,255,0.92); }
 .vp-drag-hint { font-size: 12px; color: rgba(255,255,255,0.55); display: flex; align-items: center; gap: 6px; }
 .vp-badges { position: absolute; top: 10px; right: 12px; display: flex; gap: 5px; }
@@ -216,12 +201,12 @@ body {
 .pipeline-wrap { width: 100%; margin-top: 6px; flex-shrink: 0; }
 .pipeline-bar { padding: 8px 14px; border-radius: var(--radius); background: var(--color-white); border: 1px solid var(--color-border-light); box-shadow: var(--shadow-sm); }
 .pipeline-progress { height: 5px; border-radius: 3px; background: #e2e5ea; overflow: hidden; margin-bottom: 8px; }
-.pipeline-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #1d4ed8, #2563eb, #16a34a); }
+.pipeline-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #0f766e, #0d9488, #16a34a); }
 .pipeline-stages { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .ps { display: flex; align-items: center; gap: 5px; }
 .ps-dot { width: 9px; height: 9px; border-radius: 50%; background: #d1d5db; flex-shrink: 0; }
 .ps-dot.done { background: var(--color-accent-green); }
-.ps-dot.active { background: var(--color-accent-blue); box-shadow: 0 0 6px rgba(37,99,235,0.4); }
+.ps-dot.active { background: var(--color-accent-blue); box-shadow: 0 0 6px rgba(5,150,105,0.4); }
 .ps-label { font-size: 10px; font-weight: 500; color: var(--color-text-dim); white-space: nowrap; }
 .ps-label.done { color: var(--color-text-muted); }
 .ps-label.active { color: var(--color-accent-blue); font-weight: 600; }
@@ -291,7 +276,7 @@ body {
 .vif-item { display: flex; flex-direction: column; gap: 0; }
 .vif-lbl { font-size: 9px; font-weight: 500; color: var(--color-text-dim); text-transform: uppercase; letter-spacing: 0.3px; }
 .vif-val { font-size: 13px; color: var(--color-text-primary); font-weight: 450; }
-.vif-val code { font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--color-accent-blue); background: rgba(37,99,235,0.06); padding: 1px 5px; border-radius: 3px; }
+.vif-val code { font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--color-accent-blue); background: rgba(5,150,105,0.06); padding: 1px 5px; border-radius: 3px; }
 .vif-hl { font-family: var(--font-mono); font-size: 11px; color: var(--color-accent-teal); background: rgba(13,148,136,0.07); padding: 1px 5px; border-radius: 3px; }
 .vif-div { grid-column: 1 / -1; height: 1px; background: var(--color-border-light); margin: 2px 0; }
 
@@ -378,7 +363,7 @@ body {
 .sr-acts { display: flex; gap: 3px; margin-top: 4px; }
 .sr-act { padding: 2px 7px; border-radius: 3px; border: none; background: transparent; color: var(--color-text-dim); font-size: 9px; cursor: pointer; font-family: var(--font-sans); display: flex; align-items: center; gap: 3px; }
 .sr-act svg { width: 9px; height: 9px; }
-.sr-act:hover { background: rgba(37,99,235,0.06); color: var(--color-accent-blue); }
+.sr-act:hover { background: rgba(5,150,105,0.06); color: var(--color-accent-blue); }
 
 /* ── Export menu ── */
 .export-overlay {
@@ -392,10 +377,10 @@ body {
   border: 1px solid var(--color-border);
 }
 
-/* ── Slide-out panel — matches dark sidebar ── */
+/* ── Slide-out panel — 深青绿底（比侧栏更深，保证表单可读性） ── */
 .slide-panel {
   position: absolute; top: 0; overflow: hidden;
-  background: var(--color-sidebar-start);
+  background: #086554;
   border-radius: 0 16px 16px 0;
   box-shadow: 4px 0 24px rgba(0,0,0,0.4);
   border: none;
@@ -403,64 +388,64 @@ body {
 }
 .slide-panel-inner {
   position: absolute; top: 0; height: 100%;
-  color: rgba(255,255,255,0.85);
+  color: rgba(255,255,255,0.92);
 }
 
 /* ── Slide panel dark theme (internal controls) ── */
 .slide-panel-content input[type="text"],
 .slide-panel-content input[type="search"] {
-  background: rgba(255,255,255,0.12) !important;
-  border-color: rgba(255,255,255,0.15) !important;
-  color: rgba(255,255,255,0.9) !important;
+  background: rgba(255,255,255,0.16) !important;
+  border-color: rgba(255,255,255,0.26) !important;
+  color: rgba(255,255,255,0.95) !important;
 }
 .slide-panel-content input[type="text"]::placeholder,
 .slide-panel-content input[type="search"]::placeholder {
-  color: rgba(255,255,255,0.4) !important;
+  color: rgba(255,255,255,0.55) !important;
 }
 .slide-panel-content input[type="text"]:focus,
 .slide-panel-content input[type="search"]:focus {
-  border-color: rgba(99,132,255,0.6) !important;
-  box-shadow: 0 0 0 2px rgba(99,132,255,0.2) !important;
+  border-color: rgba(45,212,191,0.75) !important;
+  box-shadow: 0 0 0 2px rgba(45,212,191,0.3) !important;
 }
 .slide-panel-content input[type="range"] {
-  accent-color: #6384ff;
+  accent-color: #04B386;
 }
 
 /* Section header labels */
 .slide-panel-content .tracking-wider {
-  color: rgba(255,255,255,0.5) !important;
+  color: rgba(255,255,255,0.68) !important;
 }
 
 /* Card items */
 .slide-panel-content [class*="border-gray"]:not(.border-white\/10) {
-  border-color: rgba(255,255,255,0.12) !important;
+  border-color: rgba(255,255,255,0.2) !important;
 }
 
 /* Card item backgrounds (bg-gray-100, bg-gray-50 etc.) */
 .slide-panel-content [class*="bg-gray-100"],
 .slide-panel-content [class*="bg-gray-50"] {
-  background: rgba(255,255,255,0.08) !important;
+  background: rgba(255,255,255,0.12) !important;
 }
 .slide-panel-content [class*="bg-gray-200"] {
-  background: rgba(255,255,255,0.14) !important;
+  background: rgba(255,255,255,0.18) !important;
 }
 .slide-panel-content .bg-white,
 .slide-panel-content .bg-white\/80,
 .slide-panel-content .bg-white\/60 {
-  background: rgba(255,255,255,0.08) !important;
+  background: rgba(255,255,255,0.12) !important;
 }
 
-/* Blue accent cards (selected/active items) */
-.slide-panel-content .bg-blue-50 {
-  background: rgba(59,130,246,0.18) !important;
-  border-color: rgba(59,130,246,0.3) !important;
+/* Teal accent cards (selected/active items) — 提高可见度 */
+.slide-panel-content .bg-teal-50 {
+  background: rgba(20,184,166,0.24) !important;
+  border-color: rgba(20,184,166,0.45) !important;
 }
-.slide-panel-content .bg-blue-50\/30 {
-  background: rgba(59,130,246,0.12) !important;
+.slide-panel-content .bg-teal-50\/30 {
+  background: rgba(20,184,166,0.18) !important;
 }
-.slide-panel-content .border-blue-200,
-.slide-panel-content .border-blue-300 {
-  border-color: rgba(59,130,246,0.35) !important;
+.slide-panel-content .border-teal-200,
+.slide-panel-content .border-teal-300 {
+  border-color: rgba(20,184,166,0.5) !important;
 }
 .slide-panel-content .border-purple-300 {
   border-color: rgba(168,85,247,0.35) !important;
@@ -483,18 +468,18 @@ body {
 /* Text colors — brighter for readability */
 .slide-panel-content .text-gray-900,
 .slide-panel-content .text-gray-800 {
-  color: rgba(255,255,255,0.92) !important;
+  color: rgba(255,255,255,0.95) !important;
 }
 .slide-panel-content .text-gray-600,
 .slide-panel-content .text-gray-500 {
-  color: rgba(255,255,255,0.78) !important;
+  color: rgba(255,255,255,0.88) !important;
 }
 .slide-panel-content .text-gray-400,
 .slide-panel-content .text-gray-350 {
-  color: rgba(255,255,255,0.6) !important;
+  color: rgba(255,255,255,0.72) !important;
 }
 .slide-panel-content .text-gray-300 {
-  color: rgba(255,255,255,0.5) !important;
+  color: rgba(255,255,255,0.65) !important;
 }
 .slide-panel-content .text-red-400 {
   color: #f87171 !important;
@@ -511,12 +496,12 @@ body {
 
 /* History panel specific */
 .slide-panel-content [class*="bg-white"].rounded-xl {
-  background: rgba(255,255,255,0.08) !important;
-  border-color: rgba(255,255,255,0.12) !important;
+  background: rgba(255,255,255,0.12) !important;
+  border-color: rgba(255,255,255,0.2) !important;
 }
-.slide-panel-content [class*="bg-blue-50"].rounded-xl {
-  background: rgba(59,130,246,0.18) !important;
-  border-color: rgba(59,130,246,0.3) !important;
+.slide-panel-content [class*="bg-teal-50"].rounded-xl {
+  background: rgba(20,184,166,0.24) !important;
+  border-color: rgba(20,184,166,0.45) !important;
 }
 
 /* Footer border */
@@ -532,8 +517,8 @@ body {
 
 /* Search dropdown */
 .slide-panel-content .shadow-lg {
-  background: #1a2740 !important;
-  border-color: rgba(255,255,255,0.1) !important;
+  background: #086554 !important;
+  border-color: rgba(255,255,255,0.2) !important;
 }
 
 /* ── Animations ── */

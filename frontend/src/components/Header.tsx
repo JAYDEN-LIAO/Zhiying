@@ -13,7 +13,7 @@ export function Header({ isUploading, onUpload, currentPage, statsBar }: Props) 
   return (
     <header className="header">
       <div className="header-left">
-        <img src="/cerno.svg" alt="Cerno" style={{ height: 36, width: "auto" }} />
+        <img src="/zhiying.svg" alt="Zhiying" style={{ height: 36, width: "auto" }} />
         <div className="header-title relative w-[88px] h-5 overflow-hidden">
           <span
             className={`absolute inset-0 flex items-center transition-all duration-500 ease-out ${

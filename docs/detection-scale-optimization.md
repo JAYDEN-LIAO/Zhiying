@@ -155,7 +155,7 @@ useDetectionData (hooks/useDetectionData.ts:33)
 }
 ```
 
-**兼容策略（v1.1 定稿 + v2.0 统一：直接替换，删除旧端点）**：cerno 是单体仓库（前后端同仓发布），无外部 API 消费者；`detection/data` 前端仅在 `services/api.ts` + `hooks/useDetectionData.ts` 两处调用（已 grep 证实）、tests 无依赖。故**删除旧端点，前端同步改调新端点**。§5/§10 相应统一为此口径，不再保留 deprecated 双轨。
+**兼容策略（v1.1 定稿 + v2.0 统一：直接替换，删除旧端点）**：zhiying 是单体仓库（前后端同仓发布），无外部 API 消费者；`detection/data` 前端仅在 `services/api.ts` + `hooks/useDetectionData.ts` 两处调用（已 grep 证实）、tests 无依赖。故**删除旧端点，前端同步改调新端点**。§5/§10 相应统一为此口径，不再保留 deprecated 双轨。
 
 改动点：
 - `detection_routes.py` — 新增两个端点，`get_detection_data` 删除；

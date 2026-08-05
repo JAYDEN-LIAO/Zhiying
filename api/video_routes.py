@@ -79,7 +79,7 @@ async def upload_video(
 ) -> APIResponse[VideoResponse]:
     """上传视频文件，创建 Video 记录（status=pending），不自动启动 Pipeline。"""
     config: dict = load_config()
-    video_dir = config.get("storage", {}).get("video_dir", "/home/cerno/data/videos")
+    video_dir = config.get("storage", {}).get("video_dir", "/home/zhiying/data/videos")
     os.makedirs(video_dir, exist_ok=True)
 
     file_id = uuid.uuid4()
@@ -145,7 +145,7 @@ async def register_external_video(
 ) -> APIResponse[VideoResponse]:
     """注册平台共享路径的视频 — 绝对路径就地引用，不上传字节（云智集成）。
 
-    源文件归平台所有（source_owned=False），删除视频时 Cerno 不 unlink 源文件
+    源文件归平台所有（source_owned=False），删除视频时 Zhiying 不 unlink 源文件
     （StorageManager 跳过外部源文件清理）。其余流程与上传一致：
     建 pending 记录 → 同步 probe → 异步 remux/proxy → 前端配置参数后启动 Pipeline。
     """
@@ -224,7 +224,7 @@ async def upload_videos_batch(
     每个文件使用独立的 DB session 并发处理，避免 SQLAlchemy session 并发冲突。
     """
     config: dict = load_config()
-    video_dir = config.get("storage", {}).get("video_dir", "/home/cerno/data/videos")
+    video_dir = config.get("storage", {}).get("video_dir", "/home/zhiying/data/videos")
     os.makedirs(video_dir, exist_ok=True)
 
     if not files:

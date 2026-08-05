@@ -57,7 +57,7 @@ def _enable_onnx_cuda() -> None:
         return  # 未装 onnxruntime-gpu → 保持 CPU，安全 no-op
 
     _orig = ort.InferenceSession.__init__
-    if getattr(_orig, "_cerno_onnx_cuda", False):
+    if getattr(_orig, "_zhiying_onnx_cuda", False):
         return  # 已打补丁
 
     def _patched(self, *args, **kwargs):
@@ -70,12 +70,12 @@ def _enable_onnx_cuda() -> None:
                 kwargs["providers"] = ["CPUExecutionProvider"]  # CUDA 初始化失败 → 回退 CPU
         _orig(self, *args, **kwargs)
 
-    _patched._cerno_onnx_cuda = True
+    _patched._zhiying_onnx_cuda = True
     ort.InferenceSession.__init__ = _patched
     logger.info("[HyperLPR] ONNX CUDA patch applied (onnxruntime-gpu detected)")
 
 
-# HyperLPR3 车牌类型整数常量 → Cerno 字符串标签
+# HyperLPR3 车牌类型整数常量 → Zhiying 字符串标签
 # 常量定义见 hyperlpr3.common.typedef
 _PLATE_TYPE_INT_MAP: dict[int, str] = {
     0: "blue",     # BLUE

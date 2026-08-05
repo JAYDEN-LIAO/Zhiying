@@ -12,7 +12,7 @@ from sqlalchemy import MetaData, text
 
 POSTGRES_URI = os.environ.get(
     "POSTGRES_URI",
-    "postgresql+asyncpg://cerno:cerno@localhost:5432/cerno",
+    "postgresql+asyncpg://zhiying:zhiying@localhost:5432/zhiying",
 )
 
 engine = create_async_engine(

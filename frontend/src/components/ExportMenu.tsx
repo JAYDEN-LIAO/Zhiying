@@ -56,7 +56,7 @@ export function ExportMenu({
             value={start}
             onChange={(e) => setStart(e.target.value)}
             placeholder="0.0"
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
           />
         </div>
 
@@ -67,7 +67,7 @@ export function ExportMenu({
             value={end}
             onChange={(e) => setEnd(e.target.value)}
             placeholder="10.0"
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
           />
         </div>
 
@@ -77,7 +77,7 @@ export function ExportMenu({
           <button
             onClick={handleExport}
             disabled={!start.trim() || !end.trim()}
-            className="w-full rounded-lg bg-blue-600 text-white text-sm font-medium py-2.5 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="w-full rounded-lg bg-teal-600 text-white text-sm font-medium py-2.5 hover:bg-teal-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {start && end && parseFloat(start) === parseFloat(end) ? "导出帧" : "导出片段"}
           </button>

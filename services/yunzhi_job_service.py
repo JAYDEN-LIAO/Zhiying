@@ -1,7 +1,7 @@
 """
 services/yunzhi_job_service.py
 ═══════════════════════════════════════════════════════════
-云智(Yunzhi)平台自动化任务执行服务 — 接收共享文件绝对路径，跑 Cerno 管道，
+云智(Yunzhi)平台自动化任务执行服务 — 接收共享文件绝对路径，跑 Zhiying 管道，
 回调平台任务中心的进度 / 完成 / 失败。
 
 流程（对照 extension-automation-demo/server.py 的契约）:
@@ -65,7 +65,7 @@ def _write_report(work_dir: Path, result_data: dict) -> str | None:
     """把结果 JSON 写入平台工作目录（供前端 files.saveToLibrary 登记到文件库）。"""
     try:
         work_dir.mkdir(parents=True, exist_ok=True)
-        report = work_dir / "cerno-result.json"
+        report = work_dir / "zhiying-result.json"
         report.write_text(
             json.dumps(result_data, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -120,7 +120,7 @@ async def run_yunzhi_job(payload: YunzhiJobPayload, app) -> None:
                     headers={**_CALLBACK_HEADERS, "X-Yunzhi-Job-Token": token},
                 )
 
-            await post(payload.callback.progressUrl, {"progress": 5, "message": "Cerno 已接收共享文件绝对路径"})
+            await post(payload.callback.progressUrl, {"progress": 5, "message": "Zhiying 已接收共享文件绝对路径"})
 
             async def on_progress(progress: float, message: str) -> None:
                 try:
@@ -162,13 +162,13 @@ async def run_yunzhi_job(payload: YunzhiJobPayload, app) -> None:
                 if report_path:
                     result_data["reportPath"] = report_path
                 await post(payload.callback.completeUrl, {
-                    "message": "Cerno 视频分析完成",
+                    "message": "Zhiying 视频分析完成",
                     "resultData": result_data,
                 })
                 logger.info("[Yunzhi] job completed video=%s", video.id)
             else:
                 await post(payload.callback.failUrl, {
-                    "message": "Cerno 视频分析失败",
+                    "message": "Zhiying 视频分析失败",
                     "error": error_message or "管道未完成",
                 })
                 logger.warning("[Yunzhi] job failed video=%s error=%s", video.id, error_message)
@@ -179,7 +179,7 @@ async def run_yunzhi_job(payload: YunzhiJobPayload, app) -> None:
             async with httpx.AsyncClient(timeout=_CALLBACK_TIMEOUT) as client:
                 await client.post(
                     payload.callback.failUrl,
-                    json={"message": "Cerno 视频分析失败", "error": str(e)},
+                    json={"message": "Zhiying 视频分析失败", "error": str(e)},
                     headers={**_CALLBACK_HEADERS, "X-Yunzhi-Job-Token": token},
                 )
         except Exception as ce:

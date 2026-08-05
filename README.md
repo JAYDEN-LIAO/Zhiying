@@ -1,4 +1,4 @@
-# Cerno — Universal Video Analytics Engine
+# Zhiying — Universal Video Analytics Engine
 
 A general-purpose video analytics engine for semantic search and structured summarization. Designed for single-GPU setups (8–32 GB VRAM).
 
@@ -14,7 +14,7 @@ set DEEPSEEK_API_KEY=sk-xxx    # LLM summarizer (vlm_llm mode)
 
 # 3. Start backend server
 uvicorn main:app --reload
-# 健康检查：http://localhost:8000/health  →  {"status":"ok","service":"cerno","version":"<当前版本>","database":"ok"}
+# 健康检查：http://localhost:8000/health  →  {"status":"ok","service":"zhiying","version":"<当前版本>","database":"ok"}
 
 # 4. (New tab) Start frontend dev server
 cd frontend && npm install && npm run dev
@@ -40,7 +40,7 @@ curl -X POST -H "Content-Type: application/json" \
 
 - 一键安装器、环境要求、模型清单（embedding/yolo/**reid**/face/plate/segmenter）、代理必填与国内镜像、坑位审计与 Linux/Windows 差异，详见 **[`deploy/deploy.md`](deploy/deploy.md)**。
 - 部署实测踩坑记录（BOM 编码 / Blackwell cu130 / pip 大文件 curl 兜底 / 代理策略等）见 **[`deploy/deploy_feedback.md`](deploy/deploy_feedback.md)**。
-- 配置已统一：单份 `config/config.yaml` 通用所有机器（embedder 相对路径解析 + captioner 本地模型缺失自动降级 `qwen_api`），无需 `config.windows.yaml` / `CERNO_CONFIG`。
+- 配置已统一：单份 `config/config.yaml` 通用所有机器（embedder 相对路径解析 + captioner 本地模型缺失自动降级 `qwen_api`），无需 `config.windows.yaml` / `ZHIYING_CONFIG`。
 - **多架构支持**：`requirements.txt` 用环境标记区分平台——Windows/Linux x86 装 `onnxruntime-gpu`（人脸/车牌 GPU），**ARM64 Linux**（DGX Spark/GB10 等，无 `onnxruntime-gpu` wheel）自动装 `onnxruntime` CPU 版，人脸/车牌走 CPU。
 
 ## Core Features
@@ -162,7 +162,7 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 ## Project Structure
 
 ```
-cerno/
+zhiying/
 ├── bump                 # 版本号一键提升启动器 (→ scripts/bump_version.py)
 ├── main.py               # FastAPI entry point
 ├── api/                  # Route definitions
@@ -232,7 +232,7 @@ cerno/
 │   └── video_source.py   # Video source classification (rule engine: phone/camera/surveillance/...)
 ├── frontend/             # React + Vite + Tailwind dashboard
 │   ├── public/
-│   │   └── cerno.svg     # App logo
+│   │   └── zhiying.svg     # App logo
 │   ├── src/
 │   │   ├── Dashboard.tsx # Main workspace (~430 lines, orchestrates state + group state + detectionVideoId)
 │   │   ├── components/   # 20 UI components
@@ -264,7 +264,7 @@ cerno/
 
 - **v0.22 — 部署系统 + 系统设置与参数系统 + Detection 渲染重构**:
   - **Windows 从零部署**: `deploy/setup_windows.ps1` 重写为裸机一键安装器（系统级 Python/FFmpeg/WSL2/Docker + 依赖级 CUDA torch 按 GPU 选源/onnxruntime-gpu + 模型级 embedding/yolo/**reid**/face/plate/segmenter + 自校验）；删除旧 `start_windows.ps1` / `write_windows_config.py`；`deploy_feedback.md` 记录部署踩坑（UTF-8 BOM、Blackwell cu130、pip 大文件 curl 兜底、代理策略、onnxruntime-gpu 桩等）。
-  - **配置统一 + 自动降级**: 单份 `config/config.yaml` 通用所有机器——embedder 相对模型路径解析到项目根；captioner 本地 8B 模型缺失 → 自动降级 `qwen_api`（DashScope）+ `effective_summary_mode` 兜底；无需 `config.windows.yaml` / `CERNO_CONFIG`。BoT-SORT ReID 改用本地 `models/yolo26n-cls.pt`（实测 `auto` 仍从 GitHub 下载）。
+  - **配置统一 + 自动降级**: 单份 `config/config.yaml` 通用所有机器——embedder 相对模型路径解析到项目根；captioner 本地 8B 模型缺失 → 自动降级 `qwen_api`（DashScope）+ `effective_summary_mode` 兜底；无需 `config.windows.yaml` / `ZHIYING_CONFIG`。BoT-SORT ReID 改用本地 `models/yolo26n-cls.pt`（实测 `auto` 仍从 GitHub 下载）。
   - **系统设置完善**: `GET/PUT /settings` 扩展 `pipeline` 段（编码三档模板 + 检测帧率/批大小/分辨率/阈值 + NVDEC/chunk 开关 + embedder 量化 + 并发上限），数值按 `PIPELINE_NUMERIC_SPEC` 钳制，保存即运行时生效（量化需重启）；前端设置页 4 分区。
   - **参数预设**: `data/presets.json` 多套命名管道参数快照，`/settings/presets` CRUD + apply 一键套用。
   - **全局 GPU 锁 + 共享单实例**: `core/gpu_lock.py` 串行化 embedder/YOLO 前向（24GB 机并发前向触发驱动硬故障）；detector 共享 `app.state` 单实例（懒加载 ~2GB）；detection 攒批 1024→128（长批持锁饿死 embedder）；`max_concurrent_videos` 信号量限流并发管道。

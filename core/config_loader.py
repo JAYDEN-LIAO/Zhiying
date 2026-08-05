@@ -19,9 +19,9 @@ from core.exceptions import ConfigurationError
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-# 部署时可用 CERNO_CONFIG 环境变量指定备选配置文件（如 config/config.windows.yaml）
+# 部署时可用 ZHIYING_CONFIG 环境变量指定备选配置文件（如 config/config.windows.yaml）
 _DEFAULT_CONFIG_PATH = Path(
-    os.environ.get("CERNO_CONFIG", str(_PROJECT_ROOT / "config" / "config.yaml"))
+    os.environ.get("ZHIYING_CONFIG", str(_PROJECT_ROOT / "config" / "config.yaml"))
 )
 
 # 环境变量 → 配置内嵌路径映射

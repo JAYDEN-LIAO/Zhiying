@@ -116,7 +116,7 @@ const TrackRow = memo(function TrackRow({
       <div className="relative shrink-0">
         <button
           onClick={(e) => { e.stopPropagation(); onToggleDropdown(track.track_id); }}
-          className="w-6 h-6 rounded-md flex items-center justify-center text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-all cursor-pointer"
+          className="w-6 h-6 rounded-md flex items-center justify-center text-gray-300 hover:text-teal-500 hover:bg-teal-50 transition-all cursor-pointer"
           title="导出"
         >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>

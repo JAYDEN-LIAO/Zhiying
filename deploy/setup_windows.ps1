@@ -1,7 +1,7 @@
 ﻿<#
-Cerno Windows 一键安装器（裸机 → 环境就绪）
+Zhiying Windows 一键安装器（裸机 → 环境就绪）
 ═══════════════════════════════════════════════════════════
-目标：在全新 Windows + NVIDIA GPU 机器上，自动安装 Cerno 运行所需的
+目标：在全新 Windows + NVIDIA GPU 机器上，自动安装 Zhiying 运行所需的
 一切基础设施：
   系统级  Python / FFmpeg(CUDA) / WSL2 / Docker Desktop
   依赖级  CUDA torch(按 GPU 选源) + 匹配 torchvision + requirements 全部包
@@ -267,7 +267,7 @@ function Get-TorchIndex([string]$GpuName, [string]$DriverCuda) {
 # 1. 交互：注意事项 + 代理输入
 # ═══════════════════════════════════════════════════════════
 
-Write-Host "Cerno Windows 一键安装器（裸机 → 环境就绪）" -ForegroundColor Cyan
+Write-Host "Zhiying Windows 一键安装器（裸机 → 环境就绪）" -ForegroundColor Cyan
 Write-Host "目标：自动安装 Python / FFmpeg / WSL2 / Docker / CUDA torch / 全部依赖 / 全部模型"
 Write-Host ""
 
@@ -323,7 +323,7 @@ if ($hasNv) {
     if ($cudaVer -match "CUDA Version:\s*([0-9.]+)") { $driverCuda = $Matches[1] }
     Write-Ok "GPU: $gpuName | 驱动 CUDA: $driverCuda"
 } else {
-    Write-Fail "未检测到 nvidia-smi（NVIDIA 驱动）。Cerno 依赖 GPU 推理，请先安装 NVIDIA 驱动。"
+    Write-Fail "未检测到 nvidia-smi（NVIDIA 驱动）。Zhiying 依赖 GPU 推理，请先安装 NVIDIA 驱动。"
     throw "缺少 NVIDIA GPU / 驱动"
 }
 
@@ -619,7 +619,7 @@ Write-Host ""
 Write-Host "  【1】数据库（PostgreSQL + pgvector）" -ForegroundColor White
 Write-Host "      启动 Docker Desktop 后，在项目根执行：" -ForegroundColor Gray
 Write-Host "        docker compose up -d db" -ForegroundColor Yellow
-Write-Host "      等待 healthy：docker ps | findstr cerno_postgres" -ForegroundColor Gray
+Write-Host "      等待 healthy：docker ps | findstr zhiying_postgres" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  【2】后端" -ForegroundColor White
 Write-Host "      在项目根执行：" -ForegroundColor Gray

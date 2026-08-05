@@ -1,4 +1,4 @@
-"""Download and verify the models required for a Cerno Windows deployment.
+"""Download and verify the models required for a Zhiying Windows deployment.
 
 Components (each skips when already complete, retries on failure):
   embedding    Qwen3-VL-Embedding-8B  (ModelScope → models/Qwen/...)
@@ -172,7 +172,7 @@ def _download_file_resumable(url: str, target: Path) -> None:
     """单文件断点续传下载（.part → 原子 rename）。"""
     partial = target.with_name(target.name + ".part")
     start = partial.stat().st_size if partial.exists() else 0
-    headers = {"User-Agent": "cerno-windows-installer/1.0"}
+    headers = {"User-Agent": "zhiying-windows-installer/1.0"}
     if start:
         headers["Range"] = f"bytes={start}-"
 

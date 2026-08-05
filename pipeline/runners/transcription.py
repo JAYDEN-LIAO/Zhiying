@@ -27,7 +27,7 @@ class TranscribeRunner(OperationRunner):
         await pctx.tracker.update("transcription")
 
         artifact_dir = pctx.config.get("storage", {}).get(
-            "artifact_dir", "/tmp/cerno/audio"
+            "artifact_dir", "/tmp/zhiying/audio"
         )
         audio_dir = os.path.join(artifact_dir, "audio")
         os.makedirs(audio_dir, exist_ok=True)

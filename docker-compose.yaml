@@ -2,44 +2,44 @@
 services:
   db:
     image: pgvector/pgvector:pg17  # PostgreSQL 17 + pgvector
-    container_name: cerno_postgres
+    container_name: zhiying_postgres
     environment:
-      POSTGRES_USER: cerno
-      POSTGRES_PASSWORD: cerno
-      POSTGRES_DB: cerno
+      POSTGRES_USER: zhiying
+      POSTGRES_PASSWORD: zhiying
+      POSTGRES_DB: zhiying
     ports:
       - "5432:5432"                       # 映射至宿主机，对齐 localhost:5432 契约
     volumes:
-      - cerno_db_data:/var/lib/postgresql/data
+      - zhiying_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cerno -d cerno"]
+      test: ["CMD-SHELL", "pg_isready -U zhiying -d zhiying"]
       interval: 5s
       timeout: 5s
       retries: 5
     networks:
-      - cerno_network
+      - zhiying_network
 
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: cerno_app
+    container_name: zhiying_app
     ports:
       - "8000:8000"
     environment:
-      - POSTGRES_URI=postgresql+asyncpg://cerno:cerno@db:5432/cerno  # 容器间通信使用 db 服务名
+      - POSTGRES_URI=postgresql+asyncpg://zhiying:zhiying@db:5432/zhiying  # 容器间通信使用 db 服务名
     volumes:
-      - .:/home/cerno/project
-      - /home/cerno/data:/home/cerno/data  # 挂载视频数据存放目录
+      - .:/home/zhiying/project
+      - /home/zhiying/data:/home/zhiying/data  # 挂载视频数据存放目录
     depends_on:
       db:
         condition: service_healthy
     networks:
-      - cerno_network
+      - zhiying_network
 
 volumes:
-  cerno_db_data:
+  zhiying_db_data:
 
 networks:
-  cerno_network:
+  zhiying_network:
     driver: bridge

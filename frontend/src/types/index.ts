@@ -1,5 +1,5 @@
 /* ════════════════════════════════════════════════════════════
-   Cerno TypeScript types — mirrors backend core/schemas.py
+   Zhiying TypeScript types — mirrors backend core/schemas.py
    ════════════════════════════════════════════════════════════ */
 
 /* ── Enums ── */

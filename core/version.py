@@ -1,5 +1,5 @@
 """
-Cerno 版本号单一事实来源（Single Source of Truth）。
+Zhiying 版本号单一事实来源（Single Source of Truth）。
 
 约定（与 git tag 强绑定）：
   1. 发布前：改这里 __version__ → `git tag v<__version__> && git push origin v<__version__>`

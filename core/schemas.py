@@ -97,7 +97,7 @@ class VideoCreate(BaseModel):
     file_path: str          = Field(..., description="原始视频存储路径(绝对路径)")
     file_name: str          = Field(..., description="上传时原始文件名")
     file_size: int          = Field(..., gt=0, description="字节数")
-    source_owned: bool      = Field(default=True, description="源文件是否归 Cerno 所有（平台共享文件=False，删除不 unlink 源文件）")
+    source_owned: bool      = Field(default=True, description="源文件是否归 Zhiying 所有（平台共享文件=False，删除不 unlink 源文件）")
     content_type: ContentType = Field(default=ContentType.GENERAL)
     language: str           = Field(default="auto", pattern=r"^(auto|zh|en|ja|ko)$")
 
@@ -192,7 +192,7 @@ class PipelineParams(BaseModel):
 class ExternalVideoRegister(PipelineParams):
     """注册平台共享路径视频的请求 — 绝对路径就地引用，不上传字节。
 
-    源文件归平台所有（source_owned=False）：删除视频时 Cerno 不 unlink 源文件。
+    源文件归平台所有（source_owned=False）：删除视频时 Zhiying 不 unlink 源文件。
     file_name 缺省时取 file_path 的 basename。
     """
     file_path: str = Field(..., description="平台共享文件的服务器绝对路径")
@@ -205,7 +205,7 @@ class ExternalVideoRegister(PipelineParams):
 
 class YunzhiJobFile(BaseModel):
     """平台传给扩展应用的共享文件信息。"""
-    absolutePath: str = Field(..., description="平台服务器上的绝对路径（与 Cerno 共享同一挂载视角）")
+    absolutePath: str = Field(..., description="平台服务器上的绝对路径（与 Zhiying 共享同一挂载视角）")
     name: str = Field(default="", description="文件名")
 
 
@@ -231,7 +231,7 @@ class YunzhiJobPayload(BaseModel):
     callback: YunzhiJobCallback
     task: YunzhiJobTask
     file: YunzhiJobFile
-    operation: str = Field(default="", description="Manifest 自动化任务 id（作为 Cerno 参数映射键）")
+    operation: str = Field(default="", description="Manifest 自动化任务 id（作为 Zhiying 参数映射键）")
     eventId: str = Field(default="", description="事件 ID，幂等键")
     workDirectory: str = Field(default="", description="平台分配的任务工作目录（结果文件写入处）")
 

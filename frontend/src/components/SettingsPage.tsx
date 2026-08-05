@@ -252,9 +252,9 @@ export function SettingsPage() {
 
   /* ── 统一样式（对齐工作台设计变量）── */
   const cardCls = "bg-white rounded-[var(--radius-lg)] border border-[var(--color-border-light)] shadow-[var(--shadow-card)] p-6";
-  const inputCls = "w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-text-primary)] placeholder:text-gray-400 outline-none focus:border-[var(--color-accent-blue)] focus:ring-2 focus:ring-blue-600/15 transition-colors";
-  const inputSmCls = "w-full px-2 py-1.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md text-xs text-[var(--color-text-primary)] placeholder:text-gray-400 outline-none focus:border-[var(--color-accent-blue)] focus:ring-1 focus:ring-blue-600/15 transition-colors";
-  const btnCls = "px-3 py-1.5 text-[11px] font-medium bg-[#1d4ed8] text-white rounded-md hover:bg-[#2563eb] disabled:opacity-40 transition-colors cursor-pointer";
+  const inputCls = "w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-text-primary)] placeholder:text-gray-400 outline-none focus:border-[var(--color-accent-blue)] focus:ring-2 focus:ring-teal-600/15 transition-colors";
+  const inputSmCls = "w-full px-2 py-1.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md text-xs text-[var(--color-text-primary)] placeholder:text-gray-400 outline-none focus:border-[var(--color-accent-blue)] focus:ring-1 focus:ring-teal-600/15 transition-colors";
+  const btnCls = "px-3 py-1.5 text-[11px] font-medium bg-[#0d9488] text-white rounded-md hover:bg-[#14b8a6] disabled:opacity-40 transition-colors cursor-pointer";
   const labelCls = "text-xs text-[var(--color-text-muted)] mb-1.5 block";
   const hintCls = "text-[10px] text-[var(--color-text-dim)] mt-1 leading-relaxed";
   const cardTitleCls = "text-sm font-semibold text-[var(--color-text-primary)] mb-1";
@@ -516,7 +516,7 @@ export function SettingsPage() {
                           )}
                           {!isRenaming && (
                             <button onClick={() => handleApplyPreset(p)} disabled={saving === `apply-${p.id}`}
-                              className="px-2.5 py-1 text-[11px] font-medium bg-[#1d4ed8] text-white rounded-md hover:bg-[#2563eb] disabled:opacity-40 transition-colors cursor-pointer flex-shrink-0">
+                              className="px-2.5 py-1 text-[11px] font-medium bg-[#0d9488] text-white rounded-md hover:bg-[#14b8a6] disabled:opacity-40 transition-colors cursor-pointer flex-shrink-0">
                               {saving === `apply-${p.id}` ? "套用中..." : "套用"}
                             </button>
                           )}
@@ -579,13 +579,13 @@ export function SettingsPage() {
                     <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] cursor-pointer">
                       <input type="checkbox" checked={!!pipelineEdit.use_nvdec}
                         onChange={(e) => setPipelineEdit((p) => ({ ...p, use_nvdec: e.target.checked }))}
-                        className="w-3.5 h-3.5 accent-blue-600" />
+                        className="w-3.5 h-3.5 accent-teal-600" />
                       NVDEC 硬解
                     </label>
                     <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] cursor-pointer">
                       <input type="checkbox" checked={!!pipelineEdit.chunk_encoding}
                         onChange={(e) => setPipelineEdit((p) => ({ ...p, chunk_encoding: e.target.checked }))}
-                        className="w-3.5 h-3.5 accent-blue-600" />
+                        className="w-3.5 h-3.5 accent-teal-600" />
                       chunk 编码
                     </label>
                   </div>

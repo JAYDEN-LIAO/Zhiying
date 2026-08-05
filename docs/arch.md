@@ -1,4 +1,4 @@
-# Cerno Architecture
+# Zhiying Architecture
 
 > Version: 0.22 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
@@ -161,7 +161,7 @@ Incremental: Only L3 switches (summary_enabled / search_index_enabled) can be to
   - embedder 相对模型路径自动解析到项目根（对齐 detector，摆脱 cwd 依赖）
   - captioner 配 qwen3_vl 但本地 8B 模型缺失 → _auto_fallback_captioner 自动降级 qwen_api (DashScope, WARNING)
   - 摘要模式由 runners/base.py effective_summary_mode() 兜底 native_video→vlm_llm
-  - 无需 config.windows.yaml / CERNO_CONFIG（后者仅保留为自定义配置覆盖入口）
+  - 无需 config.windows.yaml / ZHIYING_CONFIG（后者仅保留为自定义配置覆盖入口）
 ```
 
 ## Pipeline Detail
@@ -544,7 +544,7 @@ Vite 开发代理:
 | faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
 | OCR | 📋 | PaddleOCR available as plate recognition alternative (plugins/plate/paddle_plate.py) |
 | Grounding | 📋 | Florence-2 shell only |
-| Health | ✅ | main.py GET /health → {"status":"ok","service":"cerno","version":"<__version__>","database":"ok"}（含 DB 连通性 + 版本号） |
+| Health | ✅ | main.py GET /health → {"status":"ok","service":"zhiying","version":"<__version__>","database":"ok"}（含 DB 连通性 + 版本号） |
 | Reindex | 🔶 | 待办 |
 
 ## 版本发布

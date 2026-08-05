@@ -128,7 +128,7 @@ class StorageManager:
         （DB 行已删，文件清理失败不应让删除接口返回失败）。
 
         source_owned=False 时跳过 unlink 原始源文件（平台共享文件就地引用，
-        归平台所有，Cerno 不负责删除；remux/proxy 仍按引用清理）。
+        归平台所有，Zhiying 不负责删除；remux/proxy 仍按引用清理）。
         """
         freed = 0
         referenced = await self.all_referenced_paths(session)
@@ -137,7 +137,7 @@ class StorageManager:
         for path in (file_path, remuxed_path, proxy_path):
             if not path:
                 continue
-            # 平台共享源文件归平台所有，Cerno 不删除
+            # 平台共享源文件归平台所有，Zhiying 不删除
             if path == file_path and not source_owned:
                 continue
             norm = self._resolve(path)

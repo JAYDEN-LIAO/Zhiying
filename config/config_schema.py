@@ -20,14 +20,14 @@ class ServerConfig(BaseModel):
 
 
 class DatabaseConfig(BaseModel):
-    uri: str = Field(default="postgresql+asyncpg://cerno:cerno@localhost:5432/cerno")
+    uri: str = Field(default="postgresql+asyncpg://zhiying:zhiying@localhost:5432/zhiying")
     pool_size: int = Field(default=20, ge=1)
     max_overflow: int = Field(default=10, ge=0)
 
 
 class StorageConfig(BaseModel):
-    video_dir: str = Field(default="/home/cerno/data/videos")
-    artifact_dir: str = Field(default="/home/cerno/data/artifacts")
+    video_dir: str = Field(default="/home/zhiying/data/videos")
+    artifact_dir: str = Field(default="/home/zhiying/data/artifacts")
 
 
 class PluginConfig(BaseModel):

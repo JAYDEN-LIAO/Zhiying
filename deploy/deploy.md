@@ -1,6 +1,6 @@
-# Cerno Windows 部署指南（deploy/）
+# Zhiying Windows 部署指南（deploy/）
 
-> 目标：把 Cerno 后端跑在 **全新的 Windows + NVIDIA GPU 机器** 上。
+> 目标：把 Zhiying 后端跑在 **全新的 Windows + NVIDIA GPU 机器** 上。
 > 做法：双击 `deploy/setup_windows.ps1`，脚本**自动安装一切**——Python / FFmpeg / WSL2 / Docker Desktop /
 > CUDA torch / 全部 Python 依赖 / 全部模型。装完自校验，并打印数据库/后端/前端启动指令（由你自己启动）。
 >
@@ -64,11 +64,11 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```powershell
 # 【1】数据库（PostgreSQL + pgvector）—— 先启动 Docker Desktop
 docker compose up -d db
-docker ps | findstr cerno_postgres        # 等到 healthy
+docker ps | findstr zhiying_postgres        # 等到 healthy
 
 # 【2】后端 —— 在项目根执行
 .\.venv\Scripts\python -m uvicorn main:app --host 127.0.0.1 --port 8000
-# 健康检查：http://127.0.0.1:8000/health  →  {"status":"ok","service":"cerno","version":"<当前版本>","database":"ok"}
+# 健康检查：http://127.0.0.1:8000/health  →  {"status":"ok","service":"zhiying","version":"<当前版本>","database":"ok"}
 
 # 【3】前端
 cd frontend
@@ -82,7 +82,7 @@ npm run dev
 
 ---
 
-## 5. 配置统一（无需 config.windows.yaml / CERNO_CONFIG）
+## 5. 配置统一（无需 config.windows.yaml / ZHIYING_CONFIG）
 
 一份 `config/config.yaml` 通用所有机器：
 - **路径**：模型/存储相对路径自动解析到项目根（embedder 已对齐 detector，摆脱 cwd 依赖）
@@ -90,7 +90,7 @@ npm run dev
 - **摘要模式自动转换**：captioner 为 `qwen_api` 时，`native_video` 自动视为 `vlm_llm`（`effective_summary_mode`）
 - 开发机有本地 8B 模型 → 保持本地推理；部署机无 → 走 API。**同一份配置，无需环境变量**
 
-> `CERNO_CONFIG` 环境变量仍保留为"自定义配置文件"的通用覆盖入口（机制无害），但默认部署不需要它。
+> `ZHIYING_CONFIG` 环境变量仍保留为"自定义配置文件"的通用覆盖入口（机制无害），但默认部署不需要它。
 
 ---
 

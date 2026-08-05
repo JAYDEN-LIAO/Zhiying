@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 # 设置工作目录
-WORKDIR /home/cerno/project
+WORKDIR /home/zhiying/project
 
 # 安装系统级依赖：必须包含 ffmpeg 以及基础编译环境
 RUN apt-get update && apt-get install -y --no-install-recommends \

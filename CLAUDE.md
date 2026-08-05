@@ -1,8 +1,8 @@
-# Cerno Project Context for AI Agents
+# Zhiying Project Context for AI Agents
 
 ## One-Line Summary
 
-Cerno 是 **视频分析引擎**（v0.22）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。`deploy/` 提供 Windows 裸机一键安装（从零部署）；requirements 已做多架构区分（Windows/Linux x86 装 onnxruntime-gpu，ARM64 如 DGX Spark/GB10 无该 wheel 自动装 CPU 版，人脸/车牌走 CPU）。架构细节见 `docs/arch.md`。
+Zhiying 是 **视频分析引擎**（v0.22）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。`deploy/` 提供 Windows 裸机一键安装（从零部署）；requirements 已做多架构区分（Windows/Linux x86 装 onnxruntime-gpu，ARM64 如 DGX Spark/GB10 无该 wheel 自动装 CPU 版，人脸/车牌走 CPU）。架构细节见 `docs/arch.md`。
 
 ## Quick File Map
 
@@ -87,7 +87,7 @@ frontend/src/services/api.ts — Pipeline stages from `/pipeline/operations` (ba
 scripts/sweep_storage.py   — 存储卫生清扫 CLI (默认 dry-run 只报告, --apply 执行, --json 机器可读)
 scripts/bump_version.py    — 一键版本提升 (交互式: 改号→输入提交信息→确认 commit/tag/push, git add .)
 bump                       — 仓库根可执行启动器 → scripts/bump_version.py (任意开发机 git pull 后 `./bump minor`)
-deploy/                    — Windows 裸机一键安装套件: setup_windows.ps1（装 Python/FFmpeg/CUDA torch/WSL2/Docker/依赖/模型 + 自校验, 旧 start_windows.ps1 与 write_windows_config.py 已删）/ download_models.py（含 reid 组件 yolo26n-cls.pt）/ deploy.md / deploy_feedback.md（部署踩坑记录）。配置已统一：无需 config.windows.yaml / CERNO_CONFIG，后端直接 uvicorn main:app
+deploy/                    — Windows 裸机一键安装套件: setup_windows.ps1（装 Python/FFmpeg/CUDA torch/WSL2/Docker/依赖/模型 + 自校验, 旧 start_windows.ps1 与 write_windows_config.py 已删）/ download_models.py（含 reid 组件 yolo26n-cls.pt）/ deploy.md / deploy_feedback.md（部署踩坑记录）。配置已统一：无需 config.windows.yaml / ZHIYING_CONFIG，后端直接 uvicorn main:app
 ```
 
 ## Data Flow
@@ -135,7 +135,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **全局 GPU 锁**: 所有 GPU 前向（embedder 4 个 encode_* 与 YOLO detect，含模型加载/tracker 初始化/批量推理）必须持 `core/gpu_lock.gpu_lock`（`async with gpu_lock`）串行——24GB 机器上 YOLO 卷积与 8bit matmul 并发会触发 GPU 驱动硬故障（蓝屏/卡死）。锁只串行 GPU 计算，不串行 NVDEC 解码/DB。detection 攒批因此用 **128**（1024 长批持锁 ~20s 会饿死 embedder）。
 - **共享单实例**: embedder 与 detector 都在启动时预载到 `app.state`（detector 模型懒加载，首次 detect 才载 ~2GB，避免每视频重载），业务逻辑经 `shared_detector` 注入 PipelineEngine，禁用 `load_plugin("detector"/"embedder")` 重复实例化；captioner 按需加载。
 - **并发管道限制**: `pipeline.max_concurrent_videos`（0=不限）→ VideoService 用 `asyncio.Semaphore` 限流同时处理的管道数（组批量上传会并发启动多管道，激活峰值按并发叠加，低显存机建议 1）。
-- **配置统一 + 自动降级**: 一份 `config/config.yaml` 通用所有机器——embedder 相对模型路径自动解析到项目根；captioner 配 `qwen3_vl` 但本地 8B 模型缺失 → `load_config()` 自动降级 `qwen_api`（DashScope，打 WARNING），摘要模式由 `runners/base.py effective_summary_mode()` 兜底 `native_video→vlm_llm`。无需 `config.windows.yaml` / `CERNO_CONFIG`（后者仅保留为自定义配置覆盖入口）。
+- **配置统一 + 自动降级**: 一份 `config/config.yaml` 通用所有机器——embedder 相对模型路径自动解析到项目根；captioner 配 `qwen3_vl` 但本地 8B 模型缺失 → `load_config()` 自动降级 `qwen_api`（DashScope，打 WARNING），摘要模式由 `runners/base.py effective_summary_mode()` 兜底 `native_video→vlm_llm`。无需 `config.windows.yaml` / `ZHIYING_CONFIG`（后者仅保留为自定义配置覆盖入口）。
 - **向量维度**: 4096（人脸 512）; 无 pgvector HNSW（超 2000 上限，demo 规模全扫描 <1ms）。
 - **共享 embedder**: 启动时预载到 `app.state.embedder`，业务逻辑禁用 `load_plugin("embedder")`; captioner 按需加载。
 - **增量迁移**: `init_db()` 用 `ADD COLUMN IF NOT EXISTS` 演进 schema。

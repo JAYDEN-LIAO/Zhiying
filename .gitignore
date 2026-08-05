@@ -87,4 +87,4 @@ pnpm-debug.log*
 # ── Windows 部署产物（机器相关绝对路径，由 setup_windows.ps1 重新生成）──
 /config/config.windows.yaml
 /data/backend.log
-/data/.cerno_keys.tmp.json
+/data/.zhiying_keys.tmp.json

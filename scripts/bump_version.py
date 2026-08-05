@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-scripts/bump_version.py — Cerno 版本号提升工具（交互式）
+scripts/bump_version.py — Zhiying 版本号提升工具（交互式）
 
 一条命令完成：改版本号 → 输入提交信息 → 确认提交 → 确认打 tag → 确认推送。
 每一步发布相关操作都会问你是否执行（默认否），所以：

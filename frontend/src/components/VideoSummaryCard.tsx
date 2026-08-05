@@ -43,7 +43,7 @@ export function VideoSummaryCard({ video }: { video: VideoResponse | null }) {
           </div>
           <button
             onClick={() => { window.open(api.getThumbnailsExportUrl(video.id), "_blank"); }}
-            className="w-6 h-6 rounded-lg flex items-center justify-center text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-all shrink-0 cursor-pointer"
+            className="w-6 h-6 rounded-lg flex items-center justify-center text-gray-300 hover:text-teal-500 hover:bg-teal-50 transition-all shrink-0 cursor-pointer"
             title="导出全部缩略图"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round">

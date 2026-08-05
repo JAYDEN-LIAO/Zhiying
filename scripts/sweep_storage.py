@@ -61,7 +61,7 @@ def _print_human(report: dict) -> None:
 
 
 async def main() -> int:
-    parser = argparse.ArgumentParser(description="Cerno 存储卫生清扫")
+    parser = argparse.ArgumentParser(description="Zhiying 存储卫生清扫")
     parser.add_argument(
         "--apply", action="store_true",
         help="实际执行删除（默认 dry-run 只报告）",

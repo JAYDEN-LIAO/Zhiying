@@ -115,7 +115,7 @@ export function HistoryPanelContent({
         }`}>
         <div onClick={() => onSelect(v.id, v.group_id ?? undefined)}
           className={`rounded-xl cursor-pointer border p-3 transition-all duration-300 ${
-            currentVideoId === v.id ? "bg-blue-50 border-blue-200" : "bg-white border-gray-100 hover:bg-gray-50 hover:border-gray-200"
+            currentVideoId === v.id ? "bg-teal-50 border-teal-200" : "bg-white border-gray-100 hover:bg-gray-50 hover:border-gray-200"
           }`}>
           <div className="flex items-start gap-3">
             <div className="w-[72px] aspect-video rounded-lg shrink-0 bg-gray-100 flex items-center justify-center overflow-hidden border border-gray-200/50">
@@ -134,7 +134,7 @@ export function HistoryPanelContent({
               <div className="flex items-center justify-between mt-1">
                 <div className="flex items-center gap-2">
                   <span className={`text-[10px] font-medium ${
-                    v.status === "completed" ? "text-green-500" : v.status === "processing" ? "text-blue-500"
+                    v.status === "completed" ? "text-green-500" : v.status === "processing" ? "text-teal-500"
                     : v.status === "failed" ? "text-red-400" : "text-gray-400"}`}>
                     {v.status === "completed" ? "已完成" : v.status === "processing" ? "处理中" : v.status === "failed" ? "失败" : "等待中"}
                   </span>
@@ -161,7 +161,7 @@ export function HistoryPanelContent({
           <input type="text" value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={drillGroupId ? `在 ${displayVideos.length} 个视频中搜索...` : "搜索视频文件名..."}
-            className="w-full pl-3 pr-7 py-1.5 text-[11px] bg-white border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 transition-all placeholder:text-gray-400" />
+            className="w-full pl-3 pr-7 py-1.5 text-[11px] bg-white border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-teal-100 focus:border-teal-300 transition-all placeholder:text-gray-400" />
           {searchQuery && (
             <button onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 cursor-pointer">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
@@ -223,7 +223,7 @@ export function HistoryPanelContent({
                               })()}</span>
                               <span className="text-gray-300">|</span>
                               <span>{group.videos[0].sample_fps.toFixed(1)}fps</span>
-                              <span className="text-[9px] font-medium text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded ml-auto">{group.videos.length} 个视频</span>
+                              <span className="text-[9px] font-medium text-teal-500 bg-teal-50 px-1.5 py-0.5 rounded ml-auto">{group.videos.length} 个视频</span>
                             </p>
                           </div>
                           <div className="flex items-center justify-between mt-1">

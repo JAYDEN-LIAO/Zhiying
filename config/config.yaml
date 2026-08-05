@@ -3,7 +3,7 @@ server:
   port: 8000
 
 database:
-  uri: "postgresql+asyncpg://cerno:cerno@localhost:5432/cerno"
+  uri: "postgresql+asyncpg://zhiying:zhiying@localhost:5432/zhiying"
 
 storage:
   video_dir: "data/videos"

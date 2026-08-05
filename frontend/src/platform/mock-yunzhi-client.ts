@@ -33,7 +33,7 @@ const mockFiles: YunzhiResource[] = [
 
 export class MockYunzhiClient implements YunzhiClient {
   private readonly mockContext: YunzhiHostContext = {
-    appKey: "cerno-extension",
+    appKey: "zhiying-extension",
     locale: "zh-CN",
     theme: "light",
     entryPoint: "file.folder.action",
@@ -68,8 +68,8 @@ export class MockYunzhiClient implements YunzhiClient {
       target: {
         folderId: 20001,
         scope: "PRIVATE",
-        name: "Cerno 分析输出",
-        path: "/Mock/Cerno 分析输出",
+        name: "Zhiying 分析输出",
+        path: "/Mock/Zhiying 分析输出",
         absolutePath: "/data/yunzhi-files/private/mock/analysis-output",
       },
     }),

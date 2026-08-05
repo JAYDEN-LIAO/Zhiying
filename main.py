@@ -1,7 +1,7 @@
 """
 main.py
 ═══════════════════════════════════════════════════════════
-FastAPI 应用入口 — Cerno Video Analytics Core Engine
+FastAPI 应用入口 — Zhiying Video Analytics Core Engine
 
 启动流程：
   1. lifespan → 加载配置 + init_db（创建扩展、触发器函数、表）
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化 DB，关闭时释放连接池。"""
-    logger.info("Starting Cerno engine ...")
+    logger.info("Starting Zhiying engine ...")
 
     # 清理 socks 代理（httpx/openai 不支持 socks scheme）
     for _key in ("ALL_PROXY", "all_proxy"):
@@ -111,7 +111,7 @@ async def lifespan(app: FastAPI):
 
     yield
     await engine.dispose()
-    logger.info("Cerno engine shut down.")
+    logger.info("Zhiying engine shut down.")
 
 
 # ──────────────────────────────────────────────────────────
@@ -190,7 +190,7 @@ class JSONGZipMiddleware:
 # ──────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="Cerno Video Analytics Core Engine",
+    title="Zhiying Video Analytics Core Engine",
     version=__version__,
     lifespan=lifespan,
 )
@@ -219,7 +219,7 @@ async def health_check() -> JSONResponse:
 
     body = {
         "status": "ok",
-        "service": "cerno",
+        "service": "zhiying",
         "version": __version__,
         "database": database,
     }
