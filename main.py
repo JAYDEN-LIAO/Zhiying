@@ -22,6 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from core.db import engine, AsyncSessionLocal, init_db
 from core.config_loader import load_config
+from core.version import __version__
 from api.router import router
 
 logging.basicConfig(
@@ -190,7 +191,7 @@ class JSONGZipMiddleware:
 
 app = FastAPI(
     title="Cerno Video Analytics Core Engine",
-    version="0.5",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -216,7 +217,12 @@ async def health_check() -> JSONResponse:
     except Exception:
         database = "unreachable"
 
-    body = {"status": "ok", "service": "cerno", "database": database}
+    body = {
+        "status": "ok",
+        "service": "cerno",
+        "version": __version__,
+        "database": database,
+    }
     code = 200 if database == "ok" else 503
     return JSONResponse(status_code=code, content=body)
 
