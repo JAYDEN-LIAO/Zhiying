@@ -13,7 +13,7 @@ set DASHSCOPE_API_KEY=sk-xxx   # Qwen-VL API (vlm_llm captioning)
 set DEEPSEEK_API_KEY=sk-xxx    # LLM summarizer (vlm_llm mode)
 
 # 3. Start backend server
-uvicorn main:app --reload
+python run.py   # 按 config.yaml server 段绑定端口（默认 8011），reload 模式
 # 健康检查：http://localhost:8011/health  →  {"status":"ok","service":"zhiying","version":"<当前版本>","database":"ok"}
 
 # 4. (New tab) Start frontend dev server
