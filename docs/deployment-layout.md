@@ -53,7 +53,7 @@
 
 | 项 | 说明 |
 |---|---|
-| conda env `zhiying` + requirements 依赖 | pip 缓存为空（`/root/.cache/pip` 0 字节），torch ~2.5G 需重新下载；装到 `/opt/miniconda3/envs/zhiying` |
+| conda env `zhiying` + requirements 依赖 | 装到**前缀** `/home/services/zhiying/conda-env`（**不放 /opt/miniconda3**——它在只剩 6.9G 的根分区 `/` 上，zhiying 的 torch 等 ~6-9G 会塞爆根分区）；conda/pip 缓存也指 /home |
 | pgvector 容器 | 拉取 `pgvector/pgvector:pg17`（~450MB），数据卷 `/home/data/zhiying/pgdata` |
 | 模型 ~17G | 服务器无任何缓存（modelscope/HF 缓存空）→ **服务器端 modelscope 直接下载** 或 scp 上传（见 §3.3） |
 | 前端 node_modules + dist | `npm ci && npm run build` |
@@ -76,7 +76,7 @@
 ├── ffmpeg/                          ← （可选）独立前缀 CUDA ffmpeg，见 §6.1
 └── frontend/dist/                   ← 前端构建产物（nginx root 指这里）
 
-/opt/miniconda3/envs/zhiying/        ← 依赖环境（conda create -n zhiying python=3.13）
+/home/services/zhiying/conda-env/    ← 依赖环境（conda create -p 前缀建到 /home，避免占根分区）
 
 /home/model-weights/zhiying/         ← 模型集中区（软链 `models/` 指向这里）
 ├── Qwen/Qwen3-VL-Embedding-8B       ← 16G（embedder，8bit 量化加载）
@@ -89,10 +89,9 @@
 ├── artifacts/                       ← storage.artifact_dir（缩略图/crop/keyframe/remux/proxy）
 └── pgdata/                          ← pgvector:pg17 数据卷
 
-~/.insightface/models/buffalo_l      ← SCRFD+ArcFace（库强制缓存）
-~/.hyperlpr3/<version>/onnx          ← HyperLPR3（库强制缓存）
+（库缓存经 HOME 重定向 → 落 /home/services/zhiying/.insightface、.hyperlpr3、.cache/，见 §6.3）
 
-nginx：新 server block（托管 dist + 反代 /api→127.0.0.1:8000，CSP frame-ancestors 待 B2）
+nginx：Phase 1 默认**不启用**（若给 main.py 加静态托管则 8000 直连）；否则 B2 定入口时用，见 §6.5
 systemd：zhiying.service（仿 qwen-25.service，CUDA_VISIBLE_DEVICES=1）
 ```
 
@@ -106,12 +105,14 @@ systemd：zhiying.service（仿 qwen-25.service，CUDA_VISIBLE_DEVICES=1）
 | GPU | `CUDA_VISIBLE_DEVICES=1`（GPU1；vLLM hunyuan-mt 同卡，剩 ~25.6G，只用空闲部分） |
 | captioner | 降级 `qwen_api`（DashScope），需 `.env` 配 `DASHSCOPE_API_KEY`；embedder 8bit 量化 |
 | ffmpeg | **Phase 1 复用系统 ffmpeg（CPU 兜底，零影响）**；Phase 2 可选编译 CUDA 版到独立前缀（见 §6.1） |
+| 库缓存隔离 | systemd `Environment=HOME=/home/services/zhiying` → insightface/hyperlpr3/modelscope/pip 等 `~` 缓存全落服务目录，**避开根分区**（/root 在 90% 满的 `/` 上） |
+| 前端入口 | **Phase 1 免 nginx 的前提**：给 `main.py` 加静态托管（~3 行；app 无客户端路由，`StaticFiles(directory="frontend/dist", html=True)` 挂 `/`）→ 8000 直连 `http://10.0.0.176:8000`；若不加代码则用 nginx（Phase B 确认项，见 §6.5） |
 
 ### 3.3 模型来源（推荐服务器端下载，零上传依赖）
 
-- **首选**：服务器 `deploy/download_models.py` 从 **modelscope** 直接下载 embedder + yolo + reid（服务器出网可达 modelscope，无需经本地传输 17G）
+- **首选**：服务器 `deploy/download_models.py` 从 **modelscope** 直接下载 embedder + yolo + reid（服务器出网可达 modelscope，无需经本地传输 17G）——**下载前先建 `models/` 软链**，且以 `HOME=/home/services/zhiying` 执行，模型经软链落 `/home/model-weights/zhiying`、库缓存随 HOME 落服务目录（不碰 /root / 根分区）
 - 备选：本机 `models/` 经 **scp** 上传（服务器无 rsync）
-- face（buffalo_l）/ plate（HyperLPR3 onnx）/ segmenter（TransNetV2）由各库首次运行自动缓存到 `~/.insightface`、`~/.hyperlpr3`、pip 包内
+- face（buffalo_l）/ plate（HyperLPR3 onnx）/ segmenter（TransNetV2）由各库首次运行自动缓存（HOME 重定向到服务目录）
 - **不传** `Qwen3-VL-8B-Instruct`（17G，captioner 已降级 API）
 
 ## 4. 符合度评估
@@ -119,7 +120,7 @@ systemd：zhiying.service（仿 qwen-25.service，CUDA_VISIBLE_DEVICES=1）
 | 项 | zhiying 摆放 | 对照规范 | 结论 |
 |---|---|---|---|
 | 代码目录 | `/home/services/zhiying/` | `/home/services/{name}` | ✅ 完全符合 |
-| 依赖环境 | conda env `zhiying` | `/opt/miniconda3/envs/{name}` | ✅ 完全符合 |
+| 依赖环境 | conda env `zhiying`（前缀 `/home/services/zhiying/conda-env`） | `/opt/miniconda3/envs/{name}` | ⚠️ 前缀偏离 /opt 惯例，**为根分区安全**（/opt 在只剩 6.9G 的 `/` 上，env 若建这里会塞爆） |
 | 启动方式 | `start.sh` + systemd + `logs/` | 同左 | ✅ 完全符合 |
 | 日志 | `services/zhiying/logs/` | 同左 | ✅ 完全符合 |
 | 模型 | `/home/model-weights/zhiying`（`models/` 软链过去） | 模型集中 `/home/model-weights` | ⚠️ 软链对齐：物理位置符合规范，config 相对路径零改动 |
@@ -142,9 +143,11 @@ systemd：zhiying.service（仿 qwen-25.service，CUDA_VISIBLE_DEVICES=1）
 - **zhiying**：`/home/data/zhiying/{videos, artifacts, pgdata}`
 - **为什么偏离**：zhiying 引入现有服务没有的新类别（GB 级持续膨胀的视频数据）。无现成先例，参照平台「代码与数据分离」哲学——视频放服务目录会把"代码目录"变成"数据仓库"，破坏分离语义，运维对账困惑。代价只是 `config.yaml` 里两个绝对路径
 
-### ③ insightface / hyperlpr3 缓存：`~/.insightface`、`~/.hyperlpr3`
+### ③ insightface / hyperlpr3 缓存：经 HOME 重定向收进隔离区（已解决）
 - **规范**：模型尽量集中 `/home/model-weights`
-- **为什么偏离**：**库写死缓存路径**，不接受指定目录。与现有 `glm-ocr`（Ollama → `~/.ollama`）同类，属依赖行为，**不算违背**，可接受。部署时顺带验证是否支持自定义缓存环境变量，能收则收进规范区
+- **机制（已查源码）**：两库**无自定义缓存环境变量**，但**都跟随 HOME**——hyperlpr3 `os.environ['HOME']/.hyperlpr3`，insightface `~/.insightface`
+- **处理**：systemd 设 `HOME=/home/services/zhiying` → 这些缓存自动落进服务目录，**彻底隔离 + 避开根分区**
+- **不算偏离**：属库行为，已被 HOME 重定向吸收，不再污染 `/root`（/root 在 90% 满的 `/` 上，仅 6.9G）
 
 ## 6. 启动与服务（仿服务器惯例，零遮蔽）
 
@@ -165,7 +168,7 @@ export HF_HOME=/home/model-weights
 export TRANSFORMERS_CACHE=/home/model-weights
 cd /home/services/zhiying
 
-nohup /opt/miniconda3/envs/zhiying/bin/python -m uvicorn main:app \
+nohup /home/services/zhiying/conda-env/bin/python -m uvicorn main:app \
   --host 0.0.0.0 --port 8000 --workers 1 \
   > /home/services/zhiying/logs/server.log 2>&1 &
 wait
@@ -187,7 +190,7 @@ ExecStart=/bin/bash /home/services/zhiying/start.sh
 Restart=always
 RestartSec=10
 Environment=PATH=/opt/miniconda3/bin:/usr/local/cuda-12.8/bin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=HOME=/root
+Environment=HOME=/home/services/zhiying
 
 [Install]
 WantedBy=default.target
@@ -199,13 +202,16 @@ WantedBy=default.target
 docker run -d --name zhiying-pg \
   -e POSTGRES_USER=zhiying -e POSTGRES_PASSWORD=zhiying -e POSTGRES_DB=zhiying \
   -p 5432:5432 \
-  -v /home/data/zhiying/pgdata:/var/lib/postgresql/data \
+  -v /home/data/zhiying/pgdata:/var/lib/postgresql/data:Z \
   pgvector/pgvector:pg17
 ```
 
 > 账号/库名与 `config/config.yaml` 的 `db.uri`（`postgresql+asyncpg://zhiying:zhiying@localhost:5432/zhiying`）对齐。**与平台 postgres（15432/25432）完全隔离。**
+> **SELinux Enforcing**：bind mount 用 `:Z`（docker relabel 该目录，只作用于 zhiying 自己的目录）；若 `:Z` 执行报错，改用 docker 命名卷（`-v zhiying-pgdata:/var/lib/postgresql/data`，完全避开 SELinux，数据仍在 /home/docker）。
 
-### 6.5 nginx server block（草案，B2 确定入口 URL 后定稿）
+### 6.5 nginx server block（Phase 1 可不使用，B2 定入口后按需启用）
+
+> **Phase 1 免 nginx 的前提**：给 `main.py` 加静态托管（app 无客户端路由，`StaticFiles(directory="frontend/dist", html=True)` 挂 `/`，~3 行，需提交进部署分支），则 8000 直连 `http://10.0.0.176:8000`，nginx 完全不碰。以下 block 仅在**不想改代码**或 B2 平台要求 https/域名/路径前缀时启用（独立 conf 新增，`nginx -t` 通过才 reload，绝不动现有 3100 block）。
 
 ```nginx
 server {
@@ -244,11 +250,11 @@ server {
 ### Phase A — 零风险（不碰任何现有服务，可一口气推进）
 
 ```
-A1 代码就位       scp/git 把 feature/yunzhi 送到 /home/services/zhiying
-A2 依赖环境       conda create -n zhiying python=3.13 + pip install -r requirements.txt（tuna 源，/ 不占用）
-A3 模型           服务器端 modelscope 下载（首选）或 scp 上传；~17G → /home/model-weights/zhiying
-A4 数据库         拉取 pgvector:pg17 → docker run zhiying-pg（5432）→ init_db
-A5 前端构建       npm ci && npm run build（VITE_YUNZHI_MOCK=true 先跑通）
+A1 代码就位       git bundle 打包 feature/yunzhi → scp → 服务器本地 clone 到 /home/services/zhiying
+A2 依赖环境       **HOME=/home/services/zhiying 下执行**：`conda create -p conda-env python=3.13`（CONDA_PKGS_DIRS 指 /home）+ `pip install -r requirements.txt`（PIP_CACHE_DIR 指 /home）——**env 与缓存全在 /home，绝不占根分区**
+A3 模型           **先建 `models/` 软链 → /home/model-weights/zhiying**，再 HOME=/home/services/zhiying 下执行 modelscope 下载（首选）或 scp 上传；~17G 经软链落规范区；insightface/hyperlpr3 库缓存随 HOME 落服务目录，不碰 /root
+A4 数据库         拉取 pgvector:pg17 → docker run zhiying-pg（5432，挂载带 `:Z`）→ init_db
+A5 前端构建       npm ci（`--cache` 指 /home）+ npm run build（VITE_YUNZHI_MOCK=true 先跑通）
 A6 配置改动       按 §7 清单（数据路径/软链/.env/ReID）
 ```
 
@@ -256,7 +262,7 @@ A6 配置改动       按 §7 清单（数据路径/软链/.env/ReID）
 
 ```
 B1 [确认]  ffmpeg 策略：先确认 Phase 1 系统 ffmpeg 可用 → 冒烟管道；性能不足再进 Phase 2 编译
-B2 [确认]  nginx：新增独立 conf → `nginx -t` 校验 → 通过才 reload（绝不动 3100 block）
+B2 [确认]  nginx / firewalld：**Phase 1 默认不用 nginx**（后端服务前端直连 8000）；如需浏览器直连 8000 加一条 firewalld 放行（加法可回滚）；平台后台 docker 回调 8000 是否需放行 → B2 实测决定
 B3 [确认]  启动 zhiying.service：先 nvidia-smi 核实 GPU1 空闲显存 → 启动 → /health 冒烟
 B4 [确认]  验证：register-external + 跑管道 + /internal/yunzhi/jobs 202/进度回调
 ```
@@ -269,21 +275,22 @@ B4 [确认]  验证：register-external + 跑管道 + /internal/yunzhi/jobs 202/
 - 现有 docker 容器（yunzhi 全栈 + yanshi 演示栈）、现有 systemd 服务（vLLM/clip/ocr/rerank/glm-ocr）
 - 平台文件库（只读，`source_owned=false` 就地引用，绝不 unlink）
 - 平台 postgres（15432/25432）、GPU0（vLLM qwen-25）、系统 `/usr/bin/ffmpeg`、base conda env
+- **nginx（Phase 1 不碰、不 reload）**、**firewalld（Phase 1 不加规则）**
 - 根分区 `/`：一切安装/构建/缓存/数据路径指 `/home`（根仅 6.9G）
 
 ### 🟡 新增独立（可完整回滚）
 - `/home/services/zhiying`、`/home/data/zhiying`、`/home/model-weights/zhiying`
-- conda env `zhiying`、docker 容器 `zhiying-pg`、systemd `zhiying.service`
+- conda env `zhiying`（/home/services/zhiying/conda-env）、docker 容器 `zhiying-pg`、systemd `zhiying.service`
 - 回滚 = 停这几样，现有服务零影响
 
 ### 🔴 共享资源上的谨慎操作（5 点，均有防护）
 | # | 共享点 | 风险 | 防护 |
 |---|---|---|---|
 | 1 | GPU1 显存（hunyuan-mt 用，剩 ~25.6G） | 超可用显存挤到 vLLM | 加载前 `nvidia-smi` 核实；embedder 8bit ~8G + YOLO 2G，只用空闲部分；超限立即中止 |
-| 2 | nginx（80→3100 平台 web） | 配置错误/reload 失败弄挂平台入口 | 独立 conf 文件；`nginx -t` 通过才 reload |
+| 2 | nginx（80→3100 平台 web） | 配置错误/reload 失败弄挂平台入口 | **Phase 1 默认不碰**（不用 nginx）；如启用：独立 conf + `nginx -t` 通过才 reload |
 | 3 | 系统 ffmpeg（平台可能调用） | 遮蔽系统版影响其它服务 | 独立前缀 `/home/services/zhiying/ffmpeg`，只在 zhiying start.sh PATH 生效 |
-| 4 | firewalld（只开 3100/http/ssh） | 需给 8000 加规则 | 纯加法规则；是否开取决于 B2 平台后台调用方式，B1 可先不开 |
-| 5 | 根分区 `/`（剩 6.9G） | 系统包/构建吃根分区 | 只装 KB 级小包（nasm/yasm）；构建全在 /home；实时 `df -h` 监控 |
+| 4 | firewalld（只开 3100/http/ssh） | 内网直连 8000 需放行 | **Phase 1 默认不加**；需直连 8000 时加一条（加法可回滚）；走 nginx:80 或平台 docker 回调实测决定 |
+| 5 | 根分区 `/`（剩 6.9G） | **conda env / pip 缓存 / 模型下载若落 /opt 或 /root 会塞爆根分区** | **env 用 `-p` 建到 /home、CONDA_PKGS_DIRS / PIP_CACHE_DIR / HOME 全指 /home**；构建全在 /home；实时 `df -h` 监控 |
 
 ## 10. 交接注意事项
 
@@ -293,5 +300,7 @@ B4 [确认]  验证：register-external + 跑管道 + /internal/yunzhi/jobs 202/
 4. **回调客户端**：`run_yunzhi_job` 所有平台回调须在共享 `httpx.AsyncClient` 的 `async with` 块内发送
 5. **命名**：项目名 Zhiying（智影）；部署目录/env/DB 一律 `zhiying`。本地开发路径（`~/projects/cerno`、本地 DB `cerno_postgres`）保留原名，不属产品命名
 6. **零遮蔽**：CUDA ffmpeg 只进 zhiying 的 start.sh PATH；base conda env 只读不写
-7. **根分区**：一切安装/缓存/下载/数据路径必须指 `/home`（conda pkgs、pip cache、HF cache 均设到 /home）
-8. **逐项确认**：Phase B 每步（ffmpeg 策略/nginx/启动/验证）先停下汇报，用户确认后再执行
+7. **根分区（最重要）**：一切安装/缓存/下载/数据路径必须指 `/home`——**conda env 用 `-p` 建到 `/home/services/zhiying/conda-env`**（`/opt/miniconda3` 在只剩 6.9G 的根分区上，zhiying 的 torch 等 ~6-9G 若建到 /opt 会塞爆根分区）；conda pkgs / pip cache / HF cache 经 HOME 或环境变量指 /home
+8. **HOME 隔离**：systemd `HOME=/home/services/zhiying` → insightface/hyperlpr3/modelscope/pip 等 `~` 缓存全落服务目录（避开根分区，彻底隔离）
+9. **nginx 非必须**：Phase 1 免 nginx 需给 `main.py` 加静态托管（~3 行，无客户端路由，`StaticFiles(html=True)` 挂 `/`，需提交）；否则前端托管用 nginx（Phase B 确认项，独立 conf + `nginx -t` + 确认 reload）
+10. **逐项确认**：Phase B 每步（ffmpeg 策略/nginx/firewalld/启动/验证）先停下汇报，用户确认后再执行

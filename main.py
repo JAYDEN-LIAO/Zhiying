@@ -12,12 +12,14 @@ FastAPI 应用入口 — Zhiying Video Analytics Core Engine
 import gzip
 import logging
 import os
+from pathlib import Path
 
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.db import engine, AsyncSessionLocal, init_db
@@ -261,3 +263,18 @@ app.include_router(router)
 from api.yunzhi_routes import router as yunzhi_router
 
 app.include_router(yunzhi_router)
+
+# ──────────────────────────────────────────────────────────
+# 前端静态托管（部署用，免 nginx）
+# ──────────────────────────────────────────────────────────
+
+# 后端直接托管前端构建产物（frontend/dist）：
+#   - 仅在 dist 存在时挂载（本地开发用 Vite dev server，不产生 dist → 跳过）
+#   - 前端无客户端路由（单页，页面切换走 state）→ html=True 即可，无需 SPA fallback
+#   - 挂载在 API / health / jobs 路由之后 → 这些路径优先匹配，其余走静态
+_frontend_dist = Path(__file__).resolve().parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
+    logger.info("Frontend dist mounted at / (%s)", _frontend_dist)
+else:
+    logger.info("Frontend dist not found (%s) — skip static mount (dev mode)", _frontend_dist)
