@@ -14,7 +14,7 @@ set DEEPSEEK_API_KEY=sk-xxx    # LLM summarizer (vlm_llm mode)
 
 # 3. Start backend server
 uvicorn main:app --reload
-# 健康检查：http://localhost:8000/health  →  {"status":"ok","service":"cerno","version":"0.22.0","database":"ok"}
+# 健康检查：http://localhost:8000/health  →  {"status":"ok","service":"cerno","version":"<当前版本>","database":"ok"}
 
 # 4. (New tab) Start frontend dev server
 cd frontend && npm install && npm run dev

@@ -68,7 +68,7 @@ docker ps | findstr cerno_postgres        # 等到 healthy
 
 # 【2】后端 —— 在项目根执行
 .\.venv\Scripts\python -m uvicorn main:app --host 127.0.0.1 --port 8000
-# 健康检查：http://127.0.0.1:8000/health  →  {"status":"ok","service":"cerno","version":"0.22.0","database":"ok"}
+# 健康检查：http://127.0.0.1:8000/health  →  {"status":"ok","service":"cerno","version":"<当前版本>","database":"ok"}
 
 # 【3】前端
 cd frontend

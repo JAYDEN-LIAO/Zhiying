@@ -172,7 +172,8 @@ def main() -> int:
 
     run(["add", "."])
     run(["commit", "-m", commit_msg])
-    run(["tag", f"v{new_ver}"])
+    # 附注 tag（-a -m）：git push --follow-tags 只跟随附注 tag，轻量 tag 不会被自动推
+    run(["tag", "-a", f"v{new_ver}", "-m", f"Release {new_ver}"])
 
     # ── 5. 手动确认：推送 ──────────────────────────
     if ask("推送到 GitHub（main + tag）？"):
