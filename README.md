@@ -85,6 +85,7 @@ curl -X POST -H "Content-Type: application/json" \
 | Storage Hygiene (v0.21) | 删除视频 = DB 级联 + 磁盘文件全回收（引用计数, reuse 共享安全, 空组自动清理）| ✅ |
 | Delete-while-processing + Pipeline Cancel (v0.22) | 处理中视频**允许删除**：删除端点登记 `core.cancellation`，后台管道 persist 前检查 `is_cancelled` 优雅中止（防写已删行 FK 异常） | ✅ |
 | Orphan Storage Sweep | `POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` | ✅ |
+| 云智平台集成 (v0.24) | `POST /api/v1/videos/register-external`（平台共享文件就地引用，`source_owned=false` 删视频不删源文件）+ `POST /internal/yunzhi/jobs`（立即 202，进度/完成/失败回调，幂等）+ 前端 Bridge SDK | ✅ |
 
 ## Architecture Overview
 
@@ -164,9 +165,11 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 ```
 zhiying/
 ├── bump                 # 版本号一键提升启动器 (→ scripts/bump_version.py)
-├── main.py               # FastAPI entry point
+├── run.py                # 本地开发启动入口（按 config.yaml server 段绑端口，reload）
+├── main.py               # FastAPI entry point (+ 静态托管 frontend/dist, 部署免 nginx)
 ├── api/                  # Route definitions
 │   ├── router.py         # Route assembly (sub-routers under /api/v1)
+│   ├── yunzhi_routes.py  # 云智平台异步任务接口 (POST /internal/yunzhi/jobs, 根路径挂载)
 │   ├── routes.py         # Transitional re-export
 │   ├── deps.py           # FastAPI dependencies (DB session)
 │   ├── schemas.py        # Shared API DTOs
@@ -224,6 +227,7 @@ zhiying/
 │   └── grounding/        # (stub) Florence-2
 ├── services/             # Business logic layer
 │   ├── video_service.py  # Video processing orchestration (max_concurrent_videos 信号量限流)
+│   ├── yunzhi_job_service.py # 云智任务执行 (202+进度/完成/失败回调, 幂等)
 │   ├── format_service.py # Multi-format support (probe/remux/proxy, lazy on-demand)
 │   ├── export_service.py # Export business logic (clip/frames/track/thumbnails)
 ├── utils/                # FFmpeg tools + metadata extraction
@@ -248,6 +252,7 @@ zhiying/
 │   │   │   ├── useProxyStatus.ts, useSearch.ts, useStreamReady.ts, useVideoPolling.ts
 │   │   ├── utils/helpers.ts  # Shared helpers (fmtDuration, fmtDate, formatSec)
 │   │   ├── labels.ts        # YOLO COCO 类名英→中映射 + 颜色表
+│   │   ├── platform/       # 云智 Bridge SDK (yunzhi-bridge.ts/client.ts/YunzhiProvider/mock)
 │   │   ├── services/api.ts
 │   │   └── types/index.ts
 │   ├── package.json
@@ -256,12 +261,16 @@ zhiying/
 ├── data/                 # Video storage & artifacts + settings.json/presets.json (gitignored)
 ├── config/               # YAML config, prompts, schema
 ├── deploy/               # Windows 从零部署套件: setup_windows.ps1 一键安装器 / download_models.py / deploy.md / deploy_feedback.md
-├── scripts/              # 运维工具: sweep_storage.py 存储清扫 CLI (默认 dry-run, --apply 执行) + bump_version.py 一键版本提升
+├── scripts/              # 运维工具: sweep_storage.py 存储清扫 CLI (默认 dry-run, --apply 执行) + bump_version.py 一键版本提升 + mock_yunzhi_platform.py (mock 平台回调服务器)
 └── docs/                 # Design documents + search architecture docs
 ```
 
 ## Development Status
 
+- **v0.24 — 云智(Yunzhi)平台接入 + 生产部署（feature/yunzhi 部署分支）**:
+  - **Bridge 文件选择**: 前端 `bridge.files.select()` 从平台文件库选文件，后端 `POST /api/v1/videos/register-external` 共享绝对路径就地引用（`source_owned=false`，删除视频绝不 unlink 平台源文件）。
+  - **异步任务接口**: `POST /internal/yunzhi/jobs`（根路径挂载，非 /api/v1）立即回 202，后台建视频 + 跑管道，进度/完成/失败经 `callback.progressUrl/completeUrl/failUrl` 回调（`eventId`/`Idempotency-Key` 幂等）；`StatusTracker.on_progress` + `PipelineEngine.progress_callback` 透传；结果写平台 `workDirectory`。
+  - **生产部署**: 已部署到 10.0.0.176 —— systemd `zhiying.service`（8011，pgvector:pg17 容器，后端静态托管前端 dist 免 nginx）；规范端口 8000→8011；新增 `run.py` 本地启动入口（按 config.yaml server 段绑端口）；运维参考 `docs/server.md`（gitignored）。
 - **v0.22 — 部署系统 + 系统设置与参数系统 + Detection 渲染重构**:
   - **Windows 从零部署**: `deploy/setup_windows.ps1` 重写为裸机一键安装器（系统级 Python/FFmpeg/WSL2/Docker + 依赖级 CUDA torch 按 GPU 选源/onnxruntime-gpu + 模型级 embedding/yolo/**reid**/face/plate/segmenter + 自校验）；删除旧 `start_windows.ps1` / `write_windows_config.py`；`deploy_feedback.md` 记录部署踩坑（UTF-8 BOM、Blackwell cu130、pip 大文件 curl 兜底、代理策略、onnxruntime-gpu 桩等）。
   - **配置统一 + 自动降级**: 单份 `config/config.yaml` 通用所有机器——embedder 相对模型路径解析到项目根；captioner 本地 8B 模型缺失 → 自动降级 `qwen_api`（DashScope）+ `effective_summary_mode` 兜底；无需 `config.windows.yaml` / `ZHIYING_CONFIG`。BoT-SORT ReID 改用本地 `models/yolo26n-cls.pt`（实测 `auto` 仍从 GitHub 下载）。

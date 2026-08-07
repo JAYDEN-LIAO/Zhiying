@@ -548,11 +548,21 @@ async def stream_frames(
     """
     if use_nvdec:
         try:
+            yielded = 0
             async for frame in stream_frames_nvdec(
                 video_path, fps, output_width, output_height, raw_mode=raw_mode,
             ):
+                yielded += 1
                 yield frame
-            return
+            # NVDEC 可能"静默成功"却一帧未产：ffmpeg 无 -hwaccel cuda / h264_cuvid
+            # 时子进程直接退出、stdout 空 → 生成器正常结束但不抛异常。若 0 帧，
+            # 同样回退 cv2，否则下游（detection/search_encode）拿不到任何帧。
+            if yielded == 0:
+                logger.warning(
+                    "[stream_frames] NVDEC produced 0 frames, falling back to cv2",
+                )
+            else:
+                return
         except (FileNotFoundError, Exception) as e:
             logger.warning(
                 "[stream_frames] NVDEC unavailable (%s), falling back to cv2", e,

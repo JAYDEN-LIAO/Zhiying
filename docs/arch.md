@@ -1,8 +1,9 @@
 # Zhiying Architecture
 
-> Version: 0.22 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.24 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4
 > v0.22: Windows 从零部署 + 系统设置/参数预设 + 全局 GPU 锁 + Detection 渲染重构 + 删除处理中/管道取消 + ARM64 多架构
+> v0.24: 云智(Yunzhi)平台接入（register-external + /internal/yunzhi/jobs 异步任务）+ 生产部署（systemd, 8011, pgvector:pg17, 静态托管前端）
 
 ## System Data Flow
 
@@ -296,6 +297,7 @@ videos
   ├─ source_analysis (JSONB)        — 视频来源分析：类型/置信度/证据链/监控品牌
   ├─ ai_detect_result (JSONB)       — [残留] AI 生成检测结果（AICheck 服务已移除，此列保留但恒为 not_run）
   ├─ status_detail (管道实时操作描述)
+  ├─ source_owned (Boolean, 默认 true; 平台共享文件= false → 删除不 unlink 源文件, v0.24)
   ├─ group_id (UUID FK → video_groups.id, nullable, v0.19) — NULL=单视频未分组
   └─ created_at, updated_at
 
@@ -373,6 +375,7 @@ plate_detections
 | POST | /api/v1/videos | 注册视频任务 (JSON body) |
 | POST | /api/v1/videos/upload | 上传视频文件 (multipart, 不启动 Pipeline, group_id=NULL) |
 | POST | /api/v1/videos/upload/batch | 批量上传视频文件 (multipart, 创建 VideoGroup, 并发处理) |
+| POST | /api/v1/videos/register-external | 平台共享文件就地引用 (source_owned=false, 删视频不删源文件, v0.24) |
 | PUT | /api/v1/videos/{id}/params | 设置参数 + 启动 Pipeline (pending/completed) |
 | POST | /api/v1/videos/reuse | 基于已有视频创建新记录 (复用文件) |
 | GET | /api/v1/videos/ | 视频列表 (按创建时间降序) |
@@ -411,6 +414,7 @@ plate_detections
 | GET | /api/v1/videos/{id}/export/thumbnails | 导出场景缩略图 zip (直接下载) |
 | POST | /api/v1/maintenance/sweep | 存储孤儿清扫 (body {dry_run}, true=预览/默认, false=执行) |
 | GET | /api/v1/maintenance/storage | 存储用量概览 (各目录大小 + 可回收量) |
+| POST | /internal/yunzhi/jobs | 云智平台异步任务 (根路径挂载非 /api/v1, 立即202+幂等, 进度/完成/失败回调, v0.24) |
 
 ## Frontend Architecture
 
@@ -494,6 +498,8 @@ Vite 开发代理:
 | **从零部署 + 配置统一 (v0.22)** | setup_windows.ps1 裸机一键安装；单份 config 自动降级 captioner（本地缺失→qwen_api），effective_summary_mode 兜底摘要模式 |
 | **多架构 requirements (v0.22)** | `onnxruntime-gpu` 仅 x86/Windows 有 wheel → 环境标记：win32/x86_64/AMD64 装 GPU 版，aarch64/arm64（DGX Spark/GB10）自动装 `onnxruntime` CPU 版（人脸/车牌走 CPU）；numpy 钉 `<2.4`（paddlex 3.7） |
 | **embedder 量化 (v0.22)** | none/8bit/4bit (bitsandbytes) 把 ~16GB 权重降到 ~8GB/~4GB；启动时加载，改后需重启 |
+| **平台共享文件 source_owned (v0.24)** | register-external 就地引用平台文件（不复制、不传字节），`source_owned=false` 时删除视频绝不 unlink 源文件（所有权归平台） |
+| **异步任务 jobs (v0.24)** | /internal/yunzhi/jobs 根路径挂载（不经 /api/v1），202 立即返回 + 幂等（进程内 eventId/Idempotency-Key），进度经 StatusTracker.on_progress → callback.progressUrl 推送 |
 
 ## Current Status
 
@@ -544,6 +550,10 @@ Vite 开发代理:
 | faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
 | OCR | 📋 | PaddleOCR available as plate recognition alternative (plugins/plate/paddle_plate.py) |
 | Grounding | 📋 | Florence-2 shell only |
+| 云智平台接入 (v0.24) | ✅ | api/yunzhi_routes.py + services/yunzhi_job_service.py: POST /internal/yunzhi/jobs（根路径, 202+幂等, callback.progressUrl/completeUrl/failUrl, 结果写 workDirectory） |
+| 平台共享文件 (v0.24) | ✅ | POST /videos/register-external（source_owned=false 就地引用, 删除不 unlink 源文件）; StatusTracker.on_progress / engine.progress_callback 透传 |
+| 前端 Bridge (v0.24) | ✅ | frontend/src/platform/（yunzhi-bridge.ts/client.ts/YunzhiProvider/mock, VITE_YUNZHI_MOCK 切换真实/模拟） |
+| 生产部署 (v0.24) | ✅ | systemd `zhiying.service` @ 10.0.0.176:8011, pgvector:pg17 容器, 后端静态托管 frontend/dist 免 nginx; 运维见 docs/server.md |
 | Health | ✅ | main.py GET /health → {"status":"ok","service":"zhiying","version":"<__version__>","database":"ok"}（含 DB 连通性 + 版本号） |
 | Reindex | 🔶 | 待办 |
 

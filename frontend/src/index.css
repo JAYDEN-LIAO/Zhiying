@@ -404,11 +404,11 @@ body {
 }
 .slide-panel-content input[type="text"]:focus,
 .slide-panel-content input[type="search"]:focus {
-  border-color: rgba(45,212,191,0.75) !important;
-  box-shadow: 0 0 0 2px rgba(45,212,191,0.3) !important;
+  border-color: rgba(251,191,36,0.75) !important;
+  box-shadow: 0 0 0 2px rgba(251,191,36,0.3) !important;
 }
 .slide-panel-content input[type="range"] {
-  accent-color: #04B386;
+  accent-color: #FBBF24;
 }
 
 /* Section header labels */
@@ -435,17 +435,17 @@ body {
   background: rgba(255,255,255,0.12) !important;
 }
 
-/* Teal accent cards (selected/active items) — 提高可见度 */
+/* Amber accent cards (selected/active items) — 深青绿底上提亮暖色强调 */
 .slide-panel-content .bg-teal-50 {
-  background: rgba(20,184,166,0.24) !important;
-  border-color: rgba(20,184,166,0.45) !important;
+  background: rgba(251,191,36,0.22) !important;
+  border-color: rgba(251,191,36,0.5) !important;
 }
 .slide-panel-content .bg-teal-50\/30 {
-  background: rgba(20,184,166,0.18) !important;
+  background: rgba(251,191,36,0.14) !important;
 }
 .slide-panel-content .border-teal-200,
 .slide-panel-content .border-teal-300 {
-  border-color: rgba(20,184,166,0.5) !important;
+  border-color: rgba(251,191,36,0.55) !important;
 }
 .slide-panel-content .border-purple-300 {
   border-color: rgba(168,85,247,0.35) !important;
@@ -500,8 +500,8 @@ body {
   border-color: rgba(255,255,255,0.2) !important;
 }
 .slide-panel-content [class*="bg-teal-50"].rounded-xl {
-  background: rgba(20,184,166,0.24) !important;
-  border-color: rgba(20,184,166,0.45) !important;
+  background: rgba(251,191,36,0.22) !important;
+  border-color: rgba(251,191,36,0.5) !important;
 }
 
 /* Footer border */
