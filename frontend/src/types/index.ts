@@ -119,6 +119,8 @@ export interface VideoResponse {
   status_detail: string | null;
   /* ── Group (v0.19 多视频处理) ── */
   group_id: string | null;
+  /* ── 云智平台外部文件 ID (v0.25.x) ── */
+  external_file_id: number | null;
   qc_result: unknown | null;
   summary: VideoSummary | null;
   /* ── Format info (v0.13) ── */

@@ -53,6 +53,7 @@ async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video:
         summary_detail=video_dto.summary_detail,
         group_id=video_dto.group_id,
         source_owned=video_dto.source_owned,
+        external_file_id=video_dto.external_file_id,
     )
     session.add(video)
     try:
@@ -101,6 +102,24 @@ async def get_video_with_relations(
     )
     result = await session.execute(stmt)
     return result.unique().scalar_one_or_none()
+
+
+async def get_video_by_external_file_id(
+    session: AsyncSession,
+    file_id: int,
+) -> Video | None:
+    """按云智平台文件库资源 ID 查找视频（平台 id 一对一；防御性取最新一条）。
+
+    供前端 Bridge connect() 携带 context.resource.id 时自动跳转到对应视频。
+    """
+    stmt = (
+        select(Video)
+        .where(Video.external_file_id == file_id)
+        .order_by(Video.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    return result.scalars().first()
 
 
 # ──────────────────────────────────────────────────────────

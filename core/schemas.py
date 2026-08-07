@@ -124,6 +124,9 @@ class VideoCreate(BaseModel):
     # ── 分组 (v0.19) ──
     group_id: uuid.UUID | None  = Field(default=None, description="所属分组 ID，批量上传时设置")
 
+    # ── 云智平台外部文件 ID (v0.25.x) ──
+    external_file_id: int | None = Field(default=None, description="云智平台文件库资源 ID（Bridge files.select items[].id）")
+
 
 class PipelineParams(BaseModel):
     """Pipeline 启动参数 — 四级参数统一校验模型。
@@ -197,6 +200,7 @@ class ExternalVideoRegister(PipelineParams):
     """
     file_path: str = Field(..., description="平台共享文件的服务器绝对路径")
     file_name: str | None = Field(default=None, description="原始文件名（缺省取 basename）")
+    external_file_id: int | None = Field(default=None, description="云智平台文件库资源 ID（前端据此自动跳转到该视频）")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -207,6 +211,8 @@ class YunzhiJobFile(BaseModel):
     """平台传给扩展应用的共享文件信息。"""
     absolutePath: str = Field(..., description="平台服务器上的绝对路径（与 Zhiying 共享同一挂载视角）")
     name: str = Field(default="", description="文件名")
+    # v0.25.x: 平台文件库资源 ID — 无 extra="allow"，必须显式建模，否则被静默丢弃
+    id: int | None = Field(default=None, description="平台文件库资源 ID（若平台任务 payload 携带，则存入 videos.external_file_id）")
 
 
 class YunzhiJobTask(BaseModel):
@@ -299,6 +305,9 @@ class VideoResponse(BaseModel):
 
     # ── 分组 (v0.19) ──
     group_id: uuid.UUID | None     = None
+
+    # ── 云智平台外部文件 ID (v0.25.x) ──
+    external_file_id: int | None   = None
 
     summary: VideoSummary | None   = None
 

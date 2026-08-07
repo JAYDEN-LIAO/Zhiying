@@ -86,6 +86,7 @@ curl -X POST -H "Content-Type: application/json" \
 | Delete-while-processing + Pipeline Cancel (v0.22) | 处理中视频**允许删除**：删除端点登记 `core.cancellation`，后台管道 persist 前检查 `is_cancelled` 优雅中止（防写已删行 FK 异常） | ✅ |
 | Orphan Storage Sweep | `POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` | ✅ |
 | 云智平台集成 (v0.24) | `POST /api/v1/videos/register-external`（平台共享文件就地引用，`source_owned=false` 删视频不删源文件）+ `POST /internal/yunzhi/jobs`（立即 202，进度/完成/失败回调，幂等）+ 前端 Bridge SDK | ✅ |
+| 平台文件 id 自动跳转 (v0.26) | `GET /api/v1/videos/external/{file_id}` — 平台文件库资源 ID 存入 `videos.external_file_id`（register-external + jobs 透传）；Bridge connect() 后凭 `context.resource.id` 自动打开对应视频历史详情（非文件入口/无匹配 → 默认工作台） | ✅ |
 
 ## Architecture Overview
 
@@ -267,6 +268,7 @@ zhiying/
 
 ## Development Status
 
+- **v0.26 — 平台文件 id → 视频历史自动跳转**: 平台文件库资源 ID（`context.resource.id` / `files.select items[].id`）存入 `videos.external_file_id`（register-external + jobs 透传）；新增 `GET /api/v1/videos/external/{file_id}` 查找端点；前端 Bridge connect() 后若 `context.resource` 为 FILE 则按 id 自动打开对应视频详情（一次性，非文件入口/无匹配正常展示默认工作台）。
 - **v0.24 — 云智(Yunzhi)平台接入 + 生产部署（feature/yunzhi 部署分支）**:
   - **Bridge 文件选择**: 前端 `bridge.files.select()` 从平台文件库选文件，后端 `POST /api/v1/videos/register-external` 共享绝对路径就地引用（`source_owned=false`，删除视频绝不 unlink 平台源文件）。
   - **异步任务接口**: `POST /internal/yunzhi/jobs`（根路径挂载，非 /api/v1）立即回 202，后台建视频 + 跑管道，进度/完成/失败经 `callback.progressUrl/completeUrl/failUrl` 回调（`eventId`/`Idempotency-Key` 幂等）；`StatusTracker.on_progress` + `PipelineEngine.progress_callback` 透传；结果写平台 `workDirectory`。

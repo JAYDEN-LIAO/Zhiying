@@ -118,6 +118,11 @@ class Video(Base):
         Boolean, default=True, nullable=False,
         comment="源文件是否归 Zhiying 所有。平台共享文件就地引用时置 False，删除视频不 unlink 源文件",
     )
+    # ── 云智平台外部文件 ID（v0.25.x）──
+    external_file_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True,
+        comment="云智平台文件库资源 ID（Bridge context.resource.id / files.select items[].id），前端据此自动跳转到对应视频",
+    )
     duration: Mapped[float | None] = mapped_column(
         Float, nullable=True,
         comment="视频时长(秒), QC 阶段填充",

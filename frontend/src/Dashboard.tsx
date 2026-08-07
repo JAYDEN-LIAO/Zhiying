@@ -43,6 +43,7 @@ export default function Dashboard() {
   const [seekTarget, setSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
   const [showExport, setShowExport] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const jumpHandledRef = useRef(false); // 云智入口自动跳转只尝试一次
 
   /* ── Group state (v0.19 多视频处理) ── */
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
@@ -52,7 +53,7 @@ export default function Dashboard() {
   const [detectionVideo, setDetectionVideo] = useState<VideoResponse | null>(null);
 
   /* ── 云智平台 Bridge（mock=true 独立开发走本地上传；false 走平台文件库选文件） ── */
-  const { mock: yunzhiMock, selectFiles: yunzhiSelectFiles } = useYunzhi();
+  const { mock: yunzhiMock, selectFiles: yunzhiSelectFiles, context: yunzhiContext } = useYunzhi();
 
   /* ── Panel toggle (must be after currentVideo / drillGroupId declarations) ── */
   const togglePanel = useCallback((panel: PanelType) => {
@@ -215,6 +216,22 @@ export default function Dashboard() {
     }
   }, [currentVideoId, videoGroups, videos]);
 
+  /* ── 云智入口自动跳转（v0.25.x）：Bridge context.resource.id → 平台文件对应视频
+     只尝试一次；非文件入口 / 查无匹配 → 保持默认空工作台 */
+  useEffect(() => {
+    if (jumpHandledRef.current) return;
+    const resource = yunzhiContext?.resource;
+    if (!resource || resource.resourceType !== "FILE" || resource.id == null) return;
+    jumpHandledRef.current = true; // 尝试一次，成功与否都不再重试
+    let cancelled = false;
+    api.getVideoByExternalId(resource.id)
+      .then((video) => {
+        if (!cancelled) handleSelect(video.id, video.group_id ?? undefined);
+      })
+      .catch(() => { /* 无匹配 → 保持默认空工作台 */ });
+    return () => { cancelled = true; };
+  }, [yunzhiContext, handleSelect]);
+
   const handleDelete = useCallback((deletedId: string) => {
     if (currentVideoId === deletedId) { setCurrentVideoId(null); setCurrentVideo(null); }
     if (detectionVideoId === deletedId) { setDetectionVideoId(null); setDetectionVideo(null); }
@@ -292,12 +309,12 @@ export default function Dashboard() {
     setIsUploading(true);
     try {
       if (files.length === 1) {
-        const result = await api.registerFromPath(files[0].absolutePath!, files[0].name);
+        const result = await api.registerFromPath(files[0].absolutePath!, files[0].name, files[0].id);
         setCurrentVideoId(result.id);
         setCurrentVideo(result);
       } else {
         const results = await Promise.all(
-          files.map((f) => api.registerFromPath(f.absolutePath!, f.name))
+          files.map((f) => api.registerFromPath(f.absolutePath!, f.name, f.id))
         );
         setCurrentVideoId(results[0].id);
         setCurrentVideo(results[0]);

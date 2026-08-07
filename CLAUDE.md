@@ -2,15 +2,16 @@
 
 ## One-Line Summary
 
-Zhiying 是 **视频分析引擎**（v0.24.0）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。**已接入云智(Yunzhi)平台**：前端 Bridge 文件选择（`register-external` 共享路径就地引用）+ 异步任务接口（`/internal/yunzhi/jobs` 202+进度/完成/失败回调）。`deploy/` 提供 Windows 裸机一键安装（从零部署）；requirements 已做多架构区分（Windows/Linux x86 装 onnxruntime-gpu，ARM64 如 DGX Spark/GB10 无该 wheel 自动装 CPU 版，人脸/车牌走 CPU）。**已部署到生产服务器 10.0.0.176（systemd `zhiying.service`，8011）**，运维参考见 `docs/server.md`（gitignored，含凭证）。架构细节见 `docs/arch.md`。
+Zhiying 是 **视频分析引擎**（v0.24.0）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。**已接入云智(Yunzhi)平台**：前端 Bridge 文件选择（`register-external` 共享路径就地引用）+ 异步任务接口（`/internal/yunzhi/jobs` 202+进度/完成/失败回调）+ 平台文件 id 自动跳转（v0.26 `external_file_id` + `GET /videos/external/{file_id}`，前端凭 `context.resource.id` 直达对应视频详情）。`deploy/` 提供 Windows 裸机一键安装（从零部署）；requirements 已做多架构区分（Windows/Linux x86 装 onnxruntime-gpu，ARM64 如 DGX Spark/GB10 无该 wheel 自动装 CPU 版，人脸/车牌走 CPU）。**已部署到生产服务器 10.0.0.176（systemd `zhiying.service`，8011，部署走 git+tag：`./bump` 发版 → 服务器 `bash deploy.sh v<tag>`，config/config.yaml 已模板化不入库）**，运维参考见 `docs/server.md`（gitignored，含凭证）。架构细节见 `docs/arch.md`。
 
 ## Quick File Map
 
 ```
 run.py                     — 本地开发启动入口（按 config.yaml server 段绑端口，reload 模式）
+deploy.sh                  — 服务器一键部署（仓库根；`bash deploy.sh v<tag>`：fetch→config 迁移→checkout→build→restart→健康检查）
 main.py                    — FastAPI app, lifespan, exception handlers, shared embedder + shared detector (app.state, detector 模型懒加载); 静态托管 frontend/dist（部署免 nginx）
 api/routes.py              — Transitional re-export (endpoints split into sub-routers)
-api/video_routes.py        — Video CRUD + upload (probe同步+异步remux/proxy) + stream (hevc_ok智能路由) + proxy-status + thumbnail
+api/video_routes.py        — Video CRUD + upload (probe同步+异步remux/proxy) + stream (hevc_ok智能路由) + proxy-status + thumbnail + external-id lookup (v0.26)
 api/search_routes.py       — Semantic search + pipeline/operations endpoints
 api/settings_routes.py     — 系统设置端点：GET/PUT /settings（密钥/服务商/存储/管道性能）+ /settings/pipeline + 参数预设 CRUD
 api/router.py              — Assembles sub-routers under /api/v1 prefix
@@ -71,10 +72,10 @@ services/export_service.py — 导出业务逻辑 (clip/frames/track/thumbnails 
 utils/video_util.py        — FFmpeg 工具函数 + stream_frames() (NVDEC MJPEG pipe / cv2 fallback)
 utils/metadata.py          — 视频元数据提取 (pymediainfo → exiftool → ffprobe 三级)
 utils/video_source.py      — 视频来源分析: 规则引擎分类 phone/camera/surveillance/... + 监控品牌（文件头魔数嗅探 IMKH→海康威视, magic_bytes>filename>metadata）
-config/config.yaml         — Main config: server/db/storage/plugins/pipeline (detection_fps:10, batch:128)
+config/config.yaml         — 机器相关主配置（gitignored、不入库，v0.25.1 起；模板见 config/config.yaml.example）：server/db/storage/plugins/pipeline (detection_fps:10, batch:128)
 config/config_schema.py    — Pydantic config validation
 config/prompts.yaml        — Caption/Summarizer/Grounding prompt templates
-frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~430 lines, hevcOk探测+proxy轮询+streamReady+group state+detectionVideoId+header dropdown)
+frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~430 lines, hevcOk探测+proxy轮询+streamReady+group state+detectionVideoId+header dropdown + yunzhi 入口自动跳转 v0.26)
 frontend/src/components/    — Split components (20 files):
                               icons, Sidebar, Header, SlideOutPanel,
                               ParameterPanel, PipelineBar, VideoSection, VideoPlayer,
@@ -84,7 +85,7 @@ frontend/src/components/    — Split components (20 files):
                               SettingsPage 4 分区: 系统(存储/NVDEC/chunk/并发上限) + 模型参数(编码三档/YOLO/量化) + 参数预设 + API 密钥
 frontend/src/labels.ts        — COCO 类名英→中映射 + 统一颜色表 (zh/zhLabel/colorOf)
 frontend/src/utils/helpers.ts — Shared helpers (fmtDuration, fmtDate, formatSec)
-frontend/src/services/api.ts — API wrapper + polling helper (getVideoStreamUrl hevc_ok, getProxyStatus)
+frontend/src/services/api.ts — API wrapper + polling helper (getVideoStreamUrl hevc_ok, getProxyStatus) + getVideoByExternalId (v0.26)
 frontend/src/platform/        — 云智 Bridge SDK: yunzhi-bridge.ts/client.ts/YunzhiProvider/mock (VITE_YUNZHI_MOCK 切换真实/模拟)
 frontend/src/types/index.ts — TypeScript types (mirrors backend schemas + ProxyStatus)
 frontend/src/services/api.ts — Pipeline stages from `/pipeline/operations` (backend computes enabled operations)
@@ -112,7 +113,8 @@ deploy/                    — Windows 裸机一键安装套件: setup_windows.p
   孤儿清扫: POST /maintenance/sweep (dry_run 默认) / scripts/sweep_storage.py --apply
 
 云智平台接入 (v0.24):
-  POST /api/v1/videos/register-external → 平台共享文件就地引用 (source_owned=false, 删视频绝不 unlink 源文件; probe + 异步 remux 与上传同流程)
+  POST /api/v1/videos/register-external → 平台共享文件就地引用 (source_owned=false, 删视频绝不 unlink 源文件; probe + 异步 remux 与上传同流程; 可选带 external_file_id)
+  GET /videos/external/{file_id} + videos.external_file_id (v0.26): 平台文件 id 唯一标识 → 前端 Bridge connect() 后凭 context.resource.id 自动打开对应视频详情（非文件入口/无匹配 → 默认工作台）
   POST /internal/yunzhi/jobs → 立即 202 {accepted, bizTaskId} → 后台建视频+跑管道 → 进度/完成/失败回调 (callback.progressUrl/completeUrl/failUrl, 幂等 eventId/Idempotency-Key)
     → 平台文件库与 Zhiying 共享同一套绝对路径 (宿主同视角)
 
@@ -145,7 +147,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **全局 GPU 锁**: 所有 GPU 前向（embedder 4 个 encode_* 与 YOLO detect，含模型加载/tracker 初始化/批量推理）必须持 `core/gpu_lock.gpu_lock`（`async with gpu_lock`）串行——24GB 机器上 YOLO 卷积与 8bit matmul 并发会触发 GPU 驱动硬故障（蓝屏/卡死）。锁只串行 GPU 计算，不串行 NVDEC 解码/DB。detection 攒批因此用 **128**（1024 长批持锁 ~20s 会饿死 embedder）。
 - **共享单实例**: embedder 与 detector 都在启动时预载到 `app.state`（detector 模型懒加载，首次 detect 才载 ~2GB，避免每视频重载），业务逻辑经 `shared_detector` 注入 PipelineEngine，禁用 `load_plugin("detector"/"embedder")` 重复实例化；captioner 按需加载。
 - **并发管道限制**: `pipeline.max_concurrent_videos`（0=不限）→ VideoService 用 `asyncio.Semaphore` 限流同时处理的管道数（组批量上传会并发启动多管道，激活峰值按并发叠加，低显存机建议 1）。
-- **配置统一 + 自动降级**: 一份 `config/config.yaml` 通用所有机器——embedder 相对模型路径自动解析到项目根；captioner 配 `qwen3_vl` 但本地 8B 模型缺失 → `load_config()` 自动降级 `qwen_api`（DashScope，打 WARNING），摘要模式由 `runners/base.py effective_summary_mode()` 兜底 `native_video→vlm_llm`。无需 `config.windows.yaml` / `ZHIYING_CONFIG`（后者仅保留为自定义配置覆盖入口）。
+- **配置模板化 + 自动降级**: `config/config.yaml` **机器相关、gitignored、不入库**（v0.25.1 起；模板 `config/config.yaml.example`，新机复制后自改路径/密钥）——embedder 相对模型路径自动解析到项目根；captioner 配 `qwen3_vl` 但本地 8B 模型缺失 → `load_config()` 自动降级 `qwen_api`（DashScope，打 WARNING），摘要模式由 `runners/base.py effective_summary_mode()` 兜底 `native_video→vlm_llm`。无需 `config.windows.yaml` / `ZHIYING_CONFIG`（后者仅保留为自定义配置覆盖入口）。
 - **向量维度**: 4096（人脸 512）; 无 pgvector HNSW（超 2000 上限，demo 规模全扫描 <1ms）。
 - **共享 embedder**: 启动时预载到 `app.state.embedder`，业务逻辑禁用 `load_plugin("embedder")`; captioner 按需加载。
 - **增量迁移**: `init_db()` 用 `ADD COLUMN IF NOT EXISTS` 演进 schema。
@@ -156,7 +158,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **NVDEC**: MJPEG pipe（~100KB/帧）默认启用，自动 fallback cv2。
 - **ReID 双层**: 在线 BoT-SORT with_reid（`config/botsort.yaml` `model: "models/yolo26n-cls.pt"` 本地外观模型——实测 ultralytics 8.4.115 的 `auto` 仍会从 GitHub 下载，故本地预置避免运行时下载）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠）; 缝合完成后修改需新建记录。
 - **编码预设**: fast/balanced/precise 三档控制分辨率 + batch（336×224 / 504×336 / 672×448），三档模板与默认档可在设置页覆盖；embedder 支持 `quantization` none/8bit/4bit（bitsandbytes, 需重启生效）。
-- **版本号与发布**: 版本唯一事实来源 `core/version.py` `__version__`；`/health` 返回 `version` 字段（服务器部署后核对运行版本）。发版用 `./bump minor|patch|0.24.0`（联动改 core/version.py + frontend/package.json + package-lock.json 两处，交互式确认提交信息/commit/tag/push，`git add .`）；git tag 必须 `v<__version__>` 与 version.py 完全一致，回滚 = 服务器 `git checkout` 旧 tag + 重启。
+- **版本号与发布**: 版本唯一事实来源 `core/version.py` `__version__`；`/health` 返回 `version` 字段（服务器部署后核对运行版本）。发版用 `./bump minor|patch|0.24.0`（联动改 core/version.py + frontend/package.json + package-lock.json 两处，交互式确认提交信息/commit/tag/push，`git add .`）；git tag 必须 `v<__version__>` 与 version.py 完全一致。**部署（v0.25.1 起）**: 服务器 `bash deploy.sh v<tag>`（fetch → config 迁移 → checkout → requirements 变化才 pip → 前端 build → restart → 90s 健康检查）。**回滚限制**: config.yaml 已 gitignore，回退到 config 仍入库的老 tag（≤v0.25.0）会 checkout 冲突，正解是向前滚（出 bug 发下个 patch）；必须回退老 tag 时先还原服务器 config 备份。
 - **存储卫生**: 删除必须走 `repository.delete_video`（StorageManager 清盘, 勿直接 `session.delete`）; 新增落盘路径必须登记进 `core/storage_manager.py`; 孤儿清扫手动（maintenance 端点/CLI, dry-run 默认）。判定: 视频文件按 DB 三列引用集合, 附属目录按 `video_id ∈ videos 表` —— 绝不用 scenes.keyframe_path（persist 窗口期会误删）。删除守卫: 404 守卫; **处理中视频允许删除**（v0.22 `core/cancellation` 登记, 管道 persist 前检查 `is_cancelled` 中止, 防写已删行 FK 异常; 已删除集合在管道结束后 `unmark_cancelled` 移除）。
 
 ## Database Tables (12)
@@ -164,7 +166,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | Table | Key Columns | Purpose |
 |---|---|---|
 | `video_groups` | id(UUID PK), name, created_at, updated_at | 视频分组 — 批量上传时自动创建，组内单个视频删除自动清理空组 |
-| `videos` | id, status, progress, status_detail, summary(JSONB), content_type, summary_mode (native_video/vlm_llm), perception switches (vision/audio/ocr/grounding/caption/detection_enabled/summary_enabled), function switches (search_index_enabled), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail, encode_profile), language, format fields (container_format, video_codec, audio_codec, has_audio, remuxed_path, proxy_path, proxy_status, proxy_progress), **source_owned**(平台共享文件=false, 删视频不删源文件), **group_id(UUID FK → video_groups.id)** | Video master |
+| `videos` | id, status, progress, status_detail, summary(JSONB), content_type, summary_mode (native_video/vlm_llm), perception switches (vision/audio/ocr/grounding/caption/detection_enabled/summary_enabled), function switches (search_index_enabled), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail, encode_profile), language, format fields (container_format, video_codec, audio_codec, has_audio, remuxed_path, proxy_path, proxy_status, proxy_progress), **source_owned**(平台共享文件=false, 删视频不删源文件), **group_id(UUID FK → video_groups.id)**, **external_file_id**(平台文件库资源ID, 前端自动跳转用, v0.26) | Video master |
 | `scenes` | id, video_id(FK), scene_index, text_embedding(Vector4096), caption, ocr_text, aligned_transcript, entities(JSONB) | Core search grain (text_embedding = caption+ocr+transcript 语义) |
 | `transcripts` | id, video_id(FK, UNIQUE), full_text, words(JSONB) | Speech transcripts |
 | `frame_embeddings` | id, video_id(FK), timestamp_sec, embedding(Vector4096), is_keyframe | 1fps frame vectors |
@@ -199,7 +201,8 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | 删除处理中 + 管道取消 (v0.22) | ✅ | core/cancellation.py — 处理中视频允许删除，删除端点登记后管道 persist 前优雅中止（防写已删行 FK 异常） |
 | 多架构 requirements (v0.22) | ✅ | 环境标记: onnxruntime-gpu (win32/x86_64/AMD64) / onnxruntime (aarch64/arm64, 无 GPU wheel 自动 CPU) |
 | 云智平台接入 (v0.24) | ✅ | api/yunzhi_routes.py + services/yunzhi_job_service.py (202+进度/完成/失败回调, 幂等) + register-external (source_owned) + 前端 Bridge (frontend/src/platform/) |
-| 生产部署 (v0.24) | ✅ | systemd `zhiying.service` @ 10.0.0.176:8011, pgvector:pg17 容器, 后端静态托管前端 dist, 详见 `docs/server.md`（gitignored 含凭证）|
+| 平台文件 id 自动跳转 (v0.26) | ✅ | videos.external_file_id + GET /videos/external/{file_id} + Dashboard connect() 后凭 context.resource.id 自动打开对应视频 |
+| 生产部署 (v0.24→v0.25.1) | ✅ | systemd `zhiying.service` @ 10.0.0.176:8011, pgvector:pg17 容器, 后端静态托管前端 dist, **git+tag 部署**（`./bump` → 服务器 `bash deploy.sh v<tag>`，config 模板化不入库）, 详见 `docs/server.md`（gitignored 含凭证）|
 | OCR / Grounding | ⬜ Shell | plugins/ocr/, plugins/grounding/ |
 | Health / Reindex | 🔶 部分 | /health 已上, reindex 待办 |
 
@@ -224,6 +227,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 15. **cv2/sync C calls MUST use asyncio.to_thread()**: All cv2 operations (VideoCapture.read, cvtColor, etc.) and other synchronous C calls that take >1ms MUST be wrapped in `asyncio.to_thread()`. This prevents event loop blocking and ensures other asyncio tasks can be scheduled. The keyframe runner's cv2 read loop is the canonical example.
 16. **Embedder encode resolution**: 编码分辨率三档预设（fast 336×224 / balanced 504×336 / precise 672×448），`encode_images_batch` 支持 per-call `target_size` 覆盖；PIL resize 8 线程并行，embedder 与 stream decode 分辨率保持一致。
 17. **Storage hygiene**: 删除视频必须走 `repository.delete_video`（内部由 StorageManager 按 DB 引用清盘，不要在路由里直接 `session.delete`）。新增会产生磁盘文件的功能，落盘路径模式必须登记进 `core/storage_manager.py`（视频文件按 DB 引用集合判定、附属目录按 video_id 判定），否则删除会残留。孤儿清扫用 `POST /maintenance/sweep`（dry-run 默认）或 `scripts/sweep_storage.py --apply`。
+18. **commit / tag / push / 服务器部署必须事前征得用户明确同意**: 改代码、本地验证随便做；但任何 git 写操作（commit/tag/push）与服务器部署（`bash deploy.sh` / 重启 systemd）都先问用户，用户点头才执行。**同一时刻只允许一个 agent 跑部署闭环**，防并发 bump 打架。
 
 ## Python Environment
 

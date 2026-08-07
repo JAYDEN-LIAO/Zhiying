@@ -23,7 +23,10 @@ from core.schemas import (
 )
 from core.config_loader import load_config
 from core.models import Video, VideoGroup, VideoStatus
-from core.repository import create_video, get_video_with_relations, list_videos, delete_video
+from core.repository import (
+    create_video, get_video_with_relations, get_video_by_external_file_id,
+    list_videos, delete_video,
+)
 from core.cancellation import mark_cancelled, unmark_cancelled
 from services.video_service import VideoService, RUNNING_VIDEOS
 
@@ -182,10 +185,14 @@ async def register_external_video(
         segment_threshold=payload.segment_threshold,
         caption_with_context=payload.caption_with_context,
         summary_detail=payload.summary_detail,
+        external_file_id=payload.external_file_id,
     )
 
     video = await create_video(db, dto)
-    logger.info("[RegisterExternal] video=%s file=%s source_owned=False (platform shared)", video.id, file_name)
+    logger.info(
+        "[RegisterExternal] video=%s file=%s source_owned=False external_file_id=%s (platform shared)",
+        video.id, file_name, payload.external_file_id,
+    )
 
     # 同步探测格式（<100ms），异步执行 remux + proxy
     format_service = request.app.state.format_service
@@ -558,6 +565,18 @@ async def get_video(
     video = await get_video_with_relations(db, video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="Video not found")
+    return APIResponse(data=VideoResponse.model_validate(video))
+
+
+@router.get("/videos/external/{file_id}")
+async def get_video_by_external_file_id_endpoint(
+    file_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[VideoResponse]:
+    """按云智平台文件库资源 ID 查找视频（Bridge context.resource.id → 自动跳转目标）。"""
+    video = await get_video_by_external_file_id(db, file_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="未找到该平台文件对应的视频")
     return APIResponse(data=VideoResponse.model_validate(video))
 
 

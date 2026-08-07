@@ -100,6 +100,7 @@ async def run_yunzhi_job(payload: YunzhiJobPayload, app) -> None:
             file_name=payload.file.name or source.name,
             file_size=source.stat().st_size,
             source_owned=False,
+            external_file_id=payload.file.id,
             **params,
         )
         async with app.state.db_session_factory() as session:

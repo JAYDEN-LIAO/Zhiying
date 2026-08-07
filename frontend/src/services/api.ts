@@ -130,16 +130,22 @@ export const api = {
   },
 
   /* ── 注册平台共享路径视频（云智 Bridge 选文件 → 就地引用，不上传字节） ── */
-  registerFromPath(filePath: string, fileName?: string, params?: Partial<PipelineParams>) {
+  registerFromPath(filePath: string, fileName?: string, externalFileId?: number, params?: Partial<PipelineParams>) {
     return request<VideoResponse>(`${BASE}/videos/register-external`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         file_path: filePath,
         file_name: fileName,
+        external_file_id: externalFileId,
         ...params,
       }),
     });
+  },
+
+  /* ── 按云智平台文件库资源 ID 查找视频（Bridge context.resource.id → 自动跳转目标） ── */
+  getVideoByExternalId(fileId: number) {
+    return request<VideoResponse>(`${BASE}/videos/external/${fileId}`);
   },
 
   /* ── Set params & start pipeline ── */
