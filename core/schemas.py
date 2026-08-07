@@ -210,8 +210,14 @@ class YunzhiJobFile(BaseModel):
 
 
 class YunzhiJobTask(BaseModel):
-    """任务中心任务信息。"""
-    automationJobId: str = Field(..., description="自动化任务 ID")
+    """任务中心任务信息。
+
+    平台实测 automationJobId 为数值（如 8），非字符串——2026-08-07 联调发现
+    str 定义导致 FastAPI 在进业务代码前返回 422。改 int 后 Pydantic v2 默认
+    也能把数字字符串 "8" 强转为 int，两种都兼容。id/type/name 等多余字段由
+    默认 extra=ignore 容忍，无需建模。
+    """
+    automationJobId: int = Field(..., description="自动化任务 ID（平台任务中心数值 ID）")
 
 
 class YunzhiJobCallback(BaseModel):

@@ -12,4 +12,4 @@ Zhiying 版本号单一事实来源（Single Source of Truth）。
   升级流程见 docs/ 或 deploy/ 文档。
 """
 
-__version__ = "0.25.1"
+__version__ = "0.25.2"
