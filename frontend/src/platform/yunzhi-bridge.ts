@@ -184,7 +184,7 @@ export class YunzhiBridge implements YunzhiClient {
 
   private request<T>(type: string, payload?: unknown) {
     if (!this.sessionId) return Promise.reject(new Error("请先等待 Bridge connect() 完成"))
-    const requestId = crypto.randomUUID()
+    const requestId = randomRequestId()
     return new Promise<T>((resolve, reject) => {
       const timer = window.setTimeout(() => {
         this.pending.delete(requestId)
@@ -253,4 +253,24 @@ function isEnvelope(value: unknown): value is BridgeEnvelope {
     && value.protocol === "yunzhi-extension"
     && value.version === "1.0"
     && typeof value.type === "string"
+}
+
+/**
+ * 生成请求 ID。
+ * `crypto.randomUUID` 仅安全上下文（HTTPS / localhost）可用；纯 HTTP 内网
+ * （如 http://10.0.0.176:3111）下不可用，回退到 `crypto.getRandomValues`
+ * 生成 UUIDv4（该 API 任意上下文可用），兜底用时间戳 + 随机串。
+ */
+function randomRequestId(): string {
+  if (typeof crypto !== "undefined") {
+    if (typeof crypto.randomUUID === "function") return crypto.randomUUID()
+    if (typeof crypto.getRandomValues === "function") {
+      const bytes = crypto.getRandomValues(new Uint8Array(16))
+      bytes[6] = (bytes[6] & 0x0f) | 0x40 // version 4
+      bytes[8] = (bytes[8] & 0x3f) | 0x80 // variant 10
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+    }
+  }
+  return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
