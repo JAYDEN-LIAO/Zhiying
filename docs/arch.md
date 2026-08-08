@@ -1,12 +1,13 @@
 # Zhiying Architecture
 
-> Version: 0.24 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
-> Frontend: React 19 + Vite 6 + Tailwind CSS 4
+> Version: 0.28 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Frontend: React 19 + Vite 6 + Tailwind CSS 4（双前端: frontend/ 服务器 + frontend-desktop/ 桌面, 共享 frontend-shared/ 对接层）
 > v0.22: Windows 从零部署 + 系统设置/参数预设 + 全局 GPU 锁 + Detection 渲染重构 + 删除处理中/管道取消 + ARM64 多架构
 > v0.24: 云智(Yunzhi)平台接入（register-external + /internal/yunzhi/jobs 异步任务）+ 生产部署（systemd, 8011, pgvector:pg17, 静态托管前端）
 > v0.26: 平台文件 id → 视频自动跳转（videos.external_file_id + GET /videos/external/{file_id} + 前端 connect() 后自动打开对应视频）
 > v0.27: 搜索修正（统一 track 编号 + 范围 fail-closed + 车牌搜索修正）+ 车牌模糊搜索模式（字符归一化 + 前端「牌」模式按钮）
 > v0.28: 云智嵌入 UI 重构（移除侧边栏 / 导航上移 header / 参数历史右侧抽屉 / 搜索检测门控）
+> 桌面端（未发版）: desktop/ pywebview 启动器 + frontend-desktop/ 独立前端 + 摘要默认 vlm_llm（native_video 置灰退役）
 
 ## System Data Flow
 
@@ -222,7 +223,8 @@ core/  models.py (12 表) · schemas.py (DTO) · repository.py (数据访问) ·
        cancellation.py (管道取消登记, 删除处理中视频后优雅中止)
        prompt_loader.py · status_tracker.py (进度) · interfaces.py (10 插件 ABC) · exceptions.py
 config/  config.yaml (server/db/storage/plugins/pipeline) · config_schema.py · prompts.yaml
-frontend/  Dashboard.tsx + components/ (19, v0.28 删 Sidebar) + hooks/ (8) + labels.ts + services/api.ts + types/
+frontend/  Dashboard.tsx + components/ (19, v0.28 删 Sidebar) + hooks/ (8) + 对接层指针（实现见 frontend-shared/）
+frontend-desktop/  独立前端（v0.27 含 Sidebar）; frontend-shared/  api/types/labels/helpers 一份实现（双端复用）
 utils/  video_util.py (FFmpeg) · metadata.py (三级元数据) · video_source.py (来源规则引擎)
 services/  video_service.py (管道调度) · format_service.py (remux/proxy) · export_service.py
 ```
@@ -244,8 +246,8 @@ plugins/factory.py:
 config.yaml controls which backends to load:
 
   segmenter:   transnetv2    → TransNetV2 neural network scene detection
-  captioner:   qwen3_vl      → local Qwen3-VL-8B video understanding (default)
-               qwen_api      → Qwen-VL-Max DashScope API (vlm_llm mode; 本地模型缺失自动降级)
+  captioner:   qwen_api      → Qwen-VL-Max DashScope API (default, vlm_llm 模式; native_video 已置灰退役)
+               qwen3_vl      → local Qwen3-VL-8B video understanding (仅开发机有本地 8B 模型时可选)
   embedder:    qwen3_vl_embedding_8b → local GPU model (Qwen3-VL-Embedding-8B), loaded at startup
                                        可选 quantization none/8bit/4bit (bitsandbytes); 相对路径解析到项目根
   summarizer:  vllm          → DeepSeek API (vlm_llm mode only; native mode uses Python aggregator)
@@ -424,6 +426,8 @@ plate_detections
 
 ## Frontend Architecture
 
+**双前端共存**：服务器前端 `frontend/`（v0.28 云智嵌入 UI，本节描述）+ 桌面独立前端 `frontend-desktop/`（v0.27 独立工作台，UI 完全隔离）。**对接层 `frontend-shared/` 一份实现**（api/types/labels/helpers），两端 `services/api.ts`/`types`/`labels`/`helpers` 是 1 行再导出指针。后端按 `ZHIYING_FRONTEND` 切挂载（默认服务器 dist，桌面启动器传 desktop）。以下为服务器前端结构：
+
 ```
 React 19 + Vite 6 + Tailwind CSS 4
   │
@@ -549,7 +553,9 @@ Vite 开发代理:
 | 并发管道限制 (v0.22) | ✅ | pipeline.max_concurrent_videos → VideoService asyncio.Semaphore 限流同时处理的管道数 |
 | Embedder Quantization (v0.22) | ✅ | plugins/embedder/qwen_vl_embedder.py — none/8bit/4bit via bitsandbytes; 相对模型路径解析到项目根 |
 | Windows 从零部署 + 多架构 (v0.22) | ✅ | deploy/setup_windows.ps1 裸机一键安装器 + download_models.py (含 reid) + deploy_feedback.md; 单份 config 自动降级 captioner; requirements 环境标记支持 ARM64 (onnxruntime CPU) |
-| Frontend Dashboard | ✅ | React 19 + Vite + Tailwind, 20 components + 8 hooks + labels.ts incl Detection/Timeline/Metadata/Export/ImageSearch |
+| 服务器前端 (frontend/) | ✅ | React 19 + Vite + Tailwind, 19 components（v0.28 删 Sidebar）+ 8 hooks + 对接层指针（frontend-shared）|
+| 桌面前端 (frontend-desktop/) | ✅ | 独立工作台（v0.27, 含 Sidebar）+ native_video 置灰 + 无云智 Bridge, 经 ZHIYING_FRONTEND=desktop 挂载 |
+| 桌面端启动器 (desktop/) | ✅ | pywebview 壳: 检查模型→起 db→起 uvicorn→开窗→日志→优雅关停（看门狗防孤儿, 快捷方式/图标）|
 | Config Schema | ✅ | Pydantic v2 validation for config.yaml |
 | Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |
 | DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration, 12 tables (+video_groups) |

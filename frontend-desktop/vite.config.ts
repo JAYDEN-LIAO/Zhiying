@@ -6,6 +6,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     host: "0.0.0.0",
+    fs: {
+      // 允许加载共享后端对接层 frontend-shared/（在 frontend-desktop/ 之外，dev 需显式放行）
+      allow: [".", "../frontend-shared"],
+    },
     proxy: {
       "/api": "http://localhost:8011",
       "/videos": "http://localhost:8011",

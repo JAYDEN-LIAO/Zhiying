@@ -89,6 +89,7 @@ curl -X POST -H "Content-Type: application/json" \
 | Orphan Storage Sweep | `POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` | ✅ |
 | 云智平台集成 (v0.24) | `POST /api/v1/videos/register-external`（平台共享文件就地引用，`source_owned=false` 删视频不删源文件）+ `POST /internal/yunzhi/jobs`（立即 202，进度/完成/失败回调，幂等）+ 前端 Bridge SDK | ✅ |
 | 平台文件 id 自动跳转 (v0.26) | `GET /api/v1/videos/external/{file_id}` — 平台文件库资源 ID 存入 `videos.external_file_id`（register-external + jobs 透传）；Bridge connect() 后凭 `context.resource.id` 自动打开对应视频历史详情（非文件入口/无匹配 → 默认工作台） | ✅ |
+| 桌面端启动器 + 桌面前端 | `desktop/` pywebview 壳（检查模型→起 db→起 uvicorn→开窗→日志→优雅关停）+ `frontend-desktop/` 独立前端（`ZHIYING_FRONTEND=desktop` 挂载）| ✅ |
 
 ## Architecture Overview
 
@@ -134,6 +135,7 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 - **存储卫生 (v0.21)** — 删除即清盘（DB 级联 + 引用追踪）+ 孤儿清扫（`POST /maintenance/sweep` / `scripts/sweep_storage.py`）。
 - **设置与参数系统 (v0.22)** — 系统设置页四区（存储/模型参数/参数预设/API 密钥），`data/settings.json` 覆盖 config.yaml 运行时生效；参数预设 `data/presets.json` 命名快照一键套用；4 级参数系统逐视频控制管道。
 - **从零部署 (v0.22)** — `deploy/setup_windows.ps1` 一键安装（系统级/依赖级/模型级 + 自校验）；单份配置自动降级 captioner（本地 8B 缺失 → qwen_api）。
+- **双前端共存** — `frontend/`（服务器, v0.28 云智嵌入 UI）+ `frontend-desktop/`（桌面独立前端）UI 完全隔离；共用同一后端，`main.py` 按 `ZHIYING_FRONTEND` 切挂载（默认服务器, 桌面启动器传 desktop）。**对接层 `frontend-shared/` 一份实现**（api/types/labels/helpers, 双端再导出复用）——后端接口/字段变更只改一处。
 - **架构细节见 `docs/arch.md`**（Pipeline Detail / Database Schema / API Endpoints / Key Design Decisions）。
 
 ## Tech Stack
@@ -265,35 +267,18 @@ zhiying/
 ├── deploy/               # Windows 从零部署套件: setup_windows.ps1 一键安装器 / download_models.py / deploy.md / deploy_feedback.md
 ├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开窗→日志面板→优雅关闭; desktop.bat 入口)
 ├── frontend-desktop/     # 桌面独立前端 (v0.27 独立工作台 + native_video 置灰 + 无云智 Bridge, 与服务器 frontend/ 完全隔离; desktop.bat 加载其 dist)
+├── frontend-shared/      # 双前端共享后端对接层 (api/types/labels/helpers 一份实现, 两端 services/api.ts 等是再导出指针; 后端接口/字段变更只改这里)
 ├── scripts/              # 运维工具: sweep_storage.py 存储清扫 CLI (默认 dry-run, --apply 执行) + bump_version.py 一键版本提升 + mock_yunzhi_platform.py (mock 平台回调服务器)
 └── docs/                 # Design documents + search architecture docs
 ```
 
 ## Development Status
 
-- **v0.28 — 云智嵌入 UI 重构**: 移除侧边栏（避免与 yunzhi 平台重复）→ 导航上移 header（工作台/系统设置/参数面板/历史记录）；参数/历史抽屉改**右侧滑出**、高度低于 header；系统设置页点面板先跳回工作台；搜索框车牌/人脸按钮按**检测门控**置灰（未开启对应处理不可搜，通用图搜无限制）。
-- **v0.27 — 搜索修正 + 车牌模糊搜索模式**:
-  - **统一 track 编号**: bbox / 时间轴 / 物体检测列表 / 搜索结果 全部使用原始 `track_id`（删除前端按类别重编号），四处编号一致。
-  - **搜索范围 fail-closed**: 空 `video_ids` → 返回空（后端 `if video_ids is not None`），不再塌缩成"搜全库"；前端搜索范围默认只搜当前视频。
-  - **车牌搜索修正**: 相似度 `LEAST(dist,2)` 封顶（子串匹配不被 0.3 门槛误杀）；plate 按 `(video_id, track_id)` 独立去重（同视频多车牌全部返回）。
-  - **车牌模糊搜索模式**: 车牌字符归一化（全角→半角 / 去分隔符 / 统一大写）；搜索框新增「牌」模式按钮 → 输入一个字符/数字列出所有相关车牌（`search_types=["plate"]`, `top_k=100`）。
-- **v0.26 — 平台文件 id → 视频历史自动跳转**: 平台文件库资源 ID（`context.resource.id` / `files.select items[].id`）存入 `videos.external_file_id`（register-external + jobs 透传）；新增 `GET /api/v1/videos/external/{file_id}` 查找端点；前端 Bridge connect() 后若 `context.resource` 为 FILE 则按 id 自动打开对应视频详情（一次性，非文件入口/无匹配正常展示默认工作台）。
-- **v0.24 — 云智(Yunzhi)平台接入 + 生产部署（feature/yunzhi 部署分支）**:
-  - **Bridge 文件选择**: 前端 `bridge.files.select()` 从平台文件库选文件，后端 `POST /api/v1/videos/register-external` 共享绝对路径就地引用（`source_owned=false`，删除视频绝不 unlink 平台源文件）。
-  - **异步任务接口**: `POST /internal/yunzhi/jobs`（根路径挂载，非 /api/v1）立即回 202，后台建视频 + 跑管道，进度/完成/失败经 `callback.progressUrl/completeUrl/failUrl` 回调（`eventId`/`Idempotency-Key` 幂等）；`StatusTracker.on_progress` + `PipelineEngine.progress_callback` 透传；结果写平台 `workDirectory`。
-  - **生产部署**: 已部署到 10.0.0.176 —— systemd `zhiying.service`（8011，pgvector:pg17 容器，后端静态托管前端 dist 免 nginx）；规范端口 8000→8011；新增 `run.py` 本地启动入口（按 config.yaml server 段绑端口）；运维参考 `docs/server.md`（gitignored）。
-- **v0.22 — 部署系统 + 系统设置与参数系统 + Detection 渲染重构**:
-  - **Windows 从零部署**: `deploy/setup_windows.ps1` 重写为裸机一键安装器（系统级 Python/FFmpeg/WSL2/Docker + 依赖级 CUDA torch 按 GPU 选源/onnxruntime-gpu + 模型级 embedding/yolo/**reid**/face/plate/segmenter + 自校验）；删除旧 `start_windows.ps1` / `write_windows_config.py`；`deploy_feedback.md` 记录部署踩坑（UTF-8 BOM、Blackwell cu130、pip 大文件 curl 兜底、代理策略、onnxruntime-gpu 桩等）。
-  - **配置统一 + 自动降级**: 单份 `config/config.yaml` 通用所有机器——embedder 相对模型路径解析到项目根；captioner 本地 8B 模型缺失 → 自动降级 `qwen_api`（DashScope）+ `effective_summary_mode` 兜底；无需 `config.windows.yaml` / `ZHIYING_CONFIG`。BoT-SORT ReID 改用本地 `models/yolo26n-cls.pt`（实测 `auto` 仍从 GitHub 下载）。
-  - **系统设置完善**: `GET/PUT /settings` 扩展 `pipeline` 段（编码三档模板 + 检测帧率/批大小/分辨率/阈值 + NVDEC/chunk 开关 + embedder 量化 + 并发上限），数值按 `PIPELINE_NUMERIC_SPEC` 钳制，保存即运行时生效（量化需重启）；前端设置页 4 分区。
-  - **参数预设**: `data/presets.json` 多套命名管道参数快照，`/settings/presets` CRUD + apply 一键套用。
-  - **全局 GPU 锁 + 共享单实例**: `core/gpu_lock.py` 串行化 embedder/YOLO 前向（24GB 机并发前向触发驱动硬故障）；detector 共享 `app.state` 单实例（懒加载 ~2GB）；detection 攒批 1024→128（长批持锁饿死 embedder）；`max_concurrent_videos` 信号量限流并发管道。
-  - **Detection 渲染重构**: `/detection/data` 拆为 `/detection/tracks` + `/detection/detections`（按需时间窗）；前端 DetectionPanel 虚拟滚动 + DetectionTimeline Canvas 化；`frame_detections` 复合索引。
-  - **删除处理中 + 管道取消**: 删除端点放开 PROCESSING 守卫（处理中视频可删），`core/cancellation.py` 登记后管道 persist 前 `is_cancelled` 检查优雅中止（防写已删行 FK 异常）；前端删除按钮不再禁用 processing、去掉"释放空间"弹窗。
-  - **多架构 requirements**: `onnxruntime-gpu` 仅 Windows/x86 Linux 有 wheel；ARM64（DGX Spark/GB10）无 → 环境标记自动装 `onnxruntime` CPU 版（人脸/车牌走 CPU）；numpy 钉 `<2.4`（paddlex 3.7 要求）。
-- **v0.21 — Storage Hygiene & Management**: 删除视频 = DB 级联 + 磁盘全回收（StorageManager 按 DB 引用追踪，reuse 共享文件只在最后引用删除时清理，空组同事务自动清理，处理中守卫 409 + `RUNNING_VIDEOS` 注册表闭合竞态）；批量 DELETE 替代 ORM 全量 load（删大视频性能修复）；`POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` 孤儿清扫（sweep 按 video_id 判定附属目录、mtime 保护上传竞态）；trackthumb 导出泄漏修复；人脸/检测/车牌缩略图缺失 404 兜底；前端删除二次确认 + processing 禁用 + 释放空间提示。
-- **维护记录**: 清理废弃的前端 `DetectionContext`/`mockData`，进度阶段统一由 `/pipeline/operations` 按视频参数动态返回；补充 Python、前端缓存及本地环境文件的忽略规则。
-- **v0.20 — Dual-layer ReID**: 在线 BoT-SORT ReID（`with_reid` + 检测骨干特征直通, 遮挡/交叉保持身份）+ 全局 tracklet 缝合（detection 缓存 crop → mean pool → cosine ≥0.85 合并同一身份, segments 时序检查）。长视频友好（track_encode 零 seek）。
-- **v0.19 — Multi-Video Group**: 批量上传 + VideoGroup 分组 + 组参数同步启动 + 前端历史堆叠/展开 + 组内切换 + 跨视频搜索 + 独立检测面板。
-- **v0.18 — Universal Image Search + 中文化**: `POST /search/image` 通用图搜（独立 `search_image_only` 路径，帧不聚类精确到秒）+ 前端标签中文化 labels.ts。
+- **进行中（未发版）— 桌面端 + 双前端共存**: `desktop/` pywebview 启动器 + `frontend-desktop/` 桌面独立前端 + `frontend-shared/` 共享对接层；摘要默认 vlm_llm（native_video 置灰退役）。详见 `docs/develop.md §6`。
+- **v0.28 — 云智嵌入 UI 重构**: 移除侧边栏（避免与 yunzhi 平台重复）→ 导航上移 header；参数/历史抽屉改右侧滑出；设置页点面板先跳回工作台；搜索框车牌/人脸按钮按检测门控置灰。
+- **v0.27 — 搜索修正 + 车牌模糊搜索模式**: 统一 track 编号；搜索范围 fail-closed；车牌归一化 + 编辑距离 + 「牌」模式（单字列出所有相关车牌）。
+- **v0.26 — 平台文件 id → 视频自动跳转**: `videos.external_file_id` + `GET /videos/external/{file_id}`，Bridge connect() 后凭 `context.resource.id` 打开对应视频。
+- **v0.24 — 云智平台接入 + 生产部署**: Bridge 文件选择（register-external, source_owned=false）+ `/internal/yunzhi/jobs` 异步任务（202+回调, 幂等）+ 生产部署 10.0.0.176:8011（systemd, git+tag 部署）。
+- **v0.22 — 部署系统 + 设置/参数 + Detection 重构**: Windows 裸机一键安装器；单份 config 自动降级；系统设置页 + 参数预设；全局 GPU 锁 + 共享单实例；Detection 渲染重构（tracks/detections 端点）；删除处理中 + 管道取消；多架构 requirements（ARM64 自动 CPU）。
+- **更早版本**（v0.21 存储卫生 / v0.20 双层 ReID / v0.19 多视频分组 / v0.18 图搜+中文化）: 细节见 git 历史。
 - **Planned**: Grounding (Florence-2), OCR

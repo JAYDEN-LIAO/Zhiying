@@ -93,12 +93,23 @@ deploy.sh 干的事:fetch tags → config 迁移(首次)→ checkout 版本 → 
 
 ## 6. 多端开发(服务器 / 桌面 / 本地)
 
-同一份代码要跑三处(服务器网页端、桌面端、本地开发)。差异**用构建档,不用分支**:
+**双前端共存，单分支**：`frontend/`（服务器前端，v0.28 云智嵌入 UI）+ `frontend-desktop/`（桌面独立前端，v0.27 独立工作台）**完全隔离、各自演进**，共用同一后端（`api/core/pipeline/...`）。后端按启动方式切挂载：默认 `frontend/dist`，桌面启动器传 `ZHIYING_FRONTEND=desktop` → `frontend-desktop/dist`。
 
-- 前端加平台开关:`VITE_APP_PLATFORM=server|desktop|web`(或类似 env 变量),组件里用 `usePlatform()` 判断。参考现有 `VITE_YUNZHI_MOCK` 的用法。
-- 服务器专属 UI 调整 → 进主线的构建档,服务器 build 时带上,而不是开"服务器修复分支"。
-- 桌面端 → 同一仓库的 `desktop/` 包（**pywebview 启动器，非简单壳**）:Windows 桌面机（有 NVIDIA GPU）用它管理本地后端生命周期——检查模型齐全 → 起 uvicorn → 开 WebView2 窗口加载前端 dist → 日志面板 → 优雅关闭。入口 `desktop/desktop.bat`。复用同一前端 dist,**只加不改**共享组件,避免动到对接人正在验证的部分。
-- 桌面构建用默认 env 即可:`VITE_YUNZHI_MOCK` 缺省即 mock 本地上传（无云智 Bridge）。`native_video` 已置灰退役（摘要默认 vlm_llm, 前端不再可选, 后端保留兼容历史记录）——桌面与服务器一视同仁。
+- 服务器前端 = `frontend/`（改它不影响桌面）；桌面前端 = `frontend-desktop/`（改它不影响服务器）。
+- 桌面端 → `desktop/` 包（**pywebview 启动器**）:检查模型 → 起 uvicorn → 开 WebView2 窗口加载桌面前端 dist → 日志面板 → 优雅关闭。入口 `desktop/desktop.bat`。
+- **本地开发**：两端都是 `npm run dev` + HMR（Vite 5173，别同时开两个）；桌面前端生产用 `cd frontend-desktop && npm run build` + desktop.bat。
+- **native_video 已全局置灰退役**（摘要默认 vlm_llm, 双前端一视同仁）。
+
+### ✅ 共享对接层（后端接口/字段变更时）
+
+后端新增接口 / 字段 / 类型 → **只改 `frontend-shared/` 一处**，双端自动生效，**不存在「改两遍 / 忘第二遍」**：
+
+- **`frontend-shared/`**（项目根）: `api.ts` / `types.ts` / `labels.ts` / `helpers.ts` —— 镜像后端 schema/接口的唯一实现。
+- **双端复用**：`frontend/` 与 `frontend-desktop/` 各自的 `src/services/api.ts` / `src/types/index.ts` / `src/labels.ts` / `src/utils/helpers.ts` 只是 1 行再导出指针（`export * from "../../../frontend-shared/api"` 等）。
+- **改后端字段/接口 → 直接改 `frontend-shared/` 一处**，两端构建/运行时都拿到新实现。
+- 两端 vite.config 的 `server.fs.allow` 已放行 `../frontend-shared`（dev 模式可加载）。
+- **UI 层**（Dashboard/components/hooks）不在共享内，各自演进——`frontend/` 改 UI 不影响桌面，反之亦然。
+
 - 不拆仓库、不用 git submodule——单人维护下 monorepo 最省心。
 
 ## 7. 与对接人协作(云智平台)

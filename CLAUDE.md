@@ -9,7 +9,7 @@ Zhiying 是 **视频分析引擎**（v0.28.0）：上传视频（单个/批量�
 ```
 run.py                     — 本地开发启动入口（按 config.yaml server 段绑端口，reload 模式）
 deploy.sh                  — 服务器一键部署（仓库根；`bash deploy.sh v<tag>`：fetch→config 迁移→checkout→build→restart→健康检查）
-main.py                    — FastAPI app, lifespan, exception handlers, shared embedder + shared detector (app.state, detector 模型懒加载); 静态托管 frontend/dist（部署免 nginx）
+main.py                    — FastAPI app, lifespan, exception handlers, shared embedder + shared detector (app.state, detector 模型懒加载); 静态托管前端（默认 frontend/dist 服务器前端, `ZHIYING_FRONTEND=desktop` 时挂 frontend-desktop/dist 桌面前端）
 api/routes.py              — Transitional re-export (endpoints split into sub-routers)
 api/video_routes.py        — Video CRUD + upload (probe同步+异步remux/proxy) + stream (hevc_ok智能路由) + proxy-status + thumbnail + external-id lookup (v0.26)
 api/search_routes.py       — Semantic search + pipeline/operations endpoints
@@ -83,18 +83,19 @@ frontend/src/components/    — Split components (19 files):
                               DetectionOverlay, DetectionPanel, DetectionTimeline,
                               VideoInfoCard, ExportMenu, RightPanel
                               SettingsPage 4 分区: 系统(存储/NVDEC/chunk/并发上限) + 模型参数(编码三档/YOLO/量化) + 参数预设 + API 密钥
-frontend/src/labels.ts        — COCO 类名英→中映射 + 统一颜色表 (zh/zhLabel/colorOf)
-frontend/src/utils/helpers.ts — Shared helpers (fmtDuration, fmtDate, formatSec)
-frontend/src/services/api.ts — API wrapper + polling helper (getVideoStreamUrl hevc_ok, getProxyStatus) + getVideoByExternalId (v0.26)
-frontend/src/platform/        — 云智 Bridge SDK: yunzhi-bridge.ts/client.ts/YunzhiProvider/mock (VITE_YUNZHI_MOCK 切换真实/模拟)
-frontend/src/types/index.ts — TypeScript types (mirrors backend schemas + ProxyStatus)
-frontend/src/services/api.ts — Pipeline stages from `/pipeline/operations` (backend computes enabled operations)
+frontend/src/labels.ts        — 再导出指针 → frontend-shared/labels（COCO 类名/颜色, 一份实现）
+frontend/src/utils/helpers.ts — 再导出指针 → frontend-shared/helpers (fmtDuration/fmtDate/formatSec)
+frontend/src/services/api.ts — 再导出指针 → frontend-shared/api（API wrapper + 轮询辅助; 后端接口变更只改 frontend-shared）
+frontend/src/platform/        — 云智 Bridge SDK: yunzhi-bridge.ts/client.ts/YunzhiProvider/mock (VITE_YUNZHI_MOCK 切换真实/模拟; 仅服务器前端)
+frontend/src/types/index.ts — 再导出指针 → frontend-shared/types (mirrors backend schemas + ProxyStatus)
+frontend-desktop/             — 桌面独立前端（v0.27 独立工作台, 与服务器 frontend/ UI 完全隔离; 构建 cd frontend-desktop && npm run build; 加载经 ZHIYING_FRONTEND=desktop）
 scripts/sweep_storage.py   — 存储卫生清扫 CLI (默认 dry-run 只报告, --apply 执行, --json 机器可读)
+frontend-shared/           — 双前端共享后端对接层（api/types/labels/helpers 一份实现; frontend/ 与 frontend-desktop/ 各留 1 行再导出指针; 后端接口/字段变更只改这里）
 scripts/mock_yunzhi_platform.py — 本地 mock 云智平台回调服务器 (监听 /progress /complete /fail, 联调验证用)
 scripts/bump_version.py    — 一键版本提升 (交互式: 改号→输入提交信息→确认 commit/tag/push, git add .)
 bump                       — 仓库根可执行启动器 → scripts/bump_version.py (任意开发机 git pull 后 `./bump minor`)
 deploy/                    — Windows 裸机一键安装套件: setup_windows.ps1（装 Python/FFmpeg/CUDA torch/WSL2/Docker/依赖/模型 + 自校验, 旧 start_windows.ps1 与 write_windows_config.py 已删）/ download_models.py（含 reid 组件 yolo26n-cls.pt）/ deploy.md / deploy_feedback.md（部署踩坑记录）。配置已统一：无需 config.windows.yaml / ZHIYING_CONFIG，后端直接 uvicorn main:app
-desktop/                   — 桌面端启动器（Windows 桌面机, pywebview 壳管理本地后端生命周期）: app.py / state.py / checks.py / db.py / backend.py / logs.py / webview_panel.py + desktop.bat（Windows 入口）。复用同一前端 dist（构建用默认 env，VITE_YUNZHI_MOCK 缺省=mock 本地上传、无云智 Bridge）；摘要默认 vlm_llm（native_video 已置灰退役）；库用根 docker-compose.yaml 的 db 服务
+desktop/                   — 桌面端启动器（pywebview 壳, Windows 桌面机）: app.py/state/checks/db/backend/logs/webview_panel + desktop.bat。起后端时传 `ZHIYING_FRONTEND=desktop` → 后端挂载桌面前端 frontend-desktop/dist；摘要默认 vlm_llm（native_video 置灰退役）；库用根 docker-compose.yaml 的 db 服务
 ```
 
 ## Data Flow
@@ -156,6 +157,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **4 级参数系统**: L1 场景 → L2 感知模块 → L3 功能开关 → L4 高级参数; detection 双门控（config backend + per-video），face/plate 三门控（+face_enabled/plate_enabled）。
 - **DAG 扩展**: 新感知模块 = 新 runner + `operations.py` 一个 Operation 条目，engine.py 零改动。
 - **摘要双模式（native_video 已置灰退役）**: vlm_llm（API, 默认）/ native_video（本地 GPU + Python 聚合器, 前端置灰不可选, 后端代码保留仅兼容历史记录）; 切换封装在 runner 内部; `summary_mode` 变更需新建记录（不可增量）。
+- **双前端共存 + 共享对接层**: `frontend/`（服务器, v0.28 云智嵌入 UI）+ `frontend-desktop/`（桌面独立前端）UI 层完全隔离, 共用同一后端; main.py 按 `ZHIYING_FRONTEND` 切挂载（默认服务器, 桌面启动器传 desktop）。**后端对接层 `frontend-shared/`（api/types/labels/helpers）一份实现, 双端各留再导出指针复用**——后端接口/字段变更只改共享目录一处, 两端自动同步, 无「改两遍」负担。UI 层（Dashboard/components/hooks）各自演进不共享。
 - **多格式两层**: remux（容器标准化, -c copy）+ proxy（NVENC h264, 按需懒生成）; 管道优先读 remuxed; proxy 永不主动生成。
 - **NVDEC**: MJPEG pipe（~100KB/帧）默认启用，自动 fallback cv2。
 - **ReID 双层**: 在线 BoT-SORT with_reid（`config/botsort.yaml` `model: "models/yolo26n-cls.pt"` 本地外观模型——实测 ultralytics 8.4.115 的 `auto` 仍会从 GitHub 下载，故本地预置避免运行时下载）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠）; 缝合完成后修改需新建记录。
@@ -208,6 +210,8 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | 多架构 requirements (v0.22) | ✅ | 环境标记: onnxruntime-gpu (win32/x86_64/AMD64) / onnxruntime (aarch64/arm64, 无 GPU wheel 自动 CPU) |
 | 云智平台接入 (v0.24) | ✅ | api/yunzhi_routes.py + services/yunzhi_job_service.py (202+进度/完成/失败回调, 幂等) + register-external (source_owned) + 前端 Bridge (frontend/src/platform/) |
 | 平台文件 id 自动跳转 (v0.26) | ✅ | videos.external_file_id + GET /videos/external/{file_id} + Dashboard connect() 后凭 context.resource.id 自动打开对应视频 |
+| 桌面端启动器 + 桌面前端 | ✅ | desktop/ pywebview 壳（检查模型→起 db→起 uvicorn→开窗→日志→优雅关停, 看门狗防孤儿）+ frontend-desktop/（独立工作台, native_video 置灰）|
+| 双前端共存 + 共享对接层 | ✅ | frontend/（服务器 v0.28）+ frontend-desktop/（桌面）UI 隔离; frontend-shared/ 一份对接层双端复用; main.py `ZHIYING_FRONTEND` 切挂载 |
 | 生产部署 (v0.24→v0.25.1) | ✅ | systemd `zhiying.service` @ 10.0.0.176:8011, pgvector:pg17 容器, 后端静态托管前端 dist, **git+tag 部署**（`./bump` → 服务器 `bash deploy.sh v<tag>`，config 模板化不入库）, 详见 `docs/server.md`（gitignored 含凭证）|
 | OCR / Grounding | ⬜ Shell | plugins/ocr/, plugins/grounding/ |
 | Health / Reindex | 🔶 部分 | /health 已上, reindex 待办 |
@@ -226,7 +230,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 8. **Four encoding paths**: Frame (encode_image), Chunk (config-gated, default disabled, -c copy + encode_video), Text (encode_text). All three reuse the shared embedder.
 9. **When adding new dependencies**: add to `requirements.txt` AND to `Dockerfile`.
 10. **Search result format**: All results include `precision_level` (frame/chunk/text/label), `precise_start/end` (text 也有 scene 起止作为锚点), `match_paths`, and `thumbnail_url`. Merge 时帧簇优先，text 与非重叠帧的 text 按路径权重排序。图搜使用独立 `search_image_only()` 路径：帧不做时间聚类、不补充 scene 信息，`precise_end=None` 表示单帧精确匹配。
-11. **Frontend**: Dashboard.tsx 编排所有状态（含组状态 videoGroups/detectionVideoId），组件在 `components/`（19 个，v0.28 已删 Sidebar、导航上移 header）、hooks 在 `hooks/`（8 个）、标签/颜色映射在 `labels.ts`、类型在 `types/index.ts` 镜像后端 schema。
+11. **Frontend（双前端）**: 服务器前端 `frontend/`（v0.28 云智嵌入 UI, 组件 19 个已删 Sidebar）+ 桌面独立前端 `frontend-desktop/`（v0.27 独立工作台）——UI 层各自演进不共享；**对接层 `frontend-shared/`（api/types/labels/helpers）一份实现，两端 `services/api.ts`/`types`/`labels`/`helpers` 是 1 行再导出指针**。改后端接口/字段 → 只改 `frontend-shared/` 一处。Dashboard.tsx 编排状态（含组状态 videoGroups/detectionVideoId）。
 12. **Detection gate pattern**: New perception modules that are optional should follow the dual-gate pattern: config-level enable/disable (`plugins.{name}.backend: yolo` vs `null`) AND per-video toggle (`detection_enabled` in PipelineParams). Gate function checks both. This allows server-wide opt-out while letting users control per-video.
 13. **Canvas overlay pattern**: The DetectionOverlay uses a `canvas` with `pointerEvents: "none"` for pure rendering, with click/mousemove handlers attached via native `addEventListener` to the parent container. This allows clicks to pass through to video controls while still enabling bbox interaction.
 14. **Video format handling**: 两层 — remux（容器标准化, -c copy）+ proxy（NVENC H.264, 按需懒生成）。Probe 同步(<100ms)，remux/proxy 异步。流端点走 `FormatService.get_stream_target(id, hevc_ok)`，前端 `canPlayType()` 探测 HEVC。Proxy 永不主动生成。
