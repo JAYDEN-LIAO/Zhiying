@@ -80,7 +80,7 @@ export const api = {
     form.append("ocr_enabled", String(params?.ocr_enabled ?? false));
     form.append("caption_enabled", String(params?.caption_enabled ?? true));
     form.append("summary_enabled", String(params?.summary_enabled ?? true));
-    form.append("summary_mode", params?.summary_mode ?? "native_video");
+    form.append("summary_mode", params?.summary_mode ?? "vlm_llm");
     form.append("detection_enabled", String(params?.detection_enabled ?? false));
     if (params?.detection_classes?.length) {
       form.append("detection_classes", JSON.stringify(params.detection_classes));
@@ -110,7 +110,7 @@ export const api = {
     form.append("ocr_enabled", String(params?.ocr_enabled ?? false));
     form.append("caption_enabled", String(params?.caption_enabled ?? true));
     form.append("summary_enabled", String(params?.summary_enabled ?? true));
-    form.append("summary_mode", params?.summary_mode ?? "native_video");
+    form.append("summary_mode", params?.summary_mode ?? "vlm_llm");
     form.append("detection_enabled", String(params?.detection_enabled ?? false));
     if (params?.detection_classes?.length) {
       form.append("detection_classes", JSON.stringify(params.detection_classes));

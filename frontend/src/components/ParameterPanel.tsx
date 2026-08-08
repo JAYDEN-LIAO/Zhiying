@@ -148,7 +148,9 @@ export function ParameterPanel({
   });
   const [summaryMode, setSummaryMode] = useState<string>(() => {
     const saved = loadCustomParams();
-    return (saved?.summaryMode as string) ?? "native_video";
+    // native_video 已退役：旧的自定义参数里存的值统一归一为 vlm_llm
+    const m = saved?.summaryMode as string;
+    return m === "native_video" ? "vlm_llm" : (m ?? "vlm_llm");
   });
   const [detectionClasses, setDetectionClasses] = useState<string[] | null>(() => {
     const saved = loadCustomParams();
@@ -298,7 +300,8 @@ export function ParameterPanel({
       plate_enabled: modules.detection ? plateEnabled : false,
       search_index_enabled: functions.searchIndex,
       summary_enabled: functions.summary,
-      summary_mode: summaryMode,
+      // 防御兜底：native_video 已退役，绝不让旧值流入新管道
+      summary_mode: summaryMode === "native_video" ? "vlm_llm" : summaryMode,
       language: "auto",
       sample_fps: advanced.sampleFps,
       segment_threshold: advanced.segmentThreshold,
@@ -658,15 +661,17 @@ export function ParameterPanel({
               <p className="text-[11px] font-medium text-gray-500 mb-2">摘要模式</p>
               <div className="space-y-1.5">
                 {([
-                  { key: "native_video", label: "原生视频理解", desc: "本地 Qwen2.5-VL 直接观看视频片段，输出结构化摘要" },
-                  { key: "vlm_llm", label: "VLM + LLM", desc: "传统看图说话 + LLM 拼凑摘要（需 API）" },
+                  { key: "native_video", label: "原生视频理解", desc: "已停用：需本地 Qwen3-VL-8B 模型，不再提供（历史视频仍可正常查看）", disabled: true },
+                  { key: "vlm_llm", label: "VLM + LLM", desc: "默认摘要模式：VLM 看图说话 + LLM 拼凑摘要（需 API）", disabled: false },
                 ] as const).map((opt) => (
                   <label
                     key={opt.key}
-                    className={`flex items-start gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all border ${
-                      summaryMode === opt.key
-                        ? "bg-amber-400/15 border-amber-300/70"
-                        : "bg-white/60 border-gray-200/60 hover:border-gray-300"
+                    className={`flex items-start gap-2.5 px-3 py-2 rounded-lg border transition-all ${
+                      opt.disabled
+                        ? "opacity-50 cursor-not-allowed bg-white/40 border-gray-200/60"
+                        : summaryMode === opt.key
+                          ? "bg-amber-400/15 border-amber-300/70 cursor-pointer"
+                          : "bg-white/60 border-gray-200/60 cursor-pointer hover:border-gray-300"
                     }`}
                   >
                     <input
@@ -675,10 +680,16 @@ export function ParameterPanel({
                       value={opt.key}
                       checked={summaryMode === opt.key}
                       onChange={() => setSummaryMode(opt.key)}
+                      disabled={opt.disabled}
                       className="mt-0.5 accent-amber-400"
                     />
                     <div className="min-w-0">
-                      <span className="text-xs font-medium text-gray-800 block">{opt.label}</span>
+                      <span className="text-xs font-medium text-gray-800 block">
+                        {opt.label}
+                        {opt.disabled && (
+                          <span className="ml-1.5 text-[10px] font-normal text-gray-400 border border-gray-300/60 rounded px-1 py-px align-middle">已停用</span>
+                        )}
+                      </span>
                       <span className="text-[10px] text-gray-400 block">{opt.desc}</span>
                     </div>
                   </label>

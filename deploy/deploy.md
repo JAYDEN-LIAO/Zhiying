@@ -78,6 +78,11 @@ npm run dev
 
 # 【4】API key（摘要 vlm_llm 模式需要，可选但推荐）
 # 前端 → 设置页 → 系统设置，填 DashScope + DeepSeek key（保存即生效，无需重启）
+
+# 【5】桌面启动器（Windows 桌面机推荐，可选）
+# 直接双击 desktop/desktop.bat —— 内部自动：检查模型齐全 → docker compose up -d db → uvicorn main:app
+# → 打开 WebView2 窗口加载前端 dist（日志面板）→ 优雅关闭。桌面构建用默认 env 即可
+# （VITE_YUNZHI_MOCK 缺省即 mock 本地上传，无云智 Bridge）。
 ```
 
 ---
@@ -87,7 +92,7 @@ npm run dev
 一份 `config/config.yaml` 通用所有机器：
 - **路径**：模型/存储相对路径自动解析到项目根（embedder 已对齐 detector，摆脱 cwd 依赖）
 - **captioner 自动降级**：配置 `qwen3_vl` 但本地 8B 模型缺失 → 自动切 `qwen_api`（DashScope），启动打醒目 WARNING
-- **摘要模式自动转换**：captioner 为 `qwen_api` 时，`native_video` 自动视为 `vlm_llm`（`effective_summary_mode`）
+- **摘要模式自动转换**：captioner 为 `qwen_api` 时，`native_video` 自动视为 `vlm_llm`（`effective_summary_mode`）。**摘要默认 vlm_llm，native_video 已置灰退役**（前端不再可选；后端保留兼容历史记录，旧视频仍正常处理）；本地 captioner 8B **不再下载**（`download_models.py` 本就不含该项）
 - 开发机有本地 8B 模型 → 保持本地推理；部署机无 → 走 API。**同一份配置，无需环境变量**
 
 > `ZHIYING_CONFIG` 环境变量仍保留为"自定义配置文件"的通用覆盖入口（机制无害），但默认部署不需要它。

@@ -424,7 +424,7 @@ export default function Dashboard() {
           <span>{langLabel[currentVideo.language] || currentVideo.language}</span>
           <span className="sep">·</span>
           <span>{currentVideo.sample_fps.toFixed(1)}fps</span>
-          {currentVideo.summary_enabled && <><span className="sep">·</span><span>{currentVideo.summary_mode === "vlm_llm" ? "VLM+LLM" : "原生"}{currentVideo.search_index_enabled ? "+搜索" : ""}</span></>}
+          {currentVideo.summary_enabled && <><span className="sep">·</span><span>{currentVideo.summary_mode === "native_video" ? "原生(旧)" : "VLM+LLM"}{currentVideo.search_index_enabled ? "+搜索" : ""}</span></>}
           {!currentVideo.summary_enabled && currentVideo.search_index_enabled && <><span className="sep">·</span><span>搜索</span></>}
         </span>
       </div>

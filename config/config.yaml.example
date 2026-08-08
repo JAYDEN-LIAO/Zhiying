@@ -40,23 +40,25 @@ plugins:
   ocr:
     backend: null
 
-  # ── 画面描述 via Qwen3-VL 8B 本地视频理解 ──
+  # ── 画面描述 via DashScope API（默认，vlm_llm 摘要模式）──
+  # 注意：摘要默认走 API 模式。native_video（本地视频原生理解）已置灰退役，
+  # 本地 captioner 8B（Qwen3-VL-8B-Instruct）不再下载——download_models.py 不含该项。
   captioner:
-    backend: "qwen3_vl"
+    backend: "qwen_api"
     params:
-      model_name: "models/Qwen/Qwen3-VL-8B-Instruct"
-      max_new_tokens: 2048
-      min_pixels: 200704
-      max_pixels: 1003520
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      api_key: "placeholder"  # 实际值在 config/secrets.yaml 或设置页填写
+      model_name: "qwen-vl-max"
+      with_context: true
 
-  # ── 画面描述 via DashScope API（备选，注释掉上方 qwen25_vl 并取消注释此段即可切回）──
+  # ── 画面描述 via Qwen3-VL 8B 本地视频理解（可选：仅开发机有本地 8B 模型时启用）──
   # captioner:
-  #   backend: "qwen_api"
+  #   backend: "qwen3_vl"
   #   params:
-  #     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  #     api_key: "placeholder"
-  #     model_name: "qwen-vl-max"
-  #     with_context: true
+  #     model_name: "models/Qwen/Qwen3-VL-8B-Instruct"
+  #     max_new_tokens: 2048
+  #     min_pixels: 200704
+  #     max_pixels: 1003520
 
   # ── 向量编码（本地 GPU）──
   embedder:
@@ -110,6 +112,8 @@ pipeline:
   # 并发管道上限：0 = 不限（默认）；>0 时同一时刻最多 N 个视频管道同时处理。
   # 24GB 等低显存机器建议 1（激活峰值按并发数叠加，静态权重不叠加）
   max_concurrent_videos: 0
+  # 默认摘要模式：vlm_llm（API 驱动，默认）；native_video 已置灰退役（后端代码保留兼容历史记录）
+  default_summary_mode: "vlm_llm"
 
   # ── 编码速度预设 — 控制搜索精度与处理时间的权衡 ──
   # 每个预设定义分辨率 + 批大小；逐视频可在参数面板选择

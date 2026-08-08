@@ -76,6 +76,13 @@ frontend/dist/
 frontend/.vite/
 frontend/*.tsbuildinfo
 frontend/.eslintcache
+# ── 桌面前端（与服务器前端完全独立）──
+frontend-desktop/node_modules/
+frontend-desktop/dist/
+frontend-desktop/.vite/
+frontend-desktop/*.tsbuildinfo
+frontend-desktop/.eslintcache
+frontend-desktop/.env
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

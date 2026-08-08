@@ -1,0 +1,5 @@
+# 桌面启动器额外依赖。运行在后端同一 Python 环境（.venv / conda env）内，
+# 后端依赖（fastapi/uvicorn/pyyaml/httpx 等）已由 setup_windows.ps1 装好，这里只补 GUI 壳。
+# pywebview 6.x：private_mode/storage_path 是 webview.start() 的全局参数（5.x 在 create_window）
+pywebview>=6.0,<7
+# Windows 需系统级 WebView2 Runtime —— Win10/11 自带；缺失时启动器会提示安装。

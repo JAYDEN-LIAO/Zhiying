@@ -268,13 +268,16 @@ app.include_router(yunzhi_router)
 # 前端静态托管（部署用，免 nginx）
 # ──────────────────────────────────────────────────────────
 
-# 后端直接托管前端构建产物（frontend/dist）：
+# 后端直接托管前端构建产物（双前端共存，按启动方式切换）：
+#   - 默认挂载 frontend/dist（服务器前端，v0.28 云智嵌入 UI）
+#   - ZHIYING_FRONTEND=desktop 时挂载 frontend-desktop/dist（桌面独立前端）——桌面启动器起后端时设置
 #   - 仅在 dist 存在时挂载（本地开发用 Vite dev server，不产生 dist → 跳过）
 #   - 前端无客户端路由（单页，页面切换走 state）→ html=True 即可，无需 SPA fallback
 #   - 挂载在 API / health / jobs 路由之后 → 这些路径优先匹配，其余走静态
-_frontend_dist = Path(__file__).resolve().parent / "frontend" / "dist"
+_frontend_dir = "frontend-desktop" if os.environ.get("ZHIYING_FRONTEND") == "desktop" else "frontend"
+_frontend_dist = Path(__file__).resolve().parent / _frontend_dir / "dist"
 if _frontend_dist.is_dir():
     app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
-    logger.info("Frontend dist mounted at / (%s)", _frontend_dist)
+    logger.info("Frontend dist mounted at / (%s, %s)", _frontend_dir, _frontend_dist)
 else:
     logger.info("Frontend dist not found (%s) — skip static mount (dev mode)", _frontend_dist)

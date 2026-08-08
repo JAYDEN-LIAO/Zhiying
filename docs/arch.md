@@ -116,7 +116,7 @@ L4: Advanced Params (7)
   ├─ language, sample_fps, segment_threshold
   ├─ caption_with_context, summary_detail
   ├─ encode_profile: "fast" | "balanced" | "precise" | null (全局默认)
-  └─ summary_mode: "native_video" (默认, 本地Qwen3-VL-8B + 纯Python聚合) | "vlm_llm" (VLM+LLM, API驱动)
+  └─ summary_mode: "vlm_llm" (默认, API驱动) | "native_video" (已置灰退役: 前端不再可选; 后端代码保留兼容历史记录——effective_summary_mode() 在 captioner 为 qwen_api 时自动映射为 vlm_llm, 旧视频仍正常处理; captioner 8B 不再下载)
 
 Validation: PipelineParams model_validator in core/schemas.py
   ● vision OFF → ocr/caption/detection forced OFF
@@ -164,7 +164,7 @@ Incremental: Only L3 switches (summary_enabled / search_index_enabled) can be to
 配置统一 (v0.22, 部署): 单份 config/config.yaml 通用所有机器
   - embedder 相对模型路径自动解析到项目根（对齐 detector，摆脱 cwd 依赖）
   - captioner 配 qwen3_vl 但本地 8B 模型缺失 → _auto_fallback_captioner 自动降级 qwen_api (DashScope, WARNING)
-  - 摘要模式由 runners/base.py effective_summary_mode() 兜底 native_video→vlm_llm
+  - 摘要模式默认 vlm_llm（API 驱动）; native_video 已置灰退役, 由 runners/base.py effective_summary_mode() 兜底兼容历史记录（captioner 为 qwen_api 时自动映射 vlm_llm, 旧视频仍正常处理; captioner 8B 不再下载）
   - 无需 config.windows.yaml / ZHIYING_CONFIG（后者仅保留为自定义配置覆盖入口）
 ```
 
@@ -176,7 +176,7 @@ DAG 阶段流 (EventDrivenScheduler, 15 ops, 每 op 一个 asyncio 任务等待�
     ├─ search_encode (仅 summary_enabled=False) — 与 detection 共享单 NVDEC 流, 64 帧一批消费 → frame_embeddings
     ├─ detection (10fps, 生产者-消费者, 攒批 128) → track_encode → face / plate
     └─ segmentation → keyframes (1fps, NVDEC MJPEG pipe / cv2) → asyncio.Queue(512) 并发编码
-         → caption (双模式) → summary (双模式)
+         → caption (双模式) → summary (双模式; 默认 vlm_llm, native_video 已置灰退役)
   → _persist() → mark_completed()
 
 GPU 串行 (v0.22): 所有 embedder encode_* / YOLO detect 前向持 core/gpu_lock 全局锁
@@ -190,8 +190,8 @@ Keyframe 消费 4 链路:
   ③ text_encode → scenes.text_embedding (caption+ocr+transcript 语义)
   ④ caption → scene.caption
 
-Caption 双模式: native_video (Qwen3-VL-8B 本地 GPU 原生视频理解 → 结构化 JSON) / vlm_llm (Qwen-VL-Max API 看图)
-Summary 双模式: native_video (纯 Python 聚合器, 无 API 成本) / vlm_llm (DeepSeek API)
+Caption 双模式: native_video (Qwen3-VL-8B 本地 GPU 原生视频理解 → 结构化 JSON; 已置灰退役, 8B 不再下载) / vlm_llm (Qwen-VL-Max API 看图, 默认)
+Summary 双模式: native_video (纯 Python 聚合器, 无 API 成本; 已置灰退役) / vlm_llm (DeepSeek API, 默认)
 Track 语义路 (track_encode): 读 detection 缓存 640×384 crop (每 2s, 零 FFmpeg seek)
   → 挑 20%/50%/80% 3 帧 → mean pool → cosine ≥0.85 + 同类 + 时序不重叠 全局缝合
   → track_embeddings 表
@@ -472,7 +472,7 @@ Vite 开发代理:
 | **Plugin + Factory** | config.yaml 换后端零代码改动 |
 | **pgvector over 独立向量库** | 部署简单、事务一致 |
 | **本地 GPU Embedder** | 每场景/帧 4096-dim 编码，API 延迟不可接受 |
-| **双模式摘要** | native_video 本地 GPU + 纯 Python 聚合（零成本）/ vlm_llm API 备选 |
+| **双模式摘要** | 默认 vlm_llm（API 驱动）；native_video（本地 GPU + 纯 Python 聚合）已置灰退役——前端不再可选，后端保留兼容历史记录（旧视频仍正常处理），captioner 8B 不再下载 |
 | **FFmpeg pipe → 内存** | 帧不落盘，减 I/O |
 | **TransNetV2 分段** | 神经镜头边界检测优于固定间隔 |
 | **1fps 帧池 + 4 编码路径** | 帧级精度主力 + chunk/text/track 互补 |
@@ -524,6 +524,7 @@ Vite 开发代理:
 | Frame-level Encoding | ✅ | runners/frame_encode.py: batch encode 4 frames |
 | Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
 | Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
+| Summary（双模式摘要） | ✅ | 默认 vlm_llm（API 驱动）；native_video 已置灰退役（前端不可选，后端 effective_summary_mode 保留兼容，旧视频仍正常处理；captioner 8B 不再下载） |
 | Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT, 10fps 独立帧率（与 search 共享 NVDEC 流）, dual-gate control; 共享 app.state 单实例懒加载 + gpu_lock 串行, batch_size/imgsz 可配 |
 | AI Generation Detection | ❌ 已移除 | services/ai_detect_service.py + utils/ai_detect/ 已删除, upload 不再触发 AICheck。残留: ai_detect_result DB 列 + schema + 前端展示（恒为 not_run） |
 | Video Source Analysis | ✅ | utils/video_source.py: 规则引擎 classify_video_source(), phone/camera/screen_recording/surveillance/non_camera_source, 基于 EXIF + file naming + media structure + 文件头魔数嗅探（IMKH→海康威视, magic_bytes 内容级签名）, 首次 GET /metadata 触发, 结果缓存到 DB |
