@@ -10,7 +10,7 @@ Windows 桌面机（有 NVIDIA GPU）的本地启动器：管理本地后端生�
 2. 模型齐全：`python deploy/download_models.py --component all --model-root models --verify-only` 返回 0（含 embedding/yolo/reid/face/plate/segmenter；**不含 captioner 8B**——摘要走 API 模式）。
 3. Docker Desktop 运行中（`desktop.bat --check` 会验证）。
 4. `config/config.yaml` 已从 `config/config.yaml.example` 复制并按机器修改（至少改 `storage.video_dir/artifact_dir`；`database.uri` 默认 `localhost:5432`，与 docker-compose 的 db 服务对齐）。
-5. 前端已构建：`cd frontend && npm run build`（默认 env 即可——`VITE_YUNZHI_MOCK` 缺省即本地模式，无云智 Bridge）。
+5. 桌面前端已构建：`cd frontend-desktop && npm install && npm run build`（**独立于服务器前端 `frontend/`**，默认 env 即可——`VITE_YUNZHI_MOCK` 缺省即本地模式，无云智 Bridge）。
 
 ## 使用
 
@@ -56,7 +56,7 @@ desktop.bat --check    # 先自检：config/模型/端口/Docker，输出报告�
 | 启动页报「Docker 不可用 / 数据库未就绪」 | 确认 Docker Desktop 已启动；必要时手动 `docker compose up -d db` 观察 |
 | 端口被占用 | 报「端口 X 被其它程序占用」→ 改 `config.yaml` 的 `server.port` |
 | WebView2 缺失 | Win10/11 自带；极简安装报错时去微软官网装「WebView2 Runtime」 |
-| 后端就绪但界面白屏 | 前端没构建：`cd frontend && npm run build`，然后重启启动器 |
+| 后端就绪但界面白屏 | 桌面前端没构建：`cd frontend-desktop && npm run build`，然后重启启动器 |
 | 摘要不生成 / 报 API 错 | 摘要默认 `vlm_llm`（API 模式），需在前端设置页填 DashScope（画面描述）+ DeepSeek（摘要）key |
 
 ## 文件

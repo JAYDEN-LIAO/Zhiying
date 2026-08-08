@@ -26,6 +26,8 @@ def start_backend(root: Path, python: str, host: str, port: int, log) -> subproc
         **os.environ,
         "PYTHONUNBUFFERED": "1",
         "ZHIYING_PARENT_PID": str(os.getpid()),
+        # 桌面端：让后端挂载桌面前端（frontend-desktop/dist），而非服务器前端
+        "ZHIYING_FRONTEND": "desktop",
     }
     log.write("$ " + " ".join(cmd))
     proc = subprocess.Popen(
