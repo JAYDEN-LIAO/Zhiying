@@ -1,6 +1,6 @@
 /* ════════════════════════════════════════════════════════════
    Dashboard — slim orchestrator (v2.0)
-   Layout: Sidebar | Header | VideoSection + RightPanel
+   Layout: Header | VideoSection + RightPanel（侧边栏已移除，导航在 header）
    State management: custom hooks
    ════════════════════════════════════════════════════════════ */
 
@@ -10,7 +10,7 @@ import type { VideoListItem, VideoResponse, VideoGroup, PipelineStage } from "./
 import { fmtDuration } from "./utils/helpers";
 import { IconDownload } from "./components/icons";
 import { ExportMenu } from "./components/ExportMenu";
-import { Sidebar, type PageView, type PanelType } from "./components/Sidebar";
+import { type PageView, type PanelType } from "./components/Header";
 import { Header } from "./components/Header";
 import { SlideOutPanel } from "./components/SlideOutPanel";
 import { ParameterPanel } from "./components/ParameterPanel";
@@ -58,6 +58,10 @@ export default function Dashboard() {
   /* ── Panel toggle (must be after currentVideo / drillGroupId declarations) ── */
   const togglePanel = useCallback((panel: PanelType) => {
     const isCurrentlyOpen = activePanel === panel;
+    // 云智嵌入场景：在系统设置页点参数/历史 → 先跳回工作台再召出，避免面板盖在设置页上
+    if (!isCurrentlyOpen && currentPage !== "dashboard") {
+      setCurrentPage("dashboard");
+    }
     setActivePanel(isCurrentlyOpen ? null : panel);
     if (panel === "history") {
       if (isCurrentlyOpen) {
@@ -66,7 +70,7 @@ export default function Dashboard() {
         setDrillGroupId(currentVideo?.group_id ?? null);
       }
     }
-  }, [activePanel, currentVideo?.group_id]);
+  }, [activePanel, currentVideo?.group_id, currentPage]);
 
   /* ── Compute derived booleans ── */
   const isPending = currentVideo?.status === "pending";
@@ -440,12 +444,8 @@ export default function Dashboard() {
 
   return (
     <div className="app">
-      {/* ── Sidebar ── */}
-      <Sidebar currentPage={currentPage} activePanel={activePanel} onNavigate={navigate} onTogglePanel={togglePanel} />
-
-      {/* ── Slide-out panels ── */}
-      <div className="relative flex-shrink-0 z-20">
-        <SlideOutPanel open={activePanel === "params"} width={380}>
+      {/* ── Slide-out panels（右侧抽屉；云智嵌入场景移除侧边栏，面板从右滑出、低于 header） ── */}
+      <SlideOutPanel open={activePanel === "params"} width={380}>
           <div className="h-full flex flex-col slide-panel-content" style={{ paddingLeft: 12 }}>
             <ParameterPanel
               videoId={currentVideoId}
@@ -478,7 +478,6 @@ export default function Dashboard() {
               onSelect={(id: string, groupId?: string) => { handleSelect(id, groupId); if (!groupId) setActivePanel(null); }} onDelete={handleDelete} />
           </div>
         </SlideOutPanel>
-      </div>
 
       {/* Click-outside backdrop — always close on blank click */}
       {activePanel !== null && (
@@ -486,7 +485,7 @@ export default function Dashboard() {
       )}
 
       {/* ── Header ── */}
-      <Header isUploading={isUploading} onUpload={handleUpload} currentPage={currentPage} statsBar={statsContent} />
+      <Header isUploading={isUploading} onUpload={handleUpload} currentPage={currentPage} activePanel={activePanel} onNavigate={navigate} onTogglePanel={togglePanel} statsBar={statsContent} />
 
       {/* ════════════════════════════════════════════════════════════
          Page content

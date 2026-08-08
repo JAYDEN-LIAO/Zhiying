@@ -68,65 +68,31 @@ body {
    ═══════════════════════════════════════════════════ */
 
 .app {
+  position: relative;   /* 供右侧抽屉/backdrop 定位 */
   display: flex;
   height: 100vh;
   width: 100vw;
 }
 
-/* ── Sidebar ── */
-.sidebar {
-  width: 52px;
-  flex-shrink: 0;
-  background: linear-gradient(180deg, var(--color-sidebar-start) 0%, var(--color-sidebar-end) 100%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 14px 0 10px;
-  z-index: 20;
-}
-.sb-nav { flex: 1; display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 0 4px; }
-.sb-btn {
-  width: 44px; height: 36px; border-radius: 10px;
+/* ── Header 导航按钮（原侧边栏 4 键上移；云智嵌入场景移除侧边栏） ── */
+.header-nav { position: absolute; right: 112px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 2px; }
+.header-nav-btn {
+  width: 30px; height: 30px; border-radius: 8px;
   border: none; background: transparent;
-  color: rgba(255, 255, 255, 0.45); cursor: pointer;
+  color: #64748b; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  transition: all 0.2s ease; position: relative;
+  transition: all 0.15s ease;
 }
-/* Hover — only on non-active buttons */
-.sb-btn:not(.active):not(.active-green):hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-  transform: scale(1.05);
-}
-.sb-btn:not(.active):not(.active-green):hover svg {
-  filter: drop-shadow(0 0 4px rgba(255,255,255,0.15));
-}
-/* ── 选中态（对齐云智平台：明显提亮的青绿块 + 白色左指示条 + 白色图标，无圆角）
-     注意：不加 width/margin 撑出按钮——参数/历史按钮位于 overflow-hidden 折叠容器内，
-     负外边距会让左缘指示条被裁掉（只闪一下）；按钮自身宽度落在裁剪区内，指示条常驻。 ── */
-.sb-btn.active,
-.sb-btn.active-green {
-  color: #fff;
-  border-radius: 0;                      /* 无圆角 */
-  background: rgba(255, 255, 255, 0.18); /* 白色叠底 → 明显提亮的青绿块 */
-  cursor: default;
-}
-.sb-btn.active::before,
-.sb-btn.active-green::before {
-  content: ''; position: absolute; left: 0; top: 50%;
-  transform: translateY(-50%); width: 4px; height: 30px;
-  background: #fff;                     /* 白色激活指示条（垂直居中，贴按钮左缘） */
-  box-shadow: 0 0 4px rgba(255,255,255,0.6);   /* 微光提亮，确保在白亮块上可见 */
-}
-.sb-btn svg { width: 18px; height: 18px; transition: filter 0.2s; }
-.sb-div { height: 1px; background: rgba(255, 255, 255, 0.06); margin: 6px 0; }
-.sb-bottom { margin-top: auto; display: flex; flex-direction: column; gap: 8px; padding: 0 4px; }
+.header-nav-btn svg { width: 16px; height: 16px; }
+.header-nav-btn:hover { background: #e2e8f0; color: #0f172a; }
+.header-nav-btn.active { background: #ccfbf1; color: #0d9488; }
+.header-nav-div { width: 1px; height: 20px; background: #e2e8f0; margin: 0 5px; }
 
 /* ── Header ── */
 .header {
-  position: absolute; left: 52px; right: 0; top: 0; height: 52px;
+  position: absolute; left: 0; right: 0; top: 0; height: 52px;
   display: flex; align-items: center;
-  padding: 0 714px 0 12px; /* right padding pushes content to match player right edge */
+  padding: 0 714px 0 12px; gap: 12px; /* 右 padding 让视频名称对齐播放器右缘；导航/开始按钮绝对定位靠右不受影响 */
   background: var(--color-header-bg);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--color-border);
@@ -379,12 +345,11 @@ body {
 
 /* ── Slide-out panel — 深青绿底（比侧栏更深，保证表单可读性） ── */
 .slide-panel {
-  position: absolute; top: 0; overflow: hidden;
+  position: absolute; top: 52px; right: 0; overflow: hidden; z-index: 20;
   background: #086554;
-  border-radius: 0 16px 16px 0;
-  box-shadow: 4px 0 24px rgba(0,0,0,0.4);
+  border-radius: 16px 0 0 16px;
+  box-shadow: -4px 0 24px rgba(0,0,0,0.4);
   border: none;
-  border-left: none;
 }
 .slide-panel-inner {
   position: absolute; top: 0; height: 100%;

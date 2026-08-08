@@ -1,5 +1,6 @@
 /* ════════════════════════════════════════════════════════════
-   SlideOutPanel — generic slide-out container for params/history
+   SlideOutPanel — generic slide-out drawer for params/history
+   （v0.28：从右侧滑出、高度低于 header，适配云智嵌入场景）
    ════════════════════════════════════════════════════════════ */
 
 import { useRef, useEffect } from "react";
@@ -11,8 +12,8 @@ interface SlideOutPanelProps {
 }
 
 /**
- * Animated slide-out panel from the left (behind sidebar).
- * Uses CSS transitions from index.css (.slide-panel / .slide-panel-inner).
+ * Animated slide-out drawer from the right, below the 52px header.
+ * Positioning/shadows in index.css (.slide-panel / .slide-panel-inner).
  */
 export function SlideOutPanel({ open, width, children }: SlideOutPanelProps) {
   const innerRef = useRef<HTMLDivElement>(null);
@@ -27,11 +28,12 @@ export function SlideOutPanel({ open, width, children }: SlideOutPanelProps) {
     <div
       className="slide-panel"
       style={{
-        left: 0,
+        right: 0,
+        top: 52,
         width: open ? width : 0,
-        height: "100%",
+        height: "calc(100% - 52px)",
         borderColor: open ? "rgba(203, 213, 225, 0.8)" : "transparent",
-        boxShadow: open ? "4px 0 24px rgba(0,0,0,0.3)" : "none",
+        boxShadow: open ? "-4px 0 24px rgba(0,0,0,0.3)" : "none",
         transition: "width 500ms cubic-bezier(0.4, 0, 0.2, 1)",
       }}
     >
@@ -40,9 +42,9 @@ export function SlideOutPanel({ open, width, children }: SlideOutPanelProps) {
         tabIndex={-1}
         className="slide-panel-inner"
         style={{
-          left: open ? 0 : -width,
+          right: open ? 0 : -width,
           width,
-          transition: "left 500ms cubic-bezier(0.4, 0, 0.2, 1)",
+          transition: "right 500ms cubic-bezier(0.4, 0, 0.2, 1)",
         }}
       >
         {children}

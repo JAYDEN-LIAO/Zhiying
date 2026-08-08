@@ -26,6 +26,10 @@ export function VideoSearchCard({
 }) {
   const currentVideoId = video?.id ?? null;
   const searchIndexEnabled = video?.search_index_enabled ?? false;
+  // 检测门控：车牌/人脸搜索需对应处理已开启（且 YOLO 检测开启）；通用图搜无限制
+  const detOn = video?.detection_enabled ?? false;
+  const plateDisabled = !detOn || !(video?.plate_enabled ?? false);
+  const faceDisabled = !detOn || !(video?.face_enabled ?? false);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResultItem[]>([]);
@@ -266,12 +270,14 @@ export function VideoSearchCard({
             placeholder={plateMode ? "输入车牌任意字符模糊搜索…" : "场景 物体 车牌 动作 人物..."}
           />
 
-          {/* Plate fuzzy-search mode toggle（切换输入框为「车牌模糊搜索」） */}
+          {/* Plate fuzzy-search mode toggle（未开车牌处理则置灰） */}
           <button
-            onClick={() => setPlateMode(v => !v)}
-            title={plateMode ? "退出车牌模糊搜索模式" : "车牌模糊搜索：输入任意字符/数字，列出所有相关车牌"}
+            onClick={() => { if (!plateDisabled || plateMode) setPlateMode(v => !v); }}
+            title={plateDisabled ? "未开启车牌处理" : (plateMode ? "退出车牌模糊搜索模式" : "车牌模糊搜索：输入任意字符/数字，列出所有相关车牌")}
             className={`absolute right-[52px] top-1/2 -translate-y-1/2 h-6 min-w-6 px-1 rounded flex items-center justify-center text-[11px] font-bold transition-colors ${
-              plateMode ? "bg-amber-400 text-white" : "bg-amber-50 text-amber-600 hover:bg-amber-100"
+              plateDisabled ? "bg-gray-200 text-gray-600"
+                : plateMode ? "bg-amber-400 text-white"
+                : "bg-amber-50 text-amber-600 hover:bg-amber-100"
             }`}
           >
             牌
@@ -280,7 +286,7 @@ export function VideoSearchCard({
           {/* Image search (inside input right) */}
           <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageSearch} className="hidden" />
           <button onClick={() => imageInputRef.current?.click()} disabled={imageSearching}
-            className="absolute right-7 top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-teal-50 hover:bg-teal-100 text-teal-600 flex items-center justify-center transition-colors disabled:opacity-50" title="以图搜图">
+            className="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-teal-50 hover:bg-teal-100 text-teal-600 flex items-center justify-center transition-colors disabled:opacity-50" title="以图搜图">
             {imageSearching ? <span className="inline-block w-3 h-3 border-2 border-teal-300 border-t-teal-500 rounded-full animate-spin" /> : (
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
@@ -290,8 +296,12 @@ export function VideoSearchCard({
 
           {/* Face search (inside input right) */}
           <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleFaceFile} className="hidden" />
-          <button onClick={() => fileInputRef.current?.click()} disabled={faceSearching}
-            className="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-purple-50 hover:bg-purple-100 text-purple-600 flex items-center justify-center transition-colors disabled:opacity-50" title="人脸搜索">
+          <button onClick={() => { if (!faceDisabled) fileInputRef.current?.click(); }} disabled={faceSearching}
+            className={`absolute right-7 top-1/2 -translate-y-1/2 w-6 h-6 rounded flex items-center justify-center transition-colors disabled:opacity-50 ${
+              faceDisabled ? "bg-gray-200 text-gray-600"
+                : "bg-purple-50 hover:bg-purple-100 text-purple-600"
+            }`}
+            title={faceDisabled ? "未开启人脸处理" : "人脸搜索"}>
             {faceSearching ? <span className="inline-block w-3 h-3 border-2 border-purple-300 border-t-purple-500 rounded-full animate-spin" /> : (
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round"><circle cx="9" cy="9" r="3" /><path d="M1 20v-1a6 6 0 0112 0v1" /></svg>
             )}
