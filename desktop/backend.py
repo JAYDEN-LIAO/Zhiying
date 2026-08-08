@@ -16,9 +16,17 @@ from pathlib import Path
 
 
 def start_backend(root: Path, python: str, host: str, port: int, log) -> subprocess.Popen:
-    """启动 uvicorn 子进程，stdout 由 reader 线程逐行喂给 log。"""
-    cmd = [python, "-m", "uvicorn", "main:app", "--host", host, "--port", str(port)]
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    """启动后端子进程（uvicorn + 父进程存活看门狗），stdout 由 reader 线程逐行喂给 log。
+
+    经 desktop/backend_child.py 运行：启动器被强制结束时，后端在 ~3s 内自检父进程
+    死亡并 os._exit(3)，避免遗留占用端口/显存的孤儿进程。
+    """
+    cmd = [python, "-m", "desktop.backend_child", str(port)]
+    env = {
+        **os.environ,
+        "PYTHONUNBUFFERED": "1",
+        "ZHIYING_PARENT_PID": str(os.getpid()),
+    }
     log.write("$ " + " ".join(cmd))
     proc = subprocess.Popen(
         cmd, cwd=str(root), env=env,

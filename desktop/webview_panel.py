@@ -80,9 +80,9 @@ SPLASH_HTML = """<!DOCTYPE html>
       if (s.state === 'ready' && s.version) {
         msg.textContent = "后端已就绪 · 版本 " + s.version;
       }
-    });
+    }).catch(function () {});
+    setTimeout(tick, 300);  // 链式轮询：上次返回后再发下次，避免 pywebview 回调覆盖竞态
   }
-  setInterval(tick, 300);
   tick();
 </script>
 </body>
@@ -149,7 +149,8 @@ LOG_HTML = """<!DOCTYPE html>
       var nearBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 60;
       (r.lines || []).forEach(function (ln) { append(ln); });
       if (nearBottom) box.scrollTop = box.scrollHeight;
-    });
+    }).catch(function () {});
+    setTimeout(tick, 500);  // 链式轮询：避免 pywebview 回调覆盖竞态
   }
   function append(line, cls) {
     var box = document.getElementById('log');
@@ -162,7 +163,6 @@ LOG_HTML = """<!DOCTYPE html>
   function openBrowser() { pywebview.api.open_browser(); }
   function openLogs() { pywebview.api.open_logs_dir(); }
   function quit() { if (confirm('确定退出智影桌面端？')) pywebview.api.shutdown(); }
-  setInterval(tick, 500);
   tick();
 </script>
 </body>

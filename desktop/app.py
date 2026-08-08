@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import threading
 import time
@@ -36,6 +37,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--check", action="store_true", help="只做环境自检并打印报告（不启动）")
     p.add_argument("--no-window", action="store_true", help="无 GUI 冒烟（起 db + 后端，Ctrl+C 退出）")
     p.add_argument("--debug", action="store_true", help="pywebview 调试模式（devtools）")
+    p.add_argument("--gui", default="auto", choices=["auto", "qt", "gtk", "edgechromium", "winforms"],
+                   help="pywebview 后端（默认 auto 探测；Linux conda 缺 gi 时用 --gui qt）")
     p.add_argument("--log-dir", default=None, help="日志文件目录（默认 data/logs）")
     return p.parse_args(argv)
 
@@ -138,6 +141,16 @@ def run_gui(args) -> int:
     import webview  # lazy：--check / --no-window 不依赖它
     from webview_panel import Ctx, SplashApi, LogApi, SPLASH_HTML, LOG_HTML
 
+    # Linux 下 QtWebEngine 兼容性修复（QT_X11_NO_MITSHM + 禁 GPU 合成/沙箱）。
+    # 实测部分 X/无 GPU 合成环境会段错误；setdefault 保证用户可自行覆盖。
+    if sys.platform.startswith("linux"):
+        os.environ.setdefault("QT_X11_NO_MITSHM", "1")
+        os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+        os.environ.setdefault(
+            "QTWEBENGINE_CHROMIUM_FLAGS",
+            "--no-sandbox --disable-gpu --disable-software-rasterizer --disable-gpu-compositing",
+        )
+
     log = LogSink(path=_log_path(args))
     cfg = read_server_config(ROOT)
     host, port = "127.0.0.1", cfg["port"]
@@ -180,11 +193,10 @@ def run_gui(args) -> int:
 
     main_window = webview.create_window(
         "智影视频分析", html=SPLASH_HTML, width=1280, height=800, min_size=(1024, 700),
-        private_mode=False, confirm_close=True, js_api=SplashApi(ctx),
+        confirm_close=True, js_api=SplashApi(ctx),
     )
     control = webview.create_window(
-        "智影 · 启动日志", html=LOG_HTML, width=680, height=460,
-        private_mode=False, js_api=LogApi(ctx),
+        "智影 · 启动日志", html=LOG_HTML, width=680, height=460, js_api=LogApi(ctx),
     )
 
     def _on_main_closed() -> None:
@@ -196,7 +208,12 @@ def run_gui(args) -> int:
     def lifecycle() -> None:
         _lifecycle(runtime, ctx, cfg, log, main_window)
 
-    webview.start(lifecycle, debug=args.debug)
+    # private_mode=False：让前端 localStorage（参数面板自定义参数）持久化。
+    # 注意：pywebview 6.x 中 private_mode 是 start() 的全局参数，不在 create_window。
+    start_kwargs = {"debug": args.debug, "private_mode": False}
+    if args.gui != "auto":
+        start_kwargs["gui"] = args.gui
+    webview.start(lifecycle, **start_kwargs)
 
     # webview.start 返回 = 所有窗口已关闭，兜底清理
     if runtime["proc"] and runtime["proc"].poll() is None and not runtime["stopping"]:
