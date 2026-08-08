@@ -149,6 +149,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **并发管道限制**: `pipeline.max_concurrent_videos`（0=不限）→ VideoService 用 `asyncio.Semaphore` 限流同时处理的管道数（组批量上传会并发启动多管道，激活峰值按并发叠加，低显存机建议 1）。
 - **配置模板化 + 自动降级**: `config/config.yaml` **机器相关、gitignored、不入库**（v0.25.1 起；模板 `config/config.yaml.example`，新机复制后自改路径/密钥）——embedder 相对模型路径自动解析到项目根；captioner 配 `qwen3_vl` 但本地 8B 模型缺失 → `load_config()` 自动降级 `qwen_api`（DashScope，打 WARNING），摘要模式由 `runners/base.py effective_summary_mode()` 兜底 `native_video→vlm_llm`。无需 `config.windows.yaml` / `ZHIYING_CONFIG`（后者仅保留为自定义配置覆盖入口）。
 - **向量维度**: 4096（人脸 512）; 无 pgvector HNSW（超 2000 上限，demo 规模全扫描 <1ms）。
+- **DB 连接读 config（v0.27 起）**: `core/db.py` 连接地址解析顺序 = **环境变量 `POSTGRES_URI` → config.yaml 的 `database.uri` → 兜底 5432**（不再有"忽略 config 的硬编码"陷阱）。服务器 2026-08-08 因系统 postgres 抢 5432 迁到 **5433**（config.yaml `database.uri=5433`；start.sh 的 POSTGRES_URI=5433 冗余但无害）。新部署机在 config.yaml 配好 `database.uri` 即可。
 - **共享 embedder**: 启动时预载到 `app.state.embedder`，业务逻辑禁用 `load_plugin("embedder")`; captioner 按需加载。
 - **增量迁移**: `init_db()` 用 `ADD COLUMN IF NOT EXISTS` 演进 schema。
 - **4 级参数系统**: L1 场景 → L2 感知模块 → L3 功能开关 → L4 高级参数; detection 双门控（config backend + per-video），face/plate 三门控（+face_enabled/plate_enabled）。
@@ -187,6 +188,9 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | Detection + Tracking (双层 ReID) | ✅ | plugins/detector/yolo.py, runners/detection.py |
 | Detection 大规模渲染重构 (v0.22) | ✅ | /detection/tracks + /detection/detections 替代旧 /detection/data; 前端虚拟滚动 + Canvas 时间轴 |
 | 7-path search + 图搜 (face/universal) | ✅ | search_engine.py, core/search.py |
+| 搜索范围 fail-closed | ✅ | 空 video_ids → 返回空（`if video_ids is not None`），不再塌缩成全库；前端搜索范围默认只当前视频 |
+| 车牌模糊搜索模式 | ✅ | core/search.py 车牌归一化（全角→半角/去分隔符/大写）+ 前端「牌」模式按钮（search_types=["plate"], top_k=100）—— 一个字列出所有相关；plate 按 (video_id, track_id) 独立去重 |
+| 统一 track 编号 | ✅ | bbox/时间轴/物体列表/搜索结果全部用原始 track_id（删除前端按类别重编号） |
 | Face / Plate 识别 | ✅ | plugins/face/insightface_face.py, plugins/plate/hyperlpr_plate.py |
 | 双模式摘要 (native_video/vlm_llm) | ✅ | runners/caption.py, summary.py |
 | 多格式兼容 (remux + lazy proxy) | ✅ | services/format_service.py |

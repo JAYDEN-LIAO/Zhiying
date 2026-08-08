@@ -10,9 +10,16 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import MetaData, text
 
-POSTGRES_URI = os.environ.get(
-    "POSTGRES_URI",
-    "postgresql+asyncpg://zhiying:zhiying@localhost:5432/zhiying",
+from core.config_loader import load_config
+
+# 数据库连接地址：
+#   ① 环境变量 POSTGRES_URI 优先（部署覆盖入口，如服务器 start.sh 指向 5433）
+#   ② 否则读 config.yaml 的 database.uri（机器相关主配置，各机端口自定）
+#   ③ 兜底与 config_schema.DatabaseConfig 默认一致（本地标准 postgres 5432）
+POSTGRES_URI = (
+    os.environ.get("POSTGRES_URI")
+    or load_config().get("database", {}).get("uri")
+    or "postgresql+asyncpg://zhiying:zhiying@localhost:5432/zhiying"
 )
 
 engine = create_async_engine(

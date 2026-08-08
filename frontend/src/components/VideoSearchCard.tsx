@@ -33,8 +33,9 @@ export function VideoSearchCard({
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
+  const [plateMode, setPlateMode] = useState(false);
   const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(
-    () => new Set(groupVideos ?? (currentVideoId ? [currentVideoId] : [])),
+    () => new Set(currentVideoId ? [currentVideoId] : []),
   );
   const [dlTrackId, setDlTrackId] = useState<number | null>(null);
   const [faceSearching, setFaceSearching] = useState(false);
@@ -99,17 +100,8 @@ export function VideoSearchCard({
 
   // Reset scope when group or current video changes
   useEffect(() => {
-    setSelectedVideoIds(new Set(groupVideos ?? (currentVideoId ? [currentVideoId] : [])));
-  }, [groupVideos, currentVideoId]);
-
-  const classLocalMap = useMemo(() => {
-    const trackItems = results.filter((r) => r.precision_level === "track" && r.track_id != null);
-    const groups = new Map<string, number[]>();
-    for (const r of trackItems) { if (!groups.has(r.class_name!)) groups.set(r.class_name!, []); groups.get(r.class_name!)!.push(r.track_id!); }
-    const map = new Map<number, number>();
-    for (const [, ids] of groups) { ids.sort((a, b) => a - b); ids.forEach((id, idx) => map.set(id, idx + 1)); }
-    return map;
-  }, [results]);
+    setSelectedVideoIds(new Set(currentVideoId ? [currentVideoId] : []));
+  }, [currentVideoId]);
 
   const handleFaceFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
@@ -141,11 +133,15 @@ export function VideoSearchCard({
     if (!query.trim()) return;
     setResults([]); setSearching(true); setError(null);
     try {
-      const data = await api.searchSemantic(query.trim(), { video_ids: searchVideoIds });
+      const data = await api.searchSemantic(query.trim(), {
+        video_ids: searchVideoIds,
+        // 车牌模式：只跑车牌路 + 提高上限（「一个字列出所有相关」）
+        ...(plateMode ? { search_types: ["plate"], top_k: 100 } : {}),
+      });
       setResults(data.results ?? []); setHasSearched(true);
     } catch (err) { setError(err instanceof Error ? err.message : "搜索失败"); }
     finally { setSearching(false); }
-  }, [query, searchVideoIds]);
+  }, [query, searchVideoIds, plateMode]);
 
   const resultCount = results.length;
 
@@ -263,12 +259,23 @@ export function VideoSearchCard({
           <input
             className={`block w-full min-w-0 h-full box-border rounded-lg border border-gray-300 bg-gray-50 text-gray-900 outline-none transition-colors
               focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100 placeholder:text-gray-400
-              text-[12px] py-0 ${searchScopeVisible ? 'pl-[100px] pr-16' : 'px-3'}`}
+              text-[12px] py-0 ${searchScopeVisible ? 'pl-[100px]' : 'pl-3'} pr-[104px]`}
             type="text" value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            placeholder="场景 物体 车牌 动作 人物..."
+            placeholder={plateMode ? "输入车牌任意字符模糊搜索…" : "场景 物体 车牌 动作 人物..."}
           />
+
+          {/* Plate fuzzy-search mode toggle（切换输入框为「车牌模糊搜索」） */}
+          <button
+            onClick={() => setPlateMode(v => !v)}
+            title={plateMode ? "退出车牌模糊搜索模式" : "车牌模糊搜索：输入任意字符/数字，列出所有相关车牌"}
+            className={`absolute right-[52px] top-1/2 -translate-y-1/2 h-6 min-w-6 px-1 rounded flex items-center justify-center text-[11px] font-bold transition-colors ${
+              plateMode ? "bg-amber-400 text-white" : "bg-amber-50 text-amber-600 hover:bg-amber-100"
+            }`}
+          >
+            牌
+          </button>
 
           {/* Image search (inside input right) */}
           <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageSearch} className="hidden" />
@@ -290,9 +297,9 @@ export function VideoSearchCard({
             )}
           </button>
 
-          {/* Text search spinner（放在通用图搜按钮左侧，避免盖住图搜/人脸搜） */}
+          {/* Text search spinner（在车牌按钮左侧，避免盖住右侧按钮） */}
           {searching && (
-            <span className="absolute right-14 top-1/2 -translate-y-1/2 inline-block w-3.5 h-3.5 border-2 border-teal-300 border-t-teal-500 rounded-full animate-spin" />
+            <span className="absolute right-[80px] top-1/2 -translate-y-1/2 inline-block w-3.5 h-3.5 border-2 border-teal-300 border-t-teal-500 rounded-full animate-spin" />
           )}
         </div>
 
@@ -385,7 +392,7 @@ export function VideoSearchCard({
                       </span>
                     </div>
                     {isTrack && item.class_name ? (
-                      <div className="sr-track">{zhLabel(item.class_name, classLocalMap.get(item.track_id!) ?? item.track_id!)}</div>
+                      <div className="sr-track">{zhLabel(item.class_name, item.track_id!)}</div>
                     ) : isPlate && item.plate_text ? (
                       <div className="sr-plate">{item.plate_text}</div>
                     ) : item.caption ? (
@@ -399,8 +406,8 @@ export function VideoSearchCard({
                           </button>
                         ) : (
                           <>
-                            <button className="sr-act" onClick={() => { setDlTrackId(null); window.open(api.getTrackThumbnailUrl(item.video_id, item.track_id!, classLocalMap.get(item.track_id!)), "_blank"); }}>缩略图</button>
-                            <button className="sr-act" onClick={() => { setDlTrackId(null); window.open(api.getTrackExportUrl(item.video_id, item.track_id!, true, classLocalMap.get(item.track_id!)), "_blank"); }}>轨迹</button>
+                            <button className="sr-act" onClick={() => { setDlTrackId(null); window.open(api.getTrackThumbnailUrl(item.video_id, item.track_id!, item.track_id!), "_blank"); }}>缩略图</button>
+                            <button className="sr-act" onClick={() => { setDlTrackId(null); window.open(api.getTrackExportUrl(item.video_id, item.track_id!, true, item.track_id!), "_blank"); }}>轨迹</button>
                           </>
                         )
                       ) : null}
@@ -426,7 +433,7 @@ export function VideoSearchCard({
         {!hasSearched && !searching && !error && (
           <div className="flex flex-col items-center justify-center py-8 text-gray-400">
             <svg className="w-8 h-8 mb-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-            <p className="text-xs">输入关键词搜索视频画面</p>
+            <p className="text-xs">{plateMode ? "输入车牌任意字符，列出所有相关车牌" : "输入关键词搜索视频画面"}</p>
           </div>
         )}
       </div>

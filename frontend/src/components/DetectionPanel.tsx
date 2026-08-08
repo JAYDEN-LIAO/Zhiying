@@ -156,21 +156,6 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
 
   const showFaceBtn = !!(video?.face_enabled && faceData?.has_face);
 
-  const classLocalIds = useMemo(() => {
-    const map = new Map<number, number>();
-    const allTracks = data?.tracks ?? [];
-    const groups = new Map<string, Array<{ track_id: number; first_seen: number }>>();
-    for (const t of allTracks) {
-      if (!groups.has(t.class_name)) groups.set(t.class_name, []);
-      groups.get(t.class_name)!.push({ track_id: t.track_id, first_seen: t.first_seen });
-    }
-    for (const [, items] of groups) {
-      items.sort((a, b) => a.first_seen - b.first_seen);
-      items.forEach((item, idx) => map.set(item.track_id, idx + 1));
-    }
-    return map;
-  }, [data?.tracks]);
-
   const plateByTrack = useMemo(() => {
     const map = new Map<number, PlateDetectionItem>();
     if (plateData?.detections) {
@@ -461,7 +446,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                       tUrl={tUrl}
                       thumbTs={thumbTs}
                       bbox={bbox}
-                      displayId={classLocalIds.get(t.track_id) ?? t.track_id}
+                      displayId={t.track_id}
                       maxDuration={maxDuration}
                       isDropdownOpen={trackDropdown === t.track_id}
                       onTrackSelect={onTrackSelect}

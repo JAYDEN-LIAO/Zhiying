@@ -41,7 +41,7 @@ async def frame_vector_search(
         .order_by(similarity.desc())
         .limit(limit)
     )
-    if video_ids:
+    if video_ids is not None:
         stmt = stmt.where(FrameEmbedding.video_id.in_(video_ids))
     result = await session.execute(stmt)
     return [(row.FrameEmbedding, row.sim) for row in result]
@@ -68,7 +68,7 @@ async def chunk_vector_search(
         .order_by(similarity.desc())
         .limit(limit)
     )
-    if video_ids:
+    if video_ids is not None:
         stmt = stmt.where(Chunk.video_id.in_(video_ids))
     result = await session.execute(stmt)
     return [(row.Chunk, row.sim) for row in result]
@@ -95,7 +95,7 @@ async def text_vector_search(
         .order_by(similarity.desc())
         .limit(limit)
     )
-    if video_ids:
+    if video_ids is not None:
         stmt = stmt.where(Scene.video_id.in_(video_ids))
     result = await session.execute(stmt)
     return [(row.Scene, row.sim) for row in result]
@@ -119,7 +119,7 @@ async def track_vector_search(
         .order_by(similarity.desc())
         .limit(limit)
     )
-    if video_ids:
+    if video_ids is not None:
         stmt = stmt.where(TrackEmbedding.video_id.in_(video_ids))
     result = await session.execute(stmt)
     return [(row.TrackEmbedding, row.sim) for row in result]
@@ -129,32 +129,64 @@ async def track_vector_search(
 # 5. 车牌文本搜索（精确/模糊匹配）
 # ═══════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════
+# 车牌搜索归一化（模糊搜索的健壮性基石）
+#   - 全角 → 半角（中文输入法打出的 ０-９/Ａ-Ｚ/ａ-ｚ）
+#   - 去分隔符（· 全角空格 连字符变体 普通空格 / .）
+#   - 统一大写（levenshtein 区分大小写，ILIKE 不区分）
+# 查询侧用 _normalize_plate，DB 侧用同规则的 _plate_norm_sql，
+# 两者必须完全一致，否则匹配失真。
+# ═══════════════════════════════════════════════════════════
+_FULL_WIDTH = "０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ"
+_HALF_WIDTH = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+_SEPARATORS = "·　-‐–— ／/."
+
+
+def _normalize_plate(s: str) -> str:
+    """Python 侧归一化查询：全角→半角、去分隔符、统一大写。"""
+    s = s.translate(str.maketrans(_FULL_WIDTH, _HALF_WIDTH))
+    return "".join(ch for ch in s if ch not in _SEPARATORS).upper()
+
+
+def _plate_norm_sql(col):
+    """SQL 侧归一化 plate_text（与 _normalize_plate 同规则）。
+
+    translate: from 前 62 位一一映射到半角，末尾的分隔符（无对应）被删除。
+    """
+    return func.upper(
+        func.translate(col, _FULL_WIDTH + _SEPARATORS, _HALF_WIDTH)
+    )
+
+
 async def plate_text_search(
     session: AsyncSession,
     query: str,
     limit: int = 20,
     video_ids: list[str] | None = None,
 ) -> list[tuple[PlateDetection, float]]:
-    """车牌文本搜索 — Levenshtein 编辑距离。
+    """车牌文本模糊搜索 — 归一化后 ILIKE 子串 + Levenshtein 编辑距离。
 
-    编辑距离 ≤ 2 的视为匹配，按距离升序排列（越近越靠前）。
-    同时保留 ILIKE 子串匹配作为快速路径（距离 = 0，排最前）。
+    候选：归一化文本包含查询（ILIKE）或编辑距离 ≤ 2（近似拼写）。
+    相似度 = 1 / (1 + min(编辑距离, 2)) 封顶 0.33，保证候选都能跨过 0.3 门槛。
+    支持：一个字（省份/数字/字母）→ 列出所有相关；部分牌号 → 子串匹配；
+    近拼写（错 ≤2 位）→ 编辑距离容错。全角/分隔符/大小写由归一化统一处理。
     """
     from sqlalchemy import func as sa_func, or_, case
 
-    dist = sa_func.levenshtein(PlateDetection.plate_text, query).label("dist")
-    # 相似度 = 1 / (1 + 编辑距离)，距离 0=1.0，距离 1=0.5，距离 2=0.33
-    similarity = (1.0 / (1.0 + dist)).label("sim")
+    q = _normalize_plate(query)
+    plate_norm = _plate_norm_sql(PlateDetection.plate_text)
+    dist = sa_func.levenshtein(plate_norm, q).label("dist")
+    similarity = (1.0 / (1.0 + sa_func.least(dist, 2))).label("sim")
     stmt = (
         select(PlateDetection, similarity)
         .where(or_(
-            PlateDetection.plate_text.ilike(f"%{query}%"),
+            plate_norm.ilike(f"%{q}%"),
             dist <= 2,
         ))
         .order_by(dist.asc())
         .limit(limit)
     )
-    if video_ids:
+    if video_ids is not None:
         stmt = stmt.where(PlateDetection.video_id.in_(video_ids))
     result = await session.execute(stmt)
     return [(row.PlateDetection, row.sim) for row in result]
@@ -183,7 +215,7 @@ async def face_identity_search(
         .order_by(similarity.desc())
         .limit(limit)
     )
-    if video_ids:
+    if video_ids is not None:
         stmt = stmt.where(FaceIdentity.video_id.in_(video_ids))
     result = await session.execute(stmt)
     return [(row.FaceIdentity, row.sim) for row in result]

@@ -40,7 +40,7 @@ curl -X POST -H "Content-Type: application/json" \
 
 - 一键安装器、环境要求、模型清单（embedding/yolo/**reid**/face/plate/segmenter）、代理必填与国内镜像、坑位审计与 Linux/Windows 差异，详见 **[`deploy/deploy.md`](deploy/deploy.md)**。
 - 部署实测踩坑记录（BOM 编码 / Blackwell cu130 / pip 大文件 curl 兜底 / 代理策略等）见 **[`deploy/deploy_feedback.md`](deploy/deploy_feedback.md)**。
-- 配置已统一：单份 `config/config.yaml` 通用所有机器（embedder 相对路径解析 + captioner 本地模型缺失自动降级 `qwen_api`），无需 `config.windows.yaml` / `ZHIYING_CONFIG`。
+- **配置模板化（v0.25.1 起）**：`config/config.yaml` **机器相关、gitignored、不入库**，新机复制 `config/config.yaml.example` 自改（embedder 相对路径解析 + captioner 本地模型缺失自动降级 `qwen_api`），无需 `config.windows.yaml` / `ZHIYING_CONFIG`。
 - **多架构支持**：`requirements.txt` 用环境标记区分平台——Windows/Linux x86 装 `onnxruntime-gpu`（人脸/车牌 GPU），**ARM64 Linux**（DGX Spark/GB10 等，无 `onnxruntime-gpu` wheel）自动装 `onnxruntime` CPU 版，人脸/车牌走 CPU。
 
 ## Core Features
@@ -66,7 +66,7 @@ curl -X POST -H "Content-Type: application/json" \
 | License Plate Recognition | HyperLPR3 (ONNX Runtime) detection + text recognition | ✅ |
 | Face Image Search | `POST /api/v1/search/face` (upload image → ArcFace 512d) | ✅ |
 | Universal Image Search | `POST /api/v1/search/image` (upload any image → Qwen3-VL-Embedding 4096-dim → frame_embeddings) | ✅ |
-| Plate Text Search | `POST /api/v1/search/semantic` (plate path, Levenshtein + ILIKE) | ✅ |
+| Plate Text Search（模糊模式） | `POST /api/v1/search/semantic`（plate path: Levenshtein + ILIKE + 字符归一化；前端「牌」模式按钮 → 一个字列出所有相关车牌） | ✅ |
 | Track Thumbnail Download | `GET /api/v1/videos/{id}/export/track/{tid}/thumbnail` | ✅ |
 | Track Video Export (zip) | `GET/POST /api/v1/videos/{id}/export/track/{tid}` | ✅ |
 | Video Clip Export | `GET/POST /api/v1/videos/{id}/export/clip` | ✅ |
@@ -158,7 +158,7 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 
 - **版本唯一事实来源**：`core/version.py` 的 `__version__`（SemVer pre-1.0：MINOR=新功能，PATCH=热修）；`/health` 返回 `version` 字段，服务器部署后 `curl /health` 即可核对运行版本。
 - **发版**：`./bump minor`（新功能）/ `./bump patch`（修 bug）/ `./bump 0.24.0`（指定版本）。一条命令联动改 `core/version.py` + `frontend/package.json` + `package-lock.json`（含两处根版本），随后交互式让你输入提交信息、确认 `git add .` 提交、打 tag、推送——机器不擅自动手，但也不用复制粘贴命令。
-- **tag 强绑定**：git tag 必须命名为 `v<__version__>`，与 `core/version.py` 完全一致；回滚 = 服务器 `git checkout v<旧tag>` + 重启。
+- **tag 强绑定**：git tag 必须命名为 `v<__version__>`，与 `core/version.py` 完全一致；部署/回滚 = 服务器 `bash deploy.sh v<版本>`（fetch→checkout→构建→重启→健康检查；回滚=部署旧 tag，config 已 gitignore 需注意向前滚原则）。
 - `./bump` 是随仓库分发的 bash 启动器，任何开发机 `git pull` 后即可用（Windows 开发机用 `python scripts/bump_version.py`）。
 
 ## Project Structure
@@ -268,6 +268,11 @@ zhiying/
 
 ## Development Status
 
+- **v0.27 — 搜索修正 + 车牌模糊搜索模式**:
+  - **统一 track 编号**: bbox / 时间轴 / 物体检测列表 / 搜索结果 全部使用原始 `track_id`（删除前端按类别重编号），四处编号一致。
+  - **搜索范围 fail-closed**: 空 `video_ids` → 返回空（后端 `if video_ids is not None`），不再塌缩成"搜全库"；前端搜索范围默认只搜当前视频。
+  - **车牌搜索修正**: 相似度 `LEAST(dist,2)` 封顶（子串匹配不被 0.3 门槛误杀）；plate 按 `(video_id, track_id)` 独立去重（同视频多车牌全部返回）。
+  - **车牌模糊搜索模式**: 车牌字符归一化（全角→半角 / 去分隔符 / 统一大写）；搜索框新增「牌」模式按钮 → 输入一个字符/数字列出所有相关车牌（`search_types=["plate"]`, `top_k=100`）。
 - **v0.26 — 平台文件 id → 视频历史自动跳转**: 平台文件库资源 ID（`context.resource.id` / `files.select items[].id`）存入 `videos.external_file_id`（register-external + jobs 透传）；新增 `GET /api/v1/videos/external/{file_id}` 查找端点；前端 Bridge connect() 后若 `context.resource` 为 FILE 则按 id 自动打开对应视频详情（一次性，非文件入口/无匹配正常展示默认工作台）。
 - **v0.24 — 云智(Yunzhi)平台接入 + 生产部署（feature/yunzhi 部署分支）**:
   - **Bridge 文件选择**: 前端 `bridge.files.select()` 从平台文件库选文件，后端 `POST /api/v1/videos/register-external` 共享绝对路径就地引用（`source_owned=false`，删除视频绝不 unlink 平台源文件）。

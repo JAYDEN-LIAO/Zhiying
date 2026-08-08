@@ -220,7 +220,7 @@ export const api = {
   async searchFace(file: File, videoIds?: string[], topK?: number): Promise<FaceSearchResult[]> {
     const form = new FormData();
     form.append("file", file);
-    if (videoIds?.length) form.append("video_ids", videoIds.join(","));
+    if (videoIds) form.append("video_ids", videoIds.join(","));
     if (topK != null) form.append("top_k", String(topK));
     const res = await fetch(`${BASE}/search/face`, { method: "POST", body: form });
     if (!res.ok) {
@@ -241,7 +241,7 @@ export const api = {
   }): Promise<SearchResults> {
     const form = new FormData();
     form.append("file", file);
-    if (options?.video_ids?.length) form.append("video_ids", options.video_ids.join(","));
+    if (options?.video_ids) form.append("video_ids", options.video_ids.join(","));
     if (options?.search_types?.length) form.append("search_types", options.search_types.join(","));
     if (options?.top_k != null) form.append("top_k", String(options.top_k));
     if (options?.min_similarity != null) form.append("min_similarity", String(options.min_similarity));

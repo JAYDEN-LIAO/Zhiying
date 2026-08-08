@@ -247,7 +247,7 @@ class SearchEngine:
                 ))
                 .limit(limit)
             )
-            if video_ids:
+            if video_ids is not None:
                 stmt = stmt.where(Scene.video_id.in_(video_ids))
             result = await session.execute(stmt)
             scenes = list(result.scalars().all())
@@ -272,6 +272,7 @@ class SearchEngine:
         """
         frames: list[dict] = []
         tracks: list[dict] = []
+        plates: list[dict] = []
         others: list[dict] = []
         for ranked in ranked_lists:
             for item in ranked:
@@ -279,6 +280,8 @@ class SearchEngine:
                     frames.append(item)
                 elif item.get("source") == "track":
                     tracks.append(item)
+                elif item.get("source") == "plate":
+                    plates.append(item)
                 else:
                     others.append(item)
 
@@ -326,6 +329,15 @@ class SearchEngine:
                 track_map[key] = dict(item)
                 track_map[key]["match_paths"] = [item.get("source", "track")]
 
+        # ── Plate 独立去重：每块车牌按所属 track 唯一（(video_id, track_id)），
+        #    不再挤进 (video_id, scene_index) 的桶（scene_index 对 plate 无意义，会互相覆盖）──
+        plate_map: dict[tuple[str, int], dict] = {}
+        for item in plates:
+            key = (item["video_id"], item.get("track_id", 0))
+            if key not in plate_map or item.get("similarity", 0) > plate_map[key].get("similarity", 0):
+                plate_map[key] = dict(item)
+                plate_map[key]["match_paths"] = [item.get("source", "plate")]
+
         # ── 非帧结果：去重叠 + 按 scene 合并 ──
         other_map: dict[tuple[str, int], dict] = {}
         for item in others:
@@ -343,7 +355,7 @@ class SearchEngine:
                 if src not in ex.get("match_paths", []):
                     ex.setdefault("match_paths", []).append(src)
 
-        merged = clusters + list(other_map.values()) + list(track_map.values())
+        merged = clusters + list(other_map.values()) + list(plate_map.values()) + list(track_map.values())
         # 路径感知排序：校准后的分数 = 相似度 × 路径权重
         # frame 1.0 > text 0.85 > chunk 0.7，确保高精度结果优先
         merged.sort(

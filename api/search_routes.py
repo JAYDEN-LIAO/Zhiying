@@ -129,7 +129,7 @@ async def search_face(
 
     # 解析 video_ids
     vid_list: list[str] | None = None
-    if video_ids:
+    if video_ids is not None:
         vid_list = [v.strip() for v in video_ids.split(",") if v.strip()]
 
     # 搜索
@@ -213,7 +213,7 @@ async def search_image(
 
     # 解析参数
     vid_list: list[str] | None = None
-    if video_ids:
+    if video_ids is not None:
         vid_list = [v.strip() for v in video_ids.split(",") if v.strip()]
 
     st_list: list[str] | None = None

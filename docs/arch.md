@@ -5,6 +5,7 @@
 > v0.22: Windows 从零部署 + 系统设置/参数预设 + 全局 GPU 锁 + Detection 渲染重构 + 删除处理中/管道取消 + ARM64 多架构
 > v0.24: 云智(Yunzhi)平台接入（register-external + /internal/yunzhi/jobs 异步任务）+ 生产部署（systemd, 8011, pgvector:pg17, 静态托管前端）
 > v0.26: 平台文件 id → 视频自动跳转（videos.external_file_id + GET /videos/external/{file_id} + 前端 connect() 后自动打开对应视频）
+> v0.27: 搜索修正（统一 track 编号 + 范围 fail-closed + 车牌搜索修正）+ 车牌模糊搜索模式（字符归一化 + 前端「牌」模式按钮）
 
 ## System Data Flow
 
@@ -267,16 +268,17 @@ ARM64（DGX Spark/GB10）无 onnxruntime-gpu wheel → requirements 环境标记
 Semantic Search: POST /api/v1/search/semantic — query → embedder.encode_text() (编码一次)
   → 6 路并行召回:
      frame (1fps 精确秒) / chunk (滑窗, 默认关) / text (caption+ocr+transcript 语义)
-     label (JSONB @> entities) / track (crop 跨模态, 返回具体物体) / plate (Levenshtein + ILIKE)
+     label (JSONB @> entities) / track (crop 跨模态, 返回具体物体) / plate (Levenshtein + ILIKE + 字符归一化)
   → Face 图搜: POST /search/face — 图片 → ArcFace 512d → face_identities cosine
   → 通用图搜: POST /search/image — 图片 → Qwen3-VL 4096-dim → frame_embeddings
      (专用 search_image_only 路径: 帧不聚类, 每帧独立精确到秒, 不补 scene 信息)
-  → 合并去重: 帧簇(间隔≤4s)优先, chunk/text 与帧重叠丢弃, track 按 (video_id, track_id) 去重
+  → 合并去重: 帧簇(间隔≤4s)优先, chunk/text 与帧重叠丢弃, track/plate 各按 (video_id, track_id) 去重
+  → 范围过滤: video_ids 为空列表 → 返回空（fail-closed, `if video_ids is not None`）；None=全库
   返回: {precision_level, precise_start/end, match_paths, thumbnail_url, track_id?, bbox?}
 
 core/search.py 6 种检索函数:
   frame_vector_search · chunk_vector_search · text_vector_search
-  track_vector_search · plate_text_search (Levenshtein) · face_identity_search (ArcFace cosine)
+  track_vector_search · plate_text_search (Levenshtein + ILIKE + 归一化, 单字模糊) · face_identity_search (ArcFace cosine)
 ```
 
 ## Database Schema
@@ -481,7 +483,7 @@ Vite 开发代理:
 | **三档速度预设** | fast/balanced/precise 控制分辨率 + batch |
 | **搜索/摘要路径解耦** | search_encode 独立于摘要，帧搜索不等 caption |
 | **track 回退移除** | 直接读缓存 crop（零 seek），长视频 track_encode 257s→43s |
-| **车牌 Levenshtein 检索** | 编辑距离 ≤2 + ILIKE，天然处理错位/增减 |
+| **车牌模糊检索** | 字符归一化（全角→半角/去分隔符/大写） + 编辑距离≤2 + ILIKE 子串；相似度 `LEAST(dist,2)` 封顶（子串匹配不被 0.3 门槛误杀）；「牌」模式（search_types=["plate"], top_k=100）一个字列出所有相关 |
 | **上传/参数解耦** | 上传建 pending，配置后才启动管道 |
 | **两层格式兼容 + 懒代理** | remux (-c copy) 即时 + proxy (NVENC h264) 按需，HEVC 浏览器零处理 |
 | **GET+POST 双导出** | POST 供编程调用，GET 供浏览器直接下载 |
@@ -514,7 +516,7 @@ Vite 开发代理:
 | Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
 | License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
-| Plate Text Search | ✅ | core/search.py plate_text_search — Levenshtein edit distance + ILIKE substring |
+| Plate Text Search（模糊） | ✅ | core/search.py plate_text_search — 归一化(全角/分隔符/大写) + Levenshtein≤2 + ILIKE 子串 + 相似度 LEAST 封顶；plate 按 (video_id, track_id) 独立去重；前端「牌」模式按钮 |
 | Semantic Search (7-path) | ✅ | frame + chunk + text + label + track + plate + image 并行召回, plate 独立 ILIKE |
 | Universal Image Search | ✅ | POST /api/v1/search/image — Qwen3-VL-Embedding 4096-dim → frame_embeddings, 独立 search_image_only() 路径 (帧不聚类、不补 scene、每帧独立精确到秒) |
 | Frontend Chinese Labels | ✅ | frontend/src/labels.ts — 统一 ZH_LABELS (80 COCO 类)+zh()/zhLabel()/colorOf(), 消除 3 份重复 CLASS_COLORS |
