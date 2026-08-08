@@ -490,6 +490,10 @@ else {
     # ── accelerate（embedder device_map 必需）+ lap（BoT-SORT）──
     Invoke-Checked $VenvPython @("-m", "pip", "install", "accelerate", "lap") "accelerate/lap 安装失败"
     Write-Ok "accelerate + lap 已安装"
+
+    # ── 桌面端启动器依赖（pywebview，Windows WebView2 系统自带）──
+    Invoke-Checked $VenvPython @("-m", "pip", "install", "-r", (Join-Path $ProjectRoot "desktop\requirements.txt")) "桌面端 pywebview 安装失败"
+    Write-Ok "桌面端 pywebview 已安装（desktop/requirements.txt）"
 }
 
 # ═══════════════════════════════════════════════════════════

@@ -6,10 +6,10 @@
 
 ## 核心一句话
 
-**一条主线(main)+ 每次发布打版本号(tag)+ 服务器只认版本号 + 多端差异用构建档不用分支。**
+**一条主线(main)+ 每次发布打版本号(tag)+ 服务器只认版本号 + 多端差异用独立前端/构建产物,不用分支。**
 
 - 分支用来区分"开发中 / 正式发布",**不是**用来区分"跑在哪个地方"(服务器 / 桌面 / 本地)。
-- 一个项目只有一份"真代码"。部署目标之间的差异,用代码里的开关解决,不用分叉。
+- 一个项目一份"真后端"。部署目标之间的差异,用**独立前端**(`frontend/` 服务器 + `frontend-desktop/` 桌面,共用后端 + `frontend-shared/` 对接层)解决,不用分叉。
 
 ## 1. 分支管理
 
@@ -31,10 +31,11 @@
 ./bump 0.26.0       # 直接指定完整版本号
 ./bump --dry-run patch  # 只预览不改文件
 ```
-bump 一条龙:改 version.py + frontend/package.json + package-lock.json → `git add .` → commit → 打 tag → push(main + tag)。
+bump 一条龙:改 version.py + frontend/package.json + package-lock.json → `git add .` → commit → 打 tag → push(main + tag)。**`frontend-desktop/`（桌面前端）独立版本、不参与 bump/tag**——桌面端版本随后端 `/health` 版本走，无需单独发版。
 
-**什么时候必须 bump:** 这版代码要上服务器 / 交付时。
-**什么时候不用 bump:** 纯文档、注释改动(CLAUDE.md、docs/*、代码注释)。文档提交留在 main 里,下次 bump 时会自动一起带走。
+**什么时候必须 bump:** 任何**后端改动**（bug 修复 / 性能优化 / 管线重构 / 新功能上线）**以及服务器前端改动**（`frontend/` + 共享对接层 `frontend-shared/`——它们会上服务器）都必须 `./bump` 发版动版号（patch 修 bug/小改动，minor 新功能/大重构），**即使不立刻部署**。原因：tag 是冻结快照、服务器只认 tag，不 bump 会让「最新 tag」落后于线上实际状态，部署时对不上。保持"最新 tag = 当前可部署状态"。
+
+**什么时候不用 bump:** 纯文档、注释改动（CLAUDE.md、docs/*、代码注释），以及**桌面前端改动**（`frontend-desktop/`——桌面端相对独立自由，前端改动不发版，随后端版本走）。
 
 > 版本号不是提交计数器,是"可部署状态"的盖章。别为每个提交 bump。
 
@@ -50,7 +51,7 @@ bump 一条龙:改 version.py + frontend/package.json + package-lock.json → `g
 
 **服务器操作(在 `/home/services/zhiying` 下):**
 ```bash
-bash deploy.sh v0.25.3
+bash deploy.sh v0.28.0
 ```
 deploy.sh 干的事:fetch tags → config 迁移(首次)→ checkout 版本 → requirements 变了才 pip → 前端 build → 重启 systemd → 90s 健康检查。
 
@@ -141,13 +142,13 @@ import paramiko, re
 pw = re.search(r'\*\*root\*\*.*?`([^`]+)`', open('docs/server.md', encoding='utf-8').read()).group(1)
 c = paramiko.SSHClient(); c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 c.connect('10.0.0.176', username='root', password=pw, timeout=20, banner_timeout=30)
-# 之后 c.exec_command("bash /home/services/zhiying/deploy.sh v0.27.0") 或任意服务器命令
+# 之后 c.exec_command("bash /home/services/zhiying/deploy.sh v0.28.0") 或任意服务器命令
 PYEOF
 ```
 
 部署一条命令（服务器上）：
 ```bash
-bash /home/services/zhiying/deploy.sh v0.27.0
+bash /home/services/zhiying/deploy.sh v0.28.0
 ```
 验证：`curl http://127.0.0.1:8011/health`（version 应与 tag 对上）。
 
@@ -161,9 +162,9 @@ bash /home/services/zhiying/deploy.sh v0.27.0
 git worktree add ../zhiying-desktop    # 并行开发另一个 checkout
 
 # 服务器(在 /home/services/zhiying 下)
-bash deploy.sh v0.25.3                # 部署到指定版本
+bash deploy.sh v0.28.0                # 部署到指定版本
 curl http://127.0.0.1:8011/health     # 验证版本
 
 # 回滚(除非必须,否则向前滚)
-bash deploy.sh v0.25.2
+bash deploy.sh v0.27.0
 ```

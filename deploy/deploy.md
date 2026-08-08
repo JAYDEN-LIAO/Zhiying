@@ -79,10 +79,12 @@ npm run dev
 # 【4】API key（摘要 vlm_llm 模式需要，可选但推荐）
 # 前端 → 设置页 → 系统设置，填 DashScope + DeepSeek key（保存即生效，无需重启）
 
-# 【5】桌面启动器（Windows 桌面机推荐，可选）
-# 直接双击 desktop/desktop.bat —— 内部自动：检查模型齐全 → docker compose up -d db → uvicorn main:app
-# → 打开 WebView2 窗口加载前端 dist（日志面板）→ 优雅关闭。桌面构建用默认 env 即可
-# （VITE_YUNZHI_MOCK 缺省即 mock 本地上传，无云智 Bridge）。
+# 【5】桌面启动器（Windows 桌面机推荐，可选）—— 桌面端加载的是**桌面前端 frontend-desktop/**，与【3】的服务器前端完全隔离
+# 先构建桌面前端：
+#   cd frontend-desktop && npm install --registry=https://registry.npmmirror.com && npm run build
+# 再双击 desktop/desktop.bat —— 内部自动：检查模型齐全 → docker compose up -d db → uvicorn main:app
+# → 打开 WebView2 窗口加载桌面前端 dist（日志面板）→ 优雅关闭。启动器起后端时传 ZHIYING_FRONTEND=desktop 挂载桌面前端。
+# 首次使用还需：pip install -r desktop/requirements.txt（pywebview）；桌面快捷方式用 create_desktop_shortcut.vbs 生成。
 ```
 
 ---

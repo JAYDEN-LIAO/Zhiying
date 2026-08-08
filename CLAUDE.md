@@ -162,7 +162,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **NVDEC**: MJPEG pipe（~100KB/帧）默认启用，自动 fallback cv2。
 - **ReID 双层**: 在线 BoT-SORT with_reid（`config/botsort.yaml` `model: "models/yolo26n-cls.pt"` 本地外观模型——实测 ultralytics 8.4.115 的 `auto` 仍会从 GitHub 下载，故本地预置避免运行时下载）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠）; 缝合完成后修改需新建记录。
 - **编码预设**: fast/balanced/precise 三档控制分辨率 + batch（336×224 / 504×336 / 672×448），三档模板与默认档可在设置页覆盖；embedder 支持 `quantization` none/8bit/4bit（bitsandbytes, 需重启生效）。
-- **版本号与发布**: 版本唯一事实来源 `core/version.py` `__version__`；`/health` 返回 `version` 字段（服务器部署后核对运行版本）。发版用 `./bump minor|patch|0.24.0`（联动改 core/version.py + frontend/package.json + package-lock.json 两处，交互式确认提交信息/commit/tag/push，`git add .`）；git tag 必须 `v<__version__>` 与 version.py 完全一致。**部署（v0.25.1 起）**: 服务器 `bash deploy.sh v<tag>`（fetch → config 迁移 → checkout → requirements 变化才 pip → 前端 build → restart → 90s 健康检查）。**回滚限制**: config.yaml 已 gitignore，回退到 config 仍入库的老 tag（≤v0.25.0）会 checkout 冲突，正解是向前滚（出 bug 发下个 patch）；必须回退老 tag 时先还原服务器 config 备份。
+- **版本号与发布**: 版本唯一事实来源 `core/version.py` `__version__`；`/health` 返回 `version` 字段（服务器部署后核对运行版本）。发版用 `./bump minor|patch|0.24.0`（联动改 core/version.py + frontend/package.json + package-lock.json 两处，交互式确认提交信息/commit/tag/push，`git add .`）；git tag 必须 `v<__version__>` 与 version.py 完全一致。**⚠️ 后端任何改动（bug 修复/性能优化/管线重构/新功能上线）以及服务器前端改动（`frontend/` + `frontend-shared/`，会上服务器）都必须 `./bump` 发版打 tag——即使不立刻部署**（保持最新 tag = 当前可部署状态）；只有纯文档、注释、**桌面前端改动（`frontend-desktop/`，独立自由不发版，随后端版本走）**不需要 bump。**部署（v0.25.1 起）**: 服务器 `bash deploy.sh v<tag>`（fetch → config 迁移 → checkout → requirements 变化才 pip → 前端 build → restart → 90s 健康检查）。**回滚限制**: config.yaml 已 gitignore，回退到 config 仍入库的老 tag（≤v0.25.0）会 checkout 冲突，正解是向前滚（出 bug 发下个 patch）；必须回退老 tag 时先还原服务器 config 备份。
 - **存储卫生**: 删除必须走 `repository.delete_video`（StorageManager 清盘, 勿直接 `session.delete`）; 新增落盘路径必须登记进 `core/storage_manager.py`; 孤儿清扫手动（maintenance 端点/CLI, dry-run 默认）。判定: 视频文件按 DB 三列引用集合, 附属目录按 `video_id ∈ videos 表` —— 绝不用 scenes.keyframe_path（persist 窗口期会误删）。删除守卫: 404 守卫; **处理中视频允许删除**（v0.22 `core/cancellation` 登记, 管道 persist 前检查 `is_cancelled` 中止, 防写已删行 FK 异常; 已删除集合在管道结束后 `unmark_cancelled` 移除）。
 
 ## Database Tables (12)
@@ -238,6 +238,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 16. **Embedder encode resolution**: 编码分辨率三档预设（fast 336×224 / balanced 504×336 / precise 672×448），`encode_images_batch` 支持 per-call `target_size` 覆盖；PIL resize 8 线程并行，embedder 与 stream decode 分辨率保持一致。
 17. **Storage hygiene**: 删除视频必须走 `repository.delete_video`（内部由 StorageManager 按 DB 引用清盘，不要在路由里直接 `session.delete`）。新增会产生磁盘文件的功能，落盘路径模式必须登记进 `core/storage_manager.py`（视频文件按 DB 引用集合判定、附属目录按 video_id 判定），否则删除会残留。孤儿清扫用 `POST /maintenance/sweep`（dry-run 默认）或 `scripts/sweep_storage.py --apply`。
 18. **commit / tag / push / 服务器部署必须事前征得用户明确同意**: 改代码、本地验证随便做；但任何 git 写操作（commit/tag/push）与服务器部署（`bash deploy.sh` / 重启 systemd）都先问用户，用户点头才执行。**同一时刻只允许一个 agent 跑部署闭环**，防并发 bump 打架。
+19. **改前端必须先确认是哪个前端**: 本项目有**两个前端**——服务器前端 `frontend/`（v0.28 云智嵌入 UI，会上服务器、改动需 bump）与桌面前端 `frontend-desktop/`（v0.27 独立工作台，独立自由、改动不需 bump）。用户说「前端/界面/UI」时，若没明确指哪一端，**先反问确认再动手**，绝不猜着改错端。共享对接层 `frontend-shared/` 双端共用，改了影响两端（视为服务器侧改动）。
 
 ## Python Environment
 
