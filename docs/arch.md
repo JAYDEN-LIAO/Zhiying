@@ -6,6 +6,7 @@
 > v0.24: 云智(Yunzhi)平台接入（register-external + /internal/yunzhi/jobs 异步任务）+ 生产部署（systemd, 8011, pgvector:pg17, 静态托管前端）
 > v0.26: 平台文件 id → 视频自动跳转（videos.external_file_id + GET /videos/external/{file_id} + 前端 connect() 后自动打开对应视频）
 > v0.27: 搜索修正（统一 track 编号 + 范围 fail-closed + 车牌搜索修正）+ 车牌模糊搜索模式（字符归一化 + 前端「牌」模式按钮）
+> v0.28: 云智嵌入 UI 重构（移除侧边栏 / 导航上移 header / 参数历史右侧抽屉 / 搜索检测门控）
 
 ## System Data Flow
 
@@ -221,7 +222,7 @@ core/  models.py (12 表) · schemas.py (DTO) · repository.py (数据访问) ·
        cancellation.py (管道取消登记, 删除处理中视频后优雅中止)
        prompt_loader.py · status_tracker.py (进度) · interfaces.py (10 插件 ABC) · exceptions.py
 config/  config.yaml (server/db/storage/plugins/pipeline) · config_schema.py · prompts.yaml
-frontend/  Dashboard.tsx + components/ (20) + hooks/ (8) + labels.ts + services/api.ts + types/
+frontend/  Dashboard.tsx + components/ (19, v0.28 删 Sidebar) + hooks/ (8) + labels.ts + services/api.ts + types/
 utils/  video_util.py (FFmpeg) · metadata.py (三级元数据) · video_source.py (来源规则引擎)
 services/  video_service.py (管道调度) · format_service.py (remux/proxy) · export_service.py
 ```
@@ -301,6 +302,7 @@ videos
   ├─ ai_detect_result (JSONB)       — [残留] AI 生成检测结果（AICheck 服务已移除，此列保留但恒为 not_run）
   ├─ status_detail (管道实时操作描述)
   ├─ source_owned (Boolean, 默认 true; 平台共享文件= false → 删除不 unlink 源文件, v0.24)
+  ├─ external_file_id (Int, nullable, v0.26) — 云智平台文件库资源 ID，前端凭它自动跳转
   ├─ group_id (UUID FK → video_groups.id, nullable, v0.19) — NULL=单视频未分组
   └─ created_at, updated_at
 
@@ -426,9 +428,8 @@ plate_detections
 React 19 + Vite 6 + Tailwind CSS 4
   │
   ├── App.tsx                ← 根组件
-  ├── Dashboard.tsx          ← 主工作台 (~430 行, 状态编排 + group 状态 + detectionVideoId + header 下拉)
+  ├── Dashboard.tsx          ← 主工作台 (~430 行, 状态编排 + group 状态 + detectionVideoId + header 导航; v0.28 移除侧边栏)
   ├── components/
-  │   ├── Sidebar            ← 深色渐变导航栏: 页面切换 + 面板开关
   │   ├── ParameterPanel     ← 侧滑参数面板: 四级联动 (L1场景/L2感知/L3功能/L4高级)
   │   ├── PipelineBar        ← 动态阶段进度条 (根据开关渲染对应节点)
   │   ├── VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮

@@ -2,7 +2,7 @@
 
 ## One-Line Summary
 
-Zhiying 是 **视频分析引擎**（v0.24.0）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。**已接入云智(Yunzhi)平台**：前端 Bridge 文件选择（`register-external` 共享路径就地引用）+ 异步任务接口（`/internal/yunzhi/jobs` 202+进度/完成/失败回调）+ 平台文件 id 自动跳转（v0.26 `external_file_id` + `GET /videos/external/{file_id}`，前端凭 `context.resource.id` 直达对应视频详情）。`deploy/` 提供 Windows 裸机一键安装（从零部署）；requirements 已做多架构区分（Windows/Linux x86 装 onnxruntime-gpu，ARM64 如 DGX Spark/GB10 无该 wheel 自动装 CPU 版，人脸/车牌走 CPU）。**已部署到生产服务器 10.0.0.176（systemd `zhiying.service`，8011，部署走 git+tag：`./bump` 发版 → 服务器 `bash deploy.sh v<tag>`，config/config.yaml 已模板化不入库）**，运维参考见 `docs/server.md`（gitignored，含凭证）。架构细节见 `docs/arch.md`。
+Zhiying 是 **视频分析引擎**（v0.28.0）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。**已接入云智(Yunzhi)平台**：前端 Bridge 文件选择（`register-external` 共享路径就地引用）+ 异步任务接口（`/internal/yunzhi/jobs` 202+进度/完成/失败回调）+ 平台文件 id 自动跳转（v0.26 `external_file_id` + `GET /videos/external/{file_id}`，前端凭 `context.resource.id` 直达对应视频详情）。`deploy/` 提供 Windows 裸机一键安装（从零部署）；requirements 已做多架构区分（Windows/Linux x86 装 onnxruntime-gpu，ARM64 如 DGX Spark/GB10 无该 wheel 自动装 CPU 版，人脸/车牌走 CPU）。**已部署到生产服务器 10.0.0.176（systemd `zhiying.service`，8011，部署走 git+tag：`./bump` 发版 → 服务器 `bash deploy.sh v<tag>`，config/config.yaml 已模板化不入库）**，运维参考见 `docs/server.md`（gitignored，含凭证）。架构细节见 `docs/arch.md`。
 
 ## Quick File Map
 
@@ -76,8 +76,8 @@ config/config.yaml         — 机器相关主配置（gitignored、不入库，
 config/config_schema.py    — Pydantic config validation
 config/prompts.yaml        — Caption/Summarizer/Grounding prompt templates
 frontend/src/Dashboard.tsx — Main workspace (orchestrator, ~430 lines, hevcOk探测+proxy轮询+streamReady+group state+detectionVideoId+header dropdown + yunzhi 入口自动跳转 v0.26)
-frontend/src/components/    — Split components (20 files):
-                              icons, Sidebar, Header, SlideOutPanel,
+frontend/src/components/    — Split components (19 files):
+                              icons, Header, SlideOutPanel,
                               ParameterPanel, PipelineBar, VideoSection, VideoPlayer,
                               VideoSummaryCard, VideoSearchCard, HistoryPanelContent, SettingsPage,
                               DetectionOverlay, DetectionPanel, DetectionTimeline,
@@ -191,6 +191,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | 搜索范围 fail-closed | ✅ | 空 video_ids → 返回空（`if video_ids is not None`），不再塌缩成全库；前端搜索范围默认只当前视频 |
 | 车牌模糊搜索模式 | ✅ | core/search.py 车牌归一化（全角→半角/去分隔符/大写）+ 前端「牌」模式按钮（search_types=["plate"], top_k=100）—— 一个字列出所有相关；plate 按 (video_id, track_id) 独立去重 |
 | 统一 track 编号 | ✅ | bbox/时间轴/物体列表/搜索结果全部用原始 track_id（删除前端按类别重编号） |
+| 云智嵌入 UI (v0.28) | ✅ | 移除侧边栏（避免与平台重复）→ 导航上移 header（工作台/系统设置/参数/历史）；参数/历史抽屉改右侧滑出、低于 header；设置页点面板先跳工作台；搜索框按钮检测门控置灰 |
 | Face / Plate 识别 | ✅ | plugins/face/insightface_face.py, plugins/plate/hyperlpr_plate.py |
 | 双模式摘要 (native_video/vlm_llm) | ✅ | runners/caption.py, summary.py |
 | 多格式兼容 (remux + lazy proxy) | ✅ | services/format_service.py |
@@ -199,7 +200,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | 系统设置（API 密钥/服务商/存储/管道性能） | ✅ | core/settings_service.py, api/settings_routes.py — GET/PUT /settings（含 pipeline 段：编码三档模板/检测参数/量化/并发上限，settings.json backed，运行时生效） |
 | 参数预设 (v0.22) | ✅ | core/presets_service.py — GET/POST/PUT/DELETE /settings/presets + apply（data/presets.json 命名快照） |
 | 全局 GPU 锁 + 共享单实例 | ✅ | core/gpu_lock.py, main.py app.state.detector — embedder/YOLO 前向串行防驱动故障; 并发管道 max_concurrent_videos 限流 |
-| 前端 Dashboard (20 组件 + 8 hooks) | ✅ | Dashboard.tsx, components/ (SettingsPage 4 分区) |
+| 前端 Dashboard (19 组件 + 8 hooks) | ✅ | Dashboard.tsx, components/ (SettingsPage 4 分区) |
 | 元数据 / 来源分析 / 导出 | ✅ | utils/metadata.py, video_source.py, export_service.py |
 | Windows 从零部署 (v0.22) | ✅ | deploy/setup_windows.ps1 裸机一键安装器 + download_models.py (含 reid) + deploy_feedback.md; 配置统一自动降级 |
 | 删除处理中 + 管道取消 (v0.22) | ✅ | core/cancellation.py — 处理中视频允许删除，删除端点登记后管道 persist 前优雅中止（防写已删行 FK 异常） |
@@ -224,7 +225,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 8. **Four encoding paths**: Frame (encode_image), Chunk (config-gated, default disabled, -c copy + encode_video), Text (encode_text). All three reuse the shared embedder.
 9. **When adding new dependencies**: add to `requirements.txt` AND to `Dockerfile`.
 10. **Search result format**: All results include `precision_level` (frame/chunk/text/label), `precise_start/end` (text 也有 scene 起止作为锚点), `match_paths`, and `thumbnail_url`. Merge 时帧簇优先，text 与非重叠帧的 text 按路径权重排序。图搜使用独立 `search_image_only()` 路径：帧不做时间聚类、不补充 scene 信息，`precise_end=None` 表示单帧精确匹配。
-11. **Frontend**: Dashboard.tsx 编排所有状态（含组状态 videoGroups/detectionVideoId），组件在 `components/`（20 个）、hooks 在 `hooks/`（8 个）、标签/颜色映射在 `labels.ts`、类型在 `types/index.ts` 镜像后端 schema。
+11. **Frontend**: Dashboard.tsx 编排所有状态（含组状态 videoGroups/detectionVideoId），组件在 `components/`（19 个，v0.28 已删 Sidebar、导航上移 header）、hooks 在 `hooks/`（8 个）、标签/颜色映射在 `labels.ts`、类型在 `types/index.ts` 镜像后端 schema。
 12. **Detection gate pattern**: New perception modules that are optional should follow the dual-gate pattern: config-level enable/disable (`plugins.{name}.backend: yolo` vs `null`) AND per-video toggle (`detection_enabled` in PipelineParams). Gate function checks both. This allows server-wide opt-out while letting users control per-video.
 13. **Canvas overlay pattern**: The DetectionOverlay uses a `canvas` with `pointerEvents: "none"` for pure rendering, with click/mousemove handlers attached via native `addEventListener` to the parent container. This allows clicks to pass through to video controls while still enabling bbox interaction.
 14. **Video format handling**: 两层 — remux（容器标准化, -c copy）+ proxy（NVENC H.264, 按需懒生成）。Probe 同步(<100ms)，remux/proxy 异步。流端点走 `FormatService.get_stream_target(id, hevc_ok)`，前端 `canPlayType()` 探测 HEVC。Proxy 永不主动生成。

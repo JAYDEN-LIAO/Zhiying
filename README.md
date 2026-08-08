@@ -240,8 +240,8 @@ zhiying/
 │   │   └── zhiying.svg     # App logo
 │   ├── src/
 │   │   ├── Dashboard.tsx # Main workspace (~430 lines, orchestrates state + group state + detectionVideoId)
-│   │   ├── components/   # 20 UI components
-│   │   │   ├── Sidebar.tsx, Header.tsx, SlideOutPanel.tsx
+│   │   ├── components/   # 19 UI components
+│   │   │   ├── Header.tsx, SlideOutPanel.tsx
 │   │   │   ├── ParameterPanel.tsx, PipelineBar.tsx
 │   │   │   ├── VideoSection.tsx, VideoPlayer.tsx
 │   │   │   ├── VideoSummaryCard.tsx, VideoSearchCard.tsx
@@ -268,6 +268,7 @@ zhiying/
 
 ## Development Status
 
+- **v0.28 — 云智嵌入 UI 重构**: 移除侧边栏（避免与 yunzhi 平台重复）→ 导航上移 header（工作台/系统设置/参数面板/历史记录）；参数/历史抽屉改**右侧滑出**、高度低于 header；系统设置页点面板先跳回工作台；搜索框车牌/人脸按钮按**检测门控**置灰（未开启对应处理不可搜，通用图搜无限制）。
 - **v0.27 — 搜索修正 + 车牌模糊搜索模式**:
   - **统一 track 编号**: bbox / 时间轴 / 物体检测列表 / 搜索结果 全部使用原始 `track_id`（删除前端按类别重编号），四处编号一致。
   - **搜索范围 fail-closed**: 空 `video_ids` → 返回空（后端 `if video_ids is not None`），不再塌缩成"搜全库"；前端搜索范围默认只搜当前视频。
