@@ -31,8 +31,10 @@ curl -X POST -H "Content-Type: application/json" \
   http://localhost:8011/api/v1/search/semantic
 ```
 
-> **Note on API Keys**: Place keys in a `.env` file at project root (gitignored).  
-> Keys are only required when using the `vlm_llm` summary mode; the default `native_video` mode runs entirely on local GPU.
+> **Note on API Keys**: Place keys in a `.env` file at project root (gitignored)，或在前端设置页填写。  
+> **摘要默认 `vlm_llm`（API 模式）**，需要 DashScope（画面描述）+ DeepSeek（摘要）key。`native_video`（本地视频原生理解）已置灰退役。
+
+**Windows 桌面端**：环境就绪（`deploy/setup_windows.ps1` 装机 + 模型 + Docker + 前端 `npm run build`）后，双击 `desktop/desktop.bat`（或 `python desktop/app.py`）——启动器自动检查模型 → 起 Docker 库 → 起本地后端 → 打开桌面窗口加载前端。
 
 ## Windows 部署
 
@@ -96,10 +98,9 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
          ├─ [搜索路径]  Search Encode @1fps — 与 detection 共享 NVDEC 流 (队列消费)
          ├─ [摘要路径]  Scene Segmentation (TransNetV2) + Audio Transcription (faster-whisper)
          │    ├─ Keyframe Extraction @1fps (NVDEC MJPEG pipe / cv2 stream)
-         │    ├─ Captioning — 双模式 (runners/caption.py 内部策略):
-         │    │    ├─ native_video (默认): Qwen3-VL-8B 本地 GPU → 结构化 JSON
-         │    │    └─ vlm_llm (备选): Qwen-VL-Max API 看图说话
-         │    └─ Summarization — 双模式 (runners/summary.py 内部策略)
+         │    ├─ Captioning — vlm_llm API（默认；native_video 本地模式已置灰退役）:
+         │    │    └─ vlm_llm: Qwen-VL-Max API 看图说话
+         │    └─ Summarization — vlm_llm API（DeepSeek）默认；native_video 聚合器代码保留仅兼容历史
          ├─ Object Detection — YOLO11s + BoT-SORT (可选，双门控):
          │    └─ 逐帧检测 → 跨帧追踪 → 前端 Canvas 框选
          ├─ Embedding — 4 encoding paths (分辨率可配置, 3-档预设):
@@ -119,9 +120,9 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
          │    ├─ 引用追踪: 以 DB 三列 (file/remux/proxy) 判定, reuse 共享安全
          │    ├─ 删除: 404 守卫; 处理中可删 (cancellation 登记, 管道优雅中止)
          │    └─ sweep: 磁盘 vs DB 对账 (附属目录按 video_id, mtime 保护上传竞态)
-         └─ Shared GPU models (embedder + detector 预加载到 app.state; captioner 按需加载):
+         └─ Shared GPU models (embedder + detector 预加载到 app.state; captioner 走 API):
               ├─ Qwen3-VL-Embedding-8B (embedder, FP16, ~16GB, preloaded; 可选 8bit/4bit 量化)
-              ├─ Qwen3-VL-8B-Instruct (captioner, BF16, ~16GB, on-demand)
+              ├─ Qwen-VL-Max (captioner, DashScope API; 本地 captioner 8B 不再下载, native_video 已退役)
               ├─ YOLO11s (detector, ~2GB, 模型懒加载共享单实例)
               └─ SCRFD + ArcFace R50 (face recognizer, ONNX, preloaded)
          GPU 前向串行: 所有 embedder/YOLO 推理持 core/gpu_lock 全局锁
@@ -147,8 +148,8 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 | Vector Embedding | Qwen3-VL-Embedding-8B (local GPU, 可选 8bit/4bit 量化) |
 | Object Detection | YOLO11s (local GPU, 共享单实例 + 全局 GPU 锁串行) |
 | Object Tracking | BoT-SORT + 在线 ReID (with_reid=true, 本地 `models/yolo26n-cls.pt` 外观模型, 10fps, track_buffer=45, match_thresh=0.5) |
-| Captioning | Qwen3-VL-8B (local GPU, default) / Qwen-VL-Max (API, vlm_llm mode) |
-| Summarization | Pure Python aggregator (default) / DeepSeek Chat (API, vlm_llm mode) |
+| Captioning | Qwen-VL-Max (DashScope API, vlm_llm 默认; native_video 本地 8B 已退役) |
+| Summarization | DeepSeek Chat (API, vlm_llm 默认) / Pure Python aggregator (native_video, 仅兼容历史) |
 | Scene Segmentation | TransNetV2 / Time-based (fixed interval) |
 | Audio Transcription | faster-whisper (plugin ready, opt-in) |
 | Video Processing | FFmpeg (asyncio subprocess) |
@@ -262,6 +263,7 @@ zhiying/
 ├── data/                 # Video storage & artifacts + settings.json/presets.json (gitignored)
 ├── config/               # YAML config, prompts, schema
 ├── deploy/               # Windows 从零部署套件: setup_windows.ps1 一键安装器 / download_models.py / deploy.md / deploy_feedback.md
+├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开窗→日志面板→优雅关闭; desktop.bat 入口)
 ├── scripts/              # 运维工具: sweep_storage.py 存储清扫 CLI (默认 dry-run, --apply 执行) + bump_version.py 一键版本提升 + mock_yunzhi_platform.py (mock 平台回调服务器)
 └── docs/                 # Design documents + search architecture docs
 ```

@@ -94,7 +94,8 @@ deploy.sh 干的事:fetch tags → config 迁移(首次)→ checkout 版本 → 
 
 - 前端加平台开关:`VITE_APP_PLATFORM=server|desktop|web`(或类似 env 变量),组件里用 `usePlatform()` 判断。参考现有 `VITE_YUNZHI_MOCK` 的用法。
 - 服务器专属 UI 调整 → 进主线的构建档,服务器 build 时带上,而不是开"服务器修复分支"。
-- 桌面端 → 同一仓库加 `desktop/` 包(壳 + 打包),复用同一前端 dist。**只加不改**共享组件,避免动到对接人正在验证的部分。
+- 桌面端 → 同一仓库的 `desktop/` 包（**pywebview 启动器，非简单壳**）:Windows 桌面机（有 NVIDIA GPU）用它管理本地后端生命周期——检查模型齐全 → 起 uvicorn → 开 WebView2 窗口加载前端 dist → 日志面板 → 优雅关闭。入口 `desktop/desktop.bat`。复用同一前端 dist,**只加不改**共享组件,避免动到对接人正在验证的部分。
+- 桌面构建用默认 env 即可:`VITE_YUNZHI_MOCK` 缺省即 mock 本地上传（无云智 Bridge）。`native_video` 已置灰退役（摘要默认 vlm_llm, 前端不再可选, 后端保留兼容历史记录）——桌面与服务器一视同仁。
 - 不拆仓库、不用 git submodule——单人维护下 monorepo 最省心。
 
 ## 7. 与对接人协作(云智平台)

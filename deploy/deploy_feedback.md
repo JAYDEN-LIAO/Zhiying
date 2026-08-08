@@ -255,4 +255,14 @@
 
 ---
 
-*最后更新：2026-08-04（部署完成 + 配置统一 + 安装器重写）*
+## 【决策】桌面启动器 + native_video 退役（2026-08-08）
+
+- **摘要默认 `vlm_llm`（API 驱动）**；`native_video`（本地视频原生理解）**已置灰退役**：前端不再可选，默认走 vlm_llm。
+- **后端保留兼容历史记录**：`pipeline/runners/base.py::effective_summary_mode()` 在 captioner 后端为 `qwen_api` 时自动把 `native_video` 映射为 `vlm_llm`，旧视频仍正常处理。
+- **本地 captioner 8B（Qwen3-VL-8B-Instruct）不再下载**：`deploy/download_models.py` 本来就不含该项。
+- **桌面端形态 B**：新增 `desktop/` 包 —— Windows 桌面机（有 NVIDIA GPU）的 **pywebview 启动器**，管理本地后端生命周期（检查模型齐全 → 起 uvicorn → 开 WebView2 窗口加载前端 dist → 日志面板 → 优雅关闭），入口 `desktop/desktop.bat`。桌面构建用默认 env（`VITE_YUNZHI_MOCK` 缺省即 mock 本地上传，无云智 Bridge）；数据库用根目录 `docker-compose.yaml` 的 `db` 服务（pgvector:pg17）。
+- **只加不改**共享组件：桌面端复用同一前端 dist，避免动到对接人正在验证的部分。
+
+---
+
+*最后更新：2026-08-08（桌面启动器 + native_video 退役）*
