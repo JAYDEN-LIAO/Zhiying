@@ -17,7 +17,7 @@ export const ZH_LABELS: Record<string, string> = {
   "traffic light": "红绿灯",
   "fire hydrant": "消防栓",
   "stop sign": "停止标志",
-  parking_meter: "停车计时器",
+  "parking meter": "停车计时器",
   bench: "长椅",
   bird: "鸟",
   cat: "猫",
@@ -37,13 +37,13 @@ export const ZH_LABELS: Record<string, string> = {
   frisbee: "飞盘",
   skis: "滑雪板",
   snowboard: "滑雪板",
-  sports_ball: "球",
+  "sports ball": "球",
   kite: "风筝",
-  baseball_bat: "棒球棒",
-  baseball_glove: "棒球手套",
+  "baseball bat": "棒球棒",
+  "baseball glove": "棒球手套",
   skateboard: "滑板",
   surfboard: "冲浪板",
-  tennis_racket: "网球拍",
+  "tennis racket": "网球拍",
   bottle: "瓶子",
   "wine glass": "酒杯",
   cup: "杯子",
@@ -87,9 +87,11 @@ export const ZH_LABELS: Record<string, string> = {
   toothbrush: "牙刷",
 } as const;
 
-/** 传入英文 class_name → 返回中文（无匹配则返回原值） */
+/** 传入英文 class_name → 返回中文（无匹配则返回原值）。
+ *  兜底归一化：后端产出标准 COCO 空格类名（"parking meter"），若传入下划线变体
+ *  （"parking_meter"，历史数据/其它来源可能如此）先转空格再查，避免漏映射显示英文。 */
 export function zh(cls: string): string {
-  return ZH_LABELS[cls] ?? cls;
+  return ZH_LABELS[cls] ?? ZH_LABELS[cls.replace(/_/g, " ")] ?? cls;
 }
 
 /** 构造中文化标签文本，如 "人 #75" */
