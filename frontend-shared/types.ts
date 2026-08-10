@@ -175,6 +175,7 @@ export interface SearchResultItem {
   thumbnail_url: string | null;
   track_id?: number;
   class_name?: string;
+  display_seq?: number | null;
   bbox?: { x1: number; y1: number; x2: number; y2: number };
   plate_text?: string;
   plate_type?: string;
@@ -333,11 +334,14 @@ export interface Detection {
   bbox: { x1: number; y1: number; x2: number; y2: number };
   class_name: string;
   track_id: number;
+  /* 类内展示序号（每视频每类别 1..N；旧数据为 null → 前端回退 track_id）*/
+  display_seq?: number | null;
 }
 
 export interface Track {
   track_id: number;
   class_name: string;
+  display_seq?: number | null;
   first_seen: number;
   last_seen: number;
   frame_count: number;

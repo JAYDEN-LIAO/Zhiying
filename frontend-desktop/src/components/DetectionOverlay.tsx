@@ -46,6 +46,7 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
       if (cDet) {
         out.push({
           track_id: tid, class_name: fDet.class_name,
+          display_seq: fDet.display_seq ?? fDet.track_id,
           bbox: {
             x1: fDet.bbox.x1 + (cDet.bbox.x1 - fDet.bbox.x1) * t,
             y1: fDet.bbox.y1 + (cDet.bbox.y1 - fDet.bbox.y1) * t,
@@ -148,7 +149,7 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
       ctx.strokeRect(x, y, w, h);
       if (w > 24) {
         ctx.globalAlpha = alpha;
-        const label = zhLabel(det.class_name, det.track_id);
+        const label = zhLabel(det.class_name, det.display_seq ?? det.track_id);
         const fs = Math.max(10, Math.min(13, h * 0.35));
         ctx.font = `${fs}px system-ui, sans-serif`;
         const tw = ctx.measureText(label).width + 6;

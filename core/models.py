@@ -595,6 +595,10 @@ class FrameDetection(Base):
     class_name: Mapped[str] = mapped_column(
         String(64), nullable=False, comment="COCO 类别名，如 person/car/dog",
     )
+    display_seq: Mapped[int | None] = mapped_column(
+        Integer, nullable=True,
+        comment="类内展示序号（每视频每类别 1..N，persist 赋值；track_id 保持全局唯一）",
+    )
     confidence: Mapped[float] = mapped_column(
         Float, nullable=False, comment="YOLO 置信度 (0~1)",
     )
@@ -641,6 +645,10 @@ class Track(Base):
     class_name: Mapped[str] = mapped_column(
         String(64), nullable=False,
         comment="多数类别（track 跨帧投票得出）",
+    )
+    display_seq: Mapped[int | None] = mapped_column(
+        Integer, nullable=True,
+        comment="类内展示序号（每视频每类别 1..N，persist 赋值；track_id 保持全局唯一）",
     )
     first_seen: Mapped[float] = mapped_column(
         Float, nullable=False, comment="首次出现时间戳(秒)",
@@ -693,6 +701,10 @@ class TrackEmbedding(Base):
     )
     class_name: Mapped[str] = mapped_column(
         String(64), nullable=False, comment="COCO 类别名",
+    )
+    display_seq: Mapped[int | None] = mapped_column(
+        Integer, nullable=True,
+        comment="类内展示序号（每视频每类别 1..N，persist 赋值；track_id 保持全局唯一）",
     )
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(4096), nullable=True,

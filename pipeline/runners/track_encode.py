@@ -123,18 +123,24 @@ class TrackEncodeRunner(OperationRunner):
         new_tracks, new_frame_dets = self._stitch_tracks(tracks, frame_dets, pooled)
         logger.info("[TrackEncode] Track stitching enabled")
 
-        # ── 构建最终的 track_embeddings ──
+        # ── Phase 2.5: 每视频每类别 display_seq（类内 1..N；track_id 不变保持全局唯一）──
+        new_tracks, new_frame_dets = self._assign_display_seq(new_tracks, new_frame_dets)
+
+        # ── 构建最终的 track_embeddings（bbox/timestamp 取自最佳帧，供搜索缩略图裁剪）──
+        best_frames = pctx.ctx.track_best_frames or {}
         track_embeddings: list[dict] = []
         for t in new_tracks:
             tid = t["track_id"]
             emb = pooled.get(tid)
+            best = best_frames.get(tid) or {}
             if emb is not None:
                 track_embeddings.append({
                     "track_id": tid,
                     "class_name": t["class_name"],
+                    "display_seq": t.get("display_seq"),
                     "embedding": emb,
-                    "timestamp_sec": t["first_seen"],
-                    "bbox": None,
+                    "timestamp_sec": best.get("timestamp", t["first_seen"]),
+                    "bbox": best.get("bbox"),
                 })
 
         pctx.ctx.track_embeddings = track_embeddings
@@ -149,6 +155,35 @@ class TrackEncodeRunner(OperationRunner):
         )
 
     # ── 静态方法 ──
+
+    @staticmethod
+    def _assign_display_seq(
+        tracks: list[dict],
+        frame_dets: list[dict],
+    ) -> tuple[list[dict], list[dict]]:
+        """每视频每类别 display_seq：按 class 分组 → (first_seen, track_id) 排序 → 1..N。
+
+        **track_id 不变**（保持全局唯一，face/plate/导出/选中态零影响）；
+        display_seq 是纯展示字段，赋值到 tracks + frame_dets（同一映射），
+        track_embeddings 在调用方从 tracks 构建时自动带上。
+        """
+        from collections import defaultdict
+
+        by_class: dict[str, list[dict]] = defaultdict(list)
+        for t in tracks:
+            by_class[t["class_name"]].append(t)
+
+        seq_by_tid: dict[int, int] = {}
+        for cls, lst in by_class.items():
+            lst.sort(key=lambda t: (t.get("first_seen", 0), t.get("track_id", 0)))
+            for i, t in enumerate(lst, 1):
+                seq_by_tid[t["track_id"]] = i
+
+        for t in tracks:
+            t["display_seq"] = seq_by_tid.get(t["track_id"])
+        for d in frame_dets:
+            d["display_seq"] = seq_by_tid.get(d["track_id"])
+        return tracks, frame_dets
 
     @staticmethod
     def _stitch_tracks(

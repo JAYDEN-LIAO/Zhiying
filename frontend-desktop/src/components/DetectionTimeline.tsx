@@ -56,7 +56,7 @@ function buildRects(tracks: Track[]): { rects: Rect[]; laneCount: number } {
     segs.forEach((seg, si) => {
       rects.push({
         trackId: t.track_id, className: t.class_name,
-        color: colorOf(t.class_name), label: zhLabel(t.class_name, t.track_id),
+        color: colorOf(t.class_name), label: zhLabel(t.class_name, t.display_seq ?? t.track_id),
         start: seg.start, end: seg.end, lane,
         frameCount: t.frame_count, firstSeen: t.first_seen, lastSeen: t.last_seen,
         showLabel: si === 0,

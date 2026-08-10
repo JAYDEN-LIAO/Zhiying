@@ -65,6 +65,7 @@ class SearchResultItem(BaseModel):
     # Track 搜索专用字段
     track_id: int | None = None
     class_name: str | None = None
+    display_seq: int | None = None
     bbox: dict | None = None
 
 

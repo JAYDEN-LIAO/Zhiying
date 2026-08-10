@@ -18,7 +18,7 @@ export function VideoSearchCard({
 }: {
   video: VideoResponse | null;
   onSeekTo?: (start: number, end: number | null) => void;
-  onTrackResult?: (trackId: number, className: string, start: number) => void;
+  onTrackResult?: (videoId: string, trackId: number, className: string, start: number) => void;
   /* ── v0.19 组感知 ── */
   groupVideos?: string[];
   allVideos?: VideoListItem[];
@@ -368,9 +368,9 @@ export function VideoSearchCard({
                     onGroupVideoSwitch(item.video_id);
                   }
                   if (isTrack && item.track_id != null && item.precise_start != null) {
-                    onTrackResult?.(item.track_id, item.class_name ?? "", item.precise_start);
+                    onTrackResult?.(item.video_id, item.track_id, item.class_name ?? "", item.precise_start);
                   } else if (isPlate && item.precise_start != null) {
-                    if (item.track_id != null) onTrackResult?.(item.track_id, item.class_name ?? "", item.precise_start);
+                    if (item.track_id != null) onTrackResult?.(item.video_id, item.track_id, item.class_name ?? "", item.precise_start);
                     else onSeekTo?.(item.precise_start, null);
                   } else {
                     const ts = item.precise_start ?? item.scene_range_start;
@@ -402,7 +402,7 @@ export function VideoSearchCard({
                       </span>
                     </div>
                     {isTrack && item.class_name ? (
-                      <div className="sr-track">{zhLabel(item.class_name, item.track_id!)}</div>
+                      <div className="sr-track">{zhLabel(item.class_name, item.display_seq ?? item.track_id!)}</div>
                     ) : isPlate && item.plate_text ? (
                       <div className="sr-plate">{item.plate_text}</div>
                     ) : item.caption ? (

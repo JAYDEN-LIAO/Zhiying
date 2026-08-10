@@ -446,7 +446,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                       tUrl={tUrl}
                       thumbTs={thumbTs}
                       bbox={bbox}
-                      displayId={t.track_id}
+                      displayId={t.display_seq ?? t.track_id}
                       maxDuration={maxDuration}
                       isDropdownOpen={trackDropdown === t.track_id}
                       onTrackSelect={onTrackSelect}

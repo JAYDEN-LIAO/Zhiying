@@ -128,6 +128,11 @@ async def init_db():
             ADD COLUMN IF NOT EXISTS segments jsonb
         """))
 
+        # ── 增量迁移: display_seq 类内展示序号（每视频每类别 1..N, persist 赋值）──
+        await conn.execute(text("ALTER TABLE tracks ADD COLUMN IF NOT EXISTS display_seq int"))
+        await conn.execute(text("ALTER TABLE frame_detections ADD COLUMN IF NOT EXISTS display_seq int"))
+        await conn.execute(text("ALTER TABLE track_embeddings ADD COLUMN IF NOT EXISTS display_seq int"))
+
         # ── 增量迁移 v0.10: track 嵌入表 ──
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS track_embeddings (

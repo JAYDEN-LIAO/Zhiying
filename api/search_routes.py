@@ -82,6 +82,7 @@ async def search_semantic(
             thumbnail_url=r.get("thumbnail_url") or f"/api/v1/videos/{r['video_id']}/thumbnail/{r['scene_index']}",
             track_id=r.get("track_id"),
             class_name=r.get("class_name"),
+            display_seq=r.get("display_seq"),
             bbox=r.get("bbox"),
         )
         for r in results
@@ -249,6 +250,7 @@ async def search_image(
             thumbnail_url=r.get("thumbnail_url") or f"/api/v1/videos/{r['video_id']}/thumbnail/{r['scene_index']}",
             track_id=r.get("track_id"),
             class_name=r.get("class_name"),
+            display_seq=r.get("display_seq"),
             bbox=r.get("bbox"),
         )
         for r in results

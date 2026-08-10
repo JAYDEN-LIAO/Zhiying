@@ -20,6 +20,8 @@ interface Props {
   onClassFilterChange: (cls: string | null) => void;
   onTrackSelect: (trackId: number, className: string, seekTo?: number) => void;
   onSeekTo: (start: number, end: number | null) => void;
+  /* 搜索 track 结果点击：带 video_id（供 Dashboard 同步检测面板到结果视频）*/
+  onSearchTrackResult: (videoId: string, trackId: number, className: string, start: number) => void;
   /* ── v0.19 组感知 ── */
   groupVideos?: string[];
   videos?: VideoListItem[];
@@ -39,6 +41,7 @@ export function RightPanel({
   onClassFilterChange,
   onTrackSelect,
   onSeekTo,
+  onSearchTrackResult,
   groupVideos,
   videos,
   detectionVideoId,
@@ -71,8 +74,8 @@ export function RightPanel({
         <VideoSearchCard
           video={video}
           onSeekTo={(start, end) => onSeekTo(start, end)}
-          onTrackResult={(trackId, className, start) => {
-            onTrackSelect(trackId, className, start);
+          onTrackResult={(videoId, trackId, className, start) => {
+            onSearchTrackResult(videoId, trackId, className, start);
           }}
           groupVideos={groupVideos}
           allVideos={videos}

@@ -179,6 +179,7 @@ class SearchEngine:
             "video_id": str(track_emb.video_id),
             "track_id": track_emb.track_id,
             "class_name": track_emb.class_name,
+            "display_seq": track_emb.display_seq,
             "scene_index": 0,
             "precise_start": trk["first_seen"] if trk else track_emb.timestamp_sec,
             "precise_end": trk["last_seen"] if trk else None,

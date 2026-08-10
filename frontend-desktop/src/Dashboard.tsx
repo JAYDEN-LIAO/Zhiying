@@ -266,6 +266,16 @@ export default function Dashboard() {
     }
   }, [currentVideoId, videoGroups, detectionVideoId]);
 
+  /* ── 搜索 track 结果点击：切主视频 + 强制检测面板跟随结果视频（修复错位）── */
+  const handleSearchTrackResult = useCallback((videoId: string, trackId: number, className: string, start: number) => {
+    if (videoId && videoId !== currentVideoId) {
+      handleGroupVideoSwitch(videoId);
+    }
+    // 检测面板强制跟随主视频（= 结果视频），避免面板停在其它视频导致 track_id 错配
+    setDetectionVideoId(null);
+    handleTrackSelect(trackId, className, start);
+  }, [currentVideoId, handleGroupVideoSwitch, handleTrackSelect]);
+
   /* ── 上传文件 (单/多, Header 选择与拖拽共用) ── */
   const handleFiles = useCallback(async (fileList: FileList | File[]) => {
     const files = Array.from(fileList);
@@ -520,6 +530,7 @@ export default function Dashboard() {
               setDetectionVideoId(vid);
             }}
             onGroupVideoSwitch={handleGroupVideoSwitch}
+            onSearchTrackResult={handleSearchTrackResult}
             onSeekTo={(start, end) => {
               setSeekTarget({ start, end });
               // Direct seek in click context — avoids autoplay-blocked play()

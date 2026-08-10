@@ -400,6 +400,7 @@ async def bulk_insert_track_embeddings(
                 video_id=video_id,
                 track_id=r["track_id"],
                 class_name=r["class_name"],
+                display_seq=r.get("display_seq"),
                 embedding=r.get("embedding"),
                 timestamp_sec=r["timestamp_sec"],
                 bbox=r["bbox"],

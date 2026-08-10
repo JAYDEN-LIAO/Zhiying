@@ -95,6 +95,7 @@ def _build_tracks_data(
         data.append({
             "track_id": t.track_id,
             "class_name": t.class_name,
+            "display_seq": t.display_seq,
             "first_seen": t.first_seen,
             "last_seen": t.last_seen,
             "frame_count": t.frame_count,
@@ -174,6 +175,7 @@ async def get_detection_detections(
             "bbox": d.bbox,
             "class_name": d.class_name,
             "track_id": d.track_id,
+            "display_seq": d.display_seq,
         })
 
     return APIResponse(data={
