@@ -99,6 +99,14 @@ body {
   z-index: 15;
 }
 .header-left { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.header-version {
+  font-size: 10px; font-weight: 500; line-height: 1;
+  color: var(--color-accent-teal);
+  background: #ccfbf1; border: 1px solid #99f6e4;
+  border-radius: 999px; padding: 3px 7px;
+  white-space: nowrap; flex-shrink: 0;
+  user-select: none;
+}
 .header-title { font-size: 13px; font-weight: 500; color: var(--color-text-dim); }
 .header-title strong { color: var(--color-text-primary); font-weight: 600; }
 .header-stats-area {

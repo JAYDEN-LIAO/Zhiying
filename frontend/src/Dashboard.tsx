@@ -45,6 +45,16 @@ export default function Dashboard() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const jumpHandledRef = useRef(false); // 云智入口自动跳转只尝试一次
 
+  /* ── 版本号（header logo 右侧标签，取自 /health） ── */
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.getHealth()
+      .then((h) => { if (!cancelled) setAppVersion(h.version); })
+      .catch(() => {}); // 失败静默：不阻塞页面
+    return () => { cancelled = true; };
+  }, []);
+
   /* ── Group state (v0.19 多视频处理) ── */
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
   const [currentGroupVideos, setCurrentGroupVideos] = useState<string[]>([]);
@@ -495,7 +505,7 @@ export default function Dashboard() {
       )}
 
       {/* ── Header ── */}
-      <Header isUploading={isUploading} onUpload={handleUpload} currentPage={currentPage} activePanel={activePanel} onNavigate={navigate} onTogglePanel={togglePanel} statsBar={statsContent} />
+      <Header isUploading={isUploading} onUpload={handleUpload} currentPage={currentPage} activePanel={activePanel} onNavigate={navigate} onTogglePanel={togglePanel} statsBar={statsContent} appVersion={appVersion} />
 
       {/* ════════════════════════════════════════════════════════════
          Page content

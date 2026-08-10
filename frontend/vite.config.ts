@@ -13,6 +13,7 @@ export default defineConfig({
     proxy: {
       "/api": "http://localhost:8011",
       "/videos": "http://localhost:8011",
+      "/health": "http://localhost:8011",
     },
   },
 });

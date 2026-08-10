@@ -48,6 +48,13 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
    ════════════════════════════════════════════════════════════ */
 
 export const api = {
+  /* ── Health（根路径挂载，非 {code,message,data} 信封；返回 version 供 header 展示） ── */
+  async getHealth(): Promise<{ status: string; service: string; version: string; database: string }> {
+    const res = await fetch("/health");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  },
+
   /* ── List all videos ── */
   listVideos() {
     return request<VideoListItem[]>(`${BASE}/videos/`);

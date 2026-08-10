@@ -16,14 +16,18 @@ interface Props {
   onNavigate: (page: PageView) => void;
   onTogglePanel: (panel: PanelType) => void;
   statsBar?: React.ReactNode;
+  appVersion?: string | null;
 }
 
-export function Header({ isUploading, onUpload, currentPage, activePanel, onNavigate, onTogglePanel, statsBar }: Props) {
+export function Header({ isUploading, onUpload, currentPage, activePanel, onNavigate, onTogglePanel, statsBar, appVersion }: Props) {
   return (
     <header className="header">
-      {/* ── 左侧：logo + 标题 ── */}
+      {/* ── 左侧：logo + 版本号标签 + 标题 ── */}
       <div className="header-left">
         <img src="/zhiying.svg" alt="Zhiying" style={{ height: 36, width: "auto" }} />
+        {appVersion && (
+          <span className="header-version" title={`版本 ${appVersion}`}>v{appVersion}</span>
+        )}
         <div className="header-title relative w-[88px] h-5 overflow-hidden">
           <span
             className={`absolute inset-0 flex items-center transition-all duration-500 ease-out ${
