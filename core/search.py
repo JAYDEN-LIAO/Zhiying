@@ -196,22 +196,37 @@ async def plate_text_search(
 # 6. 人脸身份向量搜索（图片搜人脸 — ArcFace 512d）
 # ═══════════════════════════════════════════════════════════
 
+# 人脸搜索命中阈值 — 聚类在 face.py（同 track 0.30 / 跨 track 0.58 护栏式）。
+# 搜索比聚类略宽松（0.45 < 跨 track 0.58）：容忍查询图与身份代表脸的角度/光照小差异，
+# 且不引入误并（搜索只取 top-k + 按相似度排序，无"合并"副作用）。
+# 原单一 0.40 会把不同人并错进身份导致搜不到，见 face.py 注释。
+FACE_SEARCH_MIN_SIM = 0.45
+
 async def face_identity_search(
     session: AsyncSession,
     query_embedding: list[float],
     limit: int = 20,
     video_ids: list[str] | None = None,
-    min_similarity: float = 0.35,
+    min_similarity: float = FACE_SEARCH_MIN_SIM,
 ) -> list[tuple[FaceIdentity, float]]:
     """人脸身份搜索 — ArcFace 512d 查询向量 vs face_identities 表。
 
     similarity = 1 - cosine_distance，范围 (0, 1]。
+
+    v0.30 检索锚点：同时比 best_face_embedding（最典型单脸）与 face_embedding（均值），
+    取两者更高者。实测教训：单一锚点会漏——质量分高的单脸可能偏角度（人物N: 0.38 搜不到），
+    均值 0.634 却命中；反之均值可能被噪声拉偏时单脸更准。GREATEST 双锚取优，漏检最低。
     """
-    similarity = (1.0 - FaceIdentity.face_embedding.cosine_distance(query_embedding)).label("sim")
+    # 双锚：best 单脸与均值各自算相似度，GREATEST 取高；任一为 NULL 时用另一列。
+    best_col = FaceIdentity.best_face_embedding
+    mean_col = FaceIdentity.face_embedding
+    sim_best = (1.0 - best_col.cosine_distance(query_embedding))
+    sim_mean = (1.0 - mean_col.cosine_distance(query_embedding))
+    similarity = func.greatest(sim_best, sim_mean).label("sim")
     stmt = (
         select(FaceIdentity, similarity)
-        .where(FaceIdentity.face_embedding.isnot(None))
-        .where((1.0 - FaceIdentity.face_embedding.cosine_distance(query_embedding)) >= min_similarity)
+        .where(best_col.isnot(None) | mean_col.isnot(None))
+        .where(similarity >= min_similarity)
         .order_by(similarity.desc())
         .limit(limit)
     )

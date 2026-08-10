@@ -21,22 +21,37 @@ from core.interfaces import BaseFaceRecognizer
 logger = logging.getLogger(__name__)
 
 
+def _to_bgr(img: np.ndarray) -> np.ndarray:
+    """任意通道图像 → BGR（insightface 输入要求）。
+
+    - 3 通道: 假设 RGB（PIL/np 默认）→ 反转成 BGR
+    - 4 通道: RGBA，先丢 alpha 再转 BGR（透明像素按黑处理，避免 4 通道直喂崩溃）
+    - 2/1 通道: 视为灰度 → 复制到 3 通道 BGR（灰色各通道相等，无需反转）
+    """
+    if img.ndim == 2:
+        return np.stack([img, img, img], axis=-1)
+    if img.shape[-1] == 3:
+        return img[..., ::-1].copy()
+    if img.shape[-1] == 4:
+        return img[..., :3][..., ::-1].copy()
+    # 其它未知通道数：取前 3 通道兜底
+    return img[..., :3].astype(np.uint8).copy()
+
+
 class InsightFaceRecognizer(BaseFaceRecognizer):
     """InsightFace SCRFD + ArcFace R50 统一人脸分析器。
 
     参数从 config.yaml plugins.face.params 传入:
       - det_thresh:  SCRFD 检测阈值 (0~1)，默认 0.5
-      - rec_thresh:  ArcFace 识别阈值 (0~1)，默认 0.4（仅内部用，聚类由 FaceRunner 做）
+      （身份聚类阈值由 FaceRunner 统一控制，不在插件层；rec_thresh 已删除——从未传给 insightface）
     """
 
     def __init__(
         self,
         det_thresh: float = 0.5,
-        rec_thresh: float = 0.4,
         **kwargs,
     ) -> None:
         self._det_thresh = det_thresh
-        self._rec_thresh = rec_thresh
         self._app = None
 
     # ── 公开接口 ──
@@ -62,10 +77,7 @@ class InsightFaceRecognizer(BaseFaceRecognizer):
     def _sync_extract_best(self, image: np.ndarray) -> list[float] | None:
         if image is None or image.size == 0:
             return None
-        if image.shape[-1] == 3:
-            bgr = image[..., ::-1]
-        else:
-            bgr = image
+        bgr = _to_bgr(image)  # 任意通道 → BGR（RGBA 先丢 alpha）
         faces = self._app.get(bgr)
         if not faces:
             return None
@@ -88,8 +100,8 @@ class InsightFaceRecognizer(BaseFaceRecognizer):
             det_size=(640, 640),
         )
         logger.info(
-            "[InsightFace] buffalo_l loaded (det_thresh=%.2f, rec_thresh=%.2f)",
-            self._det_thresh, self._rec_thresh,
+            "[InsightFace] buffalo_l loaded (det_thresh=%.2f)",
+            self._det_thresh,
         )
 
     def _sync_extract(self, crops: list[np.ndarray]) -> list[list[dict]]:
@@ -101,10 +113,7 @@ class InsightFaceRecognizer(BaseFaceRecognizer):
                 continue
 
             # BGR 格式（insightface 需要 BGR 输入）
-            if crop.shape[-1] == 3:
-                bgr = crop[..., ::-1]  # RGB → BGR
-            else:
-                bgr = crop
+            bgr = _to_bgr(crop)  # 任意通道 → BGR
 
             faces = self._app.get(bgr)
             face_list: list[dict] = []

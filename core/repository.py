@@ -441,6 +441,8 @@ async def bulk_insert_face_identities(
                 last_seen=r["last_seen"],
                 avg_quality=r.get("avg_quality", 0.0),
                 face_embedding=r.get("face_embedding"),
+                best_face_embedding=r.get("best_face_embedding"),
+                best_track_id=r.get("best_track_id"),
                 best_face_timestamp=r.get("best_face_timestamp"),
                 best_face_bbox=r.get("best_face_bbox"),
                 best_face_path=r.get("best_face_path"),

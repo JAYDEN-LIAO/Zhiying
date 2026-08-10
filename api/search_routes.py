@@ -12,7 +12,7 @@ import logging
 import numpy as np
 from PIL import Image
 
-from fastapi import APIRouter, Depends, Request, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, Request, UploadFile, File, Form, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,15 +98,16 @@ async def search_semantic(
 @router.post("/search/face")
 async def search_face(
     file: UploadFile = File(...),
-    video_ids: str | None = None,
-    top_k: int = 20,
+    video_ids: str | None = Form(None),
+    top_k: int = Form(20),
     request: Request = None,
 ) -> APIResponse[list[dict]]:
     """上传人脸图片 → ArcFace R50 512d embedding → 比对 face_identities 表。
 
     Args:
         file:      人脸照片（JPEG/PNG，单张）
-        video_ids: 逗号分隔的 video UUID 列表，可选
+        video_ids: 逗号分隔的 video UUID 列表，可选（⚠️ form 字段，非 query；漏声明会导致
+                   前端 form-data 传参取不到 → None → 全库搜索数据泄漏，v0.30 修复）
         top_k:     返回结果数量上限
     """
     t0 = time.monotonic()
@@ -141,6 +142,29 @@ async def search_face(
 
     elapsed = (time.monotonic() - t0) * 1000
 
+    # 收集每个命中的身份的出现时间段（v0.30：身份 ↔ 时间回溯，供前端下钻）
+    from core.models import FaceDetection
+    identity_ids = [identity.id for identity, _ in results]
+    appearances_by_id: dict[int, list[dict]] = {}
+    if identity_ids:
+        async with request.app.state.db_session_factory() as session:
+            rows = await session.execute(
+                select(
+                    FaceDetection.identity_id,
+                    FaceDetection.timestamp_sec,
+                    FaceDetection.bbox,
+                    FaceDetection.track_id,
+                )
+                .where(FaceDetection.identity_id.in_(identity_ids))
+                .order_by(FaceDetection.timestamp_sec)
+            )
+            for identity_id, ts, bbox, track_id in rows:
+                appearances_by_id.setdefault(identity_id, []).append({
+                    "timestamp_sec": ts,
+                    "bbox": bbox,
+                    "track_id": track_id,
+                })
+
     items: list[dict] = []
     for identity, sim in results:
         items.append({
@@ -158,6 +182,7 @@ async def search_face(
                 f"/api/v1/videos/{identity.video_id}/face/thumbnail"
                 f"?identity_id={identity.id}"
             ),
+            "appearances": appearances_by_id.get(identity.id, []),
             "query_time_ms": elapsed,
         })
 
@@ -171,10 +196,10 @@ async def search_face(
 @router.post("/search/image")
 async def search_image(
     file: UploadFile = File(...),
-    video_ids: str | None = None,
-    search_types: str | None = None,
-    top_k: int = 20,
-    min_similarity: float = 0.3,
+    video_ids: str | None = Form(None),
+    search_types: str | None = Form(None),
+    top_k: int = Form(20),
+    min_similarity: float = Form(0.3),
     request: Request = None,
 ) -> APIResponse[SearchResults]:
     """上传任意图片 → Qwen3-VL-Embedding 4096-dim → 与 frame_embeddings 表向量匹配。
@@ -183,7 +208,8 @@ async def search_image(
 
     Args:
         file:          图片文件（JPEG/PNG/WebP）
-        video_ids:     逗号分隔的 video UUID 列表，可选
+        video_ids:     逗号分隔的 video UUID 列表，可选（⚠️ form 字段，非 query；漏声明会导致
+                       前端 form-data 传参取不到 → None → 全库搜索数据泄漏，v0.30 修复）
         search_types:  逗号分隔的检索路，默认 "frame,track"
         top_k:         返回结果数量上限
         min_similarity:最低相似度阈值

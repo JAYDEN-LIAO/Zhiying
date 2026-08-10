@@ -33,6 +33,22 @@ logger = logging.getLogger(__name__)
 CROP_EXPAND_RATIO = 1.3      # bbox 外扩比例 (每边 15%) — 与 track_encode 一致
 CROP_INTERVAL = 2.0          # track crop 缓存间隔 (秒) — 每 track 每 2s 存一帧供 track_encode
 
+# 人脸/车牌消费的最佳帧升级目标类：face 吃 person，plate 吃 vehicle。
+# 其余类 best 帧无人消费，升级纯浪费 ffmpeg 开销，保持 640×384 即可。
+VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
+
+
+def _best_frame_score(conf: float, bbox: dict) -> float:
+    """最佳帧启发式评分 — 置信度 × 目标面积加权。
+
+    人脸/车牌识别希望目标尽量大（近景）+ 检测置信高；
+    纯置信度容易选到小目标/背影帧（低分辨率下识别率差）。
+    面积项 (0.3 + area) 让近景大目标优先，area∈(0,1)。
+    """
+    bw = max(0.0, bbox["x2"] - bbox["x1"])
+    bh = max(0.0, bbox["y2"] - bbox["y1"])
+    return conf * (0.3 + bw * bh)
+
 
 def _expand_crop(frame: np.ndarray, bbox: dict) -> np.ndarray:
     """bbox 外扩 30% 后裁剪，clamp 到画面边界。与 track_encode 版本一致。"""
@@ -229,7 +245,13 @@ class DetectionRunner(OperationRunner):
 
         pctx.ctx.frame_detections = frame_detections
         pctx.ctx.tracks = ctx_tracks
-        pctx.ctx.track_best_frames = best_cache  # 640×384 检测帧，track_encode 裁剪质量足够
+
+        # person/vehicle 最佳帧升级为全分辨率（face/plate 消费；track_encode 不受影响）
+        try:
+            await self._upgrade_best_frames(video_path, best_cache, tracks_map)
+        except Exception as e:
+            logger.warning("[DetectionRunner] Best-frame upgrade skipped: %s", e)
+        pctx.ctx.track_best_frames = best_cache
 
         # 注意：entity 聚合已移至 engine._persist() —
         # 此时 scenes 可能尚未就绪（detection 不依赖 segmentation），
@@ -258,7 +280,8 @@ class DetectionRunner(OperationRunner):
         """处理一批帧：检测+追踪 → 累加到 frame_detections + tracks_map + best_cache。
 
         frames: 640×384 RGB 检测帧（stream_frames 输出，已缩放+BGR→RGB 转换）。
-        best_cache 存储检测分辨率帧占位，后续由 _upgrade_best_frames 替换为全分辨率。
+        best_cache 暂存 640×384 检测帧占位；run() 收尾时由 _upgrade_best_frames
+        对 person/vehicle track 精确 seek 替换为全分辨率帧（人脸/车牌识别用）。
         """
         batch_dets = await detector.detect(frames)
 
@@ -297,14 +320,16 @@ class DetectionRunner(OperationRunner):
                     if trk["segments"]:
                         trk["segments"][-1]["end"] = float(timestamp)
 
-                # 维护最佳帧缓存（检测分辨率 640×384，track_encode 裁剪质量足够）
-                conf = t["confidence"]
-                if tid not in best_cache or conf > best_cache[tid]["conf"]:
+                # 维护最佳帧缓存（检测分辨率 640×384 占位，收尾升级为全分辨率）。
+                # 评分 = 置信度 × 目标面积加权 → 近景大目标（脸/车牌大）优先于小目标高置信。
+                score = _best_frame_score(t["confidence"], t["bbox"])
+                if tid not in best_cache or score > best_cache[tid]["score"]:
                     best_cache[tid] = {
                         "frame": frames[i],
                         "bbox": t["bbox"],
                         "timestamp": float(timestamp),
-                        "conf": conf,
+                        "conf": t["confidence"],
+                        "score": score,
                     }
 
                 # 维护 track crop 缓存（每 CROP_INTERVAL 秒一帧，track_encode 零 seek 读取）
@@ -317,6 +342,66 @@ class DetectionRunner(OperationRunner):
                     crop = _expand_crop(frames[i], t["bbox"])
                     if crop.size > 0 and crop.shape[0] > 4 and crop.shape[1] > 4:
                         buf.append((float(timestamp), crop))
+
+    @staticmethod
+    async def _upgrade_best_frames(
+        video_path: str,
+        best_cache: dict[int, dict],
+        tracks_map: dict[int, dict],
+    ) -> int:
+        """将 person/vehicle track 的最佳帧升级为全分辨率帧。
+
+        检测流固定 640×384（stream_frames 输出，省带宽/解码开销），
+        直接从中切 person crop 做人脸识别分辨率太低（人脸可能只有几十像素），
+        车牌同理。此处按 best 帧时间戳 ffmpeg 精确 seek 提取全分辨率帧替换占位。
+
+        - 只升级 face/plate 真正消费的类（person / vehicle），其余类无人读帧，跳过省时间。
+        - bbox 为归一化坐标（0-1），crop 时按 frame.shape 换算 →
+          换全分辨率帧后 face/plate 自动受益，track_encode 只读 timestamp/bbox 不受影响。
+        - 失败静默降级：单 track 提取失败保留 640×384 原帧，不阻塞管道。
+
+        Returns:
+            成功升级的 track 数。
+        """
+        from utils.video_util import extract_keyframe_to_memory
+
+        upgrade_tids = [
+            tid for tid, trk in tracks_map.items()
+            if trk["class_name"] == "person" or trk["class_name"] in VEHICLE_CLASSES
+        ]
+        if not upgrade_tids:
+            return 0
+
+        sem = asyncio.Semaphore(4)  # 限制并发 ffmpeg，避免大量进程争抢 IO
+        upgraded = 0
+
+        async def _one(tid: int) -> None:
+            nonlocal upgraded
+            cache = best_cache.get(tid)
+            if not cache or cache.get("full_res"):
+                return
+            ts = cache.get("timestamp")
+            if ts is None:
+                return
+            async with sem:
+                try:
+                    frame = await extract_keyframe_to_memory(video_path, ts)
+                    cache["frame"] = frame
+                    cache["full_res"] = True
+                    upgraded += 1
+                except Exception as e:
+                    logger.warning(
+                        "[DetectionRunner] Full-res upgrade failed for track %d @%.1fs: %s",
+                        tid, ts, e,
+                    )
+
+        await asyncio.gather(*(_one(tid) for tid in upgrade_tids))
+        if upgraded:
+            logger.info(
+                "[DetectionRunner] Upgraded %d/%d best frames to full resolution",
+                upgraded, len(upgrade_tids),
+            )
+        return upgraded
 
 
 def _get_search_target(pctx, pipeline_cfg: dict) -> tuple[int, int]:

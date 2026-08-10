@@ -56,7 +56,23 @@ async def get_face_data(
         return APIResponse(data={
             "has_face": False,
             "identities": [],
+            "track_to_identity": {},
         })
+
+    # v0.30: 构建 track_id → identity_label 映射（前端 person track 条目显示身份标签，
+    # 与车牌显示车牌号对称；替代无信息的 👤 emoji）
+    from core.models import FaceDetection
+    id_by_label = {fi.identity_label: fi.id for fi in db_identities}
+    track_map: dict[int, dict] = {}
+    trk_result = await db.execute(
+        select(FaceDetection.track_id, FaceDetection.identity_id)
+        .where(FaceDetection.video_id == video_id)
+        .where(FaceDetection.identity_id.isnot(None))
+    )
+    for trk_id, ident_id in trk_result:
+        if trk_id in track_map:
+            continue  # 每 track 只记一个身份（该 track 的主身份）
+        track_map[trk_id] = {"identity_id": ident_id}
 
     # 3. 构建身份摘要
     identities_data = [
@@ -80,6 +96,7 @@ async def get_face_data(
     return APIResponse(data={
         "has_face": True,
         "identities": identities_data,
+        "track_to_identity": track_map,
     })
 
 

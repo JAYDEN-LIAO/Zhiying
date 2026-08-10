@@ -185,6 +185,19 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS ix_face_identities_video
             ON face_identities (video_id)
         """))
+        # ── 增量迁移 v0.30: 人脸身份检索锚点升级（最佳单脸 + 来源 track 映射）──
+        await conn.execute(text("""
+            ALTER TABLE face_identities
+            ADD COLUMN IF NOT EXISTS best_face_embedding vector(512)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE face_identities
+            ADD COLUMN IF NOT EXISTS best_track_id INTEGER
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_face_identities_best_track
+            ON face_identities (best_track_id)
+        """))
 
         # ── 增量迁移 v0.11: 逐帧人脸检测表 ──
         await conn.execute(text("""

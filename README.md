@@ -64,9 +64,11 @@ curl -X POST -H "Content-Type: application/json" \
 | Multi-Format Video Support | Remux + Lazy H.264 Proxy (NVENC) + smart stream routing | ✅ |
 | Semantic Search (6-path: frame+chunk+text+label+track+plate) | `POST /api/v1/search/semantic` | ✅ |
 | Object Detection + Tracking | YOLO11s + BoT-SORT (10fps, batch128, 640px) + Canvas overlay | ✅ |
-| Face Recognition | SCRFD + ArcFace R50 (512d) identity clustering | ✅ |
+| Face Recognition | SCRFD + ArcFace R50 (512d) identity clustering（v0.29: 护栏式双阈值聚类 + 多帧采样 + 最典型脸锚点） | ✅ |
 | License Plate Recognition | HyperLPR3 (ONNX Runtime) detection + text recognition | ✅ |
-| Face Image Search | `POST /api/v1/search/face` (upload image → ArcFace 512d) | ✅ |
+| Face Image Search | `POST /api/v1/search/face` (upload image → ArcFace 512d; v0.29 双锚检索 + 返回 appearances 时间段) | ✅ |
+| 搜索数据隔离 | search/face + search/image 严格按 video_ids 过滤（v0.29 修复 form 参数泄漏全库 bug） | ✅ |
+| 五种搜索样式统一 | 语义/图搜/物体/车牌/人脸统一 sr-item 卡片（标签右上角 + 主体1行 + 导出展开式） | ✅ |
 | Universal Image Search | `POST /api/v1/search/image` (upload any image → Qwen3-VL-Embedding 4096-dim → frame_embeddings) | ✅ |
 | Plate Text Search（模糊模式） | `POST /api/v1/search/semantic`（plate path: Levenshtein + ILIKE + 字符归一化；前端「牌」模式按钮 → 一个字列出所有相关车牌） | ✅ |
 | Track Thumbnail Download | `GET /api/v1/videos/{id}/export/track/{tid}/thumbnail` | ✅ |
@@ -274,6 +276,7 @@ zhiying/
 
 ## Development Status
 
+- **v0.29 — 人脸识别链路重构 + 搜索隔离 + 前端搜索样式统一**: 人脸聚类改护栏式双阈值（同track 0.30/跨track 0.58，替代单一 0.60 拆碎/0.40 并错）；多帧采样提脸 + 最典型脸作检索锚；detection 全分辨率帧升级；修复 search/face + search/image 的 video_ids 泄漏全库 bug（form 参数改 Form 声明）；五种搜索（语义/图搜/物体/车牌/人脸）统一 sr-item 卡片样式（标签右上角 + 主体1行 + 导出展开式）；人脸并入物体检测下拉栏。
 - **进行中（未发版）— 桌面端 + 双前端共存**: `desktop/` pywebview 启动器 + `frontend-desktop/` 桌面独立前端 + `frontend-shared/` 共享对接层；摘要默认 vlm_llm（native_video 置灰退役）。详见 `docs/develop.md §6`。
 - **v0.28 — 云智嵌入 UI 重构**: 移除侧边栏（避免与 yunzhi 平台重复）→ 导航上移 header；参数/历史抽屉改右侧滑出；设置页点面板先跳回工作台；搜索框车牌/人脸按钮按检测门控置灰。
 - **v0.27 — 搜索修正 + 车牌模糊搜索模式**: 统一 track 编号；搜索范围 fail-closed；车牌归一化 + 编辑距离 + 「牌」模式（单字列出所有相关车牌）。

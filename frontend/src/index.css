@@ -285,12 +285,12 @@ body {
 .dtc-item { display: flex; align-items: center; gap: 10px; padding: 14px 12px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
 .dtc-item:hover { background: var(--color-surface); }
 .dtc-item.sel {
-  background: rgba(255, 215, 0, 0.10);
-  border-color: rgba(255, 215, 0, 0.5);
-  box-shadow: inset 3px 0 0 #FFD700;   /* 左侧金色条，与时间轴选中色一致 */
+  background: rgba(255, 215, 0, 0.12);          /* 淡金底，显眼不夸张 */
+  border-color: rgba(255, 215, 0, 0.6);
+  box-shadow: inset 3px 0 0 #FFD700;            /* 左侧金条，与视频框/时间轴选中色一致 */
 }
-.dtc-item.sel .dtc-id { color: #FFD700; font-weight: 700; }
-.dtc-item.sel .dtc-time { color: #B45309; font-weight: 600; }
+.dtc-item.sel .dtc-id { color: #B45309; font-weight: 700; }
+.dtc-item.sel .dtc-time { color: #92400E; font-weight: 600; }
 .dtc-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .dtc-info { flex: 1; min-width: 0; }
 .dtc-name { font-size: 12px; font-weight: 600; color: var(--color-text-primary); display: flex; align-items: center; gap: 4px; }
@@ -299,7 +299,7 @@ body {
 .dtc-plate { font-size: 11px; font-weight: 700; color: var(--color-accent-teal); font-family: var(--font-mono); letter-spacing: 0.6px; }
 .dtc-plt { font-size: 8px; padding: 1px 4px; border-radius: 2px; font-weight: 600; }
 .dtc-plt.blue { background: rgba(37,99,235,0.1); color: #2563eb; }
-.dtc-face { width: 12px; height: 12px; color: var(--color-accent-purple); flex-shrink: 0; }
+.dtc-face { font-size: 10px; font-weight: 500; color: var(--color-accent-purple); background: rgba(124,58,237,0.08); border-radius: 4px; padding: 1px 5px; margin-left: 4px; flex-shrink: 0; line-height: 1.4; }
 .dtc-bar { width: 60px; height: 4px; border-radius: 2px; background: #e8ecf0; position: relative; flex-shrink: 0; overflow: hidden; }
 .dtc-bar-fill { height: 100%; border-radius: 2px; min-width: 2px; }
 
@@ -324,13 +324,17 @@ body {
 .sr-thumb { width: 52px; height: 39px; border-radius: 4px; background: rgba(0,0,0,0.03); flex-shrink: 0; border: 1px solid var(--color-border-light); overflow: hidden; }
 .sr-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .sr-c { flex: 1; min-width: 0; }
-.sr-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sr-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }  /* 物体/人脸标签紧跟时间，右侧置信度+类型 */
 .sr-time { font-size: 10px; font-family: var(--font-mono); color: var(--color-accent-blue); font-weight: 500; }
-.sr-score { font-size: 10px; font-family: var(--font-mono); color: var(--color-accent-amber); font-weight: 600; }
-.sr-type { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 500; }
-.sr-type.track { background: rgba(217,119,6,0.07); color: #d97706; }
-.sr-type.frame { background: rgba(124,58,237,0.07); color: #7c3aed; }
-.sr-type.plate { background: rgba(13,148,136,0.07); color: #0d9488; }
+.sr-score { font-size: 10px; font-family: var(--font-mono); color: var(--color-accent-amber); font-weight: 600; margin-left: auto; }  /* 推到右上角，类型标签左侧 */
+.sr-type { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 500; }  /* 在置信度右侧 */
+.sr-type.semantic { background: rgba(59,130,246,0.08); color: #3b82f6; }  /* 画面定位=蓝 */
+.sr-type.image { background: rgba(13,148,136,0.08); color: #0d9488; }      /* 图片搜索=teal(与图搜按钮一致) */
+.sr-type.track { background: rgba(225,29,72,0.08); color: #e11d48; }      /* 物体定位=玫红 */
+.sr-type.plate { background: rgba(217,119,6,0.08); color: #d97706; }      /* 车牌搜索=琥珀(与车牌按钮一致) */
+.sr-type.face { background: rgba(124,58,237,0.08); color: #7c3aed; }      /* 人脸搜索=紫(与人脸按钮一致) */
+.sr-appearances { border-left: 2px solid rgba(139,92,246,0.15); padding-left: 8px; }
+.sr-tag { font-size: 10px; font-weight: 600; font-family: var(--font-mono); color: var(--color-text-primary); }  /* 行内物体/人脸标签（小字号，紧跟时间） */
 .sr-text { font-size: 11px; color: var(--color-text-secondary); line-height: 1.4; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .sr-track { font-size: 12px; font-weight: 600; color: var(--color-text-primary); font-family: var(--font-mono); margin-top: 2px; }
 .sr-plate { font-size: 13px; font-weight: 700; color: var(--color-accent-teal); font-family: var(--font-mono); letter-spacing: 1px; margin-top: 2px; }

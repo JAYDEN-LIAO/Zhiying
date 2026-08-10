@@ -37,10 +37,14 @@ export function VideoSearchCard({
   const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(
     () => new Set(currentVideoId ? [currentVideoId] : []),
   );
-  const [dlTrackId, setDlTrackId] = useState<number | null>(null);
   const [faceSearching, setFaceSearching] = useState(false);
   const [faceResults, setFaceResults] = useState<FaceSearchResult[]>([]);
+  const [expandedFace, setExpandedFace] = useState<number | null>(null); // 展开某身份的全部出现时间段
+  const [faceExportOpen, setFaceExportOpen] = useState<number | null>(null); // 人脸"导出"展开的 identity_id
+  const [trackExportOpen, setTrackExportOpen] = useState<number | null>(null); // 物体"导出"展开的 track_id
   const [imageSearching, setImageSearching] = useState(false);
+  // v0.30: 当前结果来自哪种搜索（决定 sr-type 标签；语义=frame/text/chunk/track/plate 混合）
+  const [searchMode, setSearchMode] = useState<"semantic" | "image" | "face">("semantic");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
@@ -105,7 +109,7 @@ export function VideoSearchCard({
 
   const handleFaceFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
-    setFaceSearching(true); setError(null);
+    setFaceSearching(true); setError(null); setSearchMode("face");
     try { setFaceResults(await api.searchFace(file, searchVideoIds)); }
     catch (err) { setError(err instanceof Error ? err.message : "人脸搜索失败"); }
     finally { setFaceSearching(false); if (fileInputRef.current) fileInputRef.current.value = ""; }
@@ -114,7 +118,7 @@ export function VideoSearchCard({
   /* ── 通用图搜 ── */
   const handleImageSearch = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
-    setImageSearching(true); setError(null); setFaceResults([]);
+    setImageSearching(true); setError(null); setFaceResults([]); setSearchMode("image");
     try {
       const data = await api.searchImage(file, {
         video_ids: searchVideoIds,
@@ -131,7 +135,8 @@ export function VideoSearchCard({
 
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return;
-    setResults([]); setSearching(true); setError(null);
+    setResults([]); setSearching(true); setError(null); setFaceResults([]);
+    setSearchMode("semantic"); // 语义搜索（含帧/物体/车牌）
     try {
       const data = await api.searchSemantic(query.trim(), {
         video_ids: searchVideoIds,
@@ -306,27 +311,78 @@ export function VideoSearchCard({
         {/* Error */}
         {error && <div className="mb-2 p-2 rounded-lg bg-red-50 border border-red-100 text-[10px] text-red-600">{error}</div>}
 
-        {/* Face search results */}
+        {/* Face search results（v0.30: 与语义/车牌搜索统一 sr-item 骨架；方案A=点卡片主体展开出现列表） */}
         {faceResults.length > 0 && (
-          <div className="mb-2">
-            <div className="face-hd">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><circle cx="9" cy="9" r="3" /><path d="M1 20v-1a6 6 0 0112 0v1" /></svg>
-              <span>人脸匹配 · {faceResults.length} 人</span>
+          <div className="sr">
+              {faceResults.map((fr) => {
+                const isExpanded = expandedFace === fr.identity_id;
+                const appearances = fr.appearances ?? [];
+                return (
+                  <div key={`${fr.video_id}-${fr.identity_id}`} className="sr-item"
+                    onClick={() => {
+                      if (isExpanded) { setExpandedFace(null); return; }
+                      if (appearances.length > 1) { setExpandedFace(fr.identity_id); return; }
+                      if (fr.best_face_timestamp != null) onSeekTo?.(fr.best_face_timestamp, null);
+                    }}
+                  >
+                    <div className="sr-top">
+                      <div className="sr-thumb">
+                        {fr.thumbnail_url ? <img src={fr.thumbnail_url} alt="" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} /> : (
+                          <div className="w-full h-full flex items-center justify-center text-gray-300"><span className="text-base">👤</span></div>
+                        )}
+                      </div>
+                      <div className="sr-c">
+                        <div className="sr-meta">
+                          <span className="sr-time">
+                            {formatSec(fr.first_seen)}
+                            {fr.last_seen != null && fr.last_seen !== fr.first_seen ? ` – ${formatSec(fr.last_seen)}` : ""}
+                          </span>
+                          <span className="sr-tag" style={{ color: "#8b5cf6" }}>{fr.identity_label}</span>
+                          <span className="sr-score">{fr.similarity != null ? Math.round(fr.similarity * 100) + "%" : ""}</span>
+                          <span className="sr-type face">人脸搜索</span>
+                        </div>
+                        <div className="sr-acts" onClick={(e) => e.stopPropagation()}>
+                          {faceExportOpen !== fr.identity_id ? (
+                            <button className="sr-act" onClick={() => setFaceExportOpen(fr.identity_id)}>
+                              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>导出
+                            </button>
+                          ) : (
+                            <>
+                              {fr.thumbnail_url && (
+                                <button className="sr-act" onClick={() => { setFaceExportOpen(null); window.open(fr.thumbnail_url!, "_blank"); }}>
+                                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>导出缩略图
+                                </button>
+                              )}
+                              {(() => {
+                                const firstTid = appearances.find((ap) => ap.track_id != null)?.track_id;
+                                return firstTid != null ? (
+                                  <button className="sr-act" onClick={() => { setFaceExportOpen(null); window.open(api.getTrackExportUrl(fr.video_id, firstTid, true, firstTid), "_blank"); }}>
+                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>导出轨迹视频
+                                  </button>
+                                ) : null;
+                              })()}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    {isExpanded && appearances.length > 1 && (
+                      <div className="sr-appearances mt-1 pl-[60px]">
+                        {appearances.map((ap, ai) => (
+                          <button key={ai}
+                            onClick={(e) => { e.stopPropagation(); onSeekTo?.(ap.timestamp_sec, null); setExpandedFace(null); }}
+                            className="block w-full text-left text-[10px] text-gray-500 hover:text-teal-600 px-1 py-0.5 rounded cursor-pointer"
+                          >
+                            <span className="text-teal-500">▶</span> {formatSec(ap.timestamp_sec)}
+                            {ap.track_id != null && <span className="text-gray-400"> · track {ap.track_id}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            {faceResults.map((fr) => (
-              <button key={`${fr.video_id}-${fr.identity_id}`}
-                onClick={() => { if (fr.best_face_timestamp != null) onSeekTo?.(fr.best_face_timestamp, null); }}
-                className="face-item w-full text-left cursor-pointer"
-              >
-                <div className="face-thumb">{fr.thumbnail_url ? <img src={fr.thumbnail_url} alt="" /> : <span>👤</span>}</div>
-                <div className="face-info">
-                  <div className="face-name">{fr.identity_label} <span className="face-sim">{fr.similarity.toFixed(2)}</span></div>
-                  <div className="face-detail">{fr.face_count} 次 · {fr.first_seen.toFixed(1)}s – {fr.last_seen.toFixed(1)}s</div>
-                </div>
-              </button>
-            ))}
-            <div className="h-px bg-gray-100 my-2" />
-          </div>
         )}
 
         {faceSearching && (
@@ -349,6 +405,15 @@ export function VideoSearchCard({
           {results.map((item, idx) => {
             const isTrack = item.precision_level === "track";
             const isPlate = item.precision_level === "plate";
+            // v0.30: 统一标签——图搜=图片搜索(teal)；语义按精度分=画面定位(蓝)/物体定位(玫红)/车牌搜索(琥珀)
+            const typeLabel = searchMode === "image" ? "图片搜索"
+              : isTrack ? "物体定位"
+              : isPlate ? "车牌搜索"
+              : "画面定位";
+            const typeClass = searchMode === "image" ? "image"
+              : isTrack ? "track"
+              : isPlate ? "plate"
+              : "semantic";
             return (
               <div key={isTrack ? `track-${item.track_id}` : isPlate ? `plate-${item.video_id}-${item.track_id}-${idx}` : (item.scene_id || idx)}
                 className="sr-item"
@@ -386,28 +451,28 @@ export function VideoSearchCard({
                             : "";
                         })()}
                       </span>
+                      {isTrack && item.class_name ? (
+                        <span className="sr-tag">{zhLabel(item.class_name, item.display_seq ?? item.track_id!)}</span>
+                      ) : isPlate && item.plate_text ? (
+                        <span className="sr-tag" style={{ color: "#d97706" }}>{item.plate_text}</span>
+                      ) : null}
                       {item.similarity != null && <span className="sr-score">{Math.round(item.similarity * 100)}%</span>}
-                      <span className={`sr-type ${isTrack ? "track" : isPlate ? "plate" : "frame"}`}>
-                        {isTrack ? "物体定位" : isPlate ? "车牌" : "帧定位"}
-                      </span>
+                      <span className={`sr-type ${typeClass}`}>{typeLabel}</span>
                     </div>
-                    {isTrack && item.class_name ? (
-                      <div className="sr-track">{zhLabel(item.class_name, item.display_seq ?? item.track_id!)}</div>
-                    ) : isPlate && item.plate_text ? (
-                      <div className="sr-plate">{item.plate_text}</div>
-                    ) : item.caption ? (
-                      <div className="sr-text">{item.caption}</div>
-                    ) : null}
                     <div className="sr-acts" onClick={(e) => e.stopPropagation()}>
                       {isTrack && item.track_id != null ? (
-                        !dlTrackId || dlTrackId !== item.track_id ? (
-                          <button className="sr-act" onClick={() => setDlTrackId(item.track_id!)}>
+                        trackExportOpen !== item.track_id ? (
+                          <button className="sr-act" onClick={() => setTrackExportOpen(item.track_id!)}>
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>导出
                           </button>
                         ) : (
                           <>
-                            <button className="sr-act" onClick={() => { setDlTrackId(null); window.open(api.getTrackThumbnailUrl(item.video_id, item.track_id!, item.track_id!), "_blank"); }}>缩略图</button>
-                            <button className="sr-act" onClick={() => { setDlTrackId(null); window.open(api.getTrackExportUrl(item.video_id, item.track_id!, true, item.track_id!), "_blank"); }}>轨迹</button>
+                            <button className="sr-act" onClick={() => { setTrackExportOpen(null); window.open(api.getTrackThumbnailUrl(item.video_id, item.track_id!, item.track_id!), "_blank"); }}>
+                              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>导出缩略图
+                            </button>
+                            <button className="sr-act" onClick={() => { setTrackExportOpen(null); window.open(api.getTrackExportUrl(item.video_id, item.track_id!, true, item.track_id!), "_blank"); }}>
+                              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>导出轨迹视频
+                            </button>
                           </>
                         )
                       ) : null}

@@ -10,7 +10,7 @@ import type { DetectionData, VideoResponse, VideoListItem, Track, PlateDetection
 import { api } from "../services/api";
 import { colorOf, zh } from "../labels";
 
-const SELECTED = "#FFD700";
+const SELECTED = "#FFD700";  // 金色，与视频框(DetectionOverlay)/时间轴(DetectionTimeline)选中色统一
 
 // ── 虚拟滚动常量（dtc-item 固定行高 ~68px + dtc-list gap 4px）──
 const ROW_H = 68;
@@ -46,6 +46,7 @@ interface TrackRowProps {
   video: VideoResponse;
   color: string;
   hasFace: boolean;
+  identityLabel: string | null;  // v0.30: person track 归属的身份标签（替代 👤）
   plate: PlateDetectionItem | undefined;
   tUrl: string | null;
   thumbTs: number;
@@ -62,7 +63,7 @@ interface TrackRowProps {
 }
 
 const TrackRow = memo(function TrackRow({
-  track, isSel, video, color, hasFace, plate, tUrl, thumbTs, bbox,
+  track, isSel, video, color, hasFace, identityLabel, plate, tUrl, thumbTs, bbox,
   displayId, maxDuration, isDropdownOpen,
   onTrackSelect, onToggleDropdown, onCloseDropdown, onHoverThumb,
   onDownloadThumb, onDownloadTrack,
@@ -72,7 +73,7 @@ const TrackRow = memo(function TrackRow({
       role="button"
       tabIndex={0}
       data-track-id={track.track_id}
-      className={`dtc-item `}
+      className={`dtc-item${isSel ? " sel" : ""}`}
       style={{ width: "100%" }}
       onClick={() => onTrackSelect(track.track_id, track.class_name, track.first_seen)}
       onKeyDown={(e) => {
@@ -84,7 +85,7 @@ const TrackRow = memo(function TrackRow({
     >
       {bbox && tUrl ? (
         <div className="w-10 h-10 rounded-md shrink-0 overflow-hidden bg-gray-100 flex items-center justify-center cursor-pointer"
-             style={{ border: isSel ? `1.5px solid ${SELECTED}` : "1px solid rgba(0,0,0,0.06)" }}
+             style={{ border: "1px solid rgba(0,0,0,0.06)" }}  // 缩略图边框保持无色默认，选中标识由整行金色高亮承担
              onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); onHoverThumb({ videoId: video.id, ts: thumbTs, bbox, x: r.right + 8, y: r.top - 40 }); }}
              onMouseLeave={() => onHoverThumb(null)}
         >
@@ -97,7 +98,8 @@ const TrackRow = memo(function TrackRow({
         <div className="dtc-name">
           {zh(track.class_name)}
           <span className="dtc-id">#{displayId}</span>
-          {hasFace && <span className="dtc-face">👤</span>}
+          {identityLabel && <span className="dtc-face" title="身份">{identityLabel}</span>}
+          {hasFace && !identityLabel && <span className="dtc-face" title="检测到人脸">脸</span>}
           {plate && (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3, marginLeft: 2 }}>
               <span className="dtc-plate">{plate.plate_text}</span>
@@ -147,7 +149,12 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
   const [showFaces, setShowFaces] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [trackDropdown, setTrackDropdown] = useState<number | null>(null);
-  const [hoverThumb, setHoverThumb] = useState<{ videoId: string; ts: number; bbox: { x1: number; y1: number; x2: number; y2: number }; x: number; y: number } | null>(null);
+  // hover 浮层：物体 = {videoId,ts,bbox} 现截视频；人脸 = {src} 直接显示已存缩略图
+  const [hoverThumb, setHoverThumb] = useState<
+    | { videoId: string; ts: number; bbox: { x1: number; y1: number; x2: number; y2: number }; x: number; y: number }
+    | { src: string; x: number; y: number }
+    | null
+  >(null);
   const [expandedFaceId, setExpandedFaceId] = useState<number | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(400);
@@ -155,6 +162,27 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
   const scrollRaf = useRef(0);
 
   const showFaceBtn = !!(video?.face_enabled && faceData?.has_face);
+
+  // v0.30: 切换视频时若新视频无脸（无"人脸"按钮），自动退回"物体检测"视图。
+  // 否则组件复用保留 showFaces=true → 停在"人脸"视图显示"0人"（无该视频无人品类）。
+  useEffect(() => {
+    if (!showFaceBtn && showFaces) {
+      setShowFaces(false);
+    }
+  }, [showFaceBtn, showFaces]);
+
+  // v0.30: track_id → 身份标签（person track 条目显示"人物A"替代 👤，与车牌对称）
+  const trackToLabel = useMemo(() => {
+    const m = new Map<number, string>();
+    if (faceData?.identities && faceData.track_to_identity) {
+      const idToLabel = new Map(faceData.identities.map((i) => [i.id, i.label]));
+      for (const [tid, { identity_id }] of Object.entries(faceData.track_to_identity)) {
+        const label = idToLabel.get(identity_id);
+        if (label) m.set(Number(tid), label);
+      }
+    }
+    return m;
+  }, [faceData]);
 
   const plateByTrack = useMemo(() => {
     const map = new Map<number, PlateDetectionItem>();
@@ -209,18 +237,41 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     return () => ro.disconnect();
   }, [listVisible]);
 
-  /* ── 选中居中（scrollTop 计算替代 scrollIntoView；仅 objects tab）── */
+  /* ── 选中滚动（v0.30 增强）：页内不跳、页外丝滑居中、目标位置上移 1.5 行 ──
+     实现要点：
+     - 需求3：选中项已在可视区 → 完全不滚动（页内直接点击不再跳中段）
+     - 需求4：目标比"纯居中"再上移 1.5 行（被选物体停在栏偏上，视觉更舒服）
+     - 需求1：用 scrollTo({behavior:"smooth"}) 丝滑滚动；state 由 scroll 事件自然驱动
+       （smooth 动画持续产生 scroll 事件，handleListScroll 的 rAF 会持续更新 scrollTop，
+       虚拟窗口跟随 DOM，无抖动）。动画结束后用 timeout 兜底校正一次，防极端场景漏更新。 */
   useEffect(() => {
     if (showFaces || selectedTrackId == null || !listRef.current) return;
     const idx = filteredRef.current.findIndex((t) => t.track_id === selectedTrackId);
     if (idx < 0) return;
     const el = listRef.current;
-    const target = Math.max(0, idx * ROW_STEP - (el.clientHeight - ROW_H) / 2);
-    // 同步 DOM + state：仅设 el.scrollTop 时滚动事件会被 handleListScroll 的 rAF 节流丢弃
-    // （pending 中该事件直接 return）→ scrollTop state 不更新 → 虚拟窗口不含选中行 → 面板「跳不到位」。
+    const itemTop = idx * ROW_STEP;
+    const viewH = el.clientHeight;
+
+    // 需求3：与可视区有交集（哪怕只露出一部分）→ 不滚动。
+    // 原"完全在区内才不跳"会让一半在页内的记录也跳中段——用户不想要。
+    if (itemTop + ROW_H > el.scrollTop && itemTop < el.scrollTop + viewH) {
+      return;
+    }
+
+    // 需求4：目标位置 = 物品顶边停在视口顶部往下约 1 行处（偏上，不居中）。
+    // 视觉位置 = itemTop - target = ROW_H ≈ 68px，即"顶部往下一条"。
+    const target = Math.max(0, itemTop - ROW_H);
+
+    // 需求1：丝滑滚动；取消 pending rAF 避免旧回调覆盖动画中的 scrollTop state
     if (scrollRaf.current) { cancelAnimationFrame(scrollRaf.current); scrollRaf.current = 0; }
-    el.scrollTop = target;
-    setScrollTop(target);
+    el.scrollTo({ top: target, behavior: "smooth" });
+    // 动画结束后校正 state（防 smooth 未触发 scroll 事件的极端情况）
+    const t = window.setTimeout(() => {
+      if (listRef.current && Math.abs(listRef.current.scrollTop - target) > 2) {
+        setScrollTop(listRef.current.scrollTop);
+      }
+    }, 500);
+    return () => window.clearTimeout(t);
   }, [selectedTrackId, showFaces]);
 
   /* ── 筛选/切 tab/切视频 → 回顶（同时复位 state 与 DOM，消除陈旧滚动位置）── */
@@ -337,7 +388,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" />
           </svg>
-          {showFaces ? "人脸" : "物体检测"}
+          物体检测
         </div>
         <div className="flex items-center gap-2">
           {/* v0.19: 组内视频选择器 */}
@@ -356,27 +407,22 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
               })}
             </select>
           )}
-          {showFaceBtn && (
-            <button
-              onClick={() => setShowFaces(!showFaces)}
-              className={`text-[10px] font-medium px-2 py-0.5 rounded-md transition-all ${showFaces ? "bg-purple-500/20 text-purple-200" : "text-slate-400 hover:text-purple-300 hover:bg-purple-500/10"}`}
-            >
-              👤 人脸
-            </button>
-          )}
           <span className="major-card-badge">{showFaces ? `${faceData?.identities.length ?? 0} 人` : `${tracks.length} 条`}</span>
         </div>
       </div>
 
       <div className="major-card-bd" style={{ padding: "6px 10px 8px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {/* Class filter — dropdown */}
-        {!showFaces && classEntries.length > 1 && (
+        {/* Class filter — dropdown（v0.30: 人脸作为一类并入下拉栏，移除顶部独立按钮；
+           单类别也走下拉栏，消除"人 x465"降级文本标签） */}
+        {(classEntries.length > 0 || showFaceBtn) && (
           <div className="relative mb-2 shrink-0">
             <button
               onClick={() => setDropdownOpen(!dropdownOpen)}
               className="dtc-filter-btn"
             >
-              {isAll ? (
+              {showFaces ? (
+                <span><span className="dot" style={{ background: "#8b5cf6" }} />人脸</span>
+              ) : isAll ? (
                 <span>全部 · {tracks.length}</span>
               ) : (
                 <><span className="dot" style={{ background: activeColor }} />{zh(classFilter)} · {classCounts[classFilter]}</>
@@ -388,29 +434,32 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                 <div className="fixed inset-0 z-10" onClick={() => setDropdownOpen(false)} />
                 <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden min-w-[160px]">
                   <button
-                    className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 ${isAll ? "font-semibold text-gray-900" : "text-gray-600"}`}
-                    onClick={() => { onClassFilterChange(null); setDropdownOpen(false); }}
+                    className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 ${!showFaces && isAll ? "font-semibold text-gray-900" : "text-gray-600"}`}
+                    onClick={() => { onClassFilterChange(null); setShowFaces(false); setDropdownOpen(false); }}
                   >
                     全部 · {tracks.length}
                   </button>
                   {classEntries.map(([cls, count]) => (
                     <button
                       key={cls}
-                      className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 ${classFilter === cls ? "font-semibold text-gray-900" : "text-gray-600"}`}
-                      onClick={() => { onClassFilterChange(cls); setDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 ${!showFaces && classFilter === cls ? "font-semibold text-gray-900" : "text-gray-600"}`}
+                      onClick={() => { onClassFilterChange(cls); setShowFaces(false); setDropdownOpen(false); }}
                     >
                       <span className="dot" style={{ background: colorOf(cls) }} />{zh(cls)} · {count}
                     </button>
                   ))}
+                  {showFaceBtn && (
+                    <button
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 border-t border-gray-100 ${showFaces ? "font-semibold text-purple-600" : "text-gray-600"}`}
+                      onClick={() => { onClassFilterChange(null); setShowFaces(true); setDropdownOpen(false); }}
+                    >
+                      <span className="dot" style={{ background: "#8b5cf6" }} />人脸 · {faceData?.identities.length ?? 0}
+                    </button>
+                  )}
                 </div>
               </>
             )}
           </div>
-        )}
-        {!showFaces && classEntries.length <= 1 && classEntries.length > 0 && (
-          <span className="text-[11px] font-medium shrink-0" style={{ color: colorOf(classEntries[0][0]) }}>
-            {zh(classEntries[0][0])} × {classEntries[0][1]}
-          </span>
         )}
 
         {/* Objects tab — 虚拟滚动 (v0.22)；空筛选提示（切视频后陈旧 filter 命中空类） */}
@@ -431,6 +480,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                 const thumbTs = t.best_thumb_ts ?? Math.min(t.first_seen + 0.5, t.last_seen);
                 const tUrl = t.thumbnail_url || (bbox ? thumbUrl(video.id, thumbTs, bbox) : null);
                 const hasFace = !!(video?.face_enabled && t.class_name === "person" && faceData?.has_face);
+                const identityLabel = t.class_name === "person" ? (trackToLabel.get(t.track_id) ?? null) : null;
                 const isVehicle = ["car", "truck", "bus", "motorcycle"].includes(t.class_name);
                 const plate = isVehicle ? plateByTrack.get(t.track_id) : undefined;
                 return (
@@ -442,6 +492,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                       video={video}
                       color={color}
                       hasFace={hasFace}
+                      identityLabel={identityLabel}
                       plate={plate}
                       tUrl={tUrl}
                       thumbTs={thumbTs}
@@ -463,31 +514,52 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
           </div>
         ))}
 
-        {/* Faces tab */}
+        {/* Faces tab（v0.30: 行样式与物体 TrackRow 统一为 dtc-item 布局） */}
         {showFaces && faceData?.has_face && (
-          <div className="flex-1 overflow-y-auto" ref={listRef}>
-            {faceData.identities.map((ident) => (
-              <div key={ident.id} className="border-b border-gray-100 last:border-b-0">
-                <button
-                  onClick={() => setExpandedFaceId(expandedFaceId === ident.id ? null : ident.id)}
-                  className="w-full flex items-center gap-2 px-2 py-2 text-left hover:bg-gray-50 transition-colors cursor-pointer"
-                >
-                  <div className="face-thumb" style={{ width: 36, height: 36 }}>
-                    {ident.best_thumbnail_url ? <img src={ident.best_thumbnail_url} loading="lazy" alt="" /> : <span>👤</span>}
+          <div className="dtc-list" ref={listRef} style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
+            {faceData.identities.map((ident) => {
+              const isSel = expandedFaceId === ident.id;
+              return (
+                <div key={ident.id}>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className={`dtc-item${isSel ? " sel" : ""}`}
+                    onClick={() => setExpandedFaceId(isSel ? null : ident.id)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedFaceId(isSel ? null : ident.id); } }}
+                  >
+                    <div className="w-10 h-10 rounded-md shrink-0 overflow-hidden bg-gray-100 flex items-center justify-center cursor-pointer"
+                         style={{ border: "1px solid rgba(0,0,0,0.06)" }}
+                         onMouseEnter={(e) => {
+                           if (ident.best_thumbnail_url) {
+                             const r = e.currentTarget.getBoundingClientRect();
+                             setHoverThumb({ src: ident.best_thumbnail_url, x: r.right + 8, y: r.top - 40 });
+                           }
+                         }}
+                         onMouseLeave={() => setHoverThumb(null)}>
+                      {ident.best_thumbnail_url ? (
+                        <img src={ident.best_thumbnail_url} loading="lazy" className="w-full h-full object-contain" alt="" />
+                      ) : (
+                        <span className="text-base text-gray-300">👤</span>
+                      )}
+                    </div>
+                    <div className="dtc-info">
+                      <div className="dtc-name">
+                        {ident.label}
+                        <span className="dtc-id">×{ident.face_count}</span>
+                      </div>
+                      <div className="dtc-time">{ident.first_seen.toFixed(1)}s – {ident.last_seen.toFixed(1)}s</div>
+                    </div>
+                    <svg className={`w-3 h-3 shrink-0 text-gray-400 transition-transform ${isSel ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="currentColor"><path d="M3 5l3 3 3-3" /></svg>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="face-name">{ident.label} <span className="face-sim">×{ident.face_count}</span></div>
-                    <div className="face-detail">{ident.first_seen.toFixed(1)}s – {ident.last_seen.toFixed(1)}s</div>
-                  </div>
-                  <svg className={`w-3 h-3 shrink-0 text-gray-400 transition-transform ${expandedFaceId === ident.id ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="currentColor"><path d="M3 5l3 3 3-3" /></svg>
-                </button>
-                {expandedFaceId === ident.id && (
-                  <div className="bg-gray-50 border-t border-gray-100 px-2 py-1 text-[10px] text-gray-400">
-                    出现 {ident.face_count} 次 · 平均质量 {ident.avg_quality.toFixed(2)}
-                  </div>
-                )}
-              </div>
-            ))}
+                  {isSel && (
+                    <div className="px-3 py-1.5 text-[10px] text-gray-400" style={{ paddingLeft: 60 }}>
+                      出现 {ident.face_count} 次 · 平均质量 {ident.avg_quality.toFixed(2)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
         {showFaces && !faceData?.has_face && (
@@ -495,11 +567,15 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
         )}
       </div>
 
-      {/* Hover thumbnail preview */}
+      {/* Hover thumbnail preview（物体 = 现截视频；人脸 = 显示已存缩略图） */}
       {hoverThumb && (
         <div className="fixed z-[60] pointer-events-none rounded-xl overflow-hidden bg-transparent"
           style={{ left: hoverThumb.x, top: hoverThumb.y, width: 240, height: 240 }}>
-          <img src={thumbUrl(hoverThumb.videoId, hoverThumb.ts, hoverThumb.bbox)} className="w-full h-full object-contain" alt="" />
+          {"src" in hoverThumb ? (
+            <img src={hoverThumb.src} className="w-full h-full object-contain" alt="" />
+          ) : (
+            <img src={thumbUrl(hoverThumb.videoId, hoverThumb.ts, hoverThumb.bbox)} className="w-full h-full object-contain" alt="" />
+          )}
         </div>
       )}
     </div>

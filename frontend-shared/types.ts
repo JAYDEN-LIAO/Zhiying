@@ -184,6 +184,12 @@ export interface SearchResultItem {
 
 /* ── Face search result (POST /api/v1/search/face) ── */
 
+export interface FaceAppearance {
+  timestamp_sec: number;
+  bbox: { x1: number; y1: number; x2: number; y2: number } | null;
+  track_id: number | null;
+}
+
 export interface FaceSearchResult {
   identity_id: number;
   video_id: string;
@@ -196,6 +202,7 @@ export interface FaceSearchResult {
   best_face_timestamp: number | null;
   best_face_bbox: { x1: number; y1: number; x2: number; y2: number } | null;
   thumbnail_url: string | null;
+  appearances?: FaceAppearance[];
 }
 
 export interface SearchResults {
@@ -384,6 +391,8 @@ export interface FaceIdentity {
 export interface FaceData {
   has_face: boolean;
   identities: FaceIdentity[];
+  // v0.30: track_id → {identity_id}，person track 条目据此显示身份标签（替代 👤）
+  track_to_identity?: Record<number, { identity_id: number }>;
   // v0.22 (S1): 删除 per-frame detections 字段——后端不再返回（前端零消费，防大 JSON 炸弹）
 }
 

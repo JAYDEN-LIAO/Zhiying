@@ -2,7 +2,7 @@
 
 ## One-Line Summary
 
-Zhiying 是 **视频分析引擎**（v0.28.0）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。**已接入云智(Yunzhi)平台**：前端 Bridge 文件选择（`register-external` 共享路径就地引用）+ 异步任务接口（`/internal/yunzhi/jobs` 202+进度/完成/失败回调）+ 平台文件 id 自动跳转（v0.26 `external_file_id` + `GET /videos/external/{file_id}`，前端凭 `context.resource.id` 直达对应视频详情）。`deploy/` 提供 Windows 裸机一键安装（从零部署）；**双前端共存**：服务器前端 `frontend/`（v0.28 云智嵌入 UI）+ 桌面独立前端 `frontend-desktop/`（桌面启动器 `desktop/desktop.bat` 加载，pywebview 壳管理本地后端生命周期，后端按 `ZHIYING_FRONTEND` 切换挂载）；requirements 已做多架构区分（Windows/Linux x86 装 onnxruntime-gpu，ARM64 如 DGX Spark/GB10 无该 wheel 自动装 CPU 版，人脸/车牌走 CPU）。**摘要默认 vlm_llm（API 模式）**：native_video 本地视频原生理解已置灰退役（双前端一致），本地 captioner 8B 不再下载。**已部署到生产服务器 10.0.0.176（systemd `zhiying.service`，8011，部署走 git+tag：`./bump` 发版 → 服务器 `bash deploy.sh v<tag>`，config/config.yaml 已模板化不入库）**，运维参考见 `docs/server.md`（gitignored，含凭证）。架构细节见 `docs/arch.md`。
+Zhiying 是 **视频分析引擎**（v0.29.0）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。**已接入云智(Yunzhi)平台**：前端 Bridge 文件选择（`register-external` 共享路径就地引用）+ 异步任务接口（`/internal/yunzhi/jobs` 202+进度/完成/失败回调）+ 平台文件 id 自动跳转（v0.26 `external_file_id` + `GET /videos/external/{file_id}`，前端凭 `context.resource.id` 直达对应视频详情）。`deploy/` 提供 Windows 裸机一键安装（从零部署）；**双前端共存**：服务器前端 `frontend/`（v0.28 云智嵌入 UI）+ 桌面独立前端 `frontend-desktop/`（桌面启动器 `desktop/desktop.bat` 加载，pywebview 壳管理本地后端生命周期，后端按 `ZHIYING_FRONTEND` 切换挂载）；requirements 已做多架构区分（Windows/Linux x86 装 onnxruntime-gpu，ARM64 如 DGX Spark/GB10 无该 wheel 自动装 CPU 版，人脸/车牌走 CPU）。**摘要默认 vlm_llm（API 模式）**：native_video 本地视频原生理解已置灰退役（双前端一致），本地 captioner 8B 不再下载。**已部署到生产服务器 10.0.0.176（systemd `zhiying.service`，8011，部署走 git+tag：`./bump` 发版 → 服务器 `bash deploy.sh v<tag>`，config/config.yaml 已模板化不入库）**，运维参考见 `docs/server.md`（gitignored，含凭证）。架构细节见 `docs/arch.md`。
 
 ## Quick File Map
 
@@ -20,7 +20,7 @@ api/deps.py                — FastAPI dependency injection (get_db)
 api/schemas.py             — Shared API DTOs (APIResponse, search/status models, ProxyStatusResponse, PipelineSettings/Presets, v0.22)
 api/detection_routes.py    — Detection data API: GET /detection/tracks (摘要) + /detection/detections (时间窗, v0.22 替代旧 /detection/data) + thumbnail
 api/export_routes.py       — Export endpoints: clip/frames/track/thumbnails (7 endpoints, GET+POST)
-api/face_routes.py          — Face data API (GET face/data + face/thumbnail)
+api/face_routes.py          — Face data API (GET face/data + face/thumbnail; v0.29 face/data 返回 track_to_identity 身份↔track 映射)
 api/plate_routes.py         — Plate data API (GET plate/data + plate/thumbnail)
 api/maintenance_routes.py  — 存储清扫端点 (POST /maintenance/sweep dry-run/执行, GET /maintenance/storage)
 core/models.py             — ORM: Video (+8 format fields + group_id FK), VideoGroup, Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection (12 tables)
@@ -53,15 +53,15 @@ pipeline/runners/          — 15 operation runners (one per processing unit):
   runners/frame_encode.py    — 1fps batch image encoding (embedder @336×224) → frame_embeddings
   runners/chunk_encode.py    — Sliding window video encoding → chunks (config-gated)
   runners/text_encode.py     — Text semantic encoding (gated: 有文本源才跑)
-  runners/detection.py       — YOLO11 + BoT-SORT (10fps/128batch/640px), 生产者-消费者并发, 与 search_encode 共享 NVDEC 流, 每 2s 缓存 track crop 供 track_encode (batch 128 而非 1024: 受 gpu_lock 串行, 长批会饿死 embedder)
+  runners/detection.py       — YOLO11 + BoT-SORT (10fps/128batch/640px), 生产者-消费者并发, 与 search_encode 共享 NVDEC 流, 每 2s 缓存 track crop 供 track_encode (batch 128 而非 1024: 受 gpu_lock 串行, 长批会饿死 embedder); **best 帧按"置信度×面积"加权选取 + `_upgrade_best_frames` 全分辨率帧升级（person/vehicle 类）供 face/plate 用**
   runners/track_encode.py    — Track crop embedding + 全局 tracklet 缝合 (读检测缓存多帧 640×384 → mean pool → cosine 合并)
-  runners/face.py            — SCRFD face detection + ArcFace R50 embedding + identity clustering
+  runners/face.py            — SCRFD face detection + ArcFace R50 embedding + 身份聚类（v0.29 重构: 多帧采样提脸 + 护栏式双阈值聚类[同track 0.30/跨track 0.58] + 最典型脸作检索锚）
   runners/plate.py           — HyperLPR3 license plate detection + text recognition
   runners/search_encode.py   — 纯搜索路径：队列消费 detection 共享流帧 1fps + 批量编码，不依赖 segmentation/keyframes
 pipeline/search_engine.py  — 7-path parallel recall (frame/chunk/text/label/track/plate + image) + scene-merge dedup, search_image_only() for no-cluster per-frame image search
 plugins/factory.py         — Dynamic plugin loader (CATEGORY_MAP, _MODULE_OVERRIDES, _CLASS_OVERRIDES)
 plugins/detector/yolo.py   — YOLO11s detector (batch GPU inference 受 core/gpu_lock 串行; batch_size/imgsz 可配, asyncio.to_thread)
-plugins/face/insightface_face.py  — InsightFace SCRFD + ArcFace R50 recognizer
+plugins/face/insightface_face.py  — InsightFace SCRFD + ArcFace R50 recognizer (_to_bgr 任意通道归一化防 RGBA 崩溃; rec_thresh 死参数已删)
 plugins/plate/hyperlpr_plate.py  — HyperLPR3 license plate detector + recognizer (primary)
 plugins/plate/paddle_plate.py    — PaddleOCR license plate detector (alternative)
 plugins/embedder/qwen_vl_embedder.py — Qwen3-VL-Embedding (336×224 encode, 内存路径, 零磁盘I/O; 量化 8bit/4bit via bitsandbytes; 受 gpu_lock 串行; 相对模型路径解析到项目根)
@@ -161,6 +161,8 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **多格式两层**: remux（容器标准化, -c copy）+ proxy（NVENC h264, 按需懒生成）; 管道优先读 remuxed; proxy 永不主动生成。
 - **NVDEC**: MJPEG pipe（~100KB/帧）默认启用，自动 fallback cv2。
 - **ReID 双层**: 在线 BoT-SORT with_reid（`config/botsort.yaml` `model: "models/yolo26n-cls.pt"` 本地外观模型——实测 ultralytics 8.4.115 的 `auto` 仍会从 GitHub 下载，故本地预置避免运行时下载）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠）; 缝合完成后修改需新建记录。
+- **人脸聚类护栏式双阈值（v0.29）**: 单一聚类阈值是"跷跷板"——0.60 拆碎同人（碎片化）、0.40 并错不同人（代表性 embedding 稀释成噪声 → 搜索搜不到）。正确策略在 `face.py`: **同 track 内（同一人时间连续，强先验）阈值 0.30 宽松合并；跨 track（不同时空）阈值 0.58 保守合并**。检索锚点用**最典型单脸**（与均值最接近的成员，非质量分最高——质量分高可能偏角度导致搜索漏检）；`core/search.py` `FACE_SEARCH_MIN_SIM=0.45` 为搜索命中阈值（单一来源，聚类/搜索共用，杜绝脱节）。身份存 `best_face_embedding`（最典型单脸主锚）+ `face_embedding`（均值兜底），搜索用 `GREATEST` 双锚取高。
+- **搜索隔离（v0.29 bug 修复）**: `POST /search/face` 与 `/search/image` 的 `video_ids`/`search_types`/`top_k`/`min_similarity` 必须是 **`Form(...)` 声明**（前端 form-data 提交；曾误声明为普通参数 → FastAPI 从 query 取 → None → 全库数据泄漏）。语义搜索走 JSON body 一直正确。搜索必须严格按 `video_ids` 隔离，单视频搜索不得混入其它视频结果。
 - **编码预设**: fast/balanced/precise 三档控制分辨率 + batch（336×224 / 504×336 / 672×448），三档模板与默认档可在设置页覆盖；embedder 支持 `quantization` none/8bit/4bit（bitsandbytes, 需重启生效）。
 - **版本号与发布**: 版本唯一事实来源 `core/version.py` `__version__`；`/health` 返回 `version` 字段（服务器部署后核对运行版本）。发版用 `./bump minor|patch|0.24.0`（联动改 core/version.py + frontend/package.json + package-lock.json 两处，交互式确认提交信息/commit/tag/push，`git add .`）；git tag 必须 `v<__version__>` 与 version.py 完全一致。**⚠️ 后端任何改动（bug 修复/性能优化/管线重构/新功能上线）以及服务器前端改动（`frontend/` + `frontend-shared/`，会上服务器）都必须 `./bump` 发版打 tag——即使不立刻部署**（保持最新 tag = 当前可部署状态）；只有纯文档、注释、**桌面前端改动（`frontend-desktop/`，独立自由不发版，随后端版本走）**不需要 bump。**部署（v0.25.1 起）**: 服务器 `bash deploy.sh v<tag>`（fetch → config 迁移 → checkout → requirements 变化才 pip → 前端 build → restart → 90s 健康检查）。**回滚限制**: config.yaml 已 gitignore，回退到 config 仍入库的老 tag（≤v0.25.0）会 checkout 冲突，正解是向前滚（出 bug 发下个 patch）；必须回退老 tag 时先还原服务器 config 备份。
 - **存储卫生**: 删除必须走 `repository.delete_video`（StorageManager 清盘, 勿直接 `session.delete`）; 新增落盘路径必须登记进 `core/storage_manager.py`; 孤儿清扫手动（maintenance 端点/CLI, dry-run 默认）。判定: 视频文件按 DB 三列引用集合, 附属目录按 `video_id ∈ videos 表` —— 绝不用 scenes.keyframe_path（persist 窗口期会误删）。删除守卫: 404 守卫; **处理中视频允许删除**（v0.22 `core/cancellation` 登记, 管道 persist 前检查 `is_cancelled` 中止, 防写已删行 FK 异常; 已删除集合在管道结束后 `unmark_cancelled` 移除）。
@@ -178,7 +180,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | `frame_detections` | id, video_id(FK), track_id, timestamp_sec, class_name, confidence, bbox(JSONB) | Per-frame YOLO detection results (10fps, indexed by timestamp) |
 | `tracks` | id, video_id(FK), track_id, class_name, first_seen, last_seen, frame_count, segments(JSONB) | BoT-SORT cross-frame track summaries |
 | `track_embeddings` | id, video_id(FK), track_id, class_name, embedding(Vector4096), timestamp_sec, bbox(JSONB) | Track crop cross-modal vectors, for track-path search |
-| `face_identities` | id, video_id(FK), identity_label, face_embedding(Vector512), face_count, first_seen, last_seen, avg_quality, best_face_bbox(JSONB) | Clustered face identities (ArcFace R50 512d), "人物 A/B/C..." |
+| `face_identities` | id, video_id(FK), identity_label, face_embedding(Vector512 均值兜底), best_face_embedding(Vector512 最典型脸主锚 v0.29), best_track_id(v0.29 身份↔track 映射), face_count, first_seen, last_seen, avg_quality, best_face_bbox(JSONB) | Clustered face identities (ArcFace R50 512d), "人物 A/B/C..." |
 | `face_detections` | id, video_id(FK), identity_id(FK), track_id, timestamp_sec, bbox(JSONB), quality_score, face_embedding(Vector512) | Per-frame face detections, linked to YOLO person tracks |
 | `plate_detections` | id, video_id(FK), track_id, class_name, timestamp_sec, plate_text, plate_type, char_confidences(JSONB), bbox(JSONB), detection_confidence | HyperLPR3 license plate recognition results (per-vehicle-track, pre-ReID merge) |
 
@@ -208,6 +210,9 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | Windows 从零部署 (v0.22) | ✅ | deploy/setup_windows.ps1 裸机一键安装器 + download_models.py (含 reid) + deploy_feedback.md; 配置统一自动降级 |
 | 删除处理中 + 管道取消 (v0.22) | ✅ | core/cancellation.py — 处理中视频允许删除，删除端点登记后管道 persist 前优雅中止（防写已删行 FK 异常） |
 | 多架构 requirements (v0.22) | ✅ | 环境标记: onnxruntime-gpu (win32/x86_64/AMD64) / onnxruntime (aarch64/arm64, 无 GPU wheel 自动 CPU) |
+| 人脸识别链路重构 (v0.29) | ✅ | face.py 护栏式双阈值聚类 + 多帧采样 + 最典型脸锚点; detection.py 全分辨率帧升级; insightface RGBA 防御; search.py 双锚检索; face/data 返回 track_to_identity |
+| 搜索数据隔离修复 (v0.29) | ✅ | search/face + search/image 的 video_ids 等改 `Form(...)` 声明（原泄漏全库）；搜索严格按 video_ids 隔离 |
+| 五种搜索样式统一 (v0.29 前端) | ✅ | 语义/图搜/物体/车牌/人脸统一 sr-item 骨架：标签右上角四字彩色 + 主体 1 行 + 导出展开式；人脸并入检测下拉栏 |
 | 云智平台接入 (v0.24) | ✅ | api/yunzhi_routes.py + services/yunzhi_job_service.py (202+进度/完成/失败回调, 幂等) + register-external (source_owned) + 前端 Bridge (frontend/src/platform/) |
 | 平台文件 id 自动跳转 (v0.26) | ✅ | videos.external_file_id + GET /videos/external/{file_id} + Dashboard connect() 后凭 context.resource.id 自动打开对应视频 |
 | 桌面端启动器 + 桌面前端 | ✅ | desktop/ pywebview 壳（检查模型→起 db→起 uvicorn→开窗→日志→优雅关停, 看门狗防孤儿）+ frontend-desktop/（独立工作台, native_video 置灰）|

@@ -1,12 +1,13 @@
 # Zhiying Architecture
 
-> Version: 0.28 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.29 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4（双前端: frontend/ 服务器 + frontend-desktop/ 桌面, 共享 frontend-shared/ 对接层）
 > v0.22: Windows 从零部署 + 系统设置/参数预设 + 全局 GPU 锁 + Detection 渲染重构 + 删除处理中/管道取消 + ARM64 多架构
 > v0.24: 云智(Yunzhi)平台接入（register-external + /internal/yunzhi/jobs 异步任务）+ 生产部署（systemd, 8011, pgvector:pg17, 静态托管前端）
 > v0.26: 平台文件 id → 视频自动跳转（videos.external_file_id + GET /videos/external/{file_id} + 前端 connect() 后自动打开对应视频）
 > v0.27: 搜索修正（统一 track 编号 + 范围 fail-closed + 车牌搜索修正）+ 车牌模糊搜索模式（字符归一化 + 前端「牌」模式按钮）
 > v0.28: 云智嵌入 UI 重构（移除侧边栏 / 导航上移 header / 参数历史右侧抽屉 / 搜索检测门控）
+> v0.29: 人脸识别链路重构（护栏式双阈值聚类 + 多帧采样 + 最典型脸锚点）+ 搜索数据隔离修复 + 五种搜索样式统一 + 前端交互优化
 > 桌面端（未发版）: desktop/ pywebview 启动器 + frontend-desktop/ 独立前端 + 摘要默认 vlm_llm（native_video 置灰退役）
 
 ## System Data Flow
@@ -196,6 +197,14 @@ Summary 双模式: native_video (纯 Python 聚合器, 无 API 成本; 已置灰
 Track 语义路 (track_encode): 读 detection 缓存 640×384 crop (每 2s, 零 FFmpeg seek)
   → 挑 20%/50%/80% 3 帧 → mean pool → cosine ≥0.85 + 同类 + 时序不重叠 全局缝合
   → track_embeddings 表
+
+人脸路 (face, v0.29 重构):
+  detection 收尾 `_upgrade_best_frames` 把 person/vehicle 类 best 帧升级为全分辨率 (ffmpeg seek)
+  → FaceRunner 多帧采样: 短 track(<5s) 用 best 帧 / 长 track 按 [first_seen,last_seen] 补采 2~3 帧
+  → SCRFD 提脸 + ArcFace R50 512d → 护栏式双阈值聚类:
+     同 track 内 (时间连续强先验) sim ≥ 0.30 合并; 跨 track sim ≥ 0.58 才合并 (防并错不同人)
+  → 检索锚点: best_face_embedding = 与均值最接近的最典型单脸 (非质量分最高)
+  → face_identities (含 best_track_id 身份↔track 映射) + face_detections 落库
 Persist: bulk_insert_scenes + insert transcript + update videos (duration/summary/status_detail)
 ```
 
@@ -273,10 +282,14 @@ Semantic Search: POST /api/v1/search/semantic — query → embedder.encode_text
      frame (1fps 精确秒) / chunk (滑窗, 默认关) / text (caption+ocr+transcript 语义)
      label (JSONB @> entities) / track (crop 跨模态, 返回具体物体) / plate (Levenshtein + ILIKE + 字符归一化)
   → Face 图搜: POST /search/face — 图片 → ArcFace 512d → face_identities cosine
+     (v0.29 双锚: GREATEST(best_face_embedding 最典型单脸, face_embedding 均值) 取高, 漏检最低;
+      返回 appearances 该身份全部出现时间段)
   → 通用图搜: POST /search/image — 图片 → Qwen3-VL 4096-dim → frame_embeddings
      (专用 search_image_only 路径: 帧不聚类, 每帧独立精确到秒, 不补 scene 信息)
   → 合并去重: 帧簇(间隔≤4s)优先, chunk/text 与帧重叠丢弃, track/plate 各按 (video_id, track_id) 去重
   → 范围过滤: video_ids 为空列表 → 返回空（fail-closed, `if video_ids is not None`）；None=全库
+  → ⚠️ 搜索隔离 (v0.29 修复): search/face + search/image 的 video_ids 等参数必须 Form(...) 声明
+    （曾误声明为 query → form-data 提交取不到 → None → 全库泄漏）；单视频搜索严格隔离
   返回: {precision_level, precise_start/end, match_paths, thumbnail_url, track_id?, bbox?}
 
 core/search.py 6 种检索函数:
@@ -355,7 +368,9 @@ track_embeddings
 face_identities
   ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
   ├─ identity_label (String, "人物 A/B/C..."), face_count
-  ├─ face_embedding (Vector 512 — ArcFace R50 output)
+  ├─ face_embedding (Vector 512 — ArcFace R50 output, 均值兜底)
+  ├─ best_face_embedding (Vector 512 — 最典型单脸, v0.29 检索主锚)
+  ├─ best_track_id (Integer, v0.29 身份↔track 映射)
   ├─ first_seen, last_seen, avg_quality
   ├─ best_face_timestamp, best_face_bbox (JSONB)
   └─ created_at
@@ -437,11 +452,11 @@ React 19 + Vite 6 + Tailwind CSS 4
   │   ├── ParameterPanel     ← 侧滑参数面板: 四级联动 (L1场景/L2感知/L3功能/L4高级)
   │   ├── PipelineBar        ← 动态阶段进度条 (根据开关渲染对应节点)
   │   ├── VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮
-  │   ├── VideoSearchCard    ← 语义/图搜/人脸搜索面板 (索引未开启时置灰) + 搜索范围选择器 (组感知)
+  │   ├── VideoSearchCard    ← 语义/图搜/人脸搜索面板 (索引未开启时置灰) + 搜索范围选择器 (组感知; v0.29 五种搜索样式统一 sr-item 卡片 + searchMode 区分图搜/语义)
   │   ├── HistoryPanelContent← 历史记录列表 (搜索+自动刷新+缩略图+参数摘要, 删除二次确认+processing禁用+释放空间提示) + 组卡片堆叠/展开
   │   ├── SettingsPage       ← 系统设置 4 分区 (v0.22): 系统(存储/NVDEC/chunk/并发上限) + 模型参数(编码三档模板/默认档/量化 + YOLO 帧率/批/分辨率/阈值) + 参数预设(快照/套用/重命名/删除) + API 密钥(端点/模型/密钥)
   │   ├── DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+选中)
-  │   ├── DetectionPanel     ← 物体列表 (分类筛选+缩略图 hover+导出按钮) + 独立视频选择器 (组感知)
+  │   ├── DetectionPanel     ← 物体列表 (分类筛选下拉栏含"人脸"项 v0.29 + 缩略图 hover+导出按钮 + 身份标签) + 独立视频选择器 (组感知)
   │   ├── DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
   │   ├── VideoInfoCard      ← 视频元数据 + 来源分析
   │   ├── ExportMenu         ← 导出菜单 (视频片段或节点)
@@ -510,6 +525,9 @@ Vite 开发代理:
 | **平台共享文件 source_owned (v0.24)** | register-external 就地引用平台文件（不复制、不传字节），`source_owned=false` 时删除视频绝不 unlink 源文件（所有权归平台） |
 | **平台文件 id 自动跳转 (v0.26)** | 注册/任务时把平台文件库资源 ID 存入 `videos.external_file_id`；前端 Bridge connect() 后凭 `context.resource.id` 查 `GET /videos/external/{file_id}` 自动打开对应视频详情（一次性跳转；非文件入口/无匹配正常展示默认工作台） |
 | **异步任务 jobs (v0.24)** | /internal/yunzhi/jobs 根路径挂载（不经 /api/v1），202 立即返回 + 幂等（进程内 eventId/Idempotency-Key），进度经 StatusTracker.on_progress → callback.progressUrl 推送 |
+| **人脸聚类护栏式双阈值 (v0.29)** | 单一聚类阈值是"跷跷板"：0.60 拆碎同人 / 0.40 并错不同人（代表性 embedding 稀释成噪声→搜索搜不到）。改为同 track 0.30（时间连续强先验）+ 跨 track 0.58（防并错） |
+| **检索锚点最典型脸 (v0.29)** | best_face_embedding = 与均值最接近的单脸（非质量分最高——质量分高可能偏角度导致搜索漏检）；搜索用 GREATEST(最典型脸, 均值) 双锚取高 |
+| **搜索数据隔离 (v0.29)** | search/face + search/image 的 video_ids 等改 Form(...) 声明修复全库泄漏；单视频搜索严格隔离 |
 
 ## Current Status
 
@@ -518,7 +536,9 @@ Vite 开发代理:
 | Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 15 ops, search/summary decoupled, gates/deps, events-driven |
 | Track Encoding (crop→embed) | ✅ | runners/track_encode.py: 读检测缓存多帧 640×384 crop（零 FFmpeg seek）→ mean pool → Qwen3-VL-Embedding 4096-dim。长视频友好（track_encode 不随 track 数 seek 爆炸） |
 | Global ReID Tracklet Stitch | ✅ | track_encode Phase 2: cosine ≥0.85 + 同类 + 时序不重叠（segments 真实片段, MAX_OVERLAP_SEC=1.0 + HIGH_SIM_OVERRIDE=0.90 容忍双跟踪伪影） |
-| Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d), FaceRunner identity clustering |
+| Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d); FaceRunner v0.29 重构（多帧采样 + 护栏式双阈值聚类 + 最典型脸锚点） |
+| 搜索数据隔离 | ✅ | v0.29 修复 search/face + search/image 的 video_ids 泄漏全库 bug（Form 声明）；单视频搜索严格隔离 |
+| 五种搜索样式统一 | ✅ | v0.29 前端: 语义/图搜/物体/车牌/人脸统一 sr-item 卡片（标签右上角 + 主体1行 + 导出展开式） |
 | License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
 | Face Image Search | ✅ | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
 | Plate Text Search（模糊） | ✅ | core/search.py plate_text_search — 归一化(全角/分隔符/大写) + Levenshtein≤2 + ILIKE 子串 + 相似度 LEAST 封顶；plate 按 (video_id, track_id) 独立去重；前端「牌」模式按钮 |

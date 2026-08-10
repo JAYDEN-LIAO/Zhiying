@@ -767,7 +767,15 @@ class FaceIdentity(Base):
     )
     face_embedding: Mapped[list[float] | None] = mapped_column(
         Vector(512), nullable=True,
-        comment="代表性嵌入向量 — 最优帧的 ArcFace R50 512 维向量",
+        comment="代表性嵌入向量 — 最优帧的 ArcFace R50 512 维向量（检索主锚，最高质量单脸）",
+    )
+    best_face_embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(512), nullable=True,
+        comment="最高质量单脸的 512 维嵌入（v0.30 起，检索主锚；face_embedding 保留均值兜底兼容旧数据）",
+    )
+    best_track_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True,
+        comment="最佳人脸来源的 YOLO person track ID（身份 ↔ track 双向映射）",
     )
     best_face_timestamp: Mapped[float | None] = mapped_column(
         Float, nullable=True, comment="最优人脸帧的时间戳",

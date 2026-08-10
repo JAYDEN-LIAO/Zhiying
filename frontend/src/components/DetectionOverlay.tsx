@@ -261,7 +261,13 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
         e.preventDefault();   // 阻止视频原生点击暂停/播放
         e.stopPropagation();
         const wasPaused = video?.paused ?? null;
-        onTrackSelect(best.track_id, best.class_name);
+        // v0.30: 点击已选中的 bbox → 取消选中（显式取消入口）；
+        // 否则选中该框。播放/暂停状态不因选中而改变。
+        if (best.track_id === selectedTrackId) {
+          onTrackSelect(-1, "");
+        } else {
+          onTrackSelect(best.track_id, best.class_name);
+        }
         // 保险：若 preventDefault 未阻止原生 toggle，下一帧恢复播放状态
         if (video && wasPaused !== null) {
           requestAnimationFrame(() => {
@@ -281,15 +287,16 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
           }
         }, 500);
       } else {
-        // 空点击（点击捕获层盖住视频，视频原生手势收不到）→ 模拟原生行为：播放/暂停切换 + 反选
+        // v0.30 空点击：只模拟原生播放/暂停切换，不再反选选中框。
+        // （原实现 play/pause + onTrackSelect(-1) 耦合导致：暂停态选中物体后
+        //   点空白播放 → 高亮被取消。现在播放/暂停与选中/取消完全解耦。）
         if (video) {
           if (video.paused) video.play().catch(() => {});
           else video.pause();
         }
-        onTrackSelect(-1, "");
       }
     },
-    [hasDetection, ensure, hasLoadedRange, pickTrack, onTrackSelect],
+    [hasDetection, ensure, hasLoadedRange, pickTrack, onTrackSelect, selectedTrackId],
   );
 
   const handleMove = useCallback(
