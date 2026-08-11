@@ -12,6 +12,7 @@ export function VideoSearchCard({
   video,
   onSeekTo,
   onTrackResult,
+  onFaceResult,
   groupVideos,
   allVideos,
   onGroupVideoSwitch,
@@ -19,6 +20,8 @@ export function VideoSearchCard({
   video: VideoResponse | null;
   onSeekTo?: (start: number, end: number | null) => void;
   onTrackResult?: (videoId: string, trackId: number, className: string, start: number) => void;
+  /* v0.30: 人脸结果点击 → 定位检测栏"人脸"视图（identityId + 时间戳） */
+  onFaceResult?: (videoId: string, identityId: number, timestamp: number) => void;
   /* ── v0.19 组感知 ── */
   groupVideos?: string[];
   allVideos?: VideoListItem[];
@@ -39,7 +42,6 @@ export function VideoSearchCard({
   );
   const [faceSearching, setFaceSearching] = useState(false);
   const [faceResults, setFaceResults] = useState<FaceSearchResult[]>([]);
-  const [expandedFace, setExpandedFace] = useState<number | null>(null); // 展开某身份的全部出现时间段
   const [faceExportOpen, setFaceExportOpen] = useState<number | null>(null); // 人脸"导出"展开的 identity_id
   const [trackExportOpen, setTrackExportOpen] = useState<number | null>(null); // 物体"导出"展开的 track_id
   const [imageSearching, setImageSearching] = useState(false);
@@ -109,8 +111,13 @@ export function VideoSearchCard({
 
   const handleFaceFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
+    // 人脸搜索：清空语义/图搜旧结果，避免新结果从旧结果上方插入
+    setResults([]); setFaceResults([]); setSearching(false);
     setFaceSearching(true); setError(null); setSearchMode("face");
-    try { setFaceResults(await api.searchFace(file, searchVideoIds)); }
+    try {
+      const data = await api.searchFace(file, searchVideoIds);
+      setFaceResults(data); setHasSearched(true);
+    }
     catch (err) { setError(err instanceof Error ? err.message : "人脸搜索失败"); }
     finally { setFaceSearching(false); if (fileInputRef.current) fileInputRef.current.value = ""; }
   }, [searchVideoIds]);
@@ -118,7 +125,8 @@ export function VideoSearchCard({
   /* ── 通用图搜 ── */
   const handleImageSearch = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
-    setImageSearching(true); setError(null); setFaceResults([]); setSearchMode("image");
+    // 图搜：与语义/人脸搜索统一，先清空旧结果
+    setResults([]); setImageSearching(true); setError(null); setFaceResults([]); setSearchMode("image");
     try {
       const data = await api.searchImage(file, {
         video_ids: searchVideoIds,
@@ -311,18 +319,23 @@ export function VideoSearchCard({
         {/* Error */}
         {error && <div className="mb-2 p-2 rounded-lg bg-red-50 border border-red-100 text-[10px] text-red-600">{error}</div>}
 
+        {/* Q5: 导出展开后点空白收起（fixed 遮罩，与搜索范围下拉同一模式；sr-acts 提升 z-20 保证子按钮可点） */}
+        {(faceExportOpen != null || trackExportOpen != null) && (
+          <div className="fixed inset-0 z-10" onClick={() => { setFaceExportOpen(null); setTrackExportOpen(null); }} />
+        )}
+
         {/* Face search results（v0.30: 与语义/车牌搜索统一 sr-item 骨架；方案A=点卡片主体展开出现列表） */}
         {faceResults.length > 0 && (
           <div className="sr">
               {faceResults.map((fr) => {
-                const isExpanded = expandedFace === fr.identity_id;
                 const appearances = fr.appearances ?? [];
                 return (
                   <div key={`${fr.video_id}-${fr.identity_id}`} className="sr-item"
                     onClick={() => {
-                      if (isExpanded) { setExpandedFace(null); return; }
-                      if (appearances.length > 1) { setExpandedFace(fr.identity_id); return; }
-                      if (fr.best_face_timestamp != null) onSeekTo?.(fr.best_face_timestamp, null);
+                      // v0.30: 定位"人脸"种类 → 检测栏人脸视图 + 展开身份 + 视频定位
+                      //（跳转到该身份「第一条」出现时间点，非最典型脸时间戳；下钻在检测栏人脸视图）
+                      const ts = fr.appearances?.[0]?.timestamp_sec ?? fr.first_seen;
+                      onFaceResult?.(fr.video_id, fr.identity_id, ts);
                     }}
                   >
                     <div className="sr-top">
@@ -341,7 +354,7 @@ export function VideoSearchCard({
                           <span className="sr-score">{fr.similarity != null ? Math.round(fr.similarity * 100) + "%" : ""}</span>
                           <span className="sr-type face">人脸搜索</span>
                         </div>
-                        <div className="sr-acts" onClick={(e) => e.stopPropagation()}>
+                        <div className="sr-acts relative z-20" onClick={(e) => e.stopPropagation()}>
                           {faceExportOpen !== fr.identity_id ? (
                             <button className="sr-act" onClick={() => setFaceExportOpen(fr.identity_id)}>
                               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>导出
@@ -366,33 +379,14 @@ export function VideoSearchCard({
                         </div>
                       </div>
                     </div>
-                    {isExpanded && appearances.length > 1 && (
-                      <div className="sr-appearances mt-1 pl-[60px]">
-                        {appearances.map((ap, ai) => (
-                          <button key={ai}
-                            onClick={(e) => { e.stopPropagation(); onSeekTo?.(ap.timestamp_sec, null); setExpandedFace(null); }}
-                            className="block w-full text-left text-[10px] text-gray-500 hover:text-teal-600 px-1 py-0.5 rounded cursor-pointer"
-                          >
-                            <span className="text-teal-500">▶</span> {formatSec(ap.timestamp_sec)}
-                            {ap.track_id != null && <span className="text-gray-400"> · track {ap.track_id}</span>}
-                          </button>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 );
               })}
             </div>
         )}
 
-        {faceSearching && (
-          <div className="flex items-center justify-center py-4 text-purple-400 text-xs gap-2">
-            <span className="inline-block w-3 h-3 border-2 border-purple-300 border-t-purple-500 rounded-full animate-spin" />人脸搜索中...
-          </div>
-        )}
-
         {/* Empty results */}
-        {hasSearched && !searching && !error && results.length === 0 && faceResults.length === 0 && (
+        {hasSearched && !searching && !imageSearching && !faceSearching && !error && results.length === 0 && faceResults.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 text-gray-400">
             <svg className="w-10 h-10 mb-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
             <p className="text-sm">未找到匹配结果</p>
@@ -459,7 +453,7 @@ export function VideoSearchCard({
                       {item.similarity != null && <span className="sr-score">{Math.round(item.similarity * 100)}%</span>}
                       <span className={`sr-type ${typeClass}`}>{typeLabel}</span>
                     </div>
-                    <div className="sr-acts" onClick={(e) => e.stopPropagation()}>
+                    <div className="sr-acts relative z-20" onClick={(e) => e.stopPropagation()}>
                       {isTrack && item.track_id != null ? (
                         trackExportOpen !== item.track_id ? (
                           <button className="sr-act" onClick={() => setTrackExportOpen(item.track_id!)}>
@@ -495,7 +489,7 @@ export function VideoSearchCard({
         </div>
 
         {/* Initial prompt */}
-        {!hasSearched && !searching && !error && (
+        {!hasSearched && !searching && !imageSearching && !faceSearching && !error && (
           <div className="flex flex-col items-center justify-center py-8 text-gray-400">
             <svg className="w-8 h-8 mb-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
             <p className="text-xs">{plateMode ? "输入车牌任意字符，列出所有相关车牌" : "输入关键词搜索视频画面"}</p>

@@ -158,6 +158,18 @@ export default function Dashboard() {
   /* ── Track selection state ── */
   const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
   const [classFilter, setClassFilter] = useState<string | null>(null);
+  /* ── 人脸视图控制（v0.30: 搜索人脸结果点击 → 检测栏"人脸"视图 + 展开身份） ── */
+  const [faceViewOpen, setFaceViewOpen] = useState(false);
+  const [expandedFaceId, setExpandedFaceId] = useState<number | null>(null);
+  /* ── 选中人脸身份 → 其归属的 person track 集合（视频框高亮 + 时间轴联动，v0.30） ── */
+  const selectedFaceTrackIds = useMemo(() => {
+    if (expandedFaceId == null || !faceData?.track_to_identity) return [];
+    const ids: number[] = [];
+    for (const [tid, { identity_id }] of Object.entries(faceData.track_to_identity)) {
+      if (identity_id === expandedFaceId) ids.push(Number(tid));
+    }
+    return ids;
+  }, [expandedFaceId, faceData]);
 
   const handleTrackSelect = useCallback((trackId: number, className: string, seekTo?: number) => {
     if (trackId < 0) {
@@ -289,6 +301,18 @@ export default function Dashboard() {
     setDetectionVideoId(null);
     handleTrackSelect(trackId, className, start);
   }, [currentVideoId, handleGroupVideoSwitch, handleTrackSelect]);
+
+  /* ── 搜索人脸结果点击：切主视频 + 检测栏"人脸"视图 + 展开身份 + 定位（v0.30）
+     展开下钻（出现时间段）在检测栏人脸视图完成，搜索结果只负责"定位人脸" ── */
+  const handleFaceResult = useCallback((videoId: string, identityId: number, ts: number) => {
+    if (videoId && videoId !== currentVideoId) {
+      handleGroupVideoSwitch(videoId);
+    }
+    setDetectionVideoId(null);       // 检测面板跟随主视频（= 结果视频）
+    setFaceViewOpen(true);           // 切到"人脸"视图
+    setExpandedFaceId(identityId);   // 展开该身份
+    if (videoRef.current) videoRef.current.currentTime = ts;
+  }, [currentVideoId, handleGroupVideoSwitch]);
 
   /* ── 上传文件 (单/多, Header 选择与拖拽共用) ── */
   const handleFiles = useCallback(async (fileList: FileList | File[]) => {
@@ -521,6 +545,7 @@ export default function Dashboard() {
               detectionEnabled={currentVideo?.detection_enabled ?? false}
               hasDetection={showDetection} detectionData={detectionData}
               faceData={faceData} selectedTrackId={selectedTrackId}
+              selectedFaceTrackIds={selectedFaceTrackIds}
               classFilter={classFilter} proxyStatus={proxyStatus}
               pipelineStages={pipelineStages} videoRef={videoRef}
               onTrackSelect={handleTrackSelect}
@@ -540,6 +565,11 @@ export default function Dashboard() {
             }}
             onGroupVideoSwitch={handleGroupVideoSwitch}
             onSearchTrackResult={handleSearchTrackResult}
+            onSearchFaceResult={handleFaceResult}
+            faceViewOpen={faceViewOpen}
+            expandedFaceId={expandedFaceId}
+            onFaceViewChange={setFaceViewOpen}
+            onExpandedFaceChange={setExpandedFaceId}
             onSeekTo={(start, end) => {
               setSeekTarget({ start, end });
               // Direct seek in click context — avoids autoplay-blocked play()

@@ -20,6 +20,7 @@ interface Props {
   detectionData: DetectionData | null;
   faceData: FaceData | null;
   selectedTrackId: number | null;
+  selectedFaceTrackIds: number[];
   classFilter: string | null;
   proxyStatus: ProxyStatus | null;
   pipelineStages: PipelineStage[];
@@ -38,6 +39,7 @@ export function VideoSection({
   detectionData,
   faceData,
   selectedTrackId,
+  selectedFaceTrackIds,
   classFilter,
   proxyStatus,
   pipelineStages,
@@ -55,6 +57,7 @@ export function VideoSection({
         detectionEnabled={detectionEnabled}
         hasDetection={hasDetection && detectionEnabled && !!detectionData?.has_detection}
         selectedTrackId={selectedTrackId}
+        selectedFaceTrackIds={selectedFaceTrackIds}
         proxyStatus={proxyStatus}
         videoRef={videoRef}
         onTrackSelect={(tid, cls) => onTrackSelect(tid, cls)}
@@ -65,6 +68,7 @@ export function VideoSection({
         videoId={videoId ?? ""}
         videoRef={videoRef}
         selectedTrackId={selectedTrackId}
+        selectedFaceTrackIds={selectedFaceTrackIds}
         classFilter={classFilter}
         onTrackSelect={onTrackSelect}
         data={detectionData}

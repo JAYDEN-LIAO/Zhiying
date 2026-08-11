@@ -386,6 +386,8 @@ export interface FaceIdentity {
   best_face_timestamp: number | null;
   best_face_bbox: { x1: number; y1: number; x2: number; y2: number } | null;
   best_thumbnail_url: string | null;
+  // v0.30: 按 track 聚合的出现时间段（检测栏人脸行展开显示）
+  appearances?: { track_id: number | null; start_sec: number; end_sec: number }[];
 }
 
 export interface FaceData {

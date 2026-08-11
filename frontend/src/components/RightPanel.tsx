@@ -22,6 +22,13 @@ interface Props {
   onSeekTo: (start: number, end: number | null) => void;
   /* 搜索 track 结果点击：带 video_id（供 Dashboard 同步检测面板到结果视频）*/
   onSearchTrackResult: (videoId: string, trackId: number, className: string, start: number) => void;
+  /* 搜索人脸结果点击：定位到检测栏"人脸"视图并展开身份（v0.30）*/
+  onSearchFaceResult: (videoId: string, identityId: number, ts: number) => void;
+  /* ── 人脸视图外部控制（v0.30: 由 Dashboard 提升，供搜索人脸结果定位） ── */
+  faceViewOpen: boolean;
+  expandedFaceId: number | null;
+  onFaceViewChange: (v: boolean) => void;
+  onExpandedFaceChange: (v: number | null) => void;
   /* ── v0.19 组感知 ── */
   groupVideos?: string[];
   videos?: VideoListItem[];
@@ -42,6 +49,11 @@ export function RightPanel({
   onTrackSelect,
   onSeekTo,
   onSearchTrackResult,
+  onSearchFaceResult,
+  faceViewOpen,
+  expandedFaceId,
+  onFaceViewChange,
+  onExpandedFaceChange,
   groupVideos,
   videos,
   detectionVideoId,
@@ -59,6 +71,11 @@ export function RightPanel({
           classFilter={classFilter}
           onClassFilterChange={onClassFilterChange}
           onTrackSelect={onTrackSelect}
+          faceViewOpen={faceViewOpen}
+          expandedFaceId={expandedFaceId}
+          onFaceViewChange={onFaceViewChange}
+          onExpandedFaceChange={onExpandedFaceChange}
+          onSeekTo={(s, e) => onSeekTo(s, e)}
           faceData={faceData}
           plateData={plateData}
           groupVideos={groupVideos}
@@ -77,6 +94,7 @@ export function RightPanel({
           onTrackResult={(videoId, trackId, className, start) => {
             onSearchTrackResult(videoId, trackId, className, start);
           }}
+          onFaceResult={(videoId, identityId, ts) => onSearchFaceResult(videoId, identityId, ts)}
           groupVideos={groupVideos}
           allVideos={videos}
           onGroupVideoSwitch={onGroupVideoSwitch}

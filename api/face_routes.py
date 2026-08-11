@@ -11,7 +11,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from PIL import Image
 
@@ -74,7 +74,30 @@ async def get_face_data(
             continue  # 每 track 只记一个身份（该 track 的主身份）
         track_map[trk_id] = {"identity_id": ident_id}
 
-    # 3. 构建身份摘要
+    # 3. 身份 ↔ track 出现时间段（v0.30: 检测栏人脸行展开显示；按 track 聚合 min/max，
+    #    人脸为多帧稀疏采样，同 track 采样点代表该次出现跨度，比单点更符合直觉）
+    appearance_stmt = (
+        select(
+            FaceDetection.identity_id,
+            FaceDetection.track_id,
+            func.min(FaceDetection.timestamp_sec).label("start_sec"),
+            func.max(FaceDetection.timestamp_sec).label("end_sec"),
+        )
+        .where(FaceDetection.video_id == video_id)
+        .where(FaceDetection.identity_id.isnot(None))
+        .group_by(FaceDetection.identity_id, FaceDetection.track_id)
+        .order_by(func.min(FaceDetection.timestamp_sec))
+    )
+    app_result = await db.execute(appearance_stmt)
+    appearances_by_id: dict[int, list[dict]] = {}
+    for ident_id, trk_id, start_sec, end_sec in app_result:
+        appearances_by_id.setdefault(ident_id, []).append({
+            "track_id": trk_id,
+            "start_sec": round(float(start_sec), 2),
+            "end_sec": round(float(end_sec), 2),
+        })
+
+    # 4. 构建身份摘要
     identities_data = [
         {
             "id": fi.id,
@@ -89,6 +112,7 @@ async def get_face_data(
                 f"/api/v1/videos/{video_id}/face/thumbnail"
                 f"?identity_id={fi.id}"
             ) if fi.best_face_timestamp is not None else None,
+            "appearances": appearances_by_id.get(fi.id, []),
         }
         for fi in db_identities
     ]

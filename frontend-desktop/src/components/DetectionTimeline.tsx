@@ -39,6 +39,7 @@ interface Props {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   data: DetectionData | null;
   selectedTrackId: number | null;
+  selectedFaceTrackIds: number[];
   classFilter: string | null;
   onTrackSelect: (trackId: number, className: string, seekTo: number) => void;
   faceData?: FaceData | null;
@@ -107,7 +108,7 @@ function fmtTick(s: number): string {
   return `${s}`;
 }
 
-export const DetectionTimeline = memo(function DetectionTimeline({ videoId, videoRef, data, selectedTrackId, classFilter, onTrackSelect, faceData, streamReady }: Props) {
+export const DetectionTimeline = memo(function DetectionTimeline({ videoId, videoRef, data, selectedTrackId, selectedFaceTrackIds, classFilter, onTrackSelect, faceData, streamReady }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playheadRef = useRef<HTMLDivElement>(null);
@@ -127,6 +128,7 @@ export const DetectionTimeline = memo(function DetectionTimeline({ videoId, vide
   const sizeRef = useRef(size); sizeRef.current = size;
   const scrollTopRef = useRef(0);
   const selectedRef = useRef(selectedTrackId); selectedRef.current = selectedTrackId;
+  const selectedFaceRef = useRef(selectedFaceTrackIds); selectedFaceRef.current = selectedFaceTrackIds;
   const hoverRef = useRef(hover); hoverRef.current = hover;
   const faceRef = useRef(faceData); faceRef.current = faceData;
   const onTrackSelectRef = useRef(onTrackSelect); onTrackSelectRef.current = onTrackSelect;
@@ -176,6 +178,26 @@ export const DetectionTimeline = memo(function DetectionTimeline({ videoId, vide
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTrackId]);
 
+  /* ── 选中人脸身份 → 时间轴联动：垂直滚动到其 lane + 水平 pan（v0.30） ── */
+  useLayoutEffect(() => {
+    if (selectedFaceTrackIds.length === 0) return;
+    const rect = rectsRef.current.find((r) => selectedFaceTrackIds.includes(r.trackId));
+    const v = viewRef.current;
+    if (!rect || !v) return;
+    const wrap = wrapRef.current;
+    if (wrap) {
+      const laneTop = PAD + rect.lane * ROW;
+      wrap.scrollTop = Math.max(0, laneTop - (wrap.clientHeight - ROW) / 2);
+    }
+    if (rect.start >= v.start && rect.start <= v.end) return;
+    const span = v.end - v.start;
+    let s = rect.start - span / 2, en = rect.start + span / 2;
+    s = Math.max(0, s); en = Math.min(duration, en);
+    if (en - s < 1) en = s + 1;
+    setView({ start: s, end: en });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFaceTrackIds]);
+
   /* ── Canvas 绘制（读取 refs，稳定函数；每次渲染后重绘）── */
   const render = useCallback(() => {
     const canvas = canvasRef.current;
@@ -218,7 +240,7 @@ export const DetectionTimeline = memo(function DetectionTimeline({ videoId, vide
       // 亚像素段补最小可见宽度（对齐旧 DOM 的 min-width:3px）——任何缩放下所有 track 都可见
       const drawW = Math.max(x2 - x1, MIN_BAR_PX);
       const y = PAD + r.lane * ROW - scrollTop;
-      const isSel = r.trackId === selectedRef.current;
+      const isSel = r.trackId === selectedRef.current || selectedFaceRef.current.includes(r.trackId);
       const isHover = hoverRef.current?.rect === r;
       ctx.fillStyle = isSel ? "#FFD700" : r.color;
       ctx.globalAlpha = isSel ? 1 : (isHover ? 0.95 : 0.65);

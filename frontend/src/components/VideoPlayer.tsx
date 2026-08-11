@@ -16,6 +16,7 @@ interface Props {
   detectionEnabled: boolean;
   hasDetection: boolean;
   selectedTrackId: number | null;
+  selectedFaceTrackIds: number[];
   proxyStatus: ProxyStatus | null;
   videoRef: RefObject<HTMLVideoElement | null>;
   onTrackSelect: (trackId: number, className: string) => void;
@@ -30,6 +31,7 @@ export function VideoPlayer({
   detectionEnabled,
   hasDetection,
   selectedTrackId,
+  selectedFaceTrackIds,
   proxyStatus,
   videoRef,
   onTrackSelect,
@@ -94,6 +96,7 @@ export function VideoPlayer({
               enabled={detectionEnabled}
               hasDetection={hasDetection}
               selectedTrackId={selectedTrackId}
+              selectedFaceTrackIds={selectedFaceTrackIds}
               onTrackSelect={onTrackSelect}
             />
           )}

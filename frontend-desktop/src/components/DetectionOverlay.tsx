@@ -19,14 +19,17 @@ interface Props {
   enabled: boolean;
   hasDetection: boolean;
   selectedTrackId: number | null;
+  selectedFaceTrackIds: number[];
   onTrackSelect: (trackId: number, className: string) => void;
 }
 
-export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, selectedTrackId, onTrackSelect }: Props) {
+export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, selectedTrackId, selectedFaceTrackIds, onTrackSelect }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
   const pendingClickRef = useRef<{ x: number; y: number; t: number } | null>(null);
   const onTrackSelectRef = useRef(onTrackSelect); onTrackSelectRef.current = onTrackSelect;
+  // v0.30: 选中人脸身份的归属 person track 集合（金色高亮，draw 热路径读 ref）
+  const selectedFaceRef = useRef(selectedFaceTrackIds); selectedFaceRef.current = selectedFaceTrackIds;
   const { get, version, ensure, hasLoadedRange } = useDetectionRanges(videoId, videoRef, enabled, hasDetection);
 
   /* ── 插值 bbox（与绘制一致）：floor/ceil 之间的线性插值。
@@ -104,7 +107,7 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
     const TRAIL_DURATION = 2.0, TRAIL_STEP = 0.1, MAX_GAP = 3;
     for (const det of interpolated) {
       const color = colorOf(det.class_name);
-      const isSel = det.track_id === selectedTrackId;
+      const isSel = det.track_id === selectedTrackId || selectedFaceRef.current.includes(det.track_id);
       const curCx = offsetX + ((det.bbox.x1 + det.bbox.x2) / 2) * displayW;
       const curCy = offsetY + ((det.bbox.y1 + det.bbox.y2) / 2) * displayH;
       const points: { x: number; y: number }[] = [{ x: curCx, y: curCy }];
@@ -132,7 +135,7 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
 
     // ── Bboxes ──
     for (const det of interpolated) {
-      const isSel = det.track_id === selectedTrackId;
+      const isSel = det.track_id === selectedTrackId || selectedFaceRef.current.includes(det.track_id);
       const color = colorOf(det.class_name);
       const x = offsetX + det.bbox.x1 * displayW;
       const y = offsetY + det.bbox.y1 * displayH;
