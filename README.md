@@ -78,7 +78,7 @@ curl -X POST -H "Content-Type: application/json" \
 | System Settings (API 服务 + 存储路径 + 管道性能) | `GET/PUT /api/v1/settings`（API 密钥/服务商端点/存储路径 + 管道性能：编码三档模板/检测参数/量化/并发上限，保存即运行时生效，量化需重启）+ `GET /api/v1/settings/pipeline` | ✅ |
 | Pipeline Presets (参数预设) | `GET/POST/PUT/DELETE /api/v1/settings/presets` + `POST /{id}/apply`（data/presets.json 多套命名参数快照，一键套用） | ✅ |
 | Windows 从零部署 | `deploy/setup_windows.ps1` 裸机一键安装器（Python/FFmpeg/CUDA torch/WSL2/Docker/依赖/模型）+ 自校验 | ✅ |
-| 全局 GPU 锁 + 并发限制 | `core/gpu_lock.py` 串行化 embedder/YOLO 前向（防驱动故障）；`max_concurrent_videos` 信号量限流低显存并发 | ✅ |
+| 全局 GPU 锁 + 任务队列 | `core/gpu_lock.py` 串行化 embedder/YOLO 前向（防驱动故障）；`core/pipeline_queue.py` PipelineQueue worker 池限流并发管道（批量上传排队防 OOM，v0.32） | ✅ |
 | Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 (unified objects view + face toggle) | ✅ |
 | Track Crop Embedding (track search) | `POST /api/v1/search/semantic` (track path) | ✅ |
 | Frontend Labels Chinese Localization | 统一 labels.ts 映射中心，zh()/zhLabel()/colorOf() 函数 | ✅ |
@@ -232,7 +232,7 @@ zhiying/
 │   ├── ocr/              # (stub) PaddleOCR
 │   └── grounding/        # (stub) Florence-2
 ├── services/             # Business logic layer
-│   ├── video_service.py  # Video processing orchestration (max_concurrent_videos 信号量限流)
+│   ├── video_service.py  # Video processing orchestration（并发由 core/pipeline_queue.py 队列 worker 池限流）
 │   ├── yunzhi_job_service.py # 云智任务执行 (202+进度/完成/失败回调, 幂等)
 │   ├── format_service.py # Multi-format support (probe/remux/proxy, lazy on-demand)
 │   ├── export_service.py # Export business logic (clip/frames/track/thumbnails)
@@ -278,7 +278,7 @@ zhiying/
 
 - **v0.31 — 人脸搜索交互完善 + 搜索范围模型 + 跨视频检索穿透 + 通用置信度**: 人脸搜索交互重构（搜索人脸结果点击定位检测栏"人脸"视图 + 身份展开按 track 聚合出现时间段 + 单次不展开 + 人脸行下载按钮 + 选中视频框金色高亮 + 时间轴联动 + 丝滑定位）；搜索范围模型重构（当前/全组/全部/自定义跨视频多选，下拉常驻；无视频默认工作台直接全库搜索；人脸/车牌门控按"范围内任一视频具备即可用"）；跨视频检索穿透定位（结果点击不再重置搜索卡，根治 `video?.id` 派生 currentVideoId 的 旧→null→新 双触发；seekTarget loadedmetadata+轮询 跨视频可靠 seek；播放/时间轴/检测栏穿透）；通用置信度 confidence（`search_engine.py` 结果返回 `confidence=相似度×路径权重`，跨路径统一排行）。
 - **v0.29 — 人脸识别链路重构 + 搜索隔离 + 前端搜索样式统一**: 人脸聚类改护栏式双阈值（同track 0.30/跨track 0.58，替代单一 0.60 拆碎/0.40 并错）；多帧采样提脸 + 最典型脸作检索锚；detection 全分辨率帧升级；修复 search/face + search/image 的 video_ids 泄漏全库 bug（form 参数改 Form 声明）；五种搜索（语义/图搜/物体/车牌/人脸）统一 sr-item 卡片样式（标签右上角 + 主体1行 + 导出展开式）；人脸并入物体检测下拉栏。
-- **进行中（未发版）— 桌面端 + 双前端共存**: `desktop/` pywebview 启动器 + `frontend-desktop/` 桌面独立前端 + `frontend-shared/` 共享对接层；摘要默认 vlm_llm（native_video 置灰退役）。详见 `docs/develop.md §6`。
+- **进行中（未发版）— v0.32 全局任务队列**: `core/pipeline_queue.py` FIFO 任务队列 + worker 池（N=`max_concurrent_videos`，0/未设=1 串行）+ `pipeline_tasks` 表 DB 持久化。所有管道触发点（yunzhi jobs/上传 params/组同步/增量）统一入队，批量上传排队处理防 GPU OOM；重启恢复（yunzhi 续跑防重复建视频 / pipeline 标失败）+ "排队中"低进度回调 + 幂等跨重启。接口保持异步（jobs 202 不变）。
 - **v0.28 — 云智嵌入 UI 重构**: 移除侧边栏（避免与 yunzhi 平台重复）→ 导航上移 header；参数/历史抽屉改右侧滑出；设置页点面板先跳回工作台；搜索框车牌/人脸按钮按检测门控置灰。
 - **v0.27 — 搜索修正 + 车牌模糊搜索模式**: 统一 track 编号；搜索范围 fail-closed；车牌归一化 + 编辑距离 + 「牌」模式（单字列出所有相关车牌）。
 - **v0.26 — 平台文件 id → 视频自动跳转**: `videos.external_file_id` + `GET /videos/external/{file_id}`，Bridge connect() 后凭 `context.resource.id` 打开对应视频。

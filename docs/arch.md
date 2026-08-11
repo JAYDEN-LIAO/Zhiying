@@ -9,6 +9,7 @@
 > v0.28: 云智嵌入 UI 重构（移除侧边栏 / 导航上移 header / 参数历史右侧抽屉 / 搜索检测门控）
 > v0.29: 人脸识别链路重构（护栏式双阈值聚类 + 多帧采样 + 最典型脸锚点）+ 搜索数据隔离修复 + 五种搜索样式统一 + 前端交互优化
 > v0.31: 人脸搜索交互完善（结果定位检测栏人脸视图 + 身份展开出现时间段 + 选中高亮 + 时间轴联动）+ 搜索范围模型（当前/全组/全部/自定义多选，无视频直接搜索）+ 跨视频检索穿透定位 + 通用置信度 confidence
+> v0.32（未发版）: 全局任务队列（PipelineQueue FIFO + worker 池 + pipeline_tasks 表 DB 持久化，批量上传排队防 GPU OOM；重启恢复 yunzhi 续跑/pipeline 标失败；排队中回调；幂等跨重启）
 > 桌面端（未发版）: desktop/ pywebview 启动器 + frontend-desktop/ 独立前端 + 摘要默认 vlm_llm（native_video 置灰退役）
 
 ## System Data Flow
@@ -149,7 +150,7 @@ Incremental: Only L3 switches (summary_enabled / search_index_enabled) can be to
     yolo_imgsz             → plugins.detector.imgsz (320-640, 32倍数)
     use_nvdec / chunk_encoding   布尔开关
     quantization          embedder 量化 none/8bit/4bit（⚠️ 启动时加载，改后需重启）
-    max_concurrent_videos 并发管道上限 (0=不限) → VideoService asyncio.Semaphore
+    max_concurrent_videos 并发管道上限 → PipelineQueue worker 池（0/未设=1 串行，v0.32 队列）
 
   core/config_loader: PIPELINE_NUMERIC_SPEC + ENCODE_PROFILE_NUMERIC_SPEC + clamp_param()
     → 保存/应用时范围钳制 + 步进取整；空字符串 = 删除覆盖（回退 config.yaml）
@@ -185,7 +186,7 @@ DAG 阶段流 (EventDrivenScheduler, 15 ops, 每 op 一个 asyncio 任务等待�
 GPU 串行 (v0.22): 所有 embedder encode_* / YOLO detect 前向持 core/gpu_lock 全局锁
   → 并发前向（YOLO cuDNN 卷积 + bitsandbytes 8bit matmul）在 24GB 机器触发驱动硬故障
   → detection 攒批 128（约 2-4s 持锁），1024 长批持锁 ~20s 会饿死 embedder / 卡死共享流
-并发管道 (v0.22): max_concurrent_videos >0 → VideoService 信号量限流，防组批量激活峰值叠加 OOM
+并发管道 (v0.32 队列): max_concurrent_videos → PipelineQueue worker 池（0/未设=1 串行 FIFO 排队），防批量并发 OOM
 
 Keyframe 消费 4 链路:
   ① frame_encode → frame_embeddings 表 (1fps 帧向量)
@@ -210,6 +211,14 @@ Track 语义路 (track_encode): 读 detection 缓存 640×384 crop (每 2s, 零 
      搜索人脸结果点击 → 定位检测栏"人脸"视图 + 展开身份 + 视频定位（跳第一条出现时间点）；
      选中身份 → 其归属 person track 集合在视频框金色高亮 + 时间轴联动 + 丝滑定位
 Persist: bulk_insert_scenes + insert transcript + update videos (duration/summary/status_detail)
+
+任务队列 (v0.32, core/pipeline_queue.py PipelineQueue):
+  FIFO asyncio.Queue + N worker（N = pipeline.max_concurrent_videos，0/未设=1 串行，防批量并发 GPU OOM）
+  ├─ 所有管道触发点统一入队：yunzhi jobs（202 后入队 + "排队中"低进度回调）、上传 params、组同步、增量
+  ├─ pipeline_tasks 表 DB 持久化：queued → running → completed/failed；payload_json 存回调 URL + jobToken
+  ├─ 重启恢复：queued 重入队；running yunzhi 续跑（有 video_id 复用，防重复建视频）；running pipeline/incremental 标失败
+  ├─ 幂等：dedup_key 列，进程内 dict 快路径 + DB 兜底（跨重启）
+  └─ worker 数随设置运行时 configure() 调整；shutdown() 哨兵退出优雅关停
 ```
 
 ## Module Dependency
@@ -396,6 +405,13 @@ plate_detections
   ├─ plate_text, plate_type (blue/yellow/green/white)
   ├─ char_confidences (JSONB), bbox (JSONB), detection_confidence
   └─ created_at
+
+pipeline_tasks (v0.32 任务队列持久化)
+  ├─ id (UUID PK), type (yunzhi_job/pipeline/incremental)
+  ├─ dedup_key (String, index — 幂等键), video_id (UUID, 恢复续跑防重复建)
+  ├─ payload_json (Text — 序列化任务载荷, yunzhi 含回调 URL + jobToken)
+  ├─ status (queued/running/completed/failed), error (Text)
+  └─ created_at, updated_at
 ```
 
 ## API Endpoints
@@ -525,7 +541,7 @@ Vite 开发代理:
 | **删除处理中 + 管道取消 (v0.22)** | 放开 PROCESSING 守卫；删除端点 `core/cancellation.mark_cancelled` 登记已删 id，管道 persist 前 `is_cancelled` 检查即中止，防写已删行 FK 异常（单进程集合, 管道结束 unmark 防膨胀） |
 | **全局 GPU 锁 (v0.22)** | 24GB 机 YOLO 卷积 + 8bit matmul 并发触发驱动硬故障 → 单进程全局锁串行所有 GPU 前向；detection 攒批 1024→128 防饿死 embedder |
 | **共享单实例 (v0.22)** | embedder + detector 预载 app.state（detector 懒加载），业务逻辑经 shared_detector 注入，禁重复 load_plugin |
-| **并发管道限制 (v0.22)** | max_concurrent_videos 信号量限流（激活峰值按并发叠加），低显存机防组批量并发 OOM |
+| **并发管道限制 (v0.22→v0.32 队列)** | max_concurrent_videos → PipelineQueue worker 池（0/未设=1 串行 FIFO 排队，防批量并发 OOM） |
 | **参数预设 (v0.22)** | presets.json 命名快照一键套用，运行时生效；不含机器相关（存储路径/密钥） |
 | **从零部署 + 配置统一 (v0.22)** | setup_windows.ps1 裸机一键安装；单份 config 自动降级 captioner（本地缺失→qwen_api），effective_summary_mode 兜底摘要模式 |
 | **多架构 requirements (v0.22)** | `onnxruntime-gpu` 仅 x86/Windows 有 wheel → 环境标记：win32/x86_64/AMD64 装 GPU 版，aarch64/arm64（DGX Spark/GB10）自动装 `onnxruntime` CPU 版（人脸/车牌走 CPU）；numpy 钉 `<2.4`（paddlex 3.7） |
@@ -578,7 +594,7 @@ Vite 开发代理:
 | Settings API (Keys + Providers + Storage + Pipeline) | ✅ | core/settings_service.py, GET/PUT /api/v1/settings（密钥/端点/模型 + 存储路径 + pipeline 段: 编码三档/检测参数/量化/并发上限，settings.json backed，运行时生效，量化需重启） |
 | Pipeline Presets (v0.22) | ✅ | core/presets_service.py + /settings/presets CRUD + apply（data/presets.json 命名快照，一键套用） |
 | Global GPU Lock (v0.22) | ✅ | core/gpu_lock.py — embedder/YOLO 前向全局串行（防 24GB 机并发驱动故障）; detection 攒批 128 |
-| 并发管道限制 (v0.22) | ✅ | pipeline.max_concurrent_videos → VideoService asyncio.Semaphore 限流同时处理的管道数 |
+| 并发管道限制 (v0.22→v0.32 队列) | ✅ | pipeline.max_concurrent_videos → core/pipeline_queue.py PipelineQueue worker 池（FIFO + DB 持久化，0/未设=1 串行） |
 | Embedder Quantization (v0.22) | ✅ | plugins/embedder/qwen_vl_embedder.py — none/8bit/4bit via bitsandbytes; 相对模型路径解析到项目根 |
 | Windows 从零部署 + 多架构 (v0.22) | ✅ | deploy/setup_windows.ps1 裸机一键安装器 + download_models.py (含 reid) + deploy_feedback.md; 单份 config 自动降级 captioner; requirements 环境标记支持 ARM64 (onnxruntime CPU) |
 | 服务器前端 (frontend/) | ✅ | React 19 + Vite + Tailwind, 19 components（v0.28 删 Sidebar）+ 8 hooks + 对接层指针（frontend-shared）|

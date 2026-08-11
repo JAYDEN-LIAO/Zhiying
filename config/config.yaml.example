@@ -109,9 +109,9 @@ pipeline:
   # NVDEC 硬解 — GPU 硬件解码 + MJPEG pipe 传输 (~100KB/帧)
   # 需要 NVIDIA GPU + FFmpeg 编译 CUDA 支持；不可用时自动 fallback 到 cv2
   use_nvdec: true
-  # 并发管道上限：0 = 不限（默认）；>0 时同一时刻最多 N 个视频管道同时处理。
-  # 24GB 等低显存机器建议 1（激活峰值按并发数叠加，静态权重不叠加）
-  max_concurrent_videos: 0
+  # 并发管道上限（v0.32 起=任务队列 worker 数）：>0 时同一时刻最多 N 个视频管道同时处理；
+  # 0 或未设 → 1（串行 FIFO 排队，防批量上传并发 GPU OOM）。建议低显存机器 1。
+  max_concurrent_videos: 1
   # 默认摘要模式：vlm_llm（API 驱动，默认）；native_video 已置灰退役（后端代码保留兼容历史记录）
   default_summary_mode: "vlm_llm"
 

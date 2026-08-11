@@ -143,7 +143,7 @@ class PipelineSettings(BaseModel):
     ── 全局开关 ──
     use_nvdec: NVDEC 硬解；chunk_encoding: chunk 编码
     ── 模型参数 ──
-    quantization: Embedder 量化（需重启生效）；yolo_imgsz: YOLO 分辨率；max_concurrent_videos: 并发上限
+    quantization: Embedder 量化（需重启生效）；yolo_imgsz: YOLO 分辨率；max_concurrent_videos: 并发上限（0/未设=串行 1 worker）
     """
     # ── 编码 ──
     encode_profiles: dict[str, dict[str, str | None]] | None = Field(
@@ -163,7 +163,7 @@ class PipelineSettings(BaseModel):
     # ── 模型参数 ──
     quantization: str | None = Field(default=None, description="Embedder 量化 none/8bit/4bit（启动时加载，改后需重启；空字符串=删除覆盖）")
     yolo_imgsz: str | None = Field(default=None, description="YOLO 推理分辨率 320-640（空字符串=删除覆盖）")
-    max_concurrent_videos: str | None = Field(default=None, description="并发管道上限，0=不限（空字符串=删除覆盖）")
+    max_concurrent_videos: str | None = Field(default=None, description="并发管道上限，0/未设=串行 1 worker（空字符串=删除覆盖）")
 
 
 class PresetCreate(BaseModel):

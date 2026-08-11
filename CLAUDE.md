@@ -23,7 +23,7 @@ api/export_routes.py       — Export endpoints: clip/frames/track/thumbnails (7
 api/face_routes.py          — Face data API (GET face/data + face/thumbnail; v0.29 track_to_identity 身份↔track 映射; v0.31 每身份返回 appearances 按 track 聚合时间段)
 api/plate_routes.py         — Plate data API (GET plate/data + plate/thumbnail)
 api/maintenance_routes.py  — 存储清扫端点 (POST /maintenance/sweep dry-run/执行, GET /maintenance/storage)
-core/models.py             — ORM: Video (+8 format fields + group_id FK), VideoGroup, Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection (12 tables)
+core/models.py             — ORM: Video (+8 format fields + group_id FK), VideoGroup, Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection, PipelineTask (13 tables)
 core/schemas.py            — Pydantic v2 DTOs + JSONB validation models + FormatInfo/ProxyStatus
 core/interfaces.py         — 10 abstract base classes (ABCs) + Scene/VideoContext dataclasses
 core/search.py             — 6 search functions: frame/chunk/text/track/plate/face (async def)
@@ -65,7 +65,7 @@ plugins/face/insightface_face.py  — InsightFace SCRFD + ArcFace R50 recognizer
 plugins/plate/hyperlpr_plate.py  — HyperLPR3 license plate detector + recognizer (primary)
 plugins/plate/paddle_plate.py    — PaddleOCR license plate detector (alternative)
 plugins/embedder/qwen_vl_embedder.py — Qwen3-VL-Embedding (336×224 encode, 内存路径, 零磁盘I/O; 量化 8bit/4bit via bitsandbytes; 受 gpu_lock 串行; 相对模型路径解析到项目根)
-services/video_service.py  — Pipeline 调用与后台调度 (max_concurrent_videos 信号量限流; RUNNING_VIDEOS 注册表)
+services/video_service.py  — Pipeline 调用与后台调度 (RUNNING_VIDEOS 注册表; 并发由全局 PipelineQueue worker 池限流, v0.32 起无信号量)
 services/yunzhi_job_service.py — 云智任务执行: 建视频(source_owned=false)→管道→进度/完成/失败回调(httpx async with 内) + 默认参数映射
 services/format_service.py — 格式兼容: probe(ffprobe) / remux(容器标准化, -c copy) / proxy(按需h264_nvenc)
 services/export_service.py — 导出业务逻辑 (clip/frames/track/thumbnails zip)
@@ -125,7 +125,7 @@ desktop/                   — 桌面端启动器（pywebview 壳, Windows 桌�
     → pipeline 段覆盖 config.yaml（编码三档模板/检测参数/量化/并发上限, clamp_param 钳制）
     → load_config() 每次 _apply_settings_overrides 合并, 保存清 lru_cache → 无需重启（quantization 除外）
   GET/POST /settings/presets + PUT/DELETE /{id} + POST /{id}/apply → data/presets.json 命名快照
-  并发: pipeline.max_concurrent_videos >0 → VideoService 信号量限流同时处理的管道数
+  并发: pipeline.max_concurrent_videos → 全局 PipelineQueue worker 池（0/未设=1 串行 FIFO 排队，防批量并发 OOM）
   GPU: 所有 embedder/YOLO 前向持 core/gpu_lock 串行（防并发驱动故障）; detector 共享 app.state 单实例
 
 PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
@@ -148,7 +148,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **参数预设**: `data/presets.json` 多套命名管道参数快照（`GET/POST/PUT/DELETE /settings/presets` + `POST /settings/presets/{id}/apply`），不含存储路径与 API 密钥（机器相关）；套用即写 settings.json 覆盖区运行时生效。
 - **全局 GPU 锁**: 所有 GPU 前向（embedder 4 个 encode_* 与 YOLO detect，含模型加载/tracker 初始化/批量推理）必须持 `core/gpu_lock.gpu_lock`（`async with gpu_lock`）串行——24GB 机器上 YOLO 卷积与 8bit matmul 并发会触发 GPU 驱动硬故障（蓝屏/卡死）。锁只串行 GPU 计算，不串行 NVDEC 解码/DB。detection 攒批因此用 **128**（1024 长批持锁 ~20s 会饿死 embedder）。
 - **共享单实例**: embedder 与 detector 都在启动时预载到 `app.state`（detector 模型懒加载，首次 detect 才载 ~2GB，避免每视频重载），业务逻辑经 `shared_detector` 注入 PipelineEngine，禁用 `load_plugin("detector"/"embedder")` 重复实例化；captioner 按需加载。
-- **并发管道限制**: `pipeline.max_concurrent_videos`（0=不限）→ VideoService 用 `asyncio.Semaphore` 限流同时处理的管道数（组批量上传会并发启动多管道，激活峰值按并发叠加，低显存机建议 1）。
+- **全局任务队列（v0.32）**: `core/pipeline_queue.py` PipelineQueue — FIFO + N worker（N=max_concurrent_videos，0/未设=1 串行）+ `pipeline_tasks` 表 DB 持久化。所有管道触发点（yunzhi jobs / 上传 params / 组同步 / 增量）统一入队，接口保持异步（jobs 202）。重启恢复：queued 重入队 / running yunzhi 续跑（防重复建视频）/ running pipeline 标失败；yunzhi payload_json 存回调 URL+token，恢复后照常发 complete/fail；入队即发"排队中"低进度回调。worker 数随设置运行时调整（configure）。
 - **配置模板化 + 自动降级**: `config/config.yaml` **机器相关、gitignored、不入库**（v0.25.1 起；模板 `config/config.yaml.example`，新机复制后自改路径/密钥）——embedder 相对模型路径自动解析到项目根；captioner 配 `qwen3_vl` 但本地 8B 模型缺失 → `load_config()` 自动降级 `qwen_api`（DashScope，打 WARNING），摘要模式由 `runners/base.py effective_summary_mode()` 兜底 `native_video→vlm_llm`。**摘要默认 vlm_llm**（native_video 已置灰退役，前端不再可选；模板 captioner 默认 `qwen_api`，本地 captioner 8B 不再下载）。无需 `config.windows.yaml` / `ZHIYING_CONFIG`（后者仅保留为自定义配置覆盖入口）。
 - **向量维度**: 4096（人脸 512）; 无 pgvector HNSW（超 2000 上限，demo 规模全扫描 <1ms）。
 - **DB 连接读 config（v0.27 起）**: `core/db.py` 连接地址解析顺序 = **环境变量 `POSTGRES_URI` → config.yaml 的 `database.uri` → 兜底 5432**（不再有"忽略 config 的硬编码"陷阱）。服务器 2026-08-08 因系统 postgres 抢 5432 迁到 **5433**（config.yaml `database.uri=5433`；start.sh 的 POSTGRES_URI=5433 冗余但无害）。新部署机在 config.yaml 配好 `database.uri` 即可。
@@ -167,7 +167,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **版本号与发布**: 版本唯一事实来源 `core/version.py` `__version__`；`/health` 返回 `version` 字段（服务器部署后核对运行版本）。发版用 `./bump minor|patch|0.24.0`（联动改 core/version.py + frontend/package.json + package-lock.json 两处，交互式确认提交信息/commit/tag/push，`git add .`）；git tag 必须 `v<__version__>` 与 version.py 完全一致。**⚠️ 后端任何改动（bug 修复/性能优化/管线重构/新功能上线）以及服务器前端改动（`frontend/` + `frontend-shared/`，会上服务器）都必须 `./bump` 发版打 tag——即使不立刻部署**（保持最新 tag = 当前可部署状态）；只有纯文档、注释、**桌面前端改动（`frontend-desktop/`，独立自由不发版，随后端版本走）**不需要 bump。**部署（v0.25.1 起）**: 服务器 `bash deploy.sh v<tag>`（fetch → config 迁移 → checkout → requirements 变化才 pip → 前端 build → restart → 90s 健康检查）。**回滚限制**: config.yaml 已 gitignore，回退到 config 仍入库的老 tag（≤v0.25.0）会 checkout 冲突，正解是向前滚（出 bug 发下个 patch）；必须回退老 tag 时先还原服务器 config 备份。
 - **存储卫生**: 删除必须走 `repository.delete_video`（StorageManager 清盘, 勿直接 `session.delete`）; 新增落盘路径必须登记进 `core/storage_manager.py`; 孤儿清扫手动（maintenance 端点/CLI, dry-run 默认）。判定: 视频文件按 DB 三列引用集合, 附属目录按 `video_id ∈ videos 表` —— 绝不用 scenes.keyframe_path（persist 窗口期会误删）。删除守卫: 404 守卫; **处理中视频允许删除**（v0.22 `core/cancellation` 登记, 管道 persist 前检查 `is_cancelled` 中止, 防写已删行 FK 异常; 已删除集合在管道结束后 `unmark_cancelled` 移除）。
 
-## Database Tables (12)
+## Database Tables (13)
 
 | Table | Key Columns | Purpose |
 |---|---|---|
@@ -183,6 +183,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | `face_identities` | id, video_id(FK), identity_label, face_embedding(Vector512 均值兜底), best_face_embedding(Vector512 最典型脸主锚 v0.29), best_track_id(v0.29 身份↔track 映射), face_count, first_seen, last_seen, avg_quality, best_face_bbox(JSONB) | Clustered face identities (ArcFace R50 512d), "人物 A/B/C..." |
 | `face_detections` | id, video_id(FK), identity_id(FK), track_id, timestamp_sec, bbox(JSONB), quality_score, face_embedding(Vector512) | Per-frame face detections, linked to YOLO person tracks |
 | `plate_detections` | id, video_id(FK), track_id, class_name, timestamp_sec, plate_text, plate_type, char_confidences(JSONB), bbox(JSONB), detection_confidence | HyperLPR3 license plate recognition results (per-vehicle-track, pre-ReID merge) |
+| `pipeline_tasks` | id(UUID PK), type(yunzhi_job/pipeline/incremental), dedup_key, video_id, payload_json(Text), status(queued/running/completed/failed), error, created_at, updated_at | 全局任务队列持久化（v0.32）— 重启恢复 + 幂等查重 + 回调 URL/token 存档 |
 
 ## Current Implementation Status
 
@@ -208,7 +209,8 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | 4级参数 + 增量处理 | ✅ | core/schemas.py, engine.py run_incremental() |
 | 系统设置（API 密钥/服务商/存储/管道性能） | ✅ | core/settings_service.py, api/settings_routes.py — GET/PUT /settings（含 pipeline 段：编码三档模板/检测参数/量化/并发上限，settings.json backed，运行时生效） |
 | 参数预设 (v0.22) | ✅ | core/presets_service.py — GET/POST/PUT/DELETE /settings/presets + apply（data/presets.json 命名快照） |
-| 全局 GPU 锁 + 共享单实例 | ✅ | core/gpu_lock.py, main.py app.state.detector — embedder/YOLO 前向串行防驱动故障; 并发管道 max_concurrent_videos 限流 |
+| 全局 GPU 锁 + 共享单实例 | ✅ | core/gpu_lock.py, main.py app.state.detector — embedder/YOLO 前向串行防驱动故障 |
+| 全局任务队列 (v0.32) | ✅ | core/pipeline_queue.py PipelineQueue（FIFO + worker 池 + DB 持久化）+ pipeline_tasks 表：所有触发点统一入队，防批量上传并发 GPU OOM；重启恢复（yunzhi 续跑/pipeline 标失败）+ 排队中回调 + 幂等跨重启；worker 数= max_concurrent_videos（0/未设=1 串行），运行时 configure 调整 |
 | 前端 Dashboard (19 组件 + 8 hooks) | ✅ | Dashboard.tsx, components/ (SettingsPage 4 分区) |
 | 元数据 / 来源分析 / 导出 | ✅ | utils/metadata.py, video_source.py, export_service.py |
 | Windows 从零部署 (v0.22) | ✅ | deploy/setup_windows.ps1 裸机一键安装器 + download_models.py (含 reid) + deploy_feedback.md; 配置统一自动降级 |

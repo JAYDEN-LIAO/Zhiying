@@ -44,6 +44,31 @@ logger = logging.getLogger(__name__)
 # Lifespan
 # ──────────────────────────────────────────────────────────
 
+async def _cleanup_stuck_processing(db_session_factory) -> None:
+    """启动清理：status=processing 且无 queued/running 队列任务的视频 → 标 failed（上次重启中断）。
+
+    队列已接管的（running yunzhi 续跑 / pipeline 已标 failed）不重复处理；
+    只兜底"有 processing 状态但无对应队列任务"的僵尸记录。
+    """
+    from sqlalchemy import select
+    from core.models import Video, VideoStatus, PipelineTask
+    pending = (
+        select(PipelineTask.id)
+        .where(PipelineTask.video_id == Video.id, PipelineTask.status.in_(["queued", "running"]))
+        .exists()
+    )
+    async with db_session_factory() as session:
+        stuck = (await session.execute(
+            select(Video).where(Video.status == VideoStatus.PROCESSING, ~pending)
+        )).scalars().all()
+        for v in stuck:
+            v.status = VideoStatus.FAILED
+            v.error_message = "服务重启中断，请重新处理"
+            logger.info("[Startup] marked stuck processing video %s -> failed", v.id)
+        if stuck:
+            await session.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化 DB，关闭时释放连接池。"""
@@ -111,7 +136,32 @@ async def lifespan(app: FastAPI):
     app.state.storage_manager = StorageManager(config)
     logger.info("StorageManager ready")
 
+    # 全局任务队列（v0.32）— FIFO + worker 池 + DB 持久化，防批量上传并发 GPU OOM
+    from core.pipeline_queue import pipeline_queue
+    from services.yunzhi_job_service import execute_yunzhi_task
+    from services.video_service import execute_pipeline_task, execute_incremental_task
+    app.state.pipeline_queue = pipeline_queue
+    max_workers = int((config.get("pipeline", {}) or {}).get("max_concurrent_videos", 0) or 1)
+    pipeline_queue.bind(
+        db_session_factory=AsyncSessionLocal,
+        executors={
+            "yunzhi_job": lambda tid, payload, vid: execute_yunzhi_task(app, tid, payload, vid),
+            "pipeline": lambda tid, payload, vid: execute_pipeline_task(app, tid, payload, vid),
+            "incremental": lambda tid, payload, vid: execute_incremental_task(app, tid, payload, vid),
+        },
+        max_workers=max_workers,
+    )
+    # 重启恢复：queued 重入队 / running yunzhi 续跑 / running pipeline 标失败
+    await pipeline_queue.recover()
+    await _cleanup_stuck_processing(AsyncSessionLocal)
+    logger.info("PipelineQueue ready with %d worker(s)", max_workers)
+
     yield
+    # 优雅关停：先停队列 worker（释放 DB 会话），再关连接池
+    try:
+        await pipeline_queue.shutdown()
+    except Exception:
+        logger.warning("PipelineQueue shutdown warning", exc_info=True)
     await engine.dispose()
     logger.info("Zhiying engine shut down.")
 

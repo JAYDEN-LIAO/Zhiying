@@ -50,7 +50,7 @@ PIPELINE_NUMERIC_SPEC: dict[str, dict] = {
     "yolo_imgsz":            {"cast": int,   "min": 320, "max": 640,  "step": 32,  "recommend": 640},  # YOLO 需 32 倍数
     "confidence_threshold":  {"cast": float, "min": 0.05, "max": 0.95, "step": 0.05, "recommend": 0.4},
     "iou_threshold":         {"cast": float, "min": 0.05, "max": 0.9,  "step": 0.05, "recommend": 0.5},
-    "max_concurrent_videos": {"cast": int,   "min": 0,   "max": 16,   "step": 1,   "recommend": 0},
+    "max_concurrent_videos": {"cast": int,   "min": 0,   "max": 16,   "step": 1,   "recommend": 1},
 }
 # 编码三档模板字段规格（分辨率只钳范围不强制步进，避免破坏 504 等非 16 倍数推荐值）
 ENCODE_PROFILE_NUMERIC_SPEC: dict[str, dict] = {

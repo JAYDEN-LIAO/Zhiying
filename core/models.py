@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 import enum
 
 from sqlalchemy import (
-    String, Integer, Float, Boolean, DateTime, Text,
+    String, Integer, Float, Boolean, DateTime, Text, Uuid,
     ForeignKey, Index, UniqueConstraint, Enum as SAEnum,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -918,4 +918,52 @@ class PlateDetection(Base):
         Index("ix_plate_dets_text", "video_id", "plate_text"),
         Index("ix_plate_dets_track", "video_id", "track_id"),
         {"comment": "车牌检测结果表 — PaddleOCR 检测 + 识别，支持文本搜索"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# PipelineTask — 管道任务队列（FIFO + DB 持久化，防批量上传并发 GPU OOM）
+# ═══════════════════════════════════════════════════════════
+
+class PipelineTask(Base):
+    """管道任务表 — 全局任务队列的持久化记录（v0.32 队列机制）。
+
+    type:    yunzhi_job（云智自动任务）/ pipeline（全管道）/ incremental（增量）
+    status:  queued / running / completed / failed
+    dedup_key: 幂等键（yunzhi 用 Idempotency-Key/eventId），重启后查重不重复入队
+    video_id: 任务关联的视频（yunzhi 建视频后由 worker 回写；恢复时据此续跑，防重复建视频）
+    payload_json: 序列化任务载荷（yunzhi 含回调 URL + jobToken，重启恢复后仍可回调）
+    """
+    __tablename__ = "pipeline_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    type: Mapped[str] = mapped_column(
+        String(32), nullable=False, comment="yunzhi_job / pipeline / incremental",
+    )
+    dedup_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True, comment="幂等键（yunzhi Idempotency-Key/eventId）",
+    )
+    video_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True, comment="关联视频（恢复时防重复建）",
+    )
+    payload_json: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="序列化任务载荷",
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="queued", comment="queued/running/completed/failed",
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_pipeline_tasks_status", "status"),
+        {"comment": "管道任务队列表 — FIFO + DB 持久化"},
     )

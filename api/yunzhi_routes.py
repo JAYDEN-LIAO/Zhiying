@@ -15,18 +15,18 @@ api/yunzhi_routes.py
 """
 
 import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, Header, Request
 
 from core.schemas import YunzhiJobPayload
-from services.yunzhi_job_service import run_yunzhi_job
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["yunzhi"])
 
-# ── 幂等登记：Idempotency-Key/eventId → bizTaskId（单进程，进程内有效） ──
+# ── 幂等登记：Idempotency-Key/eventId → bizTaskId（进程内快路径；DB dedup_key 兜底跨重启） ──
 _accepted_jobs: dict[str, str] = {}
 _accepted_jobs_lock = asyncio.Lock()
 
@@ -36,20 +36,63 @@ def _biz_task_id(automation_job_id: str) -> str:
     return f"yunzhi-{automation_job_id}"
 
 
+async def _lookup_task_biz_id(app, key: str) -> str | None:
+    """DB 查重：重启后进程内 dict 丢失，按 pipeline_tasks.dedup_key 找回已登记任务。"""
+    from sqlalchemy import select
+    from core.models import PipelineTask
+    async with app.state.db_session_factory() as session:
+        row = (await session.execute(
+            select(PipelineTask).where(PipelineTask.dedup_key == key).limit(1)
+        )).scalar_one_or_none()
+    if row is None:
+        return None
+    try:
+        payload = json.loads(row.payload_json)
+        return _biz_task_id(payload["task"]["automationJobId"])
+    except Exception:
+        return None
+
+
+async def _send_queued_callback(payload: YunzhiJobPayload) -> None:
+    """入队后立即通知平台"排队中"（fire-and-forget，best-effort，失败仅记日志）。
+
+    让平台任务中心尽快显示"等待"状态，而不是停在 0 进度。
+    """
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+            await client.post(
+                payload.callback.progressUrl,
+                json={"progress": 1, "message": "Zhiying 已接收，排队处理中"},
+                headers={"Content-Type": "application/json", "X-Yunzhi-Job-Token": payload.jobToken},
+            )
+    except Exception:
+        logger.warning("[Yunzhi] 排队中回调失败（best-effort）", exc_info=True)
+
+
 @router.post("/internal/yunzhi/jobs", status_code=202)
 async def yunzhi_jobs(
     request: Request,
     payload: YunzhiJobPayload,
     idempotency_key: str | None = Header(default=None),
 ) -> dict:
-    """接收云智自动化任务：立即 202，后台异步跑管道并回调平台。"""
+    """接收云智自动化任务：立即 202，入队（FIFO 队列，DB 持久化）后台跑管道并回调平台。"""
     key = idempotency_key or payload.eventId or f"{payload.task.automationJobId}:{payload.file.name}"
     async with _accepted_jobs_lock:
         biz_task_id = _accepted_jobs.get(key)
         if biz_task_id is None:
-            biz_task_id = _biz_task_id(payload.task.automationJobId)
-            _accepted_jobs[key] = biz_task_id
-            asyncio.create_task(run_yunzhi_job(payload, request.app))
-            logger.info("[Yunzhi] accepted job key=%s bizTaskId=%s file=%s",
-                        key, biz_task_id, payload.file.name)
+            # DB 兜底（重启后 dict 丢失）
+            biz_task_id = await _lookup_task_biz_id(request.app, key)
+            if biz_task_id is None:
+                biz_task_id = _biz_task_id(payload.task.automationJobId)
+                _accepted_jobs[key] = biz_task_id
+                await request.app.state.pipeline_queue.enqueue(
+                    "yunzhi_job",
+                    payload.model_dump(mode="json"),
+                    dedup_key=key,
+                )
+                # 排队中进度回调（不阻塞 202）
+                asyncio.create_task(_send_queued_callback(payload))
+                logger.info("[Yunzhi] accepted job key=%s bizTaskId=%s file=%s",
+                            key, biz_task_id, payload.file.name)
     return {"accepted": True, "bizTaskId": biz_task_id}

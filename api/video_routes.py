@@ -362,7 +362,7 @@ async def reuse_video(
         embedder=request.app.state.embedder,
         captioner=getattr(request.app.state, "captioner", None),
     )
-    background_tasks.add_task(service.process_video, video.id)
+    await request.app.state.pipeline_queue.enqueue("pipeline", {"video_id": str(video.id)})
 
     logger.info("[Reuse] video=%s sourced from %s", video.id, payload.source_video_id)
     return APIResponse(data=VideoResponse.model_validate(video))
@@ -423,7 +423,7 @@ async def update_video_params(
             captioner=getattr(request.app.state, "captioner", None),
             detector=getattr(request.app.state, "detector", None),
         )
-        background_tasks.add_task(service.process_video, video.id)
+        await request.app.state.pipeline_queue.enqueue("pipeline", {"video_id": str(video.id)})
         logger.info("[Params] video=%s full pipeline starting", video_id)
 
         # ★ 如果是组内视频，同组其他 pending 视频也应用相同参数并启动 pipeline
@@ -462,7 +462,7 @@ async def update_video_params(
                     )
                 )
                 await db.commit()
-                background_tasks.add_task(service.process_video, sibling.id)
+                await request.app.state.pipeline_queue.enqueue("pipeline", {"video_id": str(sibling.id)})
                 logger.info("[Params] sibling video=%s (group=%s) pipeline starting", sibling.id, video.group_id)
 
         return APIResponse(data=VideoResponse.model_validate(video))
@@ -547,7 +547,10 @@ async def update_video_params(
             captioner=getattr(request.app.state, "captioner", None),
             detector=getattr(request.app.state, "detector", None),
         )
-        background_tasks.add_task(service.incremental_process, video.id, l3_turned_on)
+        await request.app.state.pipeline_queue.enqueue(
+            "incremental",
+            {"video_id": str(video.id), "added_modalities": list(l3_turned_on)},
+        )
 
         logger.info("[Params] video=%s incremental: %s", video_id, l3_turned_on)
         return APIResponse(data=VideoResponse.model_validate(video))

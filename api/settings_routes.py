@@ -4,7 +4,7 @@ api/settings_routes.py
 系统设置端点 — API key / 管道性能 / 模型参数 / 参数预设。
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from api.schemas import APIResponse, SettingsKeysRequest, PresetCreate, PresetRename
 
@@ -20,11 +20,18 @@ async def get_settings() -> APIResponse[dict]:
 
 @router.put("/settings")
 async def update_settings(
+    request: Request,
     payload: SettingsKeysRequest,
 ) -> APIResponse[dict]:
     """更新系统设置（API 密钥 / 服务商 / 存储路径），保存即运行时生效。"""
     from core.settings_service import update_settings as _update, get_current_settings
     _update(payload.model_dump(exclude_none=True))
+    # 并发上限运行时变更 → 队列 worker 数同步调整（v0.32）
+    pipeline_queue = getattr(request.app.state, "pipeline_queue", None)
+    if pipeline_queue is not None:
+        from core.config_loader import load_config
+        mcv = int((load_config().get("pipeline", {}) or {}).get("max_concurrent_videos", 0) or 1)
+        pipeline_queue.configure(mcv)
     return APIResponse(data=get_current_settings())
 
 
