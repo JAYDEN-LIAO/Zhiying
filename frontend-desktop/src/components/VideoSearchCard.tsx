@@ -221,7 +221,7 @@ export function VideoSearchCard({
         {resultCount > 0 && <span className="major-card-badge">{resultCount} 条</span>}
       </div>
 
-      <div className="major-card-bd" style={{ scrollbarGutter: "stable" }}>
+      <div className="major-card-bd" style={{ scrollbarGutter: "stable", paddingRight: 8 }}>
         {/* Search: scope dropdown + input + icons in one row */}
         {/* Search: scope button（同高左侧）+ input + icons in one row */}
         <div className="flex items-stretch w-full min-w-0 h-[34px] gap-1">
@@ -229,7 +229,7 @@ export function VideoSearchCard({
           <div className="relative shrink-0">
             <button
               onClick={() => setScopeOpen(v => !v)}
-              className={`flex h-full w-[64px] items-center justify-between gap-0.5 px-1.5 text-[11px] font-medium rounded-lg border transition-all ${
+              className={`flex h-full w-[50px] items-center justify-between gap-0.5 px-1 text-[11px] font-medium rounded-lg border transition-all ${
                 scopeOpen
                   ? "border-teal-400 bg-teal-50 text-teal-700 shadow-sm"
                   : "border-gray-300 bg-gray-50 text-gray-600 hover:border-teal-300 hover:bg-teal-50/60 hover:text-teal-700"

@@ -12,6 +12,7 @@
 import { useState, useEffect } from "react";
 import { api } from "../services/api";
 import type { EncodeProfileSettingsUpdate, PipelinePreset, PipelineSettingsUpdate, SettingsData, SettingsUpdate } from "../types";
+import { fmtFullDate } from "../utils/helpers";
 
 const PROVIDER_IDS = ["dashscope", "deepseek"] as const;
 const PROVIDER_HINT: Record<string, string> = {
@@ -510,7 +511,7 @@ export function SettingsPage() {
                             <div className="flex-1 min-w-0">
                               <div className="text-xs font-medium text-[var(--color-text-primary)] truncate">{p.name}</div>
                               <div className="text-[10px] text-[var(--color-text-dim)]">
-                                {p.created_at ? new Date(p.created_at).toLocaleString() : ""}
+                                {p.created_at ? fmtFullDate(p.created_at) : ""}
                               </div>
                             </div>
                           )}

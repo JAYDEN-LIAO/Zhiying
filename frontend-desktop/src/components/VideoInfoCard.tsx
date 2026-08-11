@@ -7,7 +7,7 @@
 import { useState, useEffect } from "react";
 import { api } from "../services/api";
 import type { VideoMetadata, VideoResponse, SourceAnalysis, AIDetectResult } from "../types";
-import { fmtDuration } from "../utils/helpers";
+import { fmtDuration, fmtFullDate } from "../utils/helpers";
 
 export function VideoInfoCard({
   videoId,
@@ -313,7 +313,6 @@ function formatChannels(n: number, layout?: string): string {
 
 function fmtISODate(iso: string): string {
   try {
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    return fmtFullDate(iso);
   } catch { return iso; }
 }

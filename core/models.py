@@ -11,7 +11,7 @@ SQLAlchemy 2.0 ORM 模型 — Video / Scene / Transcript
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 
 from sqlalchemy import (
@@ -60,11 +60,11 @@ class VideoGroup(Base):
         String(256), nullable=True, comment="组名（可选）",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow,
-        onupdate=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     # 关联
@@ -283,11 +283,11 @@ class Video(Base):
 
     # ── 时间戳 ──
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow,
-        onupdate=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     # ── 关联 ──
@@ -399,7 +399,7 @@ class Scene(Base):
 
     # ── 时间戳 ──
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     # ── 关联 ──
@@ -453,7 +453,7 @@ class Transcript(Base):
 
     # ── 时间戳 ──
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     # ── 关联 ──
@@ -505,7 +505,7 @@ class FrameEmbedding(Base):
         comment="是否被 VLM caption 选为代表帧",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     video: Mapped["Video"] = relationship("Video", back_populates="frame_embeddings")
@@ -553,7 +553,7 @@ class Chunk(Base):
         String(1024), nullable=True, comment="窗口中间帧缩略图路径",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     video: Mapped["Video"] = relationship("Video", back_populates="chunks")
@@ -607,7 +607,7 @@ class FrameDetection(Base):
         comment="归一化边界框 {x1, y1, x2, y2}，坐标 0-1",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     video: Mapped["Video"] = relationship("Video", back_populates="frame_detections")
@@ -664,7 +664,7 @@ class Track(Base):
         comment="时间片段列表 [{start, end}]；被 ReID 合并的 track 有多个片段",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     video: Mapped["Video"] = relationship("Video", back_populates="tracks_video")
@@ -717,7 +717,7 @@ class TrackEmbedding(Base):
         JSONB, nullable=False, comment="最佳帧归一化 bbox {x1,y1,x2,y2}",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     video: Mapped["Video"] = relationship("Video")
@@ -788,7 +788,7 @@ class FaceIdentity(Base):
         String(1024), nullable=True, comment="最佳人脸缩略图路径",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     video: Mapped["Video"] = relationship("Video", back_populates="face_identities")
@@ -847,7 +847,7 @@ class FaceDetection(Base):
         String(1024), nullable=True, comment="人脸缩略图路径",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     video: Mapped["Video"] = relationship("Video", back_populates="face_detections")
@@ -908,7 +908,7 @@ class PlateDetection(Base):
         String(1024), nullable=True, comment="车牌缩略图路径",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
 
     video: Mapped["Video"] = relationship("Video", back_populates="plate_detections")
