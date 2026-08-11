@@ -11,19 +11,25 @@ exe = 纯产品启动器（检测就绪 → 起 db + 后端 + 开窗），**不�
 构建（Windows）：powershell -ExecutionPolicy Bypass -File desktop/build_exe.ps1
 """
 
+from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules
+
+# 注意：PyInstaller 执行 spec 时，Analysis 脚本路径相对 spec 目录（desktop/）解析，
+# 但 pathex 相对「进程 cwd（项目根）」解析——所以 pathex 必须用绝对路径，
+# 否则 desktop/ 的兄弟模块（state/checks/backend/db/logs/webview_panel）找不到、不打进 exe。
+SPEC_DIR = Path(__file__).resolve().parent
 a = Analysis(
-    ['desktop/app.py'],
-    pathex=['desktop'],
+    ['app.py'],
+    pathex=[str(SPEC_DIR)],
     binaries=[],
     datas=[
-        ('desktop/assets/zhiying.ico', 'assets'),
-        ('desktop/assets/zhiying.png', 'assets'),
+        ('assets/zhiying.ico', 'assets'),
+        ('assets/zhiying.png', 'assets'),
     ],
-    hiddenimports=[
-        'webview',                       # run_gui 内 lazy import，显式兜底
-        'webview.platforms.edgechromium',  # Windows WebView2 后端
-        'webview.platforms.winforms',
-    ],
+    hiddenimports=['webview'] + collect_submodules('webview.platforms'),
+    # ↑ 把全部平台后端都打进（win32/edgechromium/winforms/mshtml…），运行时 pywebview 自选。
+    #   只写 edgechromium/winforms 会「not found」——那是旧 pythonnet 后端（import clr，
+    #   pythonnet 非 pywebview 依赖）；6.x Windows 默认用 win32（纯 ctypes WebView2）。
     hookspath=[],
     runtime_hooks=[],
     excludes=[
@@ -42,7 +48,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='智影桌面端',
-    icon='desktop/assets/zhiying.ico',
+    icon='assets/zhiying.ico',
     console=False,      # 窗口化（无 cmd 黑框）；--check/--status 调试用 python desktop/app.py
     upx=False,          # UPX 常未安装 + 压缩产物易触发杀软误报，默认关闭
 )

@@ -1,4 +1,4 @@
-# ═══════════════════════════════════════════════════════════
+﻿# ═══════════════════════════════════════════════════════════
 #  智影桌面端 · Windows EXE 构建脚本（PyInstaller, onedir）
 #  用法（Windows，项目根）：
 #    powershell -ExecutionPolicy Bypass -File desktop/build_exe.ps1

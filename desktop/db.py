@@ -5,13 +5,17 @@ import subprocess
 import time
 from pathlib import Path
 
+# Windows 无窗 exe spawn console 子进程（docker.exe）会弹黑框终端 → 一律禁止分配新控制台。
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 CONTAINER = "zhiying_postgres"
 COMPOSE_FILE = "docker-compose.yaml"
 
 
 def docker_available() -> bool:
     try:
-        proc = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=15)
+        proc = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=15,
+                              creationflags=_NO_WINDOW)
         return proc.returncode == 0
     except Exception:
         return False
@@ -22,7 +26,7 @@ def db_container_health(root: Path) -> str:
     try:
         proc = subprocess.run(
             ["docker", "inspect", "-f", "{{.State.Health.Status}}", CONTAINER],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=15, creationflags=_NO_WINDOW,
         )
     except Exception:
         return ""
@@ -38,6 +42,7 @@ def start_db(root: Path, log, timeout: int = 180) -> bool:
         proc = subprocess.Popen(
             cmd, cwd=str(root),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            creationflags=_NO_WINDOW,
         )
         for line in proc.stdout:
             log.write(line.rstrip())

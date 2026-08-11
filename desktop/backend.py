@@ -14,6 +14,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# Windows：exe 是 windowed（console=False），无控制台；spawn console 子进程（.venv python）
+# 时系统会新建一个黑框终端（标题=解释器路径）。CREATE_NO_WINDOW 让子进程不分配控制台。
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def start_backend(root: Path, python: str, host: str, port: int, log) -> subprocess.Popen:
     """启动后端子进程（uvicorn + 父进程存活看门狗），stdout 由 reader 线程逐行喂给 log。
@@ -33,6 +37,7 @@ def start_backend(root: Path, python: str, host: str, port: int, log) -> subproc
     proc = subprocess.Popen(
         cmd, cwd=str(root), env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+        creationflags=_NO_WINDOW,
     )
 
     def _reader() -> None:

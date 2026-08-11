@@ -83,7 +83,15 @@ SPLASH_HTML = """<!DOCTYPE html>
     }).catch(function () {});
     setTimeout(tick, 300);  // 链式轮询：上次返回后再发下次，避免 pywebview 回调覆盖竞态
   }
-  tick();
+  function run() {
+    // pywebview 对象是页面加载完成后才注入的；在此之前的调用会同步抛 TypeError，
+    // 且该异常发生在 setTimeout(tick) 之前 → 轮询整条死掉（日志窗口空白即此因）。
+    // 等 pywebviewready 事件启动；兜底 setTimeout 防事件已错过。
+    if (!window.pywebview || !pywebview.api) { setTimeout(run, 200); return; }
+    tick();
+  }
+  window.addEventListener('pywebviewready', run);
+  setTimeout(run, 500);
 </script>
 </body>
 </html>
@@ -163,7 +171,13 @@ LOG_HTML = """<!DOCTYPE html>
   function openBrowser() { pywebview.api.open_browser(); }
   function openLogs() { pywebview.api.open_logs_dir(); }
   function quit() { if (confirm('确定退出智影桌面端？')) pywebview.api.shutdown(); }
-  tick();
+  function run() {
+    // 同 splash：pywebview 注入前调用会同步 TypeError 杀死 tick 链，窗口永远空白。
+    if (!window.pywebview || !pywebview.api) { setTimeout(run, 200); return; }
+    tick();
+  }
+  window.addEventListener('pywebviewready', run);
+  setTimeout(run, 500);
 </script>
 </body>
 </html>

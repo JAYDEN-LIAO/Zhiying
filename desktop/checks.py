@@ -25,6 +25,9 @@ _COMPONENT_RE = re.compile(r"^(\w+)\s*\([^)]*\):\s*(OK|MISSING|INCOMPLETE)", re.
 # 后端关键依赖（用于"环境是否就绪"的轻量探测；不搞全量 pip list）
 _REQUIRED_MODULES = ["fastapi", "uvicorn", "sqlalchemy", "torch", "transformers", "yaml", "httpx", "PIL", "pgvector", "aiosqlite"]
 
+# Windows 无窗 exe spawn console 子进程（venv python / docker）会弹黑框终端 → 禁止分配新控制台。
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def project_root() -> Path:
     if getattr(sys, "frozen", False):
@@ -68,7 +71,7 @@ def check_models(root: Path, python: str | None = None) -> dict:
     script = root / "deploy" / "download_models.py"
     cmd = [python, str(script), "--component", "all", "--model-root", str(root / MODEL_ROOT), "--verify-only"]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, creationflags=_NO_WINDOW)
     except Exception as e:  # 超时 / 找不到 python 等
         return {"present": {}, "exit_code": -1, "error": str(e)}
     present: dict[str, bool] = {}
@@ -110,7 +113,8 @@ def check_port(port: int, host: str = DEFAULT_HOST) -> dict:
 def check_docker() -> dict:
     """Docker 引擎是否可用（docker info 退出码）。"""
     try:
-        proc = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=15)
+        proc = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=15,
+                              creationflags=_NO_WINDOW)
         return {"ok": proc.returncode == 0}
     except Exception:
         return {"ok": False}
@@ -140,7 +144,8 @@ def find_python(root: Path) -> dict:
 
 def _py_version(python: str) -> str | None:
     try:
-        proc = subprocess.run([python, "--version"], capture_output=True, text=True, timeout=10)
+        proc = subprocess.run([python, "--version"], capture_output=True, text=True, timeout=10,
+                              creationflags=_NO_WINDOW)
         return (proc.stdout or proc.stderr or "").strip() or None
     except Exception:
         return None
@@ -177,7 +182,8 @@ def check_deps(python: str | None = None) -> dict:
         "print(','.join(m for m in mods if importlib.util.find_spec(m)))"
     )
     try:
-        proc = subprocess.run([python, "-c", probe], capture_output=True, text=True, timeout=30)
+        proc = subprocess.run([python, "-c", probe], capture_output=True, text=True, timeout=30,
+                              creationflags=_NO_WINDOW)
         found = {m for m in (proc.stdout or "").strip().split(",") if m}
     except Exception:
         found = set()
