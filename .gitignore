@@ -91,13 +91,9 @@ pnpm-debug.log*
 # AI detection (installed via cargo install aicheck)
 /aidetection/
 
-# ── Windows 部署产物（机器相关绝对路径，由 setup_windows.ps1 重新生成）──
-/config/config.windows.yaml
-
 # ── 机器相关主配置（各机各改，不入库；模板见 config/config.yaml.example）──
 config/config.yaml
 /data/backend.log
-/data/.zhiying_keys.tmp.json
 
 # 服务器部署参考（含凭证，绝不入库）
 docs/server.md

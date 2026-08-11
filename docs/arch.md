@@ -1,6 +1,6 @@
 # Zhiying Architecture
 
-> Version: 0.31 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.32 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4（双前端: frontend/ 服务器 + frontend-desktop/ 桌面, 共享 frontend-shared/ 对接层）
 > v0.22: Windows 从零部署 + 系统设置/参数预设 + 全局 GPU 锁 + Detection 渲染重构 + 删除处理中/管道取消 + ARM64 多架构
 > v0.24: 云智(Yunzhi)平台接入（register-external + /internal/yunzhi/jobs 异步任务）+ 生产部署（systemd, 8011, pgvector:pg17, 静态托管前端）
@@ -9,8 +9,9 @@
 > v0.28: 云智嵌入 UI 重构（移除侧边栏 / 导航上移 header / 参数历史右侧抽屉 / 搜索检测门控）
 > v0.29: 人脸识别链路重构（护栏式双阈值聚类 + 多帧采样 + 最典型脸锚点）+ 搜索数据隔离修复 + 五种搜索样式统一 + 前端交互优化
 > v0.31: 人脸搜索交互完善（结果定位检测栏人脸视图 + 身份展开出现时间段 + 选中高亮 + 时间轴联动）+ 搜索范围模型（当前/全组/全部/自定义多选，无视频直接搜索）+ 跨视频检索穿透定位 + 通用置信度 confidence
-> v0.32（未发版）: 全局任务队列（PipelineQueue FIFO + worker 池 + pipeline_tasks 表 DB 持久化，批量上传排队防 GPU OOM；重启恢复 yunzhi 续跑/pipeline 标失败；排队中回调；幂等跨重启）
-> 桌面端（未发版）: desktop/ pywebview 启动器 + frontend-desktop/ 独立前端 + 摘要默认 vlm_llm（native_video 置灰退役）
+> v0.32: 全局任务队列（已发版，PipelineQueue FIFO + worker 池 + pipeline_tasks 表 DB 持久化，批量上传排队防 GPU OOM；重启恢复 yunzhi 续跑/pipeline 标失败；排队中回调；幂等跨重启）
+> 桌面端: desktop/ pywebview 启动器 + frontend-desktop/ 独立前端 + 摘要默认 vlm_llm（native_video 置灰退役）
+> 桌面 EXE + 双部署路径（未发版，桌面前端/部署侧）: desktop/build_exe.ps1 纯产品启动器 exe（PyInstaller onedir，仅桌面壳）+ deploy/setup_linux.sh Linux 开发机一键安装 + setup_windows.ps1 补 config.yaml 生成与前端 dist 构建
 
 ## System Data Flow
 
