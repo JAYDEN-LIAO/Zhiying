@@ -90,6 +90,7 @@ export function RightPanel({
         {/* VideoSearch: major-card, flex: 5 */}
         <VideoSearchCard
           video={video}
+          videoId={videoId}
           onSeekTo={(start, end) => onSeekTo(start, end)}
           onTrackResult={(videoId, trackId, className, start) => {
             onSearchTrackResult(videoId, trackId, className, start);

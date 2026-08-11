@@ -172,6 +172,7 @@ export interface SearchResultItem {
   ocr_text: string | null;
   aligned_transcript: string | null;
   similarity: number | null;
+  confidence?: number;  // v0.30: 通用置信度 = 相似度 × 路径权重（跨路径可排行，与返回顺序一致）
   thumbnail_url: string | null;
   track_id?: number;
   class_name?: string;

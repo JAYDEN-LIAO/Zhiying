@@ -1,6 +1,6 @@
 # Zhiying Architecture
 
-> Version: 0.29 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.31 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4（双前端: frontend/ 服务器 + frontend-desktop/ 桌面, 共享 frontend-shared/ 对接层）
 > v0.22: Windows 从零部署 + 系统设置/参数预设 + 全局 GPU 锁 + Detection 渲染重构 + 删除处理中/管道取消 + ARM64 多架构
 > v0.24: 云智(Yunzhi)平台接入（register-external + /internal/yunzhi/jobs 异步任务）+ 生产部署（systemd, 8011, pgvector:pg17, 静态托管前端）
@@ -8,6 +8,7 @@
 > v0.27: 搜索修正（统一 track 编号 + 范围 fail-closed + 车牌搜索修正）+ 车牌模糊搜索模式（字符归一化 + 前端「牌」模式按钮）
 > v0.28: 云智嵌入 UI 重构（移除侧边栏 / 导航上移 header / 参数历史右侧抽屉 / 搜索检测门控）
 > v0.29: 人脸识别链路重构（护栏式双阈值聚类 + 多帧采样 + 最典型脸锚点）+ 搜索数据隔离修复 + 五种搜索样式统一 + 前端交互优化
+> v0.31: 人脸搜索交互完善（结果定位检测栏人脸视图 + 身份展开出现时间段 + 选中高亮 + 时间轴联动）+ 搜索范围模型（当前/全组/全部/自定义多选，无视频直接搜索）+ 跨视频检索穿透定位 + 通用置信度 confidence
 > 桌面端（未发版）: desktop/ pywebview 启动器 + frontend-desktop/ 独立前端 + 摘要默认 vlm_llm（native_video 置灰退役）
 
 ## System Data Flow
@@ -205,6 +206,9 @@ Track 语义路 (track_encode): 读 detection 缓存 640×384 crop (每 2s, 零 
      同 track 内 (时间连续强先验) sim ≥ 0.30 合并; 跨 track sim ≥ 0.58 才合并 (防并错不同人)
   → 检索锚点: best_face_embedding = 与均值最接近的最典型单脸 (非质量分最高)
   → face_identities (含 best_track_id 身份↔track 映射) + face_detections 落库
+  → v0.31 前端交互: /face/data 每身份返回 appearances（按 track 聚合 min/max 时间段，人脸行展开显示"人 #N"）；
+     搜索人脸结果点击 → 定位检测栏"人脸"视图 + 展开身份 + 视频定位（跳第一条出现时间点）；
+     选中身份 → 其归属 person track 集合在视频框金色高亮 + 时间轴联动 + 丝滑定位
 Persist: bulk_insert_scenes + insert transcript + update videos (duration/summary/status_detail)
 ```
 
@@ -287,10 +291,14 @@ Semantic Search: POST /api/v1/search/semantic — query → embedder.encode_text
   → 通用图搜: POST /search/image — 图片 → Qwen3-VL 4096-dim → frame_embeddings
      (专用 search_image_only 路径: 帧不聚类, 每帧独立精确到秒, 不补 scene 信息)
   → 合并去重: 帧簇(间隔≤4s)优先, chunk/text 与帧重叠丢弃, track/plate 各按 (video_id, track_id) 去重
+  → v0.31 通用置信度: 每结果 confidence = 相似度 × 路径权重（frame 1.0 / track 0.9 / plate 0.95 / text 0.85 / chunk 0.7），
+     跨路径统一排行（search + search_image_only 口径一致）；前端显示 confidence%
   → 范围过滤: video_ids 为空列表 → 返回空（fail-closed, `if video_ids is not None`）；None=全库
   → ⚠️ 搜索隔离 (v0.29 修复): search/face + search/image 的 video_ids 等参数必须 Form(...) 声明
     （曾误声明为 query → form-data 提交取不到 → None → 全库泄漏）；单视频搜索严格隔离
-  返回: {precision_level, precise_start/end, match_paths, thumbnail_url, track_id?, bbox?}
+  → v0.31 搜索范围: 前端范围模型 current/group/all/custom（all=不传 video_ids 全库 / custom=自定义跨视频多选）；
+     无视频默认工作台直接全库搜索；跨视频结果点击保留结果与范围（suppress-flag + videoId prop 根治重置）+ seekTarget 可靠 seek
+  返回: {precision_level, precise_start/end, match_paths, thumbnail_url, track_id?, bbox?, confidence?}
 
 core/search.py 6 种检索函数:
   frame_vector_search · chunk_vector_search · text_vector_search
@@ -452,11 +460,11 @@ React 19 + Vite 6 + Tailwind CSS 4
   │   ├── ParameterPanel     ← 侧滑参数面板: 四级联动 (L1场景/L2感知/L3功能/L4高级)
   │   ├── PipelineBar        ← 动态阶段进度条 (根据开关渲染对应节点)
   │   ├── VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮
-  │   ├── VideoSearchCard    ← 语义/图搜/人脸搜索面板 (索引未开启时置灰) + 搜索范围选择器 (组感知; v0.29 五种搜索样式统一 sr-item 卡片 + searchMode 区分图搜/语义)
+  │   ├── VideoSearchCard    ← 语义/图搜/人脸搜索面板 (v0.31: 无视频工作台直接全库搜索；范围模型 current/group/all/custom 下拉常驻，自定义跨视频多选按组渲染；人脸/车牌门控按范围) + searchMode 区分图搜/语义 + confidence 显示
   │   ├── HistoryPanelContent← 历史记录列表 (搜索+自动刷新+缩略图+参数摘要, 删除二次确认+processing禁用+释放空间提示) + 组卡片堆叠/展开
   │   ├── SettingsPage       ← 系统设置 4 分区 (v0.22): 系统(存储/NVDEC/chunk/并发上限) + 模型参数(编码三档模板/默认档/量化 + YOLO 帧率/批/分辨率/阈值) + 参数预设(快照/套用/重命名/删除) + API 密钥(端点/模型/密钥)
   │   ├── DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+选中)
-  │   ├── DetectionPanel     ← 物体列表 (分类筛选下拉栏含"人脸"项 v0.29 + 缩略图 hover+导出按钮 + 身份标签) + 独立视频选择器 (组感知)
+  │   ├── DetectionPanel     ← 物体列表 (分类筛选下拉栏含"人脸"项 v0.29) + 人脸视图 (v0.31: 点击跳首次出现时间点/单次不展开/多次展开出现时间段含"人 #N"标签/下载按钮/点空白收起/选中丝滑定位) + 独立视频选择器 (组感知)
   │   ├── DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
   │   ├── VideoInfoCard      ← 视频元数据 + 来源分析
   │   ├── ExportMenu         ← 导出菜单 (视频片段或节点)

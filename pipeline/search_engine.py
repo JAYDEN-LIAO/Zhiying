@@ -357,12 +357,13 @@ class SearchEngine:
                     ex.setdefault("match_paths", []).append(src)
 
         merged = clusters + list(other_map.values()) + list(plate_map.values()) + list(track_map.values())
-        # 路径感知排序：校准后的分数 = 相似度 × 路径权重
-        # frame 1.0 > text 0.85 > chunk 0.7，确保高精度结果优先
-        merged.sort(
-            key=lambda x: x.get("similarity", 0) * _PATH_WEIGHT.get(x.get("source", ""), 1.0),
-            reverse=True,
-        )
+        # 通用置信度（v0.30）: 校准分数 = 相似度 × 路径权重，作为跨路径统一可排行的置信度。
+        # frame 1.0 > text 0.85 > chunk 0.7，确保高精度结果优先；前端据此显示与排序一致的置信度。
+        for item in merged:
+            item["confidence"] = round(
+                item.get("similarity", 0) * _PATH_WEIGHT.get(item.get("source", ""), 1.0), 3,
+            )
+        merged.sort(key=lambda x: x.get("confidence", 0), reverse=True)
         return merged
 
     async def _enrich_merged(self, merged: list[dict]) -> list[dict]:
@@ -455,9 +456,13 @@ class SearchEngine:
 
         merged.extend(track_map.values())
 
-        # 过滤低分 + 排序 + Top-K
+        # 过滤低分 + 通用置信度排序 + Top-K（与 search() 的 confidence 口径一致）
         merged = [m for m in merged if m.get("similarity", 0) >= min_similarity]
-        merged.sort(key=lambda x: x.get("similarity", 0), reverse=True)
+        for item in merged:
+            item["confidence"] = round(
+                item.get("similarity", 0) * _PATH_WEIGHT.get(item.get("source", ""), 1.0), 3,
+            )
+        merged.sort(key=lambda x: x.get("confidence", 0), reverse=True)
         return merged[:top_k]
 
     # ──────────────────────────────────────────────────────

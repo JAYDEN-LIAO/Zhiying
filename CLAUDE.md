@@ -2,7 +2,7 @@
 
 ## One-Line Summary
 
-Zhiying 是 **视频分析引擎**（v0.29.0）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。**已接入云智(Yunzhi)平台**：前端 Bridge 文件选择（`register-external` 共享路径就地引用）+ 异步任务接口（`/internal/yunzhi/jobs` 202+进度/完成/失败回调）+ 平台文件 id 自动跳转（v0.26 `external_file_id` + `GET /videos/external/{file_id}`，前端凭 `context.resource.id` 直达对应视频详情）。`deploy/` 提供 Windows 裸机一键安装（从零部署）；**双前端共存**：服务器前端 `frontend/`（v0.28 云智嵌入 UI）+ 桌面独立前端 `frontend-desktop/`（桌面启动器 `desktop/desktop.bat` 加载，pywebview 壳管理本地后端生命周期，后端按 `ZHIYING_FRONTEND` 切换挂载）；requirements 已做多架构区分（Windows/Linux x86 装 onnxruntime-gpu，ARM64 如 DGX Spark/GB10 无该 wheel 自动装 CPU 版，人脸/车牌走 CPU）。**摘要默认 vlm_llm（API 模式）**：native_video 本地视频原生理解已置灰退役（双前端一致），本地 captioner 8B 不再下载。**已部署到生产服务器 10.0.0.176（systemd `zhiying.service`，8011，部署走 git+tag：`./bump` 发版 → 服务器 `bash deploy.sh v<tag>`，config/config.yaml 已模板化不入库）**，运维参考见 `docs/server.md`（gitignored，含凭证）。架构细节见 `docs/arch.md`。
+Zhiying 是 **视频分析引擎**（v0.31.0）：上传视频（单个/批量分组）→ 声明式操作 DAG（15 ops）→ 4 条编码路径（frame/chunk/text/track）+ YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。4 级参数系统 + 系统设置（API 密钥/服务商端点/存储路径/管道性能 + 参数预设）控制管道；全局 GPU 锁串行推理 + 并发管道限流；存储卫生（删除即清盘 + 孤儿清扫）保证磁盘不泄漏。**已接入云智(Yunzhi)平台**：前端 Bridge 文件选择（`register-external` 共享路径就地引用）+ 异步任务接口（`/internal/yunzhi/jobs` 202+进度/完成/失败回调）+ 平台文件 id 自动跳转（v0.26 `external_file_id` + `GET /videos/external/{file_id}`，前端凭 `context.resource.id` 直达对应视频详情）。`deploy/` 提供 Windows 裸机一键安装（从零部署）；**双前端共存**：服务器前端 `frontend/`（v0.28 云智嵌入 UI）+ 桌面独立前端 `frontend-desktop/`（桌面启动器 `desktop/desktop.bat` 加载，pywebview 壳管理本地后端生命周期，后端按 `ZHIYING_FRONTEND` 切换挂载）；requirements 已做多架构区分（Windows/Linux x86 装 onnxruntime-gpu，ARM64 如 DGX Spark/GB10 无该 wheel 自动装 CPU 版，人脸/车牌走 CPU）。**摘要默认 vlm_llm（API 模式）**：native_video 本地视频原生理解已置灰退役（双前端一致），本地 captioner 8B 不再下载。**已部署到生产服务器 10.0.0.176（systemd `zhiying.service`，8011，部署走 git+tag：`./bump` 发版 → 服务器 `bash deploy.sh v<tag>`，config/config.yaml 已模板化不入库）**，运维参考见 `docs/server.md`（gitignored，含凭证）。架构细节见 `docs/arch.md`。
 
 ## Quick File Map
 
@@ -20,7 +20,7 @@ api/deps.py                — FastAPI dependency injection (get_db)
 api/schemas.py             — Shared API DTOs (APIResponse, search/status models, ProxyStatusResponse, PipelineSettings/Presets, v0.22)
 api/detection_routes.py    — Detection data API: GET /detection/tracks (摘要) + /detection/detections (时间窗, v0.22 替代旧 /detection/data) + thumbnail
 api/export_routes.py       — Export endpoints: clip/frames/track/thumbnails (7 endpoints, GET+POST)
-api/face_routes.py          — Face data API (GET face/data + face/thumbnail; v0.29 face/data 返回 track_to_identity 身份↔track 映射)
+api/face_routes.py          — Face data API (GET face/data + face/thumbnail; v0.29 track_to_identity 身份↔track 映射; v0.31 每身份返回 appearances 按 track 聚合时间段)
 api/plate_routes.py         — Plate data API (GET plate/data + plate/thumbnail)
 api/maintenance_routes.py  — 存储清扫端点 (POST /maintenance/sweep dry-run/执行, GET /maintenance/storage)
 core/models.py             — ORM: Video (+8 format fields + group_id FK), VideoGroup, Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection (12 tables)
@@ -188,6 +188,10 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 
 | Area | Status | Key files |
 |---|---|---|
+| 人脸搜索交互完善 (v0.31) | ✅ | VideoSearchCard/DetectionPanel/DetectionOverlay/DetectionTimeline：搜索人脸结果点击 → 定位检测栏"人脸"视图 + 展开身份 + 视频定位；人脸行点击跳首次出现时间点、单次不展开、多次展开按 track 聚合时间段（含"人 #N"标签）；选中人脸 → 视频框金色高亮（全部归属 person track）+ 时间轴联动 + 丝滑定位；人脸行下载按钮（缩略图/轨迹视频）+ 点空白收起；后端 face/data 返回 appearances |
+| 搜索范围模型重构 (v0.31) | ✅ | VideoSearchCard：范围 current/group/all/custom（全部视频=后端 None 全库 / 自定义跨视频多选），下拉常驻；无视频默认工作台直接全库搜索（跳过索引门控）；人脸/车牌门控按"范围内有任一视频具备即可用" |
+| 跨视频检索穿透定位 (v0.31) | ✅ | VideoSearchCard suppress-flag + videoId prop（结果点击不重置搜索卡，根治旧→null→新 双触发）；Dashboard seekTarget loadedmetadata+轮询 跨视频可靠 seek；播放/时间轴/检测栏穿透 |
+| 通用置信度 confidence (v0.31) | ✅ | search_engine.py：结果新增 confidence=相似度×路径权重（frame1.0/track0.9/plate0.95/text0.85/chunk0.7），跨路径统一排行；前端显示 confidence |
 | Pipeline DAG (15 ops, EventDrivenScheduler) | ✅ | engine.py, operations.py |
 | 4-path encoding (frame/chunk/text/track) | ✅ | runners/frame_encode, chunk_encode, text_encode, track_encode |
 | Detection + Tracking (双层 ReID) | ✅ | plugins/detector/yolo.py, runners/detection.py |

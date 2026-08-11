@@ -214,14 +214,22 @@ export default function Dashboard() {
     setVideoGroups(rebuilt);
   }, [videos]);
 
-  /* ── Seek ── */
+  /* ── Seek（v0.30: 跨视频可靠定位——元素未挂载/metadata 未就绪时轮询补齐） ── */
   useEffect(() => {
-    if (!seekTarget || !videoRef.current) return;
-    videoRef.current.currentTime = seekTarget.start;
-    // end 为 null 表示单帧定位（如图搜结果），不自动播放
-    if (seekTarget.end != null) {
-      videoRef.current.play().catch(() => {});
-    }
+    if (!seekTarget) return;
+    const applySeek = () => {
+      const video = videoRef.current;
+      // 元素未挂载（跨视频 currentVideo=null 空窗，<video key> 已卸载）或 metadata 未就绪 → 继续等
+      if (!video || video.readyState < 1) return false;
+      video.currentTime = seekTarget.start;
+      // end 为 null 表示单帧定位（如图搜结果），不自动播放
+      if (seekTarget.end != null) video.play().catch(() => {});
+      return true;
+    };
+    if (applySeek()) return;  // 同视频 metadata 已就绪 → 立即应用
+    // 跨视频切换：新 <video> 元素与 metadata 异步就绪，轮询补齐定位（成功后自停）
+    const iv = setInterval(() => { if (applySeek()) clearInterval(iv); }, 150);
+    return () => clearInterval(iv);
   }, [seekTarget]);
 
   /* ── Video selection (v0.19 支持分组) ── */
@@ -299,8 +307,9 @@ export default function Dashboard() {
     }
     // 检测面板强制跟随主视频（= 结果视频），避免面板停在其它视频导致 track_id 错配
     setDetectionVideoId(null);
-    handleTrackSelect(trackId, className, start);
-  }, [currentVideoId, handleGroupVideoSwitch, handleTrackSelect]);
+    setSelectedTrackId(trackId);
+    setSeekTarget({ start, end: null });  // 走 seekTarget（loadedmetadata 重试），跨视频可靠定位
+  }, [currentVideoId, handleGroupVideoSwitch]);
 
   /* ── 搜索人脸结果点击：切主视频 + 检测栏"人脸"视图 + 展开身份 + 定位（v0.30）
      展开下钻（出现时间段）在检测栏人脸视图完成，搜索结果只负责"定位人脸" ── */
@@ -311,7 +320,7 @@ export default function Dashboard() {
     setDetectionVideoId(null);       // 检测面板跟随主视频（= 结果视频）
     setFaceViewOpen(true);           // 切到"人脸"视图
     setExpandedFaceId(identityId);   // 展开该身份
-    if (videoRef.current) videoRef.current.currentTime = ts;
+    setSeekTarget({ start: ts, end: null });  // 走 seekTarget（loadedmetadata 重试），跨视频可靠定位
   }, [currentVideoId, handleGroupVideoSwitch]);
 
   /* ── 上传文件 (单/多, Header 选择与拖拽共用) ── */
