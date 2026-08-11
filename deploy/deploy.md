@@ -51,7 +51,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 1. 请求管理员权限（UAC）
 2. 打印注意事项 + 强制输入代理地址并测试
 3. 探测 Python / FFmpeg / Docker / WSL2 / GPU，**复用兼容项、补装缺失项**
-4. 装 Python（缺失时 winget）→ venv → **生成 `config/config.yaml`（cp example）** → CUDA torch（按 GPU/驱动选源，Blackwell 自动 cu130）→ 匹配 torchvision → requirements → onnxruntime-gpu → accelerate/lap
+4. 装 Python（缺失时 winget）→ venv → **生成 `config/config.yaml`（cp example）+ bump 命令接入 PATH** → CUDA torch（按 GPU/驱动选源，Blackwell 自动 cu130）→ 匹配 torchvision → requirements → onnxruntime-gpu → accelerate/lap
 5. 下载全部模型（embedding / yolo / reid / face / plate / segmenter）
 6. 数据库：WSL2 已装则直接配置 Docker + 拉 pgvector；WSL2 缺失则**放最后装 WSL2 + Docker Desktop** 并提示**重启**
 7. **装 Node + 构建前端 dist**（frontend-desktop + frontend）
@@ -77,7 +77,7 @@ bash deploy/setup_linux.sh --proxy http://127.0.0.1:7897 --non-interactive
 1. 注意事项 + 代理输入实测
 2. 探测 GPU / python3 / ffmpeg / docker / node
 3. apt 装系统依赖（python3-venv / ffmpeg / exiftool / curl / git，docker 缺失时装 docker.io）
-4. 建 `.venv` + **生成 `config/config.yaml`**
+4. 建 `.venv` + **生成 `config/config.yaml` + bump 命令接入 PATH**（软链 `~/.local/bin/bump`）
 5. CUDA torch/torchvision（按 GPU/驱动选源 + 真实 CUDA kernel 验证；aarch64/GB10 失败给 conda 提示）
 6. requirements（Aliyun 直连）+ onnxruntime-gpu（x86）/ CPU（aarch64）+ 虚拟桩 + accelerate/lap + pywebview（可选）
 7. 下载全部模型（国内源直连 / GitHub 走代理，超时整组重试）

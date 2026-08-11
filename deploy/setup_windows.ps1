@@ -412,6 +412,16 @@ if (Test-Path $VenvPython) {
 # ── config.yaml（缺失时从 example 生成；桌面启动器/后端的必需品）──
 New-ConfigFile $ProjectRoot
 
+# ── bump.cmd 垫片（新开终端即可 `bump minor/patch`；调 python scripts\bump_version.py）──
+$shimDir = Join-Path $env:USERPROFILE "bin"
+New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
+Set-Content -Path (Join-Path $shimDir "bump.cmd") -Encoding ASCII -Value "@echo off`r`npython `"$ProjectRoot\scripts\bump_version.py`" %*"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($userPath -notlike "*$shimDir*") {
+    [Environment]::SetEnvironmentVariable("Path", "$userPath;$shimDir", "User")
+}
+Write-Ok "bump.cmd 已接入用户 PATH（新开终端生效：bump minor / bump patch）"
+
 # ═══════════════════════════════════════════════════════════
 # 4. 安装 FFmpeg（缺失或无 CUDA 编解码时）
 # ═══════════════════════════════════════════════════════════

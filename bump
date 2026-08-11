@@ -10,5 +10,7 @@
 #
 # 真实逻辑在 scripts/bump_version.py（联动改 core/version.py + frontend 两个文件）
 set -euo pipefail
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# readlink -f 解析软链真实路径：setup_linux.sh 会把本启动器软链到 ~/.local/bin/bump，
+# 直接按 $0/BASH_SOURCE 定位会在软链目录里找不到 scripts/。
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 exec python3 "$DIR/scripts/bump_version.py" "$@"

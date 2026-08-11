@@ -165,7 +165,7 @@ fi
 # ═══════════════════════════════════════════════════════════
 # 3. Python venv + config.yaml
 # ═══════════════════════════════════════════════════════════
-write_step 3 10 "Python 虚拟环境 + config.yaml"
+write_step 3 10 "Python 虚拟环境 + config.yaml + bump"
 if [[ -x "$VPY" ]]; then
     write_ok "venv 已存在，跳过创建"
 else
@@ -189,6 +189,13 @@ elif [[ -f "$ROOT/config/config.yaml.example" ]]; then
 else
     write_warn "config/config.yaml.example 不存在（仓库文件缺失？），后端启动前需手动配置 config"
 fi
+
+# ── bump 命令接入 PATH（新开终端即可 `bump minor/patch`；软链到 ~/.local/bin）──
+write_info "bump 命令接入 PATH ..."
+mkdir -p "$HOME/.local/bin"
+grep -qF '.local/bin' "$HOME/.bashrc" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+ln -sf "$ROOT/bump" "$HOME/.local/bin/bump"
+write_ok "bump 已接入（新开终端生效：bump minor / bump patch）"
 
 # ═══════════════════════════════════════════════════════════
 # 4. CUDA torch + torchvision
