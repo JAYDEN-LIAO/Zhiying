@@ -22,7 +22,8 @@ from pathlib import Path
 
 from state import State, app_state
 from logs import LogSink
-from checks import project_root, read_server_config, check_config_file, check_models, check_port, probe_health
+from checks import (project_root, install_script_name, read_server_config, check_config_file,
+                    check_models, check_port, probe_health, environment_status, ready_summary, runtime_python)
 import db as db_mod
 import backend as backend_mod
 
@@ -35,6 +36,7 @@ ROOT = project_root()
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="智影桌面启动器")
     p.add_argument("--check", action="store_true", help="只做环境自检并打印报告（不启动）")
+    p.add_argument("--status", action="store_true", help="打印环境就绪状态（逐项 OK/缺失，不启动）")
     p.add_argument("--no-window", action="store_true", help="无 GUI 冒烟（起 db + 后端，Ctrl+C 退出）")
     p.add_argument("--debug", action="store_true", help="pywebview 调试模式（devtools）")
     p.add_argument("--gui", default="auto", choices=["auto", "qt", "gtk", "edgechromium", "winforms"],
@@ -118,7 +120,7 @@ def run_headless(args) -> int:
             log.write("[FAIL] 数据库容器未 healthy")
             return 1
         log.write("启动后端…")
-        proc = backend_mod.start_backend(ROOT, sys.executable, "127.0.0.1", cfg["port"], log)
+        proc = backend_mod.start_backend(ROOT, runtime_python(ROOT), "127.0.0.1", cfg["port"], log)
         health = backend_mod.wait_health("127.0.0.1", cfg["port"], log)
         log.write(f"后端就绪 http://127.0.0.1:{cfg['port']} (version {health.get('version')})")
         while True:
@@ -226,7 +228,7 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
         app_state.set(State.CHECKING, "检查环境…")
         if not check_config_file(ROOT):
             raise RuntimeError("未找到 config/config.yaml",
-                               "请复制 config/config.yaml.example 并按机器修改后重启启动器")
+                               f"请先运行部署脚本完成安装：deploy/{install_script_name()}（会生成并配置 config）")
 
         port_state = check_port(cfg["port"])
         if port_state["state"] == "conflict":
@@ -234,7 +236,7 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
                                "请修改 config.yaml 的 server.port 后重启启动器")
         already = port_state["state"] == "already_running"
 
-        models = check_models(ROOT)
+        models = check_models(ROOT, runtime_python(ROOT))  # 冻结态 sys.executable 是 exe，必须用 venv python 跑模型校验
         missing = [k for k, v in models["present"].items() if not v] if models["present"] else None
         if models["error"]:
             raise RuntimeError("模型检查运行失败", f"错误: {models['error']}")
@@ -242,7 +244,7 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
             raise RuntimeError(
                 "模型未齐全",
                 "缺失模型: " + ", ".join(missing)
-                + "\n请运行: python deploy/download_models.py --component all\n完成后重启启动器",
+                + f"\n请先运行部署脚本完成安装：deploy/{install_script_name()}（或手动 python deploy/download_models.py --component all）",
             )
 
         if already:
@@ -255,7 +257,8 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
             return
 
         if not db_mod.docker_available():
-            raise RuntimeError("Docker 不可用", "请先启动 Docker Desktop，然后重启启动器")
+            raise RuntimeError("Docker 不可用",
+                               f"请先运行部署脚本完成安装（含 Docker Desktop）：deploy/{install_script_name()}，然后重启启动器")
         app_state.set(State.DB_START, "启动数据库容器…")
         if not db_mod.start_db(ROOT, log):
             raise RuntimeError("启动数据库失败", "docker compose up -d db 失败，见控制窗日志")
@@ -263,7 +266,7 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
             raise RuntimeError("数据库未就绪", "数据库容器未在超时内 healthy，请检查 Docker Desktop")
 
         app_state.set(State.BACKEND_START, "启动后端…")
-        proc = backend_mod.start_backend(ROOT, sys.executable, "127.0.0.1", cfg["port"], log)
+        proc = backend_mod.start_backend(ROOT, runtime_python(ROOT), "127.0.0.1", cfg["port"], log)
         runtime["proc"] = proc
         backend_mod.spawn_monitor(proc, ctx.on_backend_crash)
         health = backend_mod.wait_health("127.0.0.1", cfg["port"], log)
@@ -283,10 +286,30 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
     runtime["done"].wait()
 
 
+# ────────────────────────────────────────────────────────────
+# 环境状态（v0.33）：exe 纯产品演示，不含安装逻辑。
+# 安装职责在 deploy/setup_windows.ps1（裸机→就绪）；exe 只检测就绪并启动，
+# 未就绪则在 splash 明确提示缺什么 + 指向安装脚本。
+# ────────────────────────────────────────────────────────────
+def run_status(args) -> int:
+    """打印环境就绪状态（逐项 OK/缺失，无 GUI）。"""
+    print("智影桌面端 · 环境就绪状态")
+    status = environment_status(ROOT)
+    summary = ready_summary(status)
+    for key, name, ok in summary["items"]:
+        print(f"  {name:18} {'✓ OK' if ok else '✗ 缺失'}")
+    print(f"\n{'✓ 全部就绪' if summary['ready'] else '✗ 未就绪'}  缺失: {', '.join(summary['missing']) or '(无)'}")
+    if not summary["ready"]:
+        print(f"请先运行部署脚本完成安装： deploy/{install_script_name()}")
+    return 0 if summary["ready"] else 1
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     if args.check:
         return run_check(args)
+    if args.status:
+        return run_status(args)
     if args.no_window:
         return run_headless(args)
     return run_gui(args)

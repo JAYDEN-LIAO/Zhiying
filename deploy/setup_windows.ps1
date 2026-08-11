@@ -192,6 +192,35 @@ function Find-FfmpegBin {
     return $null
 }
 
+# 探测已安装 npm.cmd（winget 装完 PATH 不刷新，需按已知位置找）
+function Find-Npm {
+    $cands = @(
+        "$env:ProgramFiles\nodejs\npm.cmd",
+        "$env:LOCALAPPDATA\Programs\nodejs\npm.cmd"
+    )
+    foreach ($c in $cands) { if (Test-Path $c) { return $c } }
+    $fromPath = (Get-Command npm.cmd -ErrorAction SilentlyContinue)
+    if ($fromPath) { return $fromPath.Source }
+    return $null
+}
+
+# 生成 config/config.yaml：example 缺失时复制（use_nvdec 默认 true，无 NVDEC 时管道自动 fallback cv2）。
+# config.yaml 已 gitignore 不入库，git clone 后必须由部署脚本生成，桌面启动器/后端才找得到。
+function New-ConfigFile {
+    param([string]$ProjectRoot)
+    $cfg = Join-Path $ProjectRoot "config\config.yaml"
+    $example = Join-Path $ProjectRoot "config\config.yaml.example"
+    if (Test-Path $cfg) {
+        Write-Ok "config/config.yaml 已存在，跳过生成"
+    } elseif (Test-Path $example) {
+        New-Item -ItemType Directory -Force -Path (Split-Path $cfg) | Out-Null
+        Copy-Item $example $cfg
+        Write-Ok "已生成 config/config.yaml（复制 example；路径/密钥按机器改，见文件内注释）"
+    } else {
+        Write-Warn "config/config.yaml.example 不存在（仓库文件缺失？），后端启动前需手动配置 config"
+    }
+}
+
 # 需要代理的下载：curl -x；否则直连。timeout 秒后失败自动切代理重试一次。
 function Invoke-CurlDownload {
     param(
@@ -233,6 +262,24 @@ function Invoke-PythonWithProxy {
     }
     try {
         return (Invoke-Native $PythonExe $ArgumentList)
+    } finally {
+        Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
+        Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
+    }
+}
+
+# 流式版本：长操作（pip 安装 / 模型下载）逐行实时输出到终端，安装者不"摸黑"。
+function Invoke-PythonWithProxyStream {
+    param([string]$PythonExe, [string[]]$ArgumentList, [bool]$UseProxy)
+    if ($UseProxy) {
+        $env:HTTP_PROXY = $Script:ProxyUrl; $env:HTTPS_PROXY = $Script:ProxyUrl
+    } else {
+        Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
+        Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
+    }
+    try {
+        & $PythonExe @ArgumentList 2>&1 | ForEach-Object { Write-Host "  $_" }
+        return $LASTEXITCODE
     } finally {
         Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
         Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
@@ -310,7 +357,7 @@ Write-Ok "安装模式：full（全量：embedding + yolo + reid + face + plate 
 # 2. 环境探测
 # ═══════════════════════════════════════════════════════════
 
-Write-Step "1/10" "探测现有环境"
+Write-Step "1/11" "探测现有环境"
 $hasPy   = Test-Cmd "py"
 $hasFF   = Test-Cmd "ffmpeg"
 $hasNv   = Test-Cmd "nvidia-smi"
@@ -338,7 +385,7 @@ Write-Ok "WSL2: $(if($wslMissing){'缺失（将放最后安装，需重启）'}e
 # 3. 安装 Python（缺失时）
 # ═══════════════════════════════════════════════════════════
 
-Write-Step "2/10" "Python 环境"
+Write-Step "2/11" "Python 环境"
 if (-not $hasPy) {
     Write-Info "Python 未安装，正在安装 Python 3.13 ..."
     $exit = Invoke-Native "winget" @("install", "--id", "Python.Python.3.13", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity")
@@ -362,11 +409,14 @@ if (Test-Path $VenvPython) {
     Write-Ok "已创建 .venv (Python $pyVersion)"
 }
 
+# ── config.yaml（缺失时从 example 生成；桌面启动器/后端的必需品）──
+New-ConfigFile $ProjectRoot
+
 # ═══════════════════════════════════════════════════════════
 # 4. 安装 FFmpeg（缺失或无 CUDA 编解码时）
 # ═══════════════════════════════════════════════════════════
 
-Write-Step "3/10" "FFmpeg（CUDA 版）"
+Write-Step "3/11" "FFmpeg（CUDA 版）"
 $ffBin = Find-FfmpegBin
 $ffCudaOk = $false
 if ($ffBin) {
@@ -392,7 +442,7 @@ $env:PATH = "$ffBin;$env:PATH"
 # 5. CUDA torch + torchvision
 # ═══════════════════════════════════════════════════════════
 
-Write-Step "4/10" "CUDA PyTorch + torchvision"
+Write-Step "4/11" "CUDA PyTorch + torchvision"
 if ($SkipDeps) { Write-Info "已跳过（-SkipDeps）" }
 else {
     # pip 国内镜像（requirements 非 torch 部分走 Aliyun 直连，免代理）
@@ -445,7 +495,7 @@ else {
 # 6. requirements + 关键依赖（onnxruntime-gpu / accelerate / lap）
 # ═══════════════════════════════════════════════════════════
 
-Write-Step "5/10" "Python 依赖"
+Write-Step "5/11" "Python 依赖"
 if ($SkipDeps) { Write-Info "已跳过（-SkipDeps）" }
 else {
     Write-Info "安装 requirements（Aliyun 国内镜像直连，排除 onnxruntime——由 onnxruntime-gpu 单独处理）..."
@@ -455,8 +505,8 @@ else {
     Get-Content (Join-Path $ProjectRoot "requirements.txt") -ErrorAction Stop |
         Where-Object { $_ -notmatch "^\s*onnxruntime" } |
         Set-Content $tmpReq -Encoding UTF8
-    $rc = Invoke-PythonWithProxy $VenvPython @("-m", "pip", "install", "-r", $tmpReq) $false
-    if ($rc -ne 0) { throw "requirements 安装失败" }
+    $rc = Invoke-PythonWithProxyStream $VenvPython @("-m", "pip", "install", "-r", $tmpReq) $false
+    if ($rc -ne 0) { throw "requirements 安装失败（见上方实时输出）" }
 
     # ── onnxruntime-gpu（人脸/车牌需要 CUDA provider）──
     $ortOk = Get-CaptureLine $VenvPython @("-c", "import onnxruntime as ort; print('CUDAExecutionProvider' in ort.get_available_providers())")
@@ -500,24 +550,24 @@ else {
 # 7. 模型下载（embedding / yolo / reid / face / plate / segmenter）
 # ═══════════════════════════════════════════════════════════
 
-Write-Step "6/10" "模型准备"
+Write-Step "6/11" "模型准备"
 if ($SkipModels) { Write-Info "已跳过（-SkipModels）" }
 else {
     $dlPy = Join-Path $PSScriptRoot "download_models.py"
     # 直连组件（国内源）：embedding + plate + segmenter
     Write-Info "下载国内源模型（embedding / plate / segmenter）..."
-    $rc = Invoke-PythonWithProxy $VenvPython @(($dlPy), "--component", "embedding", "--component", "plate", "--component", "segmenter", "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $false
+    $rc = Invoke-PythonWithProxyStream $VenvPython @(($dlPy), "--component", "embedding", "--component", "plate", "--component", "segmenter", "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $false
     if ($rc -ne 0) {
         # 超时 → 整组带代理重试（幂等，已完成组件自动跳过）
         Write-Warn "国内源下载失败，带代理重试..."
-        $rc = Invoke-PythonWithProxy $VenvPython @(($dlPy), "--component", "embedding", "--component", "plate", "--component", "segmenter", "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $true
+        $rc = Invoke-PythonWithProxyStream $VenvPython @(($dlPy), "--component", "embedding", "--component", "plate", "--component", "segmenter", "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $true
     }
-    if ($rc -ne 0) { throw "国内源模型下载失败" }
+    if ($rc -ne 0) { throw "国内源模型下载失败（见上方实时输出）" }
 
     # 代理组件（GitHub 源）：yolo + reid + face
     Write-Info "下载 GitHub 源模型（yolo / reid / face，走代理）..."
-    $rc = Invoke-PythonWithProxy $VenvPython @(($dlPy), "--component", "yolo", "--component", "reid", "--component", "face", "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $true
-    if ($rc -ne 0) { throw "GitHub 源模型下载失败（检查代理）" }
+    $rc = Invoke-PythonWithProxyStream $VenvPython @(($dlPy), "--component", "yolo", "--component", "reid", "--component", "face", "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $true
+    if ($rc -ne 0) { throw "GitHub 源模型下载失败（检查代理，见上方实时输出）" }
 
     Write-Ok "全部模型就绪"
 }
@@ -526,7 +576,7 @@ else {
 # 8. 数据库 + Docker（自适应：WSL2 缺失 → 放最后装并提示重启）
 # ═══════════════════════════════════════════════════════════
 
-Write-Step "7/10" "数据库（PostgreSQL + pgvector）"
+Write-Step "7/11" "数据库（PostgreSQL + pgvector）"
 if ($SkipDocker) { Write-Info "已跳过（-SkipDocker）" }
 else {
     if ($wslMissing) {
@@ -577,20 +627,53 @@ else {
 }
 
 # ═══════════════════════════════════════════════════════════
-# 9. 校验
+# 9. 前端构建（Node + 前端 dist）：桌面 exe 开产品窗 + 后端静态托管都需要。
+#    config.yaml 已生成；这里把 frontend-desktop 和 frontend 都构建出来。
 # ═══════════════════════════════════════════════════════════
 
-Write-Step "8/10" "校验"
+Write-Step "8/11" "前端构建（Node + 前端 dist）"
+$npmCmd = Find-Npm
+if (-not $npmCmd) {
+    Write-Info "Node.js 未安装，正在安装 Node.js LTS ..."
+    $exit = Invoke-Native "winget" @("install", "--id", "OpenJS.NodeJS.LTS", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity")
+    if ($exit -ne 0) { throw "Node.js 安装失败（前端构建需要）" }
+    $npmCmd = Find-Npm
+    if (-not $npmCmd) { throw "Node.js 装完但找不到 npm（PATH 未刷新？请新开终端重跑本脚本）" }
+    Write-Ok "Node.js 已安装"
+}
+Write-Ok "npm: $npmCmd"
+foreach ($fe in @("frontend-desktop", "frontend")) {
+    $feDir = Join-Path $ProjectRoot $fe
+    if (-not (Test-Path (Join-Path $feDir "package.json"))) { Write-Warn "$fe 无 package.json，跳过构建"; continue }
+    Write-Info "构建 $fe ..."
+    Push-Location $feDir
+    try {
+        $exit = Invoke-Native $npmCmd @("install", "--registry=https://registry.npmmirror.com", "--no-audit", "--no-fund")
+        if ($exit -ne 0) { throw "$fe npm install 失败" }
+        $exit = Invoke-Native $npmCmd @("run", "build")
+        if ($exit -ne 0) { throw "$fe npm run build 失败" }
+    } finally {
+        Pop-Location
+    }
+    if (Test-Path (Join-Path $feDir "dist\index.html")) { Write-Ok "$fe/dist 构建完成" }
+    else { throw "$fe build 结束但未生成 dist\index.html" }
+}
+
+# ═══════════════════════════════════════════════════════════
+# 10. 校验
+# ═══════════════════════════════════════════════════════════
+
+Write-Step "9/11" "校验"
 Write-Info "校验模型 ..."
 $exit = Invoke-Native $VenvPython @((Join-Path $PSScriptRoot "download_models.py"), "--component", "embedding", "--component", "yolo", "--component", "reid", "--component", "face", "--component", "plate", "--component", "segmenter", "--model-root", (Join-Path $ProjectRoot "models"), "--verify-only")
 if ($exit -ne 0) { Write-Fail "存在缺失模型"; throw "模型校验失败" }
 Write-Ok "模型校验通过"
 
 # ═══════════════════════════════════════════════════════════
-# 10. WSL2 + Docker Desktop（缺失时最后装，需重启）
+# 11. WSL2 + Docker Desktop（缺失时最后装，需重启）
 # ═══════════════════════════════════════════════════════════
 
-Write-Step "9/10" "WSL2 + Docker Desktop（最后安装）"
+Write-Step "10/11" "WSL2 + Docker Desktop（最后安装）"
 if ($SkipDocker) { Write-Info "已跳过（-SkipDocker）" }
 elseif ($wslMissing) {
     Write-Info "安装 WSL2 ..."
@@ -613,12 +696,18 @@ elseif ($wslMissing) {
 }
 
 # ═══════════════════════════════════════════════════════════
-# 11. 完成：启动指令
+# 12. 完成：启动指令
 # ═══════════════════════════════════════════════════════════
 
-Write-Step "10/10" "完成"
+Write-Step "11/11" "完成"
 Write-Host ""
 Write-Host "  ✅ 环境安装完成。以下服务由你自己启动：" -ForegroundColor Green
+Write-Host ""
+Write-Host "  【0】桌面端（装完即用，推荐）" -ForegroundColor White
+Write-Host "      前端 dist 已构建；运行桌面启动器：" -ForegroundColor Gray
+Write-Host "        python desktop\app.py" -ForegroundColor Yellow
+Write-Host "      （或构建 exe：powershell -ExecutionPolicy Bypass -File desktop\build_exe.ps1，" -ForegroundColor Gray
+Write-Host "        产物 dist\智影桌面端\，把 exe + _internal 拷到项目根后双击即用）" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  【1】数据库（PostgreSQL + pgvector）" -ForegroundColor White
 Write-Host "      启动 Docker Desktop 后，在项目根执行：" -ForegroundColor Gray
@@ -630,7 +719,7 @@ Write-Host "      在项目根执行：" -ForegroundColor Gray
 Write-Host "        .\.venv\Scripts\python -m uvicorn main:app --host 127.0.0.1 --port 8000" -ForegroundColor Yellow
 Write-Host "      健康检查：http://127.0.0.1:8000/health" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  【3】前端" -ForegroundColor White
+Write-Host "  【3】前端（开发态，可选）" -ForegroundColor White
 Write-Host "      cd frontend && npm install --registry=https://registry.npmmirror.com" -ForegroundColor Gray
 Write-Host "      npm run dev" -ForegroundColor Yellow
 Write-Host "      访问：http://localhost:5173" -ForegroundColor Gray

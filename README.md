@@ -34,13 +34,15 @@ curl -X POST -H "Content-Type: application/json" \
 > **Note on API Keys**: Place keys in a `.env` file at project root (gitignored)，或在前端设置页填写。  
 > **摘要默认 `vlm_llm`（API 模式）**，需要 DashScope（画面描述）+ DeepSeek（摘要）key。`native_video`（本地视频原生理解）已置灰退役。
 
-**Windows 桌面端**：环境就绪（`deploy/setup_windows.ps1` 装机 + 模型 + Docker + 桌面前端 `cd frontend-desktop && npm run build`）后，双击 `desktop/desktop.bat`（或 `python desktop/app.py`）——启动器自动检查模型 → 起 Docker 库 → 起本地后端 → 打开桌面窗口加载桌面前端（`ZHIYING_FRONTEND=desktop` 挂载 frontend-desktop/dist，与服务器前端 `frontend/` 完全隔离）。
+**Windows 桌面端**：环境就绪（`deploy/setup_windows.ps1` 装机——自动装模型/Docker/依赖/生成 config.yaml/构建桌面前端 dist）后，双击 `智影桌面端.exe`（构建方法见 `desktop/README.md`）或 `python desktop/app.py`——启动器自动检查就绪 → 起 Docker 库 → 起本地后端 → 打开 pywebview 桌面窗口加载桌面前端（`ZHIYING_FRONTEND=desktop` 挂载 frontend-desktop/dist，与服务器前端 `frontend/` 完全隔离）。
 
 ## Windows 部署
 
-**从零部署**：全新 Windows + NVIDIA GPU 机器上，双击 `deploy/setup_windows.ps1` 自动安装一切（Python / FFmpeg / CUDA torch / WSL2 / Docker / 依赖 / 全部模型），装完自校验并打印启动指令。
+**从零部署**：全新 Windows + NVIDIA GPU 机器上，双击 `deploy/setup_windows.ps1` 自动安装一切（Python / FFmpeg / CUDA torch / WSL2 / Docker / 依赖 / 全部模型 / config.yaml / 前端 dist），装完自校验并打印启动指令；环境就绪后双击 `智影桌面端.exe` 即可拉起桌面进程（构建方法见 `desktop/README.md`）。
 
-- 一键安装器、环境要求、模型清单（embedding/yolo/**reid**/face/plate/segmenter）、代理必填与国内镜像、坑位审计与 Linux/Windows 差异，详见 **[`deploy/deploy.md`](deploy/deploy.md)**。
+**Linux 开发机部署**：换新开发机时 `git clone` 后跑 `bash deploy/setup_linux.sh`（交互输代理 / `--proxy ... --non-interactive` 全自动），一键装齐环境/依赖/模型/前端，形态与本机一致，用于开发改代码测试。
+
+- 一键安装器、环境要求、模型清单（embedding/yolo/**reid**/face/plate/segmenter）、代理必填与国内镜像、Linux/Windows 差异，详见 **[`deploy/deploy.md`](deploy/deploy.md)**。
 - 部署实测踩坑记录（BOM 编码 / Blackwell cu130 / pip 大文件 curl 兜底 / 代理策略等）见 **[`deploy/deploy_feedback.md`](deploy/deploy_feedback.md)**。
 - **配置模板化（v0.25.1 起）**：`config/config.yaml` **机器相关、gitignored、不入库**，新机复制 `config/config.yaml.example` 自改（embedder 相对路径解析 + captioner 本地模型缺失自动降级 `qwen_api`），无需 `config.windows.yaml` / `ZHIYING_CONFIG`。
 - **多架构支持**：`requirements.txt` 用环境标记区分平台——Windows/Linux x86 装 `onnxruntime-gpu`（人脸/车牌 GPU），**ARM64 Linux**（DGX Spark/GB10 等，无 `onnxruntime-gpu` wheel）自动装 `onnxruntime` CPU 版，人脸/车牌走 CPU。
@@ -266,7 +268,7 @@ zhiying/
 ├── models/               # Local model weights (gitignored; yolo26s.pt, yolo26n-cls.pt 等在仓库内)
 ├── data/                 # Video storage & artifacts + settings.json/presets.json (gitignored)
 ├── config/               # YAML config, prompts, schema
-├── deploy/               # Windows 从零部署套件: setup_windows.ps1 一键安装器 / download_models.py / deploy.md / deploy_feedback.md
+├── deploy/               # 部署套件: setup_windows.ps1 (Windows 裸机一键安装) + setup_linux.sh (Linux 开发机一键安装) + download_models.py / deploy.md / deploy_feedback.md
 ├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开窗→日志面板→优雅关闭; desktop.bat 入口)
 ├── frontend-desktop/     # 桌面独立前端 (v0.27 独立工作台 + native_video 置灰 + 无云智 Bridge, 与服务器 frontend/ 完全隔离; desktop.bat 加载其 dist)
 ├── frontend-shared/      # 双前端共享后端对接层 (api/types/labels/helpers 一份实现, 两端 services/api.ts 等是再导出指针; 后端接口/字段变更只改这里)

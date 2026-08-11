@@ -76,3 +76,52 @@ desktop/
 ├── assets/zhiying.ico  # 桌面快捷方式图标
 └── README.md           # 本文件
 ```
+
+---
+
+## EXE 构建与分发（v0.33 纯产品启动器）
+
+**职责分离**：`智影桌面端.exe` = **纯产品演示启动器**（双击→就绪→开产品窗）；**安装 = 脚本/终端**（`deploy/setup_windows.ps1`，裸机→就绪）。exe 不含任何安装引导逻辑。
+
+### exe（产品演示，双击即用）
+
+```bash
+python desktop/app.py            # 开发态等价：检测就绪 → 起 db + 后端 + 开窗
+python desktop/app.py --status   # 打印逐项就绪状态（config/前端/Python/venv/依赖/模型/ffmpeg/Docker）
+```
+
+- 就绪 → 启动器模式：起 Docker db → 起后端 → 打开产品窗口（`frontend-desktop/dist`）。
+- 未就绪 → splash 明确提示缺什么 + 指向部署脚本（平台感知：Windows `deploy/setup_windows.ps1` / Linux `deploy/setup_linux.sh`）。
+- 后端子进程用 `.venv` python 从项目根 `python -m desktop.backend_child <port>` 拉起（`checks.runtime_python()`——冻结后 `sys.executable` 是 exe，必须用 venv）。
+
+### 安装（脚本/终端，裸机→就绪）
+
+全部安装职责在 **`deploy/setup_windows.ps1`**（系统层 Python/CUDA/Docker/WSL2/FFmpeg + 项目层 venv/依赖/模型 + **自动生成 config.yaml + 构建前端 dist**），已具备：
+
+- **环境感知复用**：已有且兼容的组件直接复用（Python/依赖/模型）。
+- **交互性**：启动时 `Read-Host` 让你**提前输入本地代理地址端口**（下载被墙的 torch/模型）。
+- **实时进度**：`Write-Step "n/10"` 步骤标题 + pip/模型下载**逐行流式输出**（不摸黑）。
+- **容错**：`Invoke-CurlDownload` 直连超时自动转代理重试；最终失败 `Write-Fail` 给出步骤+原因。
+- **幂等**：重跑自动跳过已完成组件（断点续跑）。
+
+### Windows EXE 构建（PyInstaller，**必须在 Windows 上跑**）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File desktop/build_exe.ps1
+```
+
+产物：`dist\智影桌面端\智影桌面端.exe` + `dist\智影桌面端\_internal\`（onedir，**仅桌面壳**：app/checks/db/backend/webview_panel/logs/state + assets 图标；不含后端依赖/模型——由安装脚本装）。
+
+**分发形态** = 把 `dist\智影桌面端\` 里的 **exe + `_internal\` 一起拷到项目根** + 项目代码目录（目标机已有 Python/模型则全部复用，exe 检测就绪直接开窗）。⚠️ **必须拷到项目根**（`_internal` 是 exe 的兄弟依赖目录；`project_root()` 冻结后按 `sys.executable` 所在目录判定项目根，exe 若塞进子文件夹会算错）：
+
+```
+Zhiying/（目标机）
+├── 智影桌面端.exe       ← 双击即用（纯产品演示；从 dist\智影桌面端\ 拷来）
+├── _internal/           ← onedir 必需兄弟目录（同拷）
+├── main.py/api/core/…   ← 后端代码（git pull 更新，exe 不用重打）
+├── frontend-desktop/dist
+├── config/config.yaml
+├── models/              ← 安装脚本下载补全
+├── data/
+└── .venv/               ← 安装脚本创建
+```
