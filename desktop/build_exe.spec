@@ -17,7 +17,9 @@ from PyInstaller.utils.hooks import collect_submodules
 # 注意：PyInstaller 执行 spec 时，Analysis 脚本路径相对 spec 目录（desktop/）解析，
 # 但 pathex 相对「进程 cwd（项目根）」解析——所以 pathex 必须用绝对路径，
 # 否则 desktop/ 的兄弟模块（state/checks/backend/db/logs/webview_panel）找不到、不打进 exe。
-SPEC_DIR = Path(__file__).resolve().parent
+# 用 SPECPATH（PyInstaller 文档化的 spec 目录全局）而非 __file__——spec 由 exec 执行，
+# 不保证 __file__ 存在（实测会 NameError）。
+SPEC_DIR = Path(SPECPATH)
 a = Analysis(
     ['app.py'],
     pathex=[str(SPEC_DIR)],
