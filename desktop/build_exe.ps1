@@ -1,10 +1,14 @@
 ﻿# ═══════════════════════════════════════════════════════════
 #  智影桌面端 · Windows EXE 构建脚本（PyInstaller, onedir）
 #  用法（Windows，项目根）：
-#    powershell -ExecutionPolicy Bypass -File desktop/build_exe.ps1
+#    powershell -ExecutionPolicy Bypass -File desktop/build_exe.ps1            # 只构建到 dist\智影桌面端\
+#    powershell -ExecutionPolicy Bypass -File desktop/build_exe.ps1 -Deploy    # 构建 + 自动部署到项目根（推荐）
+#  -Deploy：构建后自动把 exe + _internal\ 拷到项目根（覆盖旧版），双击即用
 #  产物：dist\智影桌面端\智影桌面端.exe
-#  分发：dist\智影桌面端\ 整个文件夹 + 项目代码目录（缺的 .venv/模型/ffmpeg 由 exe 引导补）
 # ═══════════════════════════════════════════════════════════
+param(
+    [switch]$Deploy   # 构建后自动部署到项目根
+)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
@@ -23,5 +27,15 @@ Write-Host "构建 智影桌面端.exe …"
 
 Write-Host ""
 Write-Host "✅ 构建完成: dist\智影桌面端\智影桌面端.exe"
-Write-Host "分发 = dist\智影桌面端\ 文件夹 + 项目代码目录"
-Write-Host "（目标机首次双击 exe → 准备模式引导：Python 复用/建 .venv/装依赖/下载模型/ffmpeg → 就绪后自动变启动器）"
+if ($Deploy) {
+    Write-Host "部署到项目根 …"
+    $dst = Join-Path $Root "智影桌面端.exe"
+    $dstInternal = Join-Path $Root "_internal"
+    Remove-Item -Recurse -Force $dst, $dstInternal -ErrorAction SilentlyContinue
+    Copy-Item -Force (Join-Path $Root "dist\智影桌面端\智影桌面端.exe") $dst
+    Copy-Item -Recurse -Force (Join-Path $Root "dist\智影桌面端\_internal") $dstInternal
+    Write-Host "✅ 已部署: $dst（双击即用）"
+} else {
+    Write-Host "分发 = dist\智影桌面端\ 文件夹 + 项目代码目录"
+    Write-Host "（想一步到位加 -Deploy：自动把 exe + _internal 拷到项目根）"
+}
