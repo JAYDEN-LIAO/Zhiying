@@ -137,7 +137,7 @@ export function VideoInfoCard({
             <div className="vif-item"><span className="vif-lbl">视频编码</span><span className="vif-val"><code>{vs.codec ?? "—"}</code></span></div>
             <div className="vif-item"><span className="vif-lbl">分辨率</span><span className="vif-val">{vs.resolution ?? "—"}</span></div>
             <div className="vif-item"><span className="vif-lbl">帧率</span><span className="vif-val">{vs.fps != null ? `${vs.fps.toFixed(1)} fps` : "—"}</span></div>
-            <div className="vif-item"><span className="vif-lbl">码率</span><span className="vif-val">{vs.bitrate != null ? <span className="vif-hl">{`${(vs.bitrate / 1000).toFixed(1)} Mbps`}</span> : "—"}</span></div>
+            <div className="vif-item"><span className="vif-lbl">码率</span><span className="vif-val">{vs.bitrate != null ? <span className="vif-hl">{`${(vs.bitrate / 1_000_000).toFixed(1)} Mbps`}</span> : "—"}</span></div>
             {vs.codec_profile && <div className="vif-item"><span className="vif-lbl">编码档次</span><span className="vif-val">{vs.codec_profile}</span></div>}
             {vs.codec_level && <div className="vif-item"><span className="vif-lbl">编码级别</span><span className="vif-val">{vs.codec_level}</span></div>}
             {vs.pixel_format && <div className="vif-item"><span className="vif-lbl">像素格式</span><span className="vif-val">{vs.pixel_format}</span></div>}

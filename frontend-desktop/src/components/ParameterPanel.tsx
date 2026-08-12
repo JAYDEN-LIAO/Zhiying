@@ -11,7 +11,7 @@ import { zh } from "../labels";
 const SCENE_PRESETS: Record<string, {
   label: string;
   desc: string;
-  modules: { vision: boolean; audio: boolean; ocr: boolean; caption: boolean; detection: boolean };
+  modules: { vision: boolean; audio: boolean; ocr: boolean; detection: boolean };
   functions: { searchIndex: boolean; summary: boolean };
   faceEnabled?: boolean;
   plateEnabled?: boolean;
@@ -19,19 +19,19 @@ const SCENE_PRESETS: Record<string, {
   general: {
     label: "通用",
     desc: "均衡模式，适合未知内容类型",
-    modules: { vision: true, audio: false, ocr: false, caption: true, detection: false },
-    functions: { searchIndex: true, summary: true },
+    modules: { vision: true, audio: false, ocr: false, detection: false },
+    functions: { searchIndex: true, summary: false },
   },
   meeting: {
     label: "会议",
     desc: "以语音和对话为核心（含课堂、访谈、教程）",
-    modules: { vision: true, audio: true, ocr: true, caption: true, detection: false },
+    modules: { vision: true, audio: true, ocr: true, detection: false },
     functions: { searchIndex: true, summary: true },
   },
   surveillance: {
     label: "监控",
     desc: "固定机位，无音频轨道，纯视觉分析",
-    modules: { vision: true, audio: false, ocr: false, caption: true, detection: true },
+    modules: { vision: true, audio: false, ocr: false, detection: true },
     functions: { searchIndex: true, summary: false },
     faceEnabled: true,
     plateEnabled: true,
@@ -39,7 +39,7 @@ const SCENE_PRESETS: Record<string, {
   text_recognition: {
     label: "文字识别",
     desc: "扫描视频中的文件、聊天截图、票据、PPT 等文字",
-    modules: { vision: true, audio: false, ocr: true, caption: false, detection: false },
+    modules: { vision: true, audio: false, ocr: true, detection: false },
     functions: { searchIndex: true, summary: false },
   },
 };
@@ -73,27 +73,13 @@ const COCO_ALL = [
   "toothbrush",
 ];
 
+// 自定义目标类别时展示的常用标签（其余 80 类走搜索框匹配）
 const COMMON_CLASSES = [
-  "person", "car", "truck", "bus", "motorcycle", "bicycle",
-  "dog", "cat", "bird", "horse",
-  "chair", "couch", "bed", "dining table",
-  "laptop", "cell phone", "tv", "book",
-  "backpack", "umbrella", "bottle", "cup",
+  "person", "car", "truck", "bus", "motorcycle",
+  "dog", "cat",
 ];
 
-type ModuleKey = "vision" | "audio" | "ocr" | "caption" | "detection";
-
-interface AdvancedParams {
-  sampleFps: number;
-  segmentThreshold: number;
-  encodeProfile: string | null;
-}
-
-const DEFAULT_ADVANCED: AdvancedParams = {
-  sampleFps: 1.0,
-  segmentThreshold: 0.5,
-  encodeProfile: null,
-};
+type ModuleKey = "vision" | "audio" | "ocr" | "detection";
 
 const CUSTOM_PARAMS_KEY = "zhiying_custom_params";
 
@@ -126,8 +112,9 @@ export function ParameterPanel({
   const [modules, setModules] = useState<Record<ModuleKey, boolean>>(() => {
     const saved = loadCustomParams();
     if (saved?.modules) {
-      const m = saved.modules as Record<string, boolean>;
-      return { vision: false, audio: false, ocr: false, caption: false, detection: false, ...m };
+      // 画面描述已并入摘要（v0.33 合并）：旧自定义参数里的 caption 键剥离，仅兼容不参与
+      const { caption: _oldCaption, ...mRest } = saved.modules as Record<string, boolean>;
+      return { vision: false, audio: false, ocr: false, detection: false, ...mRest };
     }
     const preset = SCENE_PRESETS["general"];
     return { ...preset.modules };
@@ -140,11 +127,6 @@ export function ParameterPanel({
     }
     const preset = SCENE_PRESETS["general"];
     return { ...preset.functions };
-  });
-  const [advanced, setAdvanced] = useState<AdvancedParams>(() => {
-    const saved = loadCustomParams();
-    if (saved?.advanced) return { ...DEFAULT_ADVANCED, ...saved.advanced as Partial<AdvancedParams> };
-    return { ...DEFAULT_ADVANCED };
   });
   const [summaryMode, setSummaryMode] = useState<string>(() => {
     const saved = loadCustomParams();
@@ -201,12 +183,9 @@ export function ParameterPanel({
     // 插件不可用
     g.audio = !moduleAvailable.audio;
     g.ocr = !moduleAvailable.ocr || !modules.vision;
-    g.caption = !modules.vision;
     g.detection = !moduleAvailable.detection || !modules.vision;
-    // 功能开关
-    g.summary = !modules.caption;
-    // 高级参数
-    g.sampleFps = !modules.vision;
+    // 功能开关（画面描述已并入摘要 → 摘要依赖视觉分析）
+    g.summary = !modules.vision;
     g.detectionClasses = !modules.detection;
     return g;
   }, [modules, functions, moduleAvailable]);
@@ -214,19 +193,21 @@ export function ParameterPanel({
   /* ── 自定义参数自动保存 ── */
   useEffect(() => {
     if (sceneType === "custom") {
-      saveCustomParams({ sceneType, modules, functions, advanced, summaryMode, detectionClasses, faceEnabled, plateEnabled });
+      saveCustomParams({ sceneType, modules, functions, summaryMode, detectionClasses, faceEnabled, plateEnabled });
     }
-  }, [sceneType, modules, functions, advanced, detectionClasses, summaryMode, faceEnabled, plateEnabled]);
+  }, [sceneType, modules, functions, detectionClasses, summaryMode, faceEnabled, plateEnabled]);
 
   /* ── L1 场景类型变更 → 重设 L2/L3 默认值 ── */
   const handleSceneTypeChange = (ct: ContentType) => {
     setSceneType(ct);
     if (ct === "custom") {
-      // 加载上次保存的自定义参数
+      // 加载上次保存的自定义参数（旧数据 caption 键剥离，画面描述已并入摘要）
       const saved = loadCustomParams();
-      if (saved?.modules) setModules(saved.modules as Record<ModuleKey, boolean>);
+      if (saved?.modules) {
+        const { caption: _oldCaption, ...mRest } = saved.modules as Record<string, boolean>;
+        setModules({ vision: false, audio: false, ocr: false, detection: false, ...mRest });
+      }
       if (saved?.functions) setFunctions(saved.functions as Record<string, boolean>);
-      if (saved?.advanced) setAdvanced({ ...DEFAULT_ADVANCED, ...saved.advanced as Partial<AdvancedParams> });
       if (saved?.summaryMode) setSummaryMode(saved.summaryMode as string);
       return;
     }
@@ -244,14 +225,10 @@ export function ParameterPanel({
     if (grayed[key]) return;
     setModules((prev) => {
       const next = { ...prev, [key]: !prev[key] };
-      // vision 关闭 → ocr / caption / detection 强制关闭
+      // vision 关闭 → ocr / detection 强制关闭 + summary 强制关闭（画面描述已并入摘要）
       if (!next.vision) {
         next.ocr = false;
-        next.caption = false;
         next.detection = false;
-      }
-      // caption 关闭 → summary 强制关闭
-      if (!next.caption) {
         setFunctions((f) => ({ ...f, summary: false }));
       }
       return next;
@@ -268,19 +245,12 @@ export function ParameterPanel({
     setError(null);
   };
 
-  /* ── L4 高级参数 ── */
-  const updateAdvanced = (patch: Partial<AdvancedParams>) => {
-    setAdvanced((prev) => ({ ...prev, ...patch }));
-    setError(null);
-  };
-
   /* ── 校验 + 提交 ── */
   const validate = (): string | null => {
     if (!modules.vision && !modules.audio) return "视觉分析和音频转录至少开启一个";
     if (!functions.searchIndex && !functions.summary) return "搜索索引和智能摘要至少开启一个";
-    if (!modules.vision && modules.caption) return "视觉分析已关闭，画面描述应同时关闭";
     if (!modules.vision && modules.detection) return "视觉分析已关闭，物体检测应同时关闭";
-    if (!modules.caption && functions.summary) return "画面描述已关闭，智能摘要应同时关闭";
+    if (!modules.vision && functions.summary) return "视觉分析已关闭，智能摘要应同时关闭";
     return null;
   };
 
@@ -293,7 +263,8 @@ export function ParameterPanel({
       vision_enabled: modules.vision,
       audio_enabled: modules.audio,
       ocr_enabled: modules.ocr,
-      caption_enabled: modules.caption,
+      // 画面描述已并入智能摘要（v0.33 合并）：摘要开启即含逐场景 VLM 描述
+      caption_enabled: functions.summary,
       detection_enabled: modules.detection,
       detection_classes: modules.detection ? detectionClasses : null,
       face_enabled: modules.detection ? faceEnabled : false,
@@ -303,11 +274,12 @@ export function ParameterPanel({
       // 防御兜底：native_video 已退役，绝不让旧值流入新管道
       summary_mode: summaryMode === "native_video" ? "vlm_llm" : summaryMode,
       language: "auto",
-      sample_fps: advanced.sampleFps,
-      segment_threshold: advanced.segmentThreshold,
+      // 采样帧率/场景切换敏感度/编码预设已移到系统设置（v0.33 起全局生效）——逐视频固定默认
+      sample_fps: 1.0,
+      segment_threshold: 0.5,
       caption_with_context: true,
       summary_detail: "standard",
-      encode_profile: advanced.encodeProfile,
+      encode_profile: null,
     });
 
     setSubmitting(true);
@@ -349,7 +321,7 @@ export function ParameterPanel({
 
       // 持久化自定义参数
       if (sceneType === "custom") {
-        saveCustomParams({ sceneType, modules, functions, advanced, summaryMode, detectionClasses, faceEnabled, plateEnabled });
+        saveCustomParams({ sceneType, modules, functions, summaryMode, detectionClasses, faceEnabled, plateEnabled });
       } else {
         localStorage.removeItem(CUSTOM_PARAMS_KEY);
       }
@@ -437,7 +409,6 @@ export function ParameterPanel({
               { key: "vision" as ModuleKey, label: "视觉分析", hint: "帧处理总开关" },
               { key: "audio" as ModuleKey, label: "音频转录", hint: grayed.audio ? "插件未启用" : "语音转文字" },
               { key: "ocr" as ModuleKey, label: "文字识别", hint: grayed.ocr ? (moduleAvailable.ocr ? "依赖视觉分析" : "插件未启用") : "提取画面文字" },
-              { key: "caption" as ModuleKey, label: "画面描述", hint: grayed.caption ? "依赖视觉分析" : "VLM 场景描述" },
               { key: "detection" as ModuleKey, label: "物体检测", hint: grayed.detection ? (moduleAvailable.detection ? "依赖视觉分析" : "插件未启用") : "YOLO11 逐帧检测与 ByteTrack 追踪" },
             ] as const).map((mod) => {
               const isOn = modules[mod.key];
@@ -466,10 +437,9 @@ export function ParameterPanel({
             })}
           </div>
 
-          {/* 物体检测 → 目标类别选择（仅检测开启时显示） */}
-          {modules.detection && (
-            <div className={`mt-2 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
-              grayed.detectionClasses ? "border-gray-150 bg-gray-50/30 opacity-40" : "border-amber-300/70 bg-amber-400/15"
+          {/* 物体检测 → 目标类别选择（检测关闭时置灰不隐藏） */}
+          <div className={`mt-2 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
+              grayed.detectionClasses ? "border-gray-150 bg-gray-50/30 opacity-40 pointer-events-none" : "border-amber-300/70 bg-amber-400/15"
             }`}>
               <div className="flex items-center justify-between mb-2">
                 <span className={`text-[11px] font-medium ${grayed.detectionClasses ? "text-gray-400" : "text-gray-600"}`}>
@@ -531,8 +501,9 @@ export function ParameterPanel({
                     />
                     {classSearch && (() => {
                       const q = classSearch.toLowerCase();
+                      // 同时匹配英文类名与中文标签（zh() 返回中文，输中文也能搜到）
                       const matches = COCO_ALL.filter(
-                        (c) => c.toLowerCase().includes(q) && !(detectionClasses ?? []).includes(c),
+                        (c) => (c.toLowerCase().includes(q) || zh(c).toLowerCase().includes(q)) && !(detectionClasses ?? []).includes(c),
                       ).slice(0, 6);
                       if (!matches.length) return null;
                       return (
@@ -569,53 +540,38 @@ export function ParameterPanel({
                 </div>
               )}
             </div>
-          )}
 
-          {/* 人脸识别子开关 — 检测开启时显示 */}
-          {modules.detection && (
-            <div className={`mt-2 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
-              !moduleAvailable.face ? "border-gray-150 bg-gray-50/30 opacity-40" : "border-purple-300 bg-purple-50/30"
+          {/* 人脸识别子开关 — 检测关闭时置灰不隐藏 */}
+          <div className={`mt-2 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
+              !moduleAvailable.face || !modules.detection ? "border-gray-150 bg-gray-50/30 opacity-40 pointer-events-none" : "border-purple-300 bg-purple-50/30"
             }`}>
               <div className="flex items-center justify-between">
-                <div className="flex-1 min-w-0">
-                  <span className={`text-[11px] font-medium block ${!moduleAvailable.face ? "text-gray-400" : "text-gray-600"}`}>
-                    人脸识别
-                  </span>
-                  <span className="text-[10px] text-gray-500 truncate block">
-                    {moduleAvailable.face ? "SCRFD 检测 + ArcFace 身份聚类" : "插件未启用"}
-                  </span>
-                </div>
+                <span className={`text-[11px] font-medium ${!moduleAvailable.face || !modules.detection ? "text-gray-400" : "text-gray-600"}`}>
+                  人脸识别
+                </span>
                 <Toggle
                   checked={faceEnabled}
                   onChange={() => { setFaceEnabled(!faceEnabled); setSceneType("custom"); }}
-                  disabled={!moduleAvailable.face}
+                  disabled={!moduleAvailable.face || !modules.detection}
                 />
               </div>
-            </div>
-          )}
+          </div>
 
-          {/* 车牌识别子开关 — 检测开启时显示 */}
-          {modules.detection && (
-            <div className={`mt-1.5 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
-              !moduleAvailable.plate ? "border-gray-150 bg-gray-50/30 opacity-40" : "border-green-300 bg-green-50/30"
+          {/* 车牌识别子开关 — 检测关闭时置灰不隐藏 */}
+          <div className={`mt-1.5 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
+              !moduleAvailable.plate || !modules.detection ? "border-gray-150 bg-gray-50/30 opacity-40 pointer-events-none" : "border-green-300 bg-green-50/30"
             }`}>
               <div className="flex items-center justify-between">
-                <div className="flex-1 min-w-0">
-                  <span className={`text-[11px] font-medium block ${!moduleAvailable.plate ? "text-gray-400" : "text-gray-600"}`}>
-                    车牌识别
-                  </span>
-                  <span className="text-[10px] text-gray-500 truncate block">
-                    {moduleAvailable.plate ? "HyperLPR3 车牌检测与文字识别" : "插件未启用"}
-                  </span>
-                </div>
+                <span className={`text-[11px] font-medium ${!moduleAvailable.plate || !modules.detection ? "text-gray-400" : "text-gray-600"}`}>
+                  车牌识别
+                </span>
                 <Toggle
                   checked={plateEnabled}
                   onChange={() => { setPlateEnabled(!plateEnabled); setSceneType("custom"); }}
-                  disabled={!moduleAvailable.plate}
+                  disabled={!moduleAvailable.plate || !modules.detection}
                 />
               </div>
-            </div>
-          )}
+          </div>
         </section>
 
         {/* L3: 功能开关 */}
@@ -624,7 +580,7 @@ export function ParameterPanel({
           <div className="space-y-1.5">
             {([
               { key: "searchIndex", label: "搜索索引", hint: "建立向量索引，支持语义搜索" },
-              { key: "summary", label: "智能摘要", hint: grayed.summary ? "依赖画面描述" : "生成全局结构化摘要" },
+              { key: "summary", label: "智能摘要", hint: grayed.summary ? "依赖视觉分析" : "生成全局结构化摘要（含逐场景画面描述）" },
             ] as const).map((fn) => {
               const isOn = functions[fn.key];
               const isGrayed = grayed[fn.key];
@@ -655,18 +611,18 @@ export function ParameterPanel({
             )}
           </div>
 
-          {/* 摘要模式选择（仅智能摘要开启时显示） */}
-          {functions.summary && (
-            <div className="mt-3 pt-3 border-t border-gray-200/60">
-              <p className="text-[11px] font-medium text-gray-500 mb-2">摘要模式</p>
+          {/* 摘要模式选择（智能摘要关闭时置灰不隐藏，仿目标类别紧贴智能摘要） */}
+          <div className={`mt-2 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
+              !functions.summary ? "border-gray-150 bg-gray-50/30 opacity-40 pointer-events-none" : "border-amber-300/70 bg-amber-400/15"
+            }`}>
               <div className="space-y-1.5">
                 {([
-                  { key: "native_video", label: "原生视频理解", desc: "已停用：需本地 Qwen3-VL-8B 模型，不再提供（历史视频仍可正常查看）", disabled: true },
-                  { key: "vlm_llm", label: "VLM + LLM", desc: "默认摘要模式：VLM 看图说话 + LLM 拼凑摘要（需 API）", disabled: false },
+                  { key: "native_video", label: "原生视频理解", disabled: true },
+                  { key: "vlm_llm", label: "VLM + LLM", disabled: false },
                 ] as const).map((opt) => (
                   <label
                     key={opt.key}
-                    className={`flex items-start gap-2.5 px-3 py-2 rounded-lg border transition-all ${
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-all ${
                       opt.disabled
                         ? "opacity-50 cursor-not-allowed bg-white/40 border-gray-200/60"
                         : summaryMode === opt.key
@@ -681,106 +637,20 @@ export function ParameterPanel({
                       checked={summaryMode === opt.key}
                       onChange={() => setSummaryMode(opt.key)}
                       disabled={opt.disabled}
-                      className="mt-0.5 accent-amber-400"
+                      className="accent-amber-400"
                     />
-                    <div className="min-w-0">
-                      <span className="text-xs font-medium text-gray-800 block">
-                        {opt.label}
-                        {opt.disabled && (
-                          <span className="ml-1.5 text-[10px] font-normal text-gray-400 border border-gray-300/60 rounded px-1 py-px align-middle">已停用</span>
-                        )}
-                      </span>
-                      <span className="text-[10px] text-gray-400 block">{opt.desc}</span>
-                    </div>
+                    <span className="text-xs font-medium text-gray-800 flex items-center gap-1.5">
+                      {opt.label}
+                      {opt.disabled && (
+                        <span className="text-[10px] font-normal text-gray-400 border border-gray-300/60 rounded px-1 py-px align-middle">已停用</span>
+                      )}
+                    </span>
                   </label>
                 ))}
               </div>
-            </div>
-          )}
-        </section>
-
-        {/* L4: 高级参数 */}
-        <section>
-          <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">高级参数</h3>
-          <div className="space-y-3">
-            {/* 采样帧率 */}
-            <div>
-              <label className={`text-xs mb-1 block ${grayed.sampleFps ? "text-gray-300" : "text-gray-400"}`}>
-                采样帧率 <span className="font-mono text-gray-600">{advanced.sampleFps.toFixed(1)} fps</span>
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  value={advanced.sampleFps}
-                  onChange={(e) => updateAdvanced({ sampleFps: parseFloat(e.target.value) })}
-                  min={0.5}
-                  max={3.0}
-                  step={0.5}
-                  disabled={grayed.sampleFps}
-                  className={`flex-1 ${grayed.sampleFps ? "opacity-30" : "accent-amber-400"}`}
-                />
-              </div>
-              <div className="flex justify-between text-[9px] text-gray-350 mt-0.5">
-                <span>0.5 快</span><span>1.5-2.0 推荐</span><span>3.0 精</span>
-              </div>
-            </div>
-
-            {/* 场景切换敏感度 */}
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">
-                场景切换敏感度 <span className="font-mono">{advanced.segmentThreshold.toFixed(1)}</span>
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  value={advanced.segmentThreshold}
-                  onChange={(e) => updateAdvanced({ segmentThreshold: parseFloat(e.target.value) })}
-                  min={0.2}
-                  max={0.8}
-                  step={0.1}
-                  className="flex-1 accent-amber-400"
-                />
-              </div>
-              <div className="flex justify-between text-[9px] text-gray-350 mt-0.5">
-                <span>0.2 敏感</span><span>0.4-0.6 推荐</span><span>0.8 保守</span>
-              </div>
-            </div>
-
-            {/* 处理速度（编码预设） */}
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">
-                处理速度
-              </label>
-              <div className="flex gap-1.5">
-                {([
-                  { key: "fast", label: "快速", hint: "~3min / 1h视频" },
-                  { key: "balanced", label: "平衡", hint: "~5min" },
-                  { key: "precise", label: "精准", hint: "~7min" },
-                ] as const).map((opt) => (
-                  <button
-                    key={opt.key}
-                    onClick={() => updateAdvanced({ encodeProfile: opt.key })}
-                    className={`flex-1 px-2 py-2 rounded-lg transition-all border text-center ${
-                      advanced.encodeProfile === opt.key
-                        ? "bg-amber-400 border-amber-400 text-amber-950 shadow-sm"
-                        : advanced.encodeProfile === null && opt.key === "balanced"
-                          ? "bg-amber-400/15 border-amber-300/60 text-amber-200"
-                          : "bg-gray-100/40 border-gray-200/60 text-gray-500 hover:border-gray-300"
-                    }`}
-                  >
-                    <div className="text-xs font-medium">{opt.label}</div>
-                    <div className={`text-[9px] mt-0.5 ${advanced.encodeProfile === opt.key ? "text-amber-950/70" : "text-gray-400"}`}>
-                      {opt.hint}
-                    </div>
-                  </button>
-                ))}
-              </div>
-              <p className="text-[10px] text-gray-350 mt-1">
-                {advanced.encodeProfile === null ? "使用全局默认 (设置页可改)" : `已选: ${advanced.encodeProfile === "fast" ? "快速 · 低分辨率" : advanced.encodeProfile === "precise" ? "精准 · 高分辨率" : "平衡 · 中等分辨率"}`}
-              </p>
-            </div>
           </div>
         </section>
+
       </div>
 
       {/* Error */}

@@ -155,7 +155,7 @@ export function VideoSearchCard({
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return;
     setResults([]); setSearching(true); setError(null); setFaceResults([]);
-    setSearchMode(plateMode ? "semantic" : "semantic"); // 语义搜索（含帧/物体/车牌）
+    setSearchMode("semantic"); // 语义搜索（含帧/物体/车牌）——从图搜/人脸搜索复位标签
     try {
       const data = await api.searchSemantic(query.trim(), {
         video_ids: searchVideoIds ?? undefined,
@@ -460,7 +460,7 @@ export function VideoSearchCard({
               : isPlate ? "plate"
               : "semantic";
             return (
-              <div key={isTrack ? `track-${item.track_id}` : isPlate ? `plate-${item.video_id}-${item.track_id}-${idx}` : (item.scene_id || idx)}
+              <div key={isTrack ? `track-${item.video_id}-${item.track_id}` : isPlate ? `plate-${item.video_id}-${item.track_id}-${idx}` : (item.scene_id || idx)}
                 className="sr-item"
                 onClick={() => {
                   // v0.19: 跨视频跳转（搜索结果自己发起的切换 → 抑制搜索卡重置，保留结果与范围）

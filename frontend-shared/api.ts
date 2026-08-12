@@ -85,7 +85,8 @@ export const api = {
     form.append("audio_enabled", String(params?.audio_enabled ?? false));
     form.append("vision_enabled", String(params?.vision_enabled ?? true));
     form.append("ocr_enabled", String(params?.ocr_enabled ?? false));
-    form.append("caption_enabled", String(params?.caption_enabled ?? true));
+    // 画面描述已并入智能摘要（v0.33 合并）：caption 默认跟随 summary
+    form.append("caption_enabled", String(params?.caption_enabled ?? params?.summary_enabled ?? true));
     form.append("summary_enabled", String(params?.summary_enabled ?? true));
     form.append("summary_mode", params?.summary_mode ?? "vlm_llm");
     form.append("detection_enabled", String(params?.detection_enabled ?? false));
@@ -115,7 +116,8 @@ export const api = {
     form.append("audio_enabled", String(params?.audio_enabled ?? false));
     form.append("vision_enabled", String(params?.vision_enabled ?? true));
     form.append("ocr_enabled", String(params?.ocr_enabled ?? false));
-    form.append("caption_enabled", String(params?.caption_enabled ?? true));
+    // 画面描述已并入智能摘要（v0.33 合并）：caption 默认跟随 summary
+    form.append("caption_enabled", String(params?.caption_enabled ?? params?.summary_enabled ?? true));
     form.append("summary_enabled", String(params?.summary_enabled ?? true));
     form.append("summary_mode", params?.summary_mode ?? "vlm_llm");
     form.append("detection_enabled", String(params?.detection_enabled ?? false));
@@ -398,17 +400,24 @@ export function pollVideoUntilDone(
   let cancelled = false;
   let timer: ReturnType<typeof setInterval> | null = null;
 
+  const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+
   const fetchVideo = async () => {
     try {
       const data = await api.getVideo(videoId);
       if (!cancelled) {
         onUpdate(data);
         if (data.status !== "processing" && data.status !== "pending") {
-          if (timer) clearInterval(timer);
+          stop();
         }
       }
     } catch (err) {
-      if (!cancelled) onError?.(err instanceof Error ? err : new Error(String(err)));
+      if (!cancelled) {
+        onError?.(err instanceof Error ? err : new Error(String(err)));
+        // 请求失败（视频删除/后端不可达）无法继续探测完成状态 → 停表，
+        // 避免 interval 无限空转（原实现只靠成功分支停表）
+        stop();
+      }
     }
   };
 

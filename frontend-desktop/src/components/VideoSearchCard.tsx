@@ -459,7 +459,7 @@ export function VideoSearchCard({
               : isPlate ? "plate"
               : "semantic";
             return (
-              <div key={isTrack ? `track-${item.track_id}` : isPlate ? `plate-${item.video_id}-${item.track_id}-${idx}` : (item.scene_id || idx)}
+              <div key={isTrack ? `track-${item.video_id}-${item.track_id}` : isPlate ? `plate-${item.video_id}-${item.track_id}-${idx}` : (item.scene_id || idx)}
                 className="sr-item"
                 onClick={() => {
                   // v0.19: 跨视频跳转（搜索结果自己发起的切换 → 抑制搜索卡重置，保留结果与范围）

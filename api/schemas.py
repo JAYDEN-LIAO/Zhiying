@@ -152,6 +152,9 @@ class PipelineSettings(BaseModel):
                     "空字段=不覆盖，空字典=删除全部模板覆盖",
     )
     default_encode_profile: str | None = Field(default=None, description="默认编码预设 fast/balanced/precise（空字符串=删除覆盖）")
+    # ── 场景分割（TransNetV2 镜头分割参数，v0.33 从逐视频高级参数移到全局设置）──
+    sample_fps: str | None = Field(default=None, description="TransNetV2 采样帧率 0.5-3.0（空字符串=删除覆盖）")
+    segment_threshold: str | None = Field(default=None, description="场景切换敏感度 0.2-0.8（空字符串=删除覆盖）")
     # ── 物体检测 ──
     detection_fps: str | None = Field(default=None, description="物体检测帧率（帧/秒；空字符串=删除覆盖）")
     detector_batch_size: str | None = Field(default=None, description="YOLO GPU 批大小（空字符串=删除覆盖）")

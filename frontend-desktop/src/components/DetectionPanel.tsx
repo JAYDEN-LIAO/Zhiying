@@ -409,7 +409,8 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     );
   }
 
-  const maxDuration = tracks[tracks.length - 1]?.last_seen || 1;
+  // 取所有 track 的最大 last_seen 作分母（tracks 按 first_seen 排序，末尾 track ≠ 最长 track）
+  const maxDuration = tracks.reduce((m, t) => Math.max(m, t.last_seen), 0) || 1;
 
   return (
     <div className="major-card">

@@ -285,6 +285,9 @@ export interface PipelineSettings {
   quantization: string;
   yolo_imgsz: number;
   max_concurrent_videos: number;
+  /* 场景分割（v0.33 起全局设置，从逐视频高级参数移入） */
+  sample_fps: number;
+  segment_threshold: number;
 }
 
 export interface EncodeProfileSettingsUpdate {
@@ -306,6 +309,8 @@ export interface PipelineSettingsUpdate {
   quantization?: string;
   yolo_imgsz?: string;
   max_concurrent_videos?: string;
+  sample_fps?: string;
+  segment_threshold?: string;
 }
 
 export interface SettingsData {

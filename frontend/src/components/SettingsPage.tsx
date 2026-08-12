@@ -60,6 +60,8 @@ export function SettingsPage() {
     quantization: "",
     yolo_imgsz: "",
     max_concurrent_videos: "",
+    sample_fps: "",
+    segment_threshold: "",
   });
   // 编码三档模板编辑态（各档独立分辨率 + 批大小）
   const [profileEdit, setProfileEdit] = useState<Record<string, EncodeProfileSettingsUpdate>>({
@@ -148,6 +150,8 @@ export function SettingsPage() {
         quantization: data.pipeline?.quantization ?? "",
         yolo_imgsz: data.pipeline?.yolo_imgsz != null ? String(data.pipeline.yolo_imgsz) : "",
         max_concurrent_videos: data.pipeline?.max_concurrent_videos != null ? String(data.pipeline.max_concurrent_videos) : "",
+        sample_fps: data.pipeline?.sample_fps != null ? String(data.pipeline.sample_fps) : "",
+        segment_threshold: data.pipeline?.segment_threshold != null ? String(data.pipeline.segment_threshold) : "",
       });
       const profiles = data.pipeline?.encode_profiles ?? {};
       setProfileEdit({
@@ -209,10 +213,12 @@ export function SettingsPage() {
           use_nvdec: pipelineEdit.use_nvdec,
           chunk_encoding: pipelineEdit.chunk_encoding,
           max_concurrent_videos: pipelineEdit.max_concurrent_videos,
+          sample_fps: pipelineEdit.sample_fps,
+          segment_threshold: pipelineEdit.segment_threshold,
         },
       });
       load();
-      flash("ok", "管道设置已保存：NVDEC / chunk / 并发上限对新视频运行时生效");
+      flash("ok", "管道设置已保存：NVDEC / chunk / 并发上限 / 场景分割对新视频运行时生效");
     } catch (e) { flash("err", e instanceof Error ? e.message : "保存失败"); }
     finally { setSaving(null); }
   };
@@ -596,6 +602,23 @@ export function SettingsPage() {
                       onChange={(e) => setPipelineEdit((p) => ({ ...p, max_concurrent_videos: e.target.value }))}
                       className={inputCls} />
                     <p className={hintCls}>推荐 0（不限）；0-16。24GB 建议 1（激活峰值按并发数叠加）</p>
+                  </div>
+                  {/* 场景分割（v0.33：从参数面板高级参数移入，全局生效） */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>采样帧率 (sample_fps)</label>
+                      <input type="number" min={0.5} max={3.0} step={0.1} value={pipelineEdit.sample_fps} placeholder="1.0"
+                        onChange={(e) => setPipelineEdit((p) => ({ ...p, sample_fps: e.target.value }))}
+                        className={inputCls} />
+                      <p className={hintCls}>TransNetV2 镜头分割采样帧率；0.5-3.0（留空恢复默认）</p>
+                    </div>
+                    <div>
+                      <label className={labelCls}>场景切换敏感度 (segment_threshold)</label>
+                      <input type="number" min={0.2} max={0.8} step={0.1} value={pipelineEdit.segment_threshold} placeholder="0.5"
+                        onChange={(e) => setPipelineEdit((p) => ({ ...p, segment_threshold: e.target.value }))}
+                        className={inputCls} />
+                      <p className={hintCls}>0.2 敏感 / 0.8 保守（留空恢复默认）</p>
+                    </div>
                   </div>
                   <div className="flex justify-end">
                     <button onClick={saveSystem} disabled={saving === "system"} className={btnCls}>

@@ -30,25 +30,30 @@ export function useDetectionData(
       return;
     }
 
+    // 竞态守卫：快速切换视频时旧请求晚到不得覆盖新视频数据（对齐 useVideoPolling 的 cancelled 模式）
+    let cancelled = false;
+
     api.fetchDetectionTracks(videoId)
-      .then((d) => setDetectionData(d))
-      .catch(() => setDetectionData(null));
+      .then((d) => { if (!cancelled) setDetectionData(d); })
+      .catch(() => { if (!cancelled) setDetectionData(null); });
 
     if (faceEnabled) {
       api.fetchFaceData(videoId)
-        .then((d) => setFaceData(d))
-        .catch(() => setFaceData(null));
+        .then((d) => { if (!cancelled) setFaceData(d); })
+        .catch(() => { if (!cancelled) setFaceData(null); });
     } else {
       setFaceData(null);
     }
 
     if (plateEnabled) {
       api.fetchPlateData(videoId)
-        .then((d) => setPlateData(d))
-        .catch(() => setPlateData(null));
+        .then((d) => { if (!cancelled) setPlateData(d); })
+        .catch(() => { if (!cancelled) setPlateData(null); });
     } else {
       setPlateData(null);
     }
+
+    return () => { cancelled = true; };
   }, [videoId, enabled, faceEnabled, plateEnabled]);
 
   return { detectionData, faceData, plateData };

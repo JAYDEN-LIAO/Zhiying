@@ -230,6 +230,9 @@ def get_current_settings() -> dict:
         "max_concurrent_videos": saved_pipeline.get("max_concurrent_videos")
                                  if saved_pipeline.get("max_concurrent_videos") is not None
                                  else pipeline_cfg.get("max_concurrent_videos", 0),
+        # 场景分割参数（v0.33 起全局设置；or 模式天然支持空串回退 config 默认）
+        "sample_fps": saved_pipeline.get("sample_fps") or pipeline_cfg.get("sample_fps", 1.0),
+        "segment_threshold": saved_pipeline.get("segment_threshold") or pipeline_cfg.get("segment_threshold", 0.5),
     }
 
     return {

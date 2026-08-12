@@ -228,7 +228,12 @@ export default function Dashboard() {
     };
     if (applySeek()) return;  // 同视频 metadata 已就绪 → 立即应用
     // 跨视频切换：新 <video> 元素与 metadata 异步就绪，轮询补齐定位（成功后自停）
-    const iv = setInterval(() => { if (applySeek()) clearInterval(iv); }, 150);
+    // 超时兜底：流加载失败/视频不可达时 ~6s 后放弃，避免 150ms 无限空转
+    let attempts = 0;
+    const iv = setInterval(() => {
+      if (applySeek()) { clearInterval(iv); return; }
+      if (++attempts >= 40) clearInterval(iv);
+    }, 150);
     return () => clearInterval(iv);
   }, [seekTarget]);
 
@@ -370,9 +375,18 @@ export default function Dashboard() {
         setCurrentVideoId(result.id);
         setCurrentVideo(result);
       } else {
-        const results = await Promise.all(
+        const settled = await Promise.allSettled(
           files.map((f) => api.registerFromPath(f.absolutePath!, f.name, f.id))
         );
+        const results = settled
+          .filter((r): r is PromiseFulfilledResult<VideoResponse> => r.status === "fulfilled")
+          .map((r) => r.value);
+        const failed = settled.length - results.length;
+        if (results.length === 0) {
+          throw new Error("所选文件全部注册失败");
+        }
+        // 部分成功也继续：选中首个成功视频 + 明确提示失败数
+        // （原 Promise.all 任一失败即整体丢弃 → 已注册成功的视频成为无引用孤儿）
         setCurrentVideoId(results[0].id);
         setCurrentVideo(results[0]);
         if (results[0].group_id) {
@@ -380,6 +394,9 @@ export default function Dashboard() {
             groupId: results[0].group_id!,
             videoIds: results.map((r) => r.id),
           }]);
+        }
+        if (failed > 0) {
+          alert(`其中 ${failed} 个文件注册失败，其余已成功`);
         }
       }
       setListKey((k) => k + 1);
