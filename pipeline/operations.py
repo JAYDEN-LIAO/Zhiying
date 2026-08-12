@@ -121,7 +121,7 @@ ALL_OPERATIONS: list[Operation] = [
 
     Operation(
         name="text_encode", runner=TextEncodeRunner(),
-        depends_on=["keyframes"],
+        depends_on=["keyframes", "caption"],  # 等 caption 产出的描述文本，避免编码空 caption
         gate=lambda v, _: (
             v.search_index_enabled and v.vision_enabled
             and v.summary_enabled

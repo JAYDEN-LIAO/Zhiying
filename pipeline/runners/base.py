@@ -35,6 +35,47 @@ def effective_summary_mode(video, config) -> str:
     return mode
 
 
+@dataclass(frozen=True)
+class EncodeProfile:
+    """编码预设 — 分辨率 + 批大小。统一各 runner 的兜底解析。
+
+    兜底 (504, 336) / batch 512 与 config.yaml balanced 档一致，
+    消除 frame_encode 与 search_encode 兜底默认不一致。
+    """
+    name: str
+    encode_width: int = 504
+    encode_height: int = 336
+    encode_batch_size: int = 512
+    label: str = ""
+    desc: str = ""
+
+    @property
+    def target_size(self) -> tuple[int, int]:
+        return (self.encode_width, self.encode_height)
+
+
+def resolve_encode_profile(config: dict, video) -> EncodeProfile:
+    """解析视频生效的编码预设 — frame_encode/search_encode/keyframe/detection 共用。
+
+    优先级: video.encode_profile → pipeline.default_encode_profile → "balanced"。
+    找不到预设或字段缺失时用内置默认 (504,336)/512。
+    """
+    pipeline_cfg = config.get("pipeline", {}) or {}
+    name = (
+        getattr(video, "encode_profile", None)
+        or pipeline_cfg.get("default_encode_profile", "balanced")
+    )
+    profile = (pipeline_cfg.get("encode_profiles", {}) or {}).get(name, {}) or {}
+    return EncodeProfile(
+        name=name,
+        encode_width=int(profile.get("encode_width", 504)),
+        encode_height=int(profile.get("encode_height", 336)),
+        encode_batch_size=int(profile.get("encode_batch_size", 512)),
+        label=str(profile.get("label", "")),
+        desc=str(profile.get("desc", "")),
+    )
+
+
 @dataclass
 class PipelineContext:
     """所有 runner 执行所需的共享状态。

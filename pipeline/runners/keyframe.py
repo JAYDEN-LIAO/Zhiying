@@ -6,13 +6,17 @@ pipeline/runners/keyframe.py
 帧通过 asyncio.Queue 流式推送给 frame_encode runner，
 抽取和编码并发执行，消除 GPU 空闲等待。
 
-原始帧仍存入 scene.keyframes 供 caption 等下游消费。
+帧抽取时统一 resize 到编码预设分辨率（encode_profile），不再驻留原分辨率帧；
+resize 后的帧存入 scene.keyframes 供 caption/缩略图等下游消费。
 """
 
+import asyncio
 import logging
 import os
 
-from pipeline.runners.base import OperationRunner, PipelineContext
+from pipeline.runners.base import (
+    OperationRunner, PipelineContext, effective_summary_mode, resolve_encode_profile,
+)
 from utils.video_util import stream_frames
 
 logger = logging.getLogger(__name__)
@@ -38,10 +42,12 @@ class KeyframeRunner(OperationRunner):
                 await frame_queue.put(None)
             return
 
-        summary_mode = getattr(pctx.video, "summary_mode", "native_video")
+        summary_mode = effective_summary_mode(pctx.video, pctx.config)
         total_seconds = int(duration)
         pipeline_cfg = pctx.config.get("pipeline", {})
         use_nvdec = pipeline_cfg.get("use_nvdec", False)
+        # 抽帧统一 resize 到编码预设分辨率（与 search_encode 一致，不再驻留原分辨率帧）
+        target_w, target_h = resolve_encode_profile(pctx.config, pctx.video).target_size
 
         logger.info(
             "[KeyframeRunner] Extracting frame pool @ 1fps (stream, mode=%s, ~%d frames, nvdec=%s)",
@@ -76,6 +82,7 @@ class KeyframeRunner(OperationRunner):
             async for frame in stream_frames(
                 video_path, fps=1.0,
                 use_nvdec=use_nvdec,
+                output_width=target_w, output_height=target_h,
                 total_frames=total_seconds,  # cv2 路径用；NVDEC 忽略
             ):
                 if frame_idx >= total_seconds:
@@ -125,7 +132,9 @@ class KeyframeRunner(OperationRunner):
                 )
                 os.makedirs(thumb_dir, exist_ok=True)
                 thumb_path = os.path.join(thumb_dir, f"scene_{scene.scene_index:04d}.jpg")
-                Image.fromarray(scene.keyframe).save(thumb_path, "JPEG", quality=80)
+                await asyncio.to_thread(
+                    Image.fromarray(scene.keyframe).save, thumb_path, "JPEG", quality=80,
+                )
                 scene.keyframe_path = thumb_path
             except Exception as e:
                 logger.warning("[KeyframeRunner] Thumbnail save failed for scene %d: %s", i, e)

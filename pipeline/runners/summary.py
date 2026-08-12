@@ -125,30 +125,15 @@ class SummaryRunner(OperationRunner):
             pctx.ctx.summary = self._fallback_summary(scenes)
             return
 
-        lines: list[str] = []
-        for s in scenes:
-            caption = (s.caption or "").strip()
-            ocr = (s.ocr_text or "").strip()
-            transcript = (s.aligned_transcript or "").strip()
-            if not caption and not ocr and not transcript:
-                continue
-            parts = [f"[{s.start_sec:.1f}-{s.end_sec:.1f}]"]
-            if caption:
-                parts.append(f"画面:{caption}")
-            if ocr:
-                parts.append(f"文字:{ocr}")
-            if transcript:
-                parts.append(f"台词:{transcript}")
-            lines.append(" ".join(parts))
-
-        script = "\n".join(lines)
+        budget = self._input_budget(pctx)
+        script, scene_count = self._build_script(scenes, budget)
         if not script.strip():
             logger.info("[SummaryRunner] No content to summarize, skipping")
             return
 
         await pctx.tracker.update(
             "summary",
-            description=f"正在生成摘要（{len(lines)} 个场景）...",
+            description=f"正在生成摘要（{scene_count} 个场景）...",
         )
 
         pl = pctx.prompt_loader
@@ -158,7 +143,7 @@ class SummaryRunner(OperationRunner):
             if pl else script
         )
 
-        logger.info("[SummaryRunner] Summarizing %d scenes via LLM...", len(lines))
+        logger.info("[SummaryRunner] Summarizing %d scenes via LLM...", scene_count)
         try:
             raw = await summarizer.summarize(script, system_prompt, user_prompt)
         except Exception as e:
@@ -168,6 +153,67 @@ class SummaryRunner(OperationRunner):
             await self._run_aggregate(pctx, scenes)
             return
         await self._validate_and_store(pctx, raw)
+
+    # ── 剧本构建 + 输入预算（v0.33 防长视频上下文溢出）──
+
+    @staticmethod
+    def _input_budget(pctx) -> int:
+        """摘要 LLM 输入预算（字符数）— 超长剧本时截断，防上下文溢出。"""
+        cfg = pctx.config.get("plugins", {}).get("summarizer", {})
+        return int(cfg.get("max_input_chars", 12000))
+
+    @classmethod
+    def _build_script(cls, scenes: list[Scene], budget_chars: int) -> tuple[str, int]:
+        """把场景描述拼成剧本 + 返回有内容的场景数；超预算时按 台词 → 文字 → 画面 优先级截尾。
+
+        不超预算 → 输出与旧逻辑字节级一致。场景数用于日志/进度描述（caption 内换行不计入）。
+        """
+        entries: list[dict] = []
+        for s in scenes:
+            caption = (s.caption or "").strip()
+            ocr = (s.ocr_text or "").strip()
+            transcript = (s.aligned_transcript or "").strip()
+            if not caption and not ocr and not transcript:
+                continue
+            entries.append({
+                "start": s.start_sec, "end": s.end_sec,
+                "caption": caption, "ocr": ocr, "transcript": transcript,
+            })
+
+        def render() -> str:
+            return "\n".join(cls._entry_line(e) for e in entries)
+
+        script = render()
+        if len(script) <= budget_chars:
+            return script, len(entries)
+
+        # 超预算：按 transcript → ocr → caption 优先级逐条截尾（循环至满足预算）。
+        # 截断保留 "…" 后缀，多砍 1 字符保证净减 exactly over，避免超预算漏进下一优先级。
+        for field in ("transcript", "ocr", "caption"):
+            for e in entries:
+                if len(script) <= budget_chars:
+                    return script, len(entries)
+                if not e[field]:
+                    continue
+                while len(script) > budget_chars and e[field]:
+                    over = len(script) - budget_chars
+                    if len(e[field]) > over:
+                        e[field] = e[field][:len(e[field]) - over - 1] + "…"
+                    else:
+                        e[field] = ""
+                    script = render()
+        return script, len(entries)
+
+    @staticmethod
+    def _entry_line(e: dict) -> str:
+        parts = [f"[{e['start']:.1f}-{e['end']:.1f}]"]
+        if e["caption"]:
+            parts.append(f"画面:{e['caption']}")
+        if e["ocr"]:
+            parts.append(f"文字:{e['ocr']}")
+        if e["transcript"]:
+            parts.append(f"台词:{e['transcript']}")
+        return " ".join(parts)
 
     # ── 共用 ──
 

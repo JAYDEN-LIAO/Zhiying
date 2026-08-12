@@ -104,7 +104,7 @@ class ReuseRequest(BaseModel):
     face_enabled: bool = False
     plate_enabled: bool = False
     summary_enabled: bool = True
-    summary_mode: str = "native_video"
+    summary_mode: str = "vlm_llm"
     search_index_enabled: bool = True
     sample_fps: float = Field(default=1.0, ge=0.5, le=3.0)
     segment_threshold: float = Field(default=0.5, ge=0.2, le=0.8)
@@ -309,7 +309,6 @@ class ExportClipRequest(BaseModel):
     """视频片段导出请求。start_sec == end_sec 时视为单帧导出。"""
     start_sec: float = Field(..., ge=0.0, description="起始时间(秒)")
     end_sec: float = Field(..., ge=0.0, description="结束时间(秒)，与 start 相同则导出单帧")
-    output_format: str = Field(default="mp4", pattern=r"^(mp4)$", description="输出格式")
     output_format: str = Field(default="mp4", pattern=r"^(mp4)$", description="输出格式")
 
 

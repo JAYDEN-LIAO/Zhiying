@@ -181,8 +181,8 @@ class Video(Base):
         comment="摘要生成开关",
     )
     summary_mode: Mapped[str] = mapped_column(
-        String(16), default="native_video", nullable=False,
-        comment="摘要模式: native_video(本地Qwen2.5-VL) / vlm_llm(VLM+LLM)",
+        String(16), default="vlm_llm", nullable=False,
+        comment="摘要模式: vlm_llm(默认, VLM+LLM) / native_video(已置灰退役, 保留兼容历史记录)",
     )
 
     # ── 参数层新增 (v0.6) ──
@@ -200,7 +200,7 @@ class Video(Base):
     )
     caption_with_context: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False,
-        comment="Caption 是否带前一场景上下文",
+        comment="已废弃(v0.33): caption runner 以 config.plugins.captioner.params.with_context 为准, 此列仅保留兼容历史",
     )
     summary_detail: Mapped[str] = mapped_column(
         String(16), default="standard", nullable=False,

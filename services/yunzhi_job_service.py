@@ -52,7 +52,7 @@ def default_params_for_operation(operation: str) -> dict:
         "face_enabled": False,
         "plate_enabled": False,
         "summary_enabled": True,
-        "summary_mode": "native_video",
+        "summary_mode": "vlm_llm",
         "search_index_enabled": True,
         "language": "auto",
         "sample_fps": 1.0,

@@ -11,7 +11,7 @@ pipeline/runners/search_encode.py
 import logging
 import os
 
-from pipeline.runners.base import OperationRunner, PipelineContext
+from pipeline.runners.base import OperationRunner, PipelineContext, resolve_encode_profile
 from core.interfaces import Scene as SceneData
 from core.repository import bulk_insert_frames
 from utils.video_util import stream_frames
@@ -39,27 +39,21 @@ class SearchEncodeRunner(OperationRunner):
             logger.warning("[SearchEncodeRunner] No valid duration, skipping")
             return
 
-        # ── 编码速度预设：逐视频 profile → 分辨率 + batch_size ──
+        # ── 编码速度预设（统一解析，见 base.resolve_encode_profile）──
         pipeline_cfg = pctx.config.get("pipeline", {})
-        profile_name = getattr(pctx.video, "encode_profile", None)
-        if not profile_name:
-            profile_name = pipeline_cfg.get("default_encode_profile", "balanced")
-        profiles = pipeline_cfg.get("encode_profiles", {})
-        profile = profiles.get(profile_name, {})
-        encode_w = profile.get("encode_width", 336)
-        encode_h = profile.get("encode_height", 224)
-        batch_size = profile.get("encode_batch_size", 512)
-        target_size: tuple[int, int] = (encode_w, encode_h)
+        profile = resolve_encode_profile(pctx.config, pctx.video)
+        batch_size = profile.encode_batch_size
+        target_size = profile.target_size
 
         # ── 队列模式（优先）：从 detection 共享 NVDEC 流消费帧 ──
         search_queue: object | None = getattr(pctx, "search_frame_queue", None)
         if search_queue is not None:
             await self._run_from_queue(
-                pctx, embedder, search_queue, duration, target_size, profile_name,
+                pctx, embedder, search_queue, duration, target_size, profile.name,
             )
         else:
             await self._run_encode(
-                pctx, embedder, duration, target_size, batch_size, pipeline_cfg, profile_name,
+                pctx, embedder, duration, target_size, batch_size, pipeline_cfg, profile.name,
             )
 
     async def _run_from_queue(

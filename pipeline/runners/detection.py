@@ -405,12 +405,6 @@ class DetectionRunner(OperationRunner):
 
 
 def _get_search_target(pctx, pipeline_cfg: dict) -> tuple[int, int]:
-    """从视频 encode_profile 或 config 默认值获取搜索帧目标分辨率。"""
-    profile_name = getattr(pctx.video, "encode_profile", None)
-    if not profile_name:
-        profile_name = pipeline_cfg.get("default_encode_profile", "balanced")
-    profiles = pipeline_cfg.get("encode_profiles", {})
-    profile = profiles.get(profile_name, {})
-    w = profile.get("encode_width", 336)
-    h = profile.get("encode_height", 224)
-    return (w, h)
+    """从视频 encode_profile 或 config 默认值获取搜索帧目标分辨率（统一解析）。"""
+    from pipeline.runners.base import resolve_encode_profile
+    return resolve_encode_profile(pctx.config, pctx.video).target_size

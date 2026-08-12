@@ -50,6 +50,7 @@ class QwenAPICaptioner(BaseCaptioner):
         self.api_key = api_key
         self.model_name = model_name
         self.default_max_tokens = max_new_tokens
+        self._client: httpx.AsyncClient | None = None  # 懒建复用，避免每请求握手
         logger.info(
             "[QwenAPICaptioner] Ready: %s model=%s",
             base_url, model_name,
@@ -102,18 +103,18 @@ class QwenAPICaptioner(BaseCaptioner):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=30.0)) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                )
+            client = await self._get_client()
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            )
 
-                body = response.content.decode("utf-8")
-                data = json.loads(body)
+            body = response.content.decode("utf-8")
+            data = json.loads(body)
 
             content = data["choices"][0]["message"]["content"]
             if not content:
@@ -124,3 +125,18 @@ class QwenAPICaptioner(BaseCaptioner):
         except Exception as e:
             logger.exception("[QwenAPICaptioner] API call failed")
             raise
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """懒建并复用 HTTP 客户端（避免每请求 TCP+TLS 握手）。"""
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=30.0))
+        return self._client
+
+    async def unload(self) -> None:
+        """释放 HTTP 连接（engine 卸载 captioner 时调用）。"""
+        if self._client is not None:
+            try:
+                await self._client.aclose()
+            except Exception:
+                logger.warning("[QwenAPICaptioner] unload client failed", exc_info=True)
+            self._client = None

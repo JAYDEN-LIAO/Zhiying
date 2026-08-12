@@ -148,6 +148,27 @@ class QwenVLEmbedder(BaseEmbedder):
             logger.exception("[QwenVLEmbedder] Text encoding failed")
             raise
 
+    async def encode_texts_batch(self, texts: list[str]) -> list[list[float]]:
+        """批量文本编码 — 多段文本一次前向，比逐条 encode_text 吞吐更高。
+
+        Args:
+            texts: 文本列表（如每个场景拼接后的 caption+ocr+transcript）。
+
+        Returns:
+            list[list[float]] — 每段 4096 维归一化向量，顺序与输入一致。
+        """
+        if not texts:
+            return []
+        try:
+            async with gpu_lock:
+                vectors = await asyncio.to_thread(
+                    self._sync_encode_texts_batch, texts,
+                )
+            return vectors
+        except Exception as e:
+            logger.exception("[QwenVLEmbedder] Batch text encoding failed")
+            raise
+
     async def encode_video(
         self, video_path: str, fps: float = 1.0, max_frames: int = 32,
     ) -> list[float]:
@@ -228,6 +249,38 @@ class QwenVLEmbedder(BaseEmbedder):
         )
         return embedding.cpu().to(torch.float32).numpy().astype(np.float64).tolist()
 
+    def _sync_encode_texts_batch(self, texts: list[str]) -> list[list[float]]:
+        """批量文本嵌入：每段走 chat template → 一次前向 → 逐行 pooling_last。"""
+        conversations = [
+            [
+                {"role": "system", "content": [{"type": "text", "text": self._SYSTEM_PROMPT}]},
+                {"role": "user", "content": [{"type": "text", "text": t or " "}]},
+            ]
+            for t in texts
+        ]
+        prompts = [
+            self.processor.apply_chat_template(
+                conv, tokenize=False, add_generation_prompt=True,
+            )
+            for conv in conversations
+        ]
+        inputs = self.processor(
+            text=prompts,
+            return_tensors="pt",
+            padding=True,
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+
+        emb = self._pool_last_token(
+            outputs.last_hidden_state, inputs["attention_mask"],
+        )
+        if emb.dim() == 1:  # B=1 时 _pool_last_token 返回 1D，补 batch 维
+            emb = emb.unsqueeze(0)
+        return emb.cpu().to(torch.float32).numpy().tolist()
+
     def _sync_encode_image(self, image: np.ndarray) -> list[float]:
         """图像嵌入：numpy → PIL Image（纯内存）→ process_vision_info → pooling_last。"""
         from PIL import Image as PILImage
@@ -279,10 +332,15 @@ class QwenVLEmbedder(BaseEmbedder):
 
         encode_size = target_size if target_size is not None else self.encode_size
 
-        # ── 并行 PIL resize (PIL 线程安全) ──
+        # ── 并行 PIL 转换 (PIL 线程安全)；帧已达标（keyframe 抽帧已 resize）则跳过二次缩放 ──
         with Pool(max_workers=8) as pool:
             pil_images = list(pool.map(
-                lambda img: PILImage.fromarray(img).resize(encode_size, PILImage.LANCZOS),
+                lambda img: (
+                    PILImage.fromarray(img)
+                    if (encode_size is not None
+                        and img.shape[1] == encode_size[0] and img.shape[0] == encode_size[1])
+                    else PILImage.fromarray(img).resize(encode_size, PILImage.LANCZOS)
+                ),
                 images,
             ))
 

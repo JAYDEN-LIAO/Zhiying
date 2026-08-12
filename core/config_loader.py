@@ -51,6 +51,7 @@ PIPELINE_NUMERIC_SPEC: dict[str, dict] = {
     "confidence_threshold":  {"cast": float, "min": 0.05, "max": 0.95, "step": 0.05, "recommend": 0.4},
     "iou_threshold":         {"cast": float, "min": 0.05, "max": 0.9,  "step": 0.05, "recommend": 0.5},
     "max_concurrent_videos": {"cast": int,   "min": 0,   "max": 16,   "step": 1,   "recommend": 1},
+    "max_scenes":            {"cast": int,   "min": 1,   "max": 30,   "step": 1,   "recommend": 6},
 }
 # 编码三档模板字段规格（分辨率只钳范围不强制步进，避免破坏 504 等非 16 倍数推荐值）
 ENCODE_PROFILE_NUMERIC_SPEC: dict[str, dict] = {
@@ -129,7 +130,8 @@ def _auto_fallback_captioner(cfg: dict) -> None:
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
             "api_key": "placeholder",  # 实际值经 env / settings.json 注入
             "model_name": "qwen-vl-max",
-            "with_context": True,
+            "max_new_tokens": 2048,
+            "with_context": False,  # 默认关：caption 并发提速；开则串行（依赖前序场景描述）
         },
     }
 
@@ -234,6 +236,10 @@ def _apply_settings_overrides(cfg: dict) -> None:
         v = clamp_param(PIPELINE_NUMERIC_SPEC["max_concurrent_videos"], pipeline["max_concurrent_videos"])
         if v is not None:
             pcfg["max_concurrent_videos"] = v
+    if pipeline.get("max_scenes") is not None:
+        v = clamp_param(PIPELINE_NUMERIC_SPEC["max_scenes"], pipeline["max_scenes"])
+        if v is not None:
+            pcfg["max_scenes"] = v
 
     # ── 全局开关（布尔，含 "false" 字符串兜底）──
     if pipeline.get("use_nvdec") is not None:

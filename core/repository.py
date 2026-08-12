@@ -10,7 +10,7 @@ core/repository.py
 import uuid
 import logging
 
-from sqlalchemy import select, update, insert, delete, func
+from sqlalchemy import select, update, insert, delete, func, bindparam
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -292,6 +292,51 @@ async def bulk_insert_scenes(
         logger.exception(
             "[Repo] Failed to bulk insert scenes for video %s", video_id
         )
+        raise
+
+
+async def bulk_update_scenes_captions(
+    session: AsyncSession,
+    video_id: uuid.UUID,
+    scenes_list: list[dict],
+) -> None:
+    """批量更新已有场景的 caption 等文本字段（增量摘要用）。
+
+    scenes_list 每项: {scene_index, caption, prev_caption, keyframe_path, text_embedding}。
+    按 (video_id, scene_index) 匹配，不新增行。方法内 commit。
+    """
+    if not scenes_list:
+        logger.warning("[Repo] Empty scenes_list for video %s, skipping", video_id)
+        return
+
+    try:
+        stmt = (
+            update(Scene.__table__)
+            .where(Scene.video_id == video_id)
+            .where(Scene.scene_index == bindparam("_scene_index"))
+            .values(
+                caption=bindparam("caption"),
+                prev_caption=bindparam("prev_caption"),
+                keyframe_path=bindparam("keyframe_path"),
+                text_embedding=bindparam("text_embedding"),
+            )
+        )
+        rows = [
+            {
+                "_scene_index": s.get("scene_index"),
+                "caption": s.get("caption"),
+                "prev_caption": s.get("prev_caption"),
+                "keyframe_path": s.get("keyframe_path"),
+                "text_embedding": s.get("text_embedding"),
+            }
+            for s in scenes_list
+        ]
+        await session.execute(stmt, rows)
+        await session.commit()
+        logger.info("[Repo] Bulk updated %d scene captions for video %s", len(rows), video_id)
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to bulk update scene captions for video %s", video_id)
         raise
 
 

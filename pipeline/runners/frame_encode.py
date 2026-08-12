@@ -10,7 +10,7 @@ pipeline/runners/frame_encode.py
 
 import logging
 
-from pipeline.runners.base import OperationRunner, PipelineContext
+from pipeline.runners.base import OperationRunner, PipelineContext, resolve_encode_profile
 from core.repository import bulk_insert_frames
 
 logger = logging.getLogger(__name__)
@@ -30,24 +30,17 @@ class FrameEncodeRunner(OperationRunner):
             logger.warning("[FrameEncodeRunner] No frame_queue, skipping (search path handles encoding)")
             return
 
-        # ── 编码速度预设 ──
-        pipeline_cfg = pctx.config.get("pipeline", {})
-        profile_name = getattr(pctx.video, "encode_profile", None)
-        if not profile_name:
-            profile_name = pipeline_cfg.get("default_encode_profile", "balanced")
-        profiles = pipeline_cfg.get("encode_profiles", {})
-        profile = profiles.get(profile_name, {})
-        batch_size = profile.get("encode_batch_size", 512)
-        target_w = profile.get("encode_width", 504)
-        target_h = profile.get("encode_height", 336)
-        target_size: tuple[int, int] = (target_w, target_h)
+        # ── 编码速度预设（统一解析，见 base.resolve_encode_profile）──
+        profile = resolve_encode_profile(pctx.config, pctx.video)
+        batch_size = profile.encode_batch_size
+        target_size = profile.target_size
 
         expected_total: int | None = None
 
         await pctx.tracker.update("frame_encode", sub_progress=0.0)
         logger.info(
             "[FrameEncodeRunner] Consuming from frame_queue, profile=%s, %dx%d, batch=%d, ~%s frames",
-            profile_name, target_w, target_h, batch_size, "unknown",
+            profile.name, target_size[0], target_size[1], batch_size, "unknown",
         )
 
         all_frame_rows: list[dict] = []

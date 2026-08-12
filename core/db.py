@@ -99,7 +99,7 @@ async def init_db():
         await conn.execute(text("""
             ALTER TABLE videos
             ADD COLUMN IF NOT EXISTS summary_mode varchar(16)
-                DEFAULT 'native_video' NOT NULL
+                DEFAULT 'vlm_llm' NOT NULL
         """))
 
         # ── 增量迁移 v0.8: 物体检测开关 ──

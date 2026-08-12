@@ -54,7 +54,7 @@ async def get_pipeline_config() -> APIResponse[dict]:
         "encode_profiles": pipeline_cfg.get("encode_profiles", {}),
         "use_nvdec": pipeline_cfg.get("use_nvdec", False),
         "chunk_encoding": pipeline_cfg.get("chunk_encoding", False),
-        "default_summary_mode": pipeline_cfg.get("default_summary_mode", "native_video"),
+        "default_summary_mode": pipeline_cfg.get("default_summary_mode", "vlm_llm"),
         "plugins": plugin_available,
     })
 

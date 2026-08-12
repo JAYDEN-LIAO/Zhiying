@@ -20,7 +20,7 @@ from core.cancellation import is_cancelled
 from core.status_tracker import StatusTracker
 from core.prompt_loader import get_prompt_loader
 from core.repository import (
-    bulk_insert_scenes, save_video_artifacts,
+    bulk_insert_scenes, save_video_artifacts, bulk_update_scenes_captions,
     bulk_insert_frame_detections, bulk_insert_tracks,
     bulk_insert_track_embeddings,
     bulk_insert_face_identities, bulk_insert_face_detections,
@@ -297,7 +297,9 @@ class PipelineEngine:
             if self._shared_captioner is None:
                 cap = self.plugins.get("captioner")
                 if cap is not None and hasattr(cap, "unload"):
-                    cap.unload()
+                    result = cap.unload()
+                    if asyncio.iscoroutine(result):
+                        await result
 
             await tracker.mark_completed()
             logger.info("[Pipeline] video %s completed", self.video.id)
@@ -326,8 +328,11 @@ class PipelineEngine:
 
             # 确定需要运行的操作子集
             op_names: set[str] = set()
-            if need_summary and v.caption_enabled:
-                op_names.update(["caption", "summary"])
+            if need_summary and v.caption_enabled and v.vision_enabled:
+                # 摘要路径: keyframes(重抽帧供 caption) → caption → summary
+                op_names.update(["keyframes", "caption", "summary"])
+                if v.search_index_enabled:
+                    op_names.add("text_encode")  # 摘要后刷新文本向量
             if need_search and v.vision_enabled:
                 if v.summary_enabled:
                     # 摘要路径: keyframes → frame_encode + text_encode
@@ -359,8 +364,8 @@ class PipelineEngine:
                         )
                     await session.commit()
 
-            # 从 DB 加载已有场景（仅摘要路径需要）
-            if v.summary_enabled and need_search:
+            # 从 DB 加载已有场景（need_summary 或 need_search 且摘要开启时）
+            if (need_summary or need_search) and v.summary_enabled:
                 await self._load_scenes_from_db()
 
             await self._load_plugins(enabled)
@@ -524,12 +529,23 @@ class PipelineEngine:
             await session.commit()
 
     async def _persist_summary_only(self) -> None:
-        """仅写入摘要（增量用）。"""
-        if self.ctx.summary:
-            async with self.db_session_factory() as session:
+        """增量摘要：写 summary + 批量更新已有 scenes 的 caption 等文本字段。"""
+        async with self.db_session_factory() as session:
+            if self.ctx.summary:
                 await save_video_artifacts(
                     session, self.video.id, summary=self.ctx.summary,
                 )
+            if self.ctx.scenes:
+                await bulk_update_scenes_captions(session, self.video.id, [
+                    {
+                        "scene_index": s.scene_index,
+                        "caption": s.caption,
+                        "prev_caption": s.prev_caption,
+                        "keyframe_path": s.keyframe_path,
+                        "text_embedding": s.text_embedding,
+                    }
+                    for s in self.ctx.scenes
+                ])
 
     async def _load_scenes_from_db(self) -> None:
         """从 DB 加载已有场景数据到 ctx.scenes（增量用）。"""

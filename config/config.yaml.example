@@ -49,7 +49,11 @@ plugins:
       base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       api_key: "placeholder"  # 实际值在 config/secrets.yaml 或设置页填写
       model_name: "qwen-vl-max"
-      with_context: true
+      max_new_tokens: 2048
+      # with_context: 用上一场景描述增强连贯性（默认关）。开时 caption 串行（依赖前序），
+      #               关时并发限流（concurrency 控制并发数）。
+      with_context: false
+      concurrency: 4
 
   # ── 画面描述 via Qwen3-VL 8B 本地视频理解（可选：仅开发机有本地 8B 模型时启用）──
   # captioner:
@@ -82,6 +86,7 @@ plugins:
     model_name: "deepseek-chat"
     max_tokens: 2048
     temperature: 0.1
+    max_input_chars: 12000   # 剧本输入预算（字符）— 超长时截台词/文字保画面描述
 
   # ── 动态 Grounding（Demo 跳过）──
   grounding:
@@ -112,6 +117,8 @@ pipeline:
   # 并发管道上限（v0.32 起=任务队列 worker 数）：>0 时同一时刻最多 N 个视频管道同时处理；
   # 0 或未设 → 1（串行 FIFO 排队，防批量上传并发 GPU OOM）。建议低显存机器 1。
   max_concurrent_videos: 1
+  # 目标场景数上限：长视频固定段数 / TransNetV2 结果合并上限（默认 6，稳定下游 caption 成本）
+  max_scenes: 6
   # 默认摘要模式：vlm_llm（API 驱动，默认）；native_video 已置灰退役（后端代码保留兼容历史记录）
   default_summary_mode: "vlm_llm"
 

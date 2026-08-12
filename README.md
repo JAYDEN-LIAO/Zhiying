@@ -93,7 +93,7 @@ curl -X POST -H "Content-Type: application/json" \
 | Orphan Storage Sweep | `POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` | ✅ |
 | 云智平台集成 (v0.24) | `POST /api/v1/videos/register-external`（平台共享文件就地引用，`source_owned=false` 删视频不删源文件）+ `POST /internal/yunzhi/jobs`（立即 202，进度/完成/失败回调，幂等）+ 前端 Bridge SDK | ✅ |
 | 平台文件 id 自动跳转 (v0.26) | `GET /api/v1/videos/external/{file_id}` — 平台文件库资源 ID 存入 `videos.external_file_id`（register-external + jobs 透传）；Bridge connect() 后凭 `context.resource.id` 自动打开对应视频历史详情（非文件入口/无匹配 → 默认工作台） | ✅ |
-| 桌面端启动器 + 桌面前端 | `desktop/` pywebview 壳（检查模型→起 db→起 uvicorn→开窗→日志→优雅关停）+ `frontend-desktop/` 独立前端（`ZHIYING_FRONTEND=desktop` 挂载）| ✅ |
+| 桌面端启动器 + 桌面前端 | `desktop/` pywebview 壳（检查模型→起 db→起 uvicorn→开窗→日志→优雅关停）+ `build_exe.ps1 -Deploy` 一键构建部署纯产品启动器 exe + `frontend-desktop/` 独立前端（`ZHIYING_FRONTEND=desktop` 挂载）| ✅ |
 
 ## Architecture Overview
 
@@ -268,7 +268,7 @@ zhiying/
 ├── data/                 # Video storage & artifacts + settings.json/presets.json (gitignored)
 ├── config/               # YAML config, prompts, schema
 ├── deploy/               # 部署套件: setup_windows.ps1 (Windows 裸机一键安装) + setup_linux.sh (Linux 开发机一键安装) + download_models.py / deploy.md / deploy_feedback.md
-├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开窗→日志面板→优雅关闭; desktop.bat 入口)
+├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开窗→日志面板→优雅关闭; desktop.bat 入口; build_exe.ps1 -Deploy 一键构建部署 exe)
 ├── frontend-desktop/     # 桌面独立前端 (v0.27 独立工作台 + native_video 置灰 + 无云智 Bridge, 与服务器 frontend/ 完全隔离; desktop.bat 加载其 dist)
 ├── frontend-shared/      # 双前端共享后端对接层 (api/types/labels/helpers 一份实现, 两端 services/api.ts 等是再导出指针; 后端接口/字段变更只改这里)
 ├── scripts/              # 运维工具: sweep_storage.py 存储清扫 CLI (默认 dry-run, --apply 执行) + bump_version.py 一键版本提升 + mock_yunzhi_platform.py (mock 平台回调服务器)
@@ -277,8 +277,9 @@ zhiying/
 
 ## Development Status
 
+- **v0.33 — 摘要链路根治重构（本次发版）**: 场景数上限 `pipeline.max_scenes`（默认 6：长视频固定段数 / TransNetV2 结果按累计时长合并）；caption 并发限流 + 单场景失败降级重试 + 配置穿透（with_context/max_new_tokens 从 params 子层读，默认关 with_context）；text_encode 攒批 encode_texts_batch；summary 剧本输入预算截断（max_input_chars）；incremental 纯搜索→开摘要不再静默失败（完整跑摘要流水线 + 更新 scenes）；keyframe 抽帧统一 resize 到编码预设分辨率（取消原分辨率帧驻留，内存大幅下降）；frame_encode/search_encode/keyframe/detection 统一 resolve_encode_profile 解析；summary_mode 默认值全量 native_video→vlm_llm。
 - **v0.32 — 全局任务队列（已发版）**: `core/pipeline_queue.py` FIFO 任务队列 + worker 池（N=`max_concurrent_videos`，0/未设=1 串行）+ `pipeline_tasks` 表 DB 持久化。所有管道触发点（yunzhi jobs/上传 params/组同步/增量）统一入队，批量上传排队处理防 GPU OOM；重启恢复（yunzhi 续跑防重复建视频 / pipeline 标失败）+ "排队中"低进度回调 + 幂等跨重启。接口保持异步（jobs 202 不变）。
-- **桌面端 EXE + 双部署路径（未发版，桌面前端/部署侧，随后端版本走）**: `desktop/build_exe.ps1` 纯产品启动器 exe（PyInstaller onedir，桌面壳不含后端/模型）+ `deploy/setup_linux.sh` Linux 开发机一键安装 + `setup_windows.ps1` 补 config.yaml 生成与前端 dist 构建。详见 `deploy/deploy.md` / `desktop/README.md`。
+- **桌面端 EXE + 双部署路径（未发版，桌面前端/部署侧，随后端版本走）**: `desktop/build_exe.ps1 -Deploy` 一条命令构建并部署纯产品启动器 exe（PyInstaller onedir，桌面壳不含后端/模型；壳修复：pywebviewready JS 轮询 + CREATE_NO_WINDOW 防弹终端 + spec SPECPATH/collect_submodules）+ `deploy/setup_linux.sh` Linux 开发机一键安装 + `setup_windows.ps1` 补 config.yaml 生成与前端 dist 构建 + **bump 命令全机接入 PATH**。详见 `deploy/deploy.md` / `desktop/README.md`。
 - **v0.31 — 人脸搜索交互完善 + 搜索范围模型 + 跨视频检索穿透 + 通用置信度**: 人脸搜索交互重构（搜索人脸结果点击定位检测栏"人脸"视图 + 身份展开按 track 聚合出现时间段 + 单次不展开 + 人脸行下载按钮 + 选中视频框金色高亮 + 时间轴联动 + 丝滑定位）；搜索范围模型重构（当前/全组/全部/自定义跨视频多选，下拉常驻；无视频默认工作台直接全库搜索；人脸/车牌门控按"范围内任一视频具备即可用"）；跨视频检索穿透定位（结果点击不再重置搜索卡，根治 `video?.id` 派生 currentVideoId 的 旧→null→新 双触发；seekTarget loadedmetadata+轮询 跨视频可靠 seek；播放/时间轴/检测栏穿透）；通用置信度 confidence（`search_engine.py` 结果返回 `confidence=相似度×路径权重`，跨路径统一排行）。
 - **v0.29 — 人脸识别链路重构 + 搜索隔离 + 前端搜索样式统一**: 人脸聚类改护栏式双阈值（同track 0.30/跨track 0.58，替代单一 0.60 拆碎/0.40 并错）；多帧采样提脸 + 最典型脸作检索锚；detection 全分辨率帧升级；修复 search/face + search/image 的 video_ids 泄漏全库 bug（form 参数改 Form 声明）；五种搜索（语义/图搜/物体/车牌/人脸）统一 sr-item 卡片样式（标签右上角 + 主体1行 + 导出展开式）；人脸并入物体检测下拉栏。
 - **v0.28 — 云智嵌入 UI 重构**: 移除侧边栏（避免与 yunzhi 平台重复）→ 导航上移 header；参数/历史抽屉改右侧滑出；设置页点面板先跳回工作台；搜索框车牌/人脸按钮按检测门控置灰。

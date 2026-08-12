@@ -43,6 +43,7 @@ class PipelineConfig(BaseModel):
     chunk_encoding: bool = Field(default=False, description="chunk 编码开关（需较好 GPU）")
     encode_batch_size: int = Field(default=64, ge=1, description="帧编码批大小（按 GPU VRAM 调整）")
     use_nvdec: bool = Field(default=False, description="NVDEC 硬件解码（需 NVIDIA GPU + FFmpeg CUDA）")
+    max_scenes: int = Field(default=6, ge=1, le=30, description="目标场景数上限（长视频固定段数 / TransNetV2 结果合并上限）")
 
 
 # ═══════════════════════════════════════════════════════════

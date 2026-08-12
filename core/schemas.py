@@ -112,7 +112,7 @@ class VideoCreate(BaseModel):
     face_enabled: bool      = Field(default=False)
     plate_enabled: bool     = Field(default=False)
     summary_enabled: bool   = Field(default=True)
-    summary_mode: str       = Field(default="native_video", pattern=r"^(native_video|vlm_llm)$")
+    summary_mode: str       = Field(default="vlm_llm", pattern=r"^(native_video|vlm_llm)$")
 
     # ── 参数层新增 (v0.6) ──
     search_index_enabled: bool  = Field(default=True)
@@ -149,7 +149,7 @@ class PipelineParams(BaseModel):
     # L3: 功能开关
     search_index_enabled: bool = Field(default=True)
     summary_enabled: bool      = Field(default=True)
-    summary_mode: str          = Field(default="native_video", pattern=r"^(native_video|vlm_llm)$")
+    summary_mode: str          = Field(default="vlm_llm", pattern=r"^(native_video|vlm_llm)$")
 
     # L4: 高级参数
     language: str               = Field(default="auto", pattern=r"^(auto|zh|en|ja|ko)$")
@@ -346,7 +346,7 @@ class VideoListItem(BaseModel):
     face_enabled: bool             = False
     plate_enabled: bool            = False
     summary_enabled: bool          = True
-    summary_mode: str              = "native_video"
+    summary_mode: str              = "vlm_llm"
     search_index_enabled: bool     = True
     sample_fps: float              = 1.0
     language: str                  = "auto"

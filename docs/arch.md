@@ -1,6 +1,6 @@
 # Zhiying Architecture
 
-> Version: 0.32 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.33 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4（双前端: frontend/ 服务器 + frontend-desktop/ 桌面, 共享 frontend-shared/ 对接层）
 > v0.22: Windows 从零部署 + 系统设置/参数预设 + 全局 GPU 锁 + Detection 渲染重构 + 删除处理中/管道取消 + ARM64 多架构
 > v0.24: 云智(Yunzhi)平台接入（register-external + /internal/yunzhi/jobs 异步任务）+ 生产部署（systemd, 8011, pgvector:pg17, 静态托管前端）
@@ -10,8 +10,9 @@
 > v0.29: 人脸识别链路重构（护栏式双阈值聚类 + 多帧采样 + 最典型脸锚点）+ 搜索数据隔离修复 + 五种搜索样式统一 + 前端交互优化
 > v0.31: 人脸搜索交互完善（结果定位检测栏人脸视图 + 身份展开出现时间段 + 选中高亮 + 时间轴联动）+ 搜索范围模型（当前/全组/全部/自定义多选，无视频直接搜索）+ 跨视频检索穿透定位 + 通用置信度 confidence
 > v0.32: 全局任务队列（已发版，PipelineQueue FIFO + worker 池 + pipeline_tasks 表 DB 持久化，批量上传排队防 GPU OOM；重启恢复 yunzhi 续跑/pipeline 标失败；排队中回调；幂等跨重启）
+> v0.33: 摘要链路根治重构（本次发版——场景数上限 max_scenes / caption 并发+降级+配置穿透 / text_encode 批量 / summary 预算截断 / 增量补摘要修复 / keyframe 抽帧 resize / resolve_encode_profile 统一 / summary_mode 默认 vlm_llm）
 > 桌面端: desktop/ pywebview 启动器 + frontend-desktop/ 独立前端 + 摘要默认 vlm_llm（native_video 置灰退役）
-> 桌面 EXE + 双部署路径（未发版，桌面前端/部署侧）: desktop/build_exe.ps1 纯产品启动器 exe（PyInstaller onedir，仅桌面壳）+ deploy/setup_linux.sh Linux 开发机一键安装 + setup_windows.ps1 补 config.yaml 生成与前端 dist 构建
+> 桌面 EXE + 双部署路径（未发版，桌面前端/部署侧）: desktop/build_exe.ps1 -Deploy 一条命令构建并部署纯产品启动器 exe（PyInstaller onedir，仅桌面壳；壳修复：pywebviewready JS 轮询 + CREATE_NO_WINDOW + spec SPECPATH）+ deploy/setup_linux.sh Linux 开发机一键安装 + setup_windows.ps1 补 config.yaml 生成与前端 dist 构建 + bump 命令全机接入
 
 ## System Data Flow
 
@@ -152,6 +153,7 @@ Incremental: Only L3 switches (summary_enabled / search_index_enabled) can be to
     use_nvdec / chunk_encoding   布尔开关
     quantization          embedder 量化 none/8bit/4bit（⚠️ 启动时加载，改后需重启）
     max_concurrent_videos 并发管道上限 → PipelineQueue worker 池（0/未设=1 串行，v0.32 队列）
+    max_scenes            目标场景数上限 → segmentation（长视频固定段数 / TransNetV2 结果合并，默认 6）
 
   core/config_loader: PIPELINE_NUMERIC_SPEC + ENCODE_PROFILE_NUMERIC_SPEC + clamp_param()
     → 保存/应用时范围钳制 + 步进取整；空字符串 = 删除覆盖（回退 config.yaml）
@@ -180,8 +182,9 @@ DAG 阶段流 (EventDrivenScheduler, 15 ops, 每 op 一个 asyncio 任务等待�
   duration
     ├─ search_encode (仅 summary_enabled=False) — 与 detection 共享单 NVDEC 流, 64 帧一批消费 → frame_embeddings
     ├─ detection (10fps, 生产者-消费者, 攒批 128) → track_encode → face / plate
-    └─ segmentation → keyframes (1fps, NVDEC MJPEG pipe / cv2) → asyncio.Queue(512) 并发编码
-         → caption (双模式) → summary (双模式; 默认 vlm_llm, native_video 已置灰退役)
+    └─ segmentation (场景数上限 max_scenes: 长视频按 duration/max_scenes 固定段数, TransNetV2 结果超限按累计时长合并)
+         → keyframes (1fps, 抽帧统一 resize 到编码预设分辨率, NVDEC MJPEG pipe / cv2) → asyncio.Queue(512) 并发编码
+         → caption (vlm_llm 并发限流 + 单场景失败降级; native_video 已置灰退役) → summary (预算截断, 默认 vlm_llm)
   → _persist() → mark_completed()
 
 GPU 串行 (v0.22): 所有 embedder encode_* / YOLO detect 前向持 core/gpu_lock 全局锁
@@ -195,7 +198,7 @@ Keyframe 消费 4 链路:
   ③ text_encode → scenes.text_embedding (caption+ocr+transcript 语义)
   ④ caption → scene.caption
 
-Caption 双模式: native_video (Qwen3-VL-8B 本地 GPU 原生视频理解 → 结构化 JSON; 已置灰退役, 8B 不再下载) / vlm_llm (Qwen-VL-Max API 看图, 默认)
+Caption 双模式: native_video (Qwen3-VL-8B 本地 GPU 原生视频理解 → 结构化 JSON; 已置灰退役, 8B 不再下载) / vlm_llm (Qwen-VL-Max API 看图, 默认; v0.33 并发限流 + 单场景失败重试降级, with_context/max_new_tokens 从 captioner.params 子层读, 默认关 with_context)
 Summary 双模式: native_video (纯 Python 聚合器, 无 API 成本; 已置灰退役) / vlm_llm (DeepSeek API, 默认)
 Track 语义路 (track_encode): 读 detection 缓存 640×384 crop (每 2s, 零 FFmpeg seek)
   → 挑 20%/50%/80% 3 帧 → mean pool → cosine ≥0.85 + 同类 + 时序不重叠 全局缝合

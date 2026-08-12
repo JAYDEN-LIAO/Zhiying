@@ -107,8 +107,9 @@ python desktop/app.py --status   # 打印逐项就绪状态（config/前端/Pyth
 ### Windows EXE 构建（PyInstaller，**必须在 Windows 上跑**）
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File desktop/build_exe.ps1
+powershell -ExecutionPolicy Bypass -File desktop/build_exe.ps1 -Deploy
 ```
+`-Deploy`：构建后**自动把 exe + `_internal\` 拷到项目根**（覆盖旧版），双击即用；不带则只构建到 `dist\智影桌面端\`。
 
 产物：`dist\智影桌面端\智影桌面端.exe` + `dist\智影桌面端\_internal\`（onedir，**仅桌面壳**：app/checks/db/backend/webview_panel/logs/state + assets 图标；不含后端依赖/模型——由安装脚本装）。
 
