@@ -384,7 +384,7 @@ body {
 /* ── Slide-out panel — 深青绿底（比侧栏更深，保证表单可读性） ── */
 .slide-panel {
   position: absolute; top: 0; overflow: hidden;
-  background: #086554;
+  background: #083344;
   border-radius: 0 16px 16px 0;
   box-shadow: 4px 0 24px rgba(0,0,0,0.4);
   border: none;
@@ -408,11 +408,11 @@ body {
 }
 .slide-panel-content input[type="text"]:focus,
 .slide-panel-content input[type="search"]:focus {
-  border-color: rgba(251,191,36,0.75) !important;
-  box-shadow: 0 0 0 2px rgba(251,191,36,0.3) !important;
+  border-color: rgba(13,148,136,0.75) !important;
+  box-shadow: 0 0 0 2px rgba(13,148,136,0.3) !important;
 }
 .slide-panel-content input[type="range"] {
-  accent-color: #FBBF24;
+  accent-color: #06b6d4;
 }
 
 /* Section header labels */
@@ -441,15 +441,15 @@ body {
 
 /* Amber accent cards (selected/active items) — 深青绿底上提亮暖色强调 */
 .slide-panel-content .bg-teal-50 {
-  background: rgba(251,191,36,0.22) !important;
-  border-color: rgba(251,191,36,0.5) !important;
+  background: rgba(13,148,136,0.22) !important;
+  border-color: rgba(13,148,136,0.5) !important;
 }
 .slide-panel-content .bg-teal-50\/30 {
-  background: rgba(251,191,36,0.14) !important;
+  background: rgba(13,148,136,0.14) !important;
 }
 .slide-panel-content .border-teal-200,
 .slide-panel-content .border-teal-300 {
-  border-color: rgba(251,191,36,0.55) !important;
+  border-color: rgba(13,148,136,0.55) !important;
 }
 .slide-panel-content .border-purple-300 {
   border-color: rgba(168,85,247,0.35) !important;
@@ -504,8 +504,8 @@ body {
   border-color: rgba(255,255,255,0.2) !important;
 }
 .slide-panel-content [class*="bg-teal-50"].rounded-xl {
-  background: rgba(251,191,36,0.22) !important;
-  border-color: rgba(251,191,36,0.5) !important;
+  background: rgba(13,148,136,0.22) !important;
+  border-color: rgba(13,148,136,0.5) !important;
 }
 
 /* Footer border */
@@ -521,7 +521,7 @@ body {
 
 /* Search dropdown */
 .slide-panel-content .shadow-lg {
-  background: #086554 !important;
+  background: #083344 !important;
   border-color: rgba(255,255,255,0.2) !important;
 }
 

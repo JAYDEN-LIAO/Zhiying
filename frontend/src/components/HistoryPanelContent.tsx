@@ -134,7 +134,7 @@ export function HistoryPanelContent({
               <div className="flex items-center justify-between mt-1">
                 <div className="flex items-center gap-2">
                   <span className={`text-[10px] font-medium ${
-                    v.status === "completed" ? "text-green-500" : v.status === "processing" ? "text-teal-500"
+                    v.status === "completed" ? "text-green-500" : v.status === "processing" ? "text-teal-600"
                     : v.status === "failed" ? "text-red-400" : "text-gray-400"}`}>
                     {v.status === "completed" ? "已完成" : v.status === "processing" ? "处理中" : v.status === "failed" ? "失败" : "等待中"}
                   </span>
@@ -223,7 +223,7 @@ export function HistoryPanelContent({
                               })()}</span>
                               <span className="text-gray-300">|</span>
                               <span>{group.videos[0].sample_fps.toFixed(1)}fps</span>
-                              <span className="text-[9px] font-medium text-teal-500 bg-teal-50 px-1.5 py-0.5 rounded ml-auto">{group.videos.length} 个视频</span>
+                              <span className="text-[9px] font-medium text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded ml-auto">{group.videos.length} 个视频</span>
                             </p>
                           </div>
                           <div className="flex items-center justify-between mt-1">

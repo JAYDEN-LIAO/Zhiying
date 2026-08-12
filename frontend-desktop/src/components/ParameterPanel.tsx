@@ -340,11 +340,11 @@ export function ParameterPanel({
       aria-checked={checked}
       disabled={disabled}
       className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-all duration-300 ease-out
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#086554]
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#083344]
         ${disabled
           ? "bg-white/10 cursor-not-allowed"
           : checked
-            ? "bg-amber-400 cursor-pointer shadow-[0_0_10px_rgba(251,191,36,0.35)]"
+            ? "bg-teal-600 cursor-pointer shadow-[0_0_10px_rgba(13,148,136,0.35)]"
             : "bg-white/15 cursor-pointer hover:bg-white/25"
         }`}
       onClick={() => !disabled && onChange()}
@@ -381,7 +381,7 @@ export function ParameterPanel({
                 onClick={() => handleSceneTypeChange(ct.value as ContentType)}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
                   sceneType === ct.value
-                    ? "bg-amber-400 text-amber-950 shadow-sm"
+                    ? "bg-teal-600 text-teal-950 shadow-sm"
                     : "bg-gray-100/60 text-gray-600 hover:bg-gray-100"
                 }`}
               >
@@ -392,7 +392,7 @@ export function ParameterPanel({
               onClick={() => handleSceneTypeChange("custom" as ContentType)}
               className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
                 sceneType === "custom"
-                  ? "bg-amber-400 text-amber-950 shadow-sm"
+                  ? "bg-teal-600 text-teal-950 shadow-sm"
                   : "bg-gray-100/60 text-gray-600 hover:bg-gray-100"
               }`}
             >
@@ -418,7 +418,7 @@ export function ParameterPanel({
                   key={mod.key}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all select-none ${
                     isGrayed ? "bg-gray-50/60 border border-gray-100/60" :
-                    isOn ? "bg-amber-400/20 border border-amber-300/70" : "bg-gray-100/40 border border-gray-200/60"
+                    isOn ? "bg-teal-600/20 border border-teal-500/70" : "bg-gray-100/40 border border-gray-200/60"
                   }`}
                 >
                   <div className="flex-1 min-w-0">
@@ -439,7 +439,7 @@ export function ParameterPanel({
 
           {/* 物体检测 → 目标类别选择（检测关闭时置灰不隐藏） */}
           <div className={`mt-2 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
-              grayed.detectionClasses ? "border-gray-150 bg-gray-50/30 opacity-40 pointer-events-none" : "border-amber-300/70 bg-amber-400/15"
+              grayed.detectionClasses ? "border-gray-150 bg-gray-50/30 opacity-40 pointer-events-none" : "border-teal-500/70 bg-teal-600/15"
             }`}>
               <div className="flex items-center justify-between mb-2">
                 <span className={`text-[11px] font-medium ${grayed.detectionClasses ? "text-gray-400" : "text-gray-600"}`}>
@@ -451,7 +451,7 @@ export function ParameterPanel({
                     disabled={grayed.detectionClasses}
                     className={`px-2 py-0.5 text-[10px] font-medium rounded-md transition-all ${
                       grayed.detectionClasses ? "text-gray-300 cursor-not-allowed" :
-                      detectionClasses === null ? "bg-amber-400 text-amber-950" : "bg-gray-100/80 text-gray-600 hover:bg-gray-200/80"
+                      detectionClasses === null ? "bg-teal-600 text-teal-950" : "bg-gray-100/80 text-gray-600 hover:bg-gray-200/80"
                     }`}
                   >
                     全部
@@ -461,7 +461,7 @@ export function ParameterPanel({
                     disabled={grayed.detectionClasses}
                     className={`px-2 py-0.5 text-[10px] font-medium rounded-md transition-all ${
                       grayed.detectionClasses ? "text-gray-300 cursor-not-allowed" :
-                      detectionClasses !== null ? "bg-amber-400 text-amber-950" : "bg-gray-100/80 text-gray-600 hover:bg-gray-200/80"
+                      detectionClasses !== null ? "bg-teal-600 text-teal-950" : "bg-gray-100/80 text-gray-600 hover:bg-gray-200/80"
                     }`}
                   >
                     自定义
@@ -479,7 +479,7 @@ export function ParameterPanel({
                         <span
                           key={cls}
                           onClick={() => setDetectionClasses((prev) => (prev ?? []).filter((c) => c !== cls))}
-                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-amber-400 text-amber-950 rounded-md cursor-pointer hover:bg-amber-500 transition-colors"
+                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-teal-600 text-teal-950 rounded-md cursor-pointer hover:bg-teal-700 transition-colors"
                         >
                           {zh(cls)}
                           <svg className="w-2.5 h-2.5 opacity-70" viewBox="0 0 12 12" fill="currentColor">
@@ -497,7 +497,7 @@ export function ParameterPanel({
                       value={classSearch}
                       onChange={(e) => setClassSearch(e.target.value)}
                       placeholder="搜索匹配 80 类…"
-                      className="w-full px-2.5 py-1 text-[11px] border border-gray-200 rounded-md focus:outline-none focus:border-amber-400 bg-white/80 placeholder:text-gray-350"
+                      className="w-full px-2.5 py-1 text-[11px] border border-gray-200 rounded-md focus:outline-none focus:border-teal-600 bg-white/80 placeholder:text-gray-350"
                     />
                     {classSearch && (() => {
                       const q = classSearch.toLowerCase();
@@ -515,7 +515,7 @@ export function ParameterPanel({
                                 setDetectionClasses((prev) => [...(prev ?? []), c]);
                                 setClassSearch("");
                               }}
-                              className="w-full text-left px-2.5 py-1 text-[11px] hover:bg-amber-400/20 text-gray-600 transition-colors"
+                              className="w-full text-left px-2.5 py-1 text-[11px] hover:bg-teal-600/20 text-gray-600 transition-colors"
                             >
                               {zh(c)}
                             </button>
@@ -531,7 +531,7 @@ export function ParameterPanel({
                       <button
                         key={cls}
                         onClick={() => setDetectionClasses((prev) => [...(prev ?? []), cls])}
-                        className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-100/60 text-gray-500 rounded-md hover:bg-amber-400/30 hover:text-amber-300 transition-colors"
+                        className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-100/60 text-gray-500 rounded-md hover:bg-teal-600/30 hover:text-teal-500 transition-colors"
                       >
                         + {zh(cls)}
                       </button>
@@ -589,7 +589,7 @@ export function ParameterPanel({
                   key={fn.key}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all select-none ${
                     isGrayed ? "bg-gray-50/60 border border-gray-100/60" :
-                    isOn ? "bg-amber-400/20 border border-amber-300/70" : "bg-gray-100/40 border border-gray-200/60"
+                    isOn ? "bg-teal-600/20 border border-teal-500/70" : "bg-gray-100/40 border border-gray-200/60"
                   }`}
                 >
                   <div className="flex-1 min-w-0">
@@ -613,7 +613,7 @@ export function ParameterPanel({
 
           {/* 摘要模式选择（智能摘要关闭时置灰不隐藏，仿目标类别紧贴智能摘要） */}
           <div className={`mt-2 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
-              !functions.summary ? "border-gray-150 bg-gray-50/30 opacity-40 pointer-events-none" : "border-amber-300/70 bg-amber-400/15"
+              !functions.summary ? "border-gray-150 bg-gray-50/30 opacity-40 pointer-events-none" : "border-teal-500/70 bg-teal-600/15"
             }`}>
               <div className="space-y-1.5">
                 {([
@@ -626,7 +626,7 @@ export function ParameterPanel({
                       opt.disabled
                         ? "opacity-50 cursor-not-allowed bg-white/40 border-gray-200/60"
                         : summaryMode === opt.key
-                          ? "bg-amber-400/15 border-amber-300/70 cursor-pointer"
+                          ? "bg-teal-600/15 border-teal-500/70 cursor-pointer"
                           : "bg-white/60 border-gray-200/60 cursor-pointer hover:border-gray-300"
                     }`}
                   >
@@ -637,7 +637,7 @@ export function ParameterPanel({
                       checked={summaryMode === opt.key}
                       onChange={() => setSummaryMode(opt.key)}
                       disabled={opt.disabled}
-                      className="accent-amber-400"
+                      className="accent-teal-600"
                     />
                     <span className="text-xs font-medium text-gray-800 flex items-center gap-1.5">
                       {opt.label}
@@ -665,7 +665,7 @@ export function ParameterPanel({
         <button
           onClick={handleSubmit}
           disabled={submitting}
-          className="px-5 py-2 text-xs font-medium bg-gradient-to-r from-amber-400 to-amber-500 text-amber-950 rounded-lg hover:from-amber-500 hover:to-amber-600 disabled:opacity-50 transition-all shadow-sm"
+          className="px-5 py-2 text-xs font-medium bg-gradient-to-r from-teal-600 to-teal-700 text-teal-950 rounded-lg hover:from-teal-700 hover:to-teal-800 disabled:opacity-50 transition-all shadow-sm"
         >
           {submitting ? "启动中..." : "参数启动"}
         </button>
