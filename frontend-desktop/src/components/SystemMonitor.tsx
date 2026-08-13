@@ -49,7 +49,6 @@ function SparkLine({ values, color, width, height, max }: {
 
 export function SystemMonitor() {
   const [stats, setStats] = useState<SysStats | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
 
   const cpuHist = useRef<number[]>([]);
   const memHist = useRef<number[]>([]);
@@ -101,7 +100,7 @@ export function SystemMonitor() {
     };
   }, []);
 
-  if (!stats || collapsed) return null;
+  if (!stats) return null;
 
   return (
     <div className="sysmon">
@@ -145,14 +144,6 @@ export function SystemMonitor() {
           <SparkLine values={netHist.current} color="#f59e0b" width={132} height={16} max={Math.max(10240, ...netHist.current)} />
         </div>
       )}
-
-      <div className="sysmon-fold">
-        <button title="折叠" onClick={() => setCollapsed(true)}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="4 14 12 22 20 14" /><polyline points="4 4 12 12 20 4" />
-          </svg>
-        </button>
-      </div>
     </div>
   );
 }

@@ -51,7 +51,7 @@ export function TitleBar() {
             <polygon points="6 3 20 12 6 21 6 3" />
           </svg>
         </div>
-        <span className="tb-title">智影视频分析</span>
+        <span className="tb-title">智影视频分析系统</span>
         {version && <span className="tb-badge">v{version}</span>}
       </div>
 
