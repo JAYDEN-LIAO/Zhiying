@@ -280,28 +280,9 @@ export function SettingsPage({
     }`;
 
   return (
-    <div className="flex-1 min-h-0 flex bg-[var(--color-page-bg)]">
-      {/* ── 左导航 ── */}
-      <nav className="w-44 flex-shrink-0 pt-5 pl-5 pr-2">
-        <div className="flex flex-col gap-1">
-          <button onClick={() => onSectionChange?.("system")} className={navItemCls(section === "system")}>
-            系统
-          </button>
-          <button onClick={() => onSectionChange?.("model")} className={navItemCls(section === "model")}>
-            模型参数
-          </button>
-          <button onClick={() => onSectionChange?.("presets")} className={navItemCls(section === "presets")}>
-            参数预设
-          </button>
-          <button onClick={() => onSectionChange?.("api")} className={navItemCls(section === "api")}>
-            API 密钥
-          </button>
-        </div>
-      </nav>
-
-      {/* ── 右内容（独立滚动）── */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="px-6 pt-[72px] pb-10 max-w-[860px]">
+    <div className="flex-1 min-h-0 bg-[var(--color-page-bg)] overflow-y-auto">
+      {/* 内容（子页切换由左侧导航控制，见 AppContext settingsTab） */}
+      <div className="px-6 pt-6 pb-10 max-w-[900px]">
           {loading ? (
             <div className="space-y-4">
               <div className={`${cardCls} h-44 animate-pulse`} />
@@ -635,7 +616,6 @@ export function SettingsPage({
               </div>
             </div>
           )}
-        </div>
       </div>
 
       {/* 全局提示 */}

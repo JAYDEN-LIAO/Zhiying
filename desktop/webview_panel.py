@@ -286,11 +286,14 @@ class SplashApi:
         if self._gpu_cache is not None and now - self._gpu_cache_at < self._GPU_REFRESH_SEC:
             return self._gpu_cache
         try:
+            # CREATE_NO_WINDOW：exe 是无窗口壳(runw.exe)，不带此标志时子进程
+            # 每次调用都会闪现一个黑控制台框（系统监控每 ~5s 调一次 → 频繁闪框）
             out = subprocess.run(
                 ["nvidia-smi",
                  "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name",
                  "--format=csv,noheader,nounits"],
                 capture_output=True, text=True, timeout=3,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             if out.returncode != 0 or not out.stdout.strip():
                 self._gpu_cache = None

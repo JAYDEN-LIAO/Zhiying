@@ -62,7 +62,7 @@ export function Sidebar({
           );
         })}
 
-        <div className="sb-group-label">系统设置</div>
+        <div className="sb-group-label">设置</div>
         {SETTINGS.map((item) => (
           <button
             key={item.key}
