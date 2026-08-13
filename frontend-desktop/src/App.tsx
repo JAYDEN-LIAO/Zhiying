@@ -12,7 +12,7 @@ import { TaskCenter } from "./components/TaskCenter";
 import { SettingsPage } from "./components/SettingsPage";
 
 function Shell() {
-  const { page, navigate, videos, dragActive } = useApp();
+  const { page, navigate, settingsTab, navigateSettings, videos, dragActive } = useApp();
 
   const counts = {
     files: videos.length,
@@ -25,13 +25,13 @@ function Shell() {
       <TitleBar />
 
       <div className="app-body">
-        <Sidebar page={page} onNavigate={navigate} counts={counts} />
+        <Sidebar page={page} settingsTab={settingsTab} onNavigate={navigate} onNavigateSettings={navigateSettings} counts={counts} />
 
         <main className="app-main">
           {page === "files" && <FileLibrary />}
           {page === "workbench" && <Workbench />}
           {page === "tasks" && <TaskCenter />}
-          {page === "settings" && <SettingsPage />}
+          {page === "settings" && <SettingsPage section={settingsTab} onSectionChange={navigateSettings} />}
         </main>
       </div>
 

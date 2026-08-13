@@ -1,19 +1,20 @@
 /* ════════════════════════════════════════════════════════════
-   Workbench — 视频解析（工作台）页（v0.34 桌面重构）
-   布局照智影 v2 demo 嵌套 SplitPane：
-     外层 row 60%  左=主舞台(播放器/时间轴)  右=侧栏(摘要/检索)
-     左舞台 col 70%  上=播放器  下=时间轴+管道条
-     右栏 col 20%    上=摘要/信息卡  下=检索区
-     检索区 row 42%  左=物体检测  右=视频搜索
-   状态 = 原 Dashboard 工作台全部逻辑（播放/轮询/检测/人脸/搜索/定位），
-   页面/抽屉/导航已上移到 AppContext。
+   Workbench — 视频解析（工作台）页（v0.34 桌面重构 · 照 demo 骨架）
+   结构（智影 v2 demo Workbench.jsx）：
+     顶栏：视频解析 + 视频名 + 所属分组 | 重新解析/参数 + 上传
+     外层 SplitPane row 60%：左=主舞台  右=侧栏
+       左舞台 col 70%：上=播放器(+分析进度浮层)  下=时间轴+管道条
+       右栏 col 20%：  上=视频摘要⇄信息 toggle 卡  下=检索区
+       检索区 row 42%：左=物体检测  右=视频搜索
+   注：Zhiying 无 per-video 版本系统 → demo 的「版本切换器/历史记录」
+   以「摘要⇄信息 toggle」承载（历史记录=视频信息）。状态逻辑=原 Dashboard。
    ════════════════════════════════════════════════════════════ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
 import type { VideoResponse, PipelineStage } from "../types";
 import { fmtDuration } from "../utils/helpers";
-import { IconDownload, IconPlus, IconPlay2 } from "./icons";
+import { IconDownload, IconPlus } from "./icons";
 import { ExportMenu } from "./ExportMenu";
 import { ParameterPanel } from "./ParameterPanel";
 import { VideoPlayer } from "./VideoPlayer";
@@ -45,6 +46,7 @@ export function Workbench() {
   const [showExport, setShowExport] = useState(false);
   const [paramsOpen, setParamsOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showInfo, setShowInfo] = useState(false); // 右上卡：摘要⇄信息
   const videoRef = useRef<HTMLVideoElement>(null);
 
   /* ── 组感知状态（v0.19） ── */
@@ -68,11 +70,9 @@ export function Workbench() {
     setSeekTarget(null);
     setShowExport(false);
     setParamsOpen(false);
-    if (currentVideoId) {
-      setCurrentGroupVideos([currentVideoId]);
-    } else {
-      setCurrentGroupVideos([]);
-    }
+    setShowInfo(false);
+    if (currentVideoId) setCurrentGroupVideos([currentVideoId]);
+    else setCurrentGroupVideos([]);
     setDetectionVideoId(null);
   }, [currentVideoId]);
 
@@ -92,9 +92,7 @@ export function Workbench() {
 
   useVideoPolling({
     videoId: currentVideoId,
-    onUpdate: useCallback((data: VideoResponse) => {
-      setCurrentVideo(data);
-    }, []),
+    onUpdate: useCallback((data: VideoResponse) => { setCurrentVideo(data); }, []),
   });
 
   const needsProxy = useMemo(() => {
@@ -225,43 +223,82 @@ export function Workbench() {
   if (!currentVideoId) {
     return (
       <div className="h-full flex flex-col">
-        <div className="wb-toolbar">
-          <span style={{ color: "#64748b", fontSize: 13 }}>未选择视频</span>
-          <div style={{ marginLeft: "auto" }}>
-            <button className="g-btn g-btn-primary" onClick={() => navigate("files")}><IconPlay2 />前往文件库</button>
+        {/* demo 顶栏 */}
+        <div className="h-[52px] px-5 bg-white border-b border-gray-200 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <h1 className="text-[15px] font-semibold text-gray-900 shrink-0">视频解析</h1>
+            <span className="w-px h-5 bg-gray-200" />
+            <span className="text-[12.5px] text-gray-400">未选择视频</span>
           </div>
         </div>
-        <div className="g-empty" style={{ flex: 1 }}>
-          <IconPlay2 />
-          <div className="g-empty-title">当前无分析视频</div>
-          <div className="g-empty-desc">前往「文件库」选择视频，点击「查看结果」或「智能解析」开始分析</div>
+        {/* 播放器空态（demo 风格） */}
+        <div className="flex-1 min-h-0 flex flex-col bg-[#0b0f16]">
+          <div className="flex-1 flex flex-col items-center justify-center text-gray-400 gap-3">
+            <div className="w-20 h-20 rounded-full border border-gray-700 flex items-center justify-center">
+              <svg className="w-9 h-9 ml-1 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5.14v13.72L19 12 8 5.14z" />
+              </svg>
+            </div>
+            <div className="text-[15px] font-medium text-gray-300 mt-2">上传或选择视频开始分析</div>
+            <div className="text-[12.5px] text-gray-500">前往「文件库」选择视频，点击「查看结果」或「智能解析」</div>
+            <button
+              className="mt-2 w-[300px] h-[110px] rounded-lg border-2 border-dashed border-gray-700 flex flex-col items-center justify-center gap-1.5
+                transition-colors cursor-pointer hover:border-[#4f7cff]/60"
+              onClick={() => navigate("files")}
+            >
+              <svg className="w-7 h-7 text-gray-500" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+              </svg>
+              <span className="text-[12.5px] text-gray-400">前往文件库选择视频</span>
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
+  const groupName = (() => {
+    const g = videoGroups.find((grp) => grp.videoIds.includes(currentVideoId));
+    if (g && g.videoIds.length > 1) return `分组 ${g.videoIds.length} 个视频`;
+    return null;
+  })();
+
   return (
     <div className="h-full flex flex-col">
-      {/* ── 顶栏工具栏 ── */}
-      <div className="wb-toolbar">
-        {currentVideo && (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentVideo.file_name}</span>
-              {currentVideo.duration != null && <span style={{ fontSize: 11, color: "#94a3b8" }}>{fmtDuration(currentVideo.duration)}</span>}
-              <span className={"g-badge " + (isCompleted ? "ok" : isProcessing ? "run" : currentVideo.status === "failed" ? "err" : "wait")}>
+      {/* ══ demo 顶栏：视频解析 + 名称/所属 | 重新解析 + 上传 ══ */}
+      <div className="h-[52px] px-5 bg-white border-b border-gray-200 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <h1 className="text-[15px] font-semibold text-gray-900 shrink-0">视频解析</h1>
+          <span className="w-px h-5 bg-gray-200" />
+          {currentVideo ? (
+            <>
+              <span className="text-[12.5px] text-gray-600 truncate max-w-[220px]">{currentVideo.file_name}</span>
+              {groupName && <span className="text-[11.5px] text-gray-400">{groupName}</span>}
+              <span className={"g-badge " + (isCompleted ? "ok" : isProcessing ? "run" : currentVideo?.status === "failed" ? "err" : "wait")}>
                 {isProcessing && <span className="pulse" />}
-                {isCompleted ? "已完成" : isProcessing ? "处理中" : currentVideo.status === "failed" ? "失败" : "等待参数"}
+                {isCompleted ? "已完成" : isProcessing ? "处理中" : currentVideo?.status === "failed" ? "失败" : "等待参数"}
               </span>
-              <span style={{ fontSize: 11, color: "#64748b" }}>{ctLabel[currentVideo.content_type] || currentVideo.content_type} · {langLabel[currentVideo.language] || currentVideo.language}</span>
-            </div>
-          </>
-        )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          <button className="g-btn" onClick={handleUploadClick} disabled={isUploading}><IconPlus />上传</button>
+            </>
+          ) : (
+            <span className="text-[12.5px] text-gray-400">未选择视频</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-gray-400 mr-1 hidden xl:inline">
+            {currentVideo?.duration != null ? fmtDuration(currentVideo.duration) : ""}
+            {currentVideo ? " · " + (ctLabel[currentVideo.content_type] || currentVideo.content_type) + " · " + (langLabel[currentVideo.language] || currentVideo.language) : ""}
+          </span>
+          <button className="g-btn" onClick={handleUploadClick} disabled={isUploading}>
+            <IconPlus />上传
+          </button>
           {currentVideo && (
             <>
-              <button className="g-btn g-btn-primary" onClick={() => setParamsOpen(true)}>{isProcessing ? "参数" : "开始解析"}</button>
+              <button className="g-btn g-btn-primary" onClick={() => setParamsOpen(true)}>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 1112.9 5.3M4.5 12V7.5M4.5 12h4.5M19.5 12a7.5 7.5 0 01-12.9-5.3M19.5 12v4.5M19.5 12H15" />
+                </svg>
+                {isProcessing ? "重新解析" : "开始解析"}
+              </button>
               <div style={{ position: "relative" }}>
                 <button className="g-btn" onClick={() => setShowExport((v) => !v)} title="导出"><IconDownload /></button>
                 {showExport && <div className="export-overlay" onClick={() => setShowExport(false)} />}
@@ -273,90 +310,151 @@ export function Workbench() {
         </div>
       </div>
 
-      {/* ── 嵌套 SplitPane 工作台 ── */}
+      {/* ══ 主体：左右可拖拽分栏（demo 骨架） ══ */}
       <div className="flex-1 min-h-0" style={{ padding: 10 }}>
-        <SplitPane direction="row" initial={62} min={34} max={72}>
-          {/* 左舞台：播放器 / 时间轴 */}
-          <SplitPane direction="col" initial={70} min={48} max={85}>
-            <div className="video-player-wrap">
-              <VideoPlayer
-                videoId={currentVideoId}
-                video={currentVideo}
-                streamReady={streamReady}
-                hevcOk={hevcOk}
-                isUploading={isUploading}
-                detectionEnabled={currentVideo?.detection_enabled ?? false}
-                hasDetection={showDetection && !!detectionData?.has_detection}
-                selectedTrackId={selectedTrackId}
-                selectedFaceTrackIds={selectedFaceTrackIds}
-                proxyStatus={proxyStatus}
-                videoRef={videoRef}
-                onTrackSelect={handleTrackSelect}
-              />
-            </div>
-            <div className="pipeline-wrap" style={{ height: "100%", display: "flex", flexDirection: "column", gap: 6, paddingTop: 8 }}>
-              <DetectionTimeline
-                videoId={currentVideoId}
-                videoRef={videoRef}
-                selectedTrackId={selectedTrackId}
-                selectedFaceTrackIds={selectedFaceTrackIds}
-                classFilter={classFilter}
-                onTrackSelect={handleTrackSelect}
-                data={detectionData}
-                faceData={faceData}
-                streamReady={streamReady}
-              />
-              <PipelineBar
-                progress={currentVideo?.progress ?? 0}
-                statusDetail={currentVideo?.status_detail}
-                stages={pipelineStages}
-                subtitle={currentVideo?.status === "pending" ? "等待参数配置..." : null}
-              />
-            </div>
-          </SplitPane>
-
-          {/* 右侧栏：摘要 / 检索区 */}
-          <SplitPane direction="col" initial={22} min={12} max={45}>
-            <div style={{ padding: "0 8px 4px 8px", height: "100%", display: "flex", flexDirection: "column", gap: 8, overflow: "hidden" }}>
-              <VideoSummaryCard video={currentVideo} />
-              <VideoInfoCard videoId={currentVideoId} video={currentVideo} />
-            </div>
-            <SplitPane direction="row" initial={42} min={25} max={68}>
-              <div style={{ padding: "4px 8px 0 0", height: "100%", minWidth: 0 }}>
-                <DetectionPanel
-                  video={currentVideo}
-                  data={detectionData}
-                  selectedTrackId={selectedTrackId}
-                  classFilter={classFilter}
-                  onClassFilterChange={setClassFilter}
-                  onTrackSelect={handleTrackSelect}
-                  faceViewOpen={faceViewOpen}
-                  expandedFaceId={expandedFaceId}
-                  onFaceViewChange={setFaceViewOpen}
-                  onExpandedFaceChange={setExpandedFaceId}
-                  onSeekTo={handleSeekTo}
-                  faceData={faceData}
-                  plateData={plateData}
-                  groupVideos={currentGroupVideos}
-                  videos={videos}
-                  detectionVideoId={detectionVideoId}
-                  onDetectionVideoChange={setDetectionVideoId}
-                />
-              </div>
-              <div style={{ padding: "4px 0 0 8px", height: "100%", minWidth: 0 }}>
-                <VideoSearchCard
-                  video={currentVideo}
+        <SplitPane direction="row" initial={60} min={32} max={72}>
+          {/* ── 左主舞台 ── */}
+          <div className="w-full h-full min-w-0 flex flex-col bg-[#0b0f16] rounded-lg overflow-hidden">
+            <SplitPane direction="col" initial={70} min={45} max={85}>
+              {/* 上部：播放器（+分析进度浮层） */}
+              <div className="relative w-full h-full bg-black overflow-hidden">
+                <VideoPlayer
                   videoId={currentVideoId}
-                  onSeekTo={handleSeekTo}
-                  onTrackResult={handleSearchTrackResult}
-                  onFaceResult={handleFaceResult}
-                  groupVideos={currentGroupVideos}
-                  allVideos={videos}
-                  onGroupVideoSwitch={handleGroupVideoSwitch}
+                  video={currentVideo}
+                  streamReady={streamReady}
+                  hevcOk={hevcOk}
+                  isUploading={isUploading}
+                  detectionEnabled={currentVideo?.detection_enabled ?? false}
+                  hasDetection={showDetection && !!detectionData?.has_detection}
+                  selectedTrackId={selectedTrackId}
+                  selectedFaceTrackIds={selectedFaceTrackIds}
+                  proxyStatus={proxyStatus}
+                  videoRef={videoRef}
+                  onTrackSelect={handleTrackSelect}
+                />
+                {/* 分析进度浮层（demo analyse-overlay） */}
+                {isProcessing && (
+                  <div className="analyse-overlay">
+                    <div className="flex items-center gap-3">
+                      <div className="g-progress flex-1 !bg-white/10" style={{ height: 6 }}>
+                        <div style={{ width: `${currentVideo?.progress ?? 0}%`, background: "#4f7cff" }} />
+                      </div>
+                      <span className="text-white text-[12px] font-semibold shrink-0">{Math.round(currentVideo?.progress ?? 0)}%</span>
+                      <span className="text-white/70 text-[11.5px] shrink-0">管道处理中…</span>
+                    </div>
+                  </div>
+                )}
+                {/* 视频信息浮层（demo stage-info-badge） */}
+                <button className="stage-info-badge" title="视频信息" onClick={() => setShowInfo((v) => !v)}>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" /><path strokeLinecap="round" d="M12 16v-4m0-4h.01" />
+                  </svg>
+                </button>
+                {showInfo && currentVideo && (
+                  <div className="absolute top-12 right-3 z-20 w-[280px] rounded-lg bg-gray-900/95 backdrop-blur border border-white/10 p-3.5 text-white text-[12px] space-y-1.5 shadow-xl">
+                    {[["文件名称", currentVideo.file_name], ["时长", currentVideo.duration != null ? fmtDuration(currentVideo.duration) : "-"],
+                      ["场景类型", ctLabel[currentVideo.content_type] || currentVideo.content_type],
+                      ["状态", isCompleted ? "已完成" : isProcessing ? "处理中 " + Math.round(currentVideo.progress ?? 0) + "%" : currentVideo.status === "failed" ? "失败" : "等待参数"],
+                    ].map(([k, v]) => (
+                      <div className="flex justify-between gap-3" key={k}>
+                        <span className="text-white/50 shrink-0">{k}</span>
+                        <span className="truncate text-right">{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 下部：时间轴 + 管道条 */}
+              <div className="w-full h-full bg-[#0b0f16] border-t border-white/10 p-3 flex flex-col gap-2 min-h-0">
+                <DetectionTimeline
+                  videoId={currentVideoId}
+                  videoRef={videoRef}
+                  selectedTrackId={selectedTrackId}
+                  selectedFaceTrackIds={selectedFaceTrackIds}
+                  classFilter={classFilter}
+                  onTrackSelect={handleTrackSelect}
+                  data={detectionData}
+                  faceData={faceData}
+                  streamReady={streamReady}
+                />
+                <PipelineBar
+                  progress={currentVideo?.progress ?? 0}
+                  statusDetail={currentVideo?.status_detail}
+                  stages={pipelineStages}
+                  subtitle={currentVideo?.status === "pending" ? "等待参数配置..." : null}
                 />
               </div>
             </SplitPane>
-          </SplitPane>
+          </div>
+
+          {/* ── 右侧栏 ── */}
+          <div className="min-w-0 flex flex-col bg-gray-50/70 min-h-0">
+            <SplitPane direction="col" initial={20} min={10} max={45}>
+              {/* 上卡：视频摘要 ⇄ 视频信息 */}
+              <div className="w-full h-full flex flex-col bg-white min-h-0 rounded-lg border border-gray-200 overflow-hidden">
+                <div className="g-card-title">
+                  <div className="flex items-center gap-1">
+                    <button className={"g-tab" + (!showInfo ? " active" : "")} style={{ fontSize: 13 }} onClick={() => setShowInfo(false)}>
+                      视频摘要 <span className="text-gray-400 text-[11px] font-normal">Summary</span>
+                    </button>
+                    <button className={"g-tab" + (showInfo ? " active" : "")} style={{ fontSize: 13 }} onClick={() => setShowInfo(true)}>
+                      视频信息 <span className="text-gray-400 text-[11px] font-normal">Info</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="flex-1 min-h-0 overflow-auto p-2">
+                  {showInfo ? <VideoInfoCard videoId={currentVideoId} video={currentVideo} /> : <VideoSummaryCard video={currentVideo} />}
+                </div>
+              </div>
+
+              {/* 下卡：物体检测 | 视频搜索（内部左右可拖拽） */}
+              <div className="w-full h-full min-h-0 p-2">
+                <SplitPane direction="row" initial={42} min={25} max={68} className="rounded-lg overflow-hidden">
+                  <div className="w-full h-full flex flex-col bg-white rounded-lg border border-gray-200 overflow-hidden">
+                    <div className="g-card-title">物体检测 <span className="text-gray-400 text-[11px] font-normal">Object Detection</span></div>
+                    <div className="flex-1 min-h-0 overflow-auto">
+                      <DetectionPanel
+                        video={currentVideo}
+                        data={detectionData}
+                        selectedTrackId={selectedTrackId}
+                        classFilter={classFilter}
+                        onClassFilterChange={setClassFilter}
+                        onTrackSelect={handleTrackSelect}
+                        faceViewOpen={faceViewOpen}
+                        expandedFaceId={expandedFaceId}
+                        onFaceViewChange={setFaceViewOpen}
+                        onExpandedFaceChange={setExpandedFaceId}
+                        onSeekTo={handleSeekTo}
+                        faceData={faceData}
+                        plateData={plateData}
+                        groupVideos={currentGroupVideos}
+                        videos={videos}
+                        detectionVideoId={detectionVideoId}
+                        onDetectionVideoChange={setDetectionVideoId}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="w-full h-full flex flex-col bg-white rounded-lg border border-gray-200 overflow-hidden">
+                    <div className="g-card-title">视频搜索 <span className="text-gray-400 text-[11px] font-normal">Video Search</span></div>
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                      <VideoSearchCard
+                        video={currentVideo}
+                        videoId={currentVideoId}
+                        onSeekTo={handleSeekTo}
+                        onTrackResult={handleSearchTrackResult}
+                        onFaceResult={handleFaceResult}
+                        groupVideos={currentGroupVideos}
+                        allVideos={videos}
+                        onGroupVideoSwitch={handleGroupVideoSwitch}
+                      />
+                    </div>
+                  </div>
+                </SplitPane>
+              </div>
+            </SplitPane>
+          </div>
         </SplitPane>
       </div>
 
@@ -368,10 +466,6 @@ export function Workbench() {
               videoId={currentVideoId}
               onClose={() => setParamsOpen(false)}
               onParamsSet={() => setParamsOpen(false)}
-              onUploadDone={(newId: string) => {
-                setParamsOpen(false);
-                // 上传携带参数完成 → 刷新列表（视频已创建，selectedVideoId 不变）
-              }}
             />
           </div>
         </div>

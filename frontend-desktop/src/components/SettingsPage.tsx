@@ -35,11 +35,17 @@ const ENCODE_PROFILE_RECOMMEND: Record<string, { encode_width: number; encode_he
 const strOr = (v: number | undefined): string => (v != null ? String(v) : "");
 
 type SettingsSection = "system" | "model" | "presets" | "api";
+export type { SettingsSection };
 
-export function SettingsPage() {
+export function SettingsPage({
+  section,
+  onSectionChange,
+}: {
+  section: SettingsSection;
+  onSectionChange?: (s: SettingsSection) => void;
+}) {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [section, setSection] = useState<SettingsSection>("system");
 
   // 编辑态
   const [apiKeyEdit, setApiKeyEdit] = useState<Record<string, string>>({});
@@ -278,16 +284,16 @@ export function SettingsPage() {
       {/* ── 左导航 ── */}
       <nav className="w-44 flex-shrink-0 pt-5 pl-5 pr-2">
         <div className="flex flex-col gap-1">
-          <button onClick={() => setSection("system")} className={navItemCls(section === "system")}>
+          <button onClick={() => onSectionChange?.("system")} className={navItemCls(section === "system")}>
             系统
           </button>
-          <button onClick={() => setSection("model")} className={navItemCls(section === "model")}>
+          <button onClick={() => onSectionChange?.("model")} className={navItemCls(section === "model")}>
             模型参数
           </button>
-          <button onClick={() => setSection("presets")} className={navItemCls(section === "presets")}>
+          <button onClick={() => onSectionChange?.("presets")} className={navItemCls(section === "presets")}>
             参数预设
           </button>
-          <button onClick={() => setSection("api")} className={navItemCls(section === "api")}>
+          <button onClick={() => onSectionChange?.("api")} className={navItemCls(section === "api")}>
             API 密钥
           </button>
         </div>

@@ -1,55 +1,81 @@
 /* ════════════════════════════════════════════════════════════
-   Sidebar — w-56 浅蓝分组导航 + 底部系统监控（v0.34 桌面重构）
-   4 页模型：文件库 / 视频解析 / 任务中心 / 系统设置（照智影 v2 demo）
+   Sidebar — w-56 浅蓝渐变分组导航 + 底部系统监控（v0.34 桌面重构）
+   导航：业务组（文件库/视频解析/任务中心）+ 系统设置组（4 子页：
+   系统/模型参数/参数预设/API 密钥，照 demo Layout 二级菜单拆出）
    ════════════════════════════════════════════════════════════ */
 
-import { IconFolder, IconVideo, IconTask, IconGear } from "./icons";
+import { IconFolder, IconVideo, IconTask, IconGear, IconSliders, IconHistory, IconInfo } from "./icons";
 import { SystemMonitor } from "./SystemMonitor";
+import type { SettingsTab } from "../AppContext";
 
 export type Page = "files" | "workbench" | "tasks" | "settings";
 
-const NAV: { key: Page; label: string; group: string; icon: React.ReactNode }[] = [
-  { key: "files", label: "文件库", group: "业务", icon: <IconFolder /> },
-  { key: "workbench", label: "视频解析", group: "业务", icon: <IconVideo /> },
-  { key: "tasks", label: "任务中心", group: "业务", icon: <IconTask /> },
-  { key: "settings", label: "系统设置", group: "系统", icon: <IconGear /> },
+interface NavItem {
+  key: string;
+  label: string;
+  icon: React.ReactNode;
+}
+
+const BUSINESS: NavItem[] = [
+  { key: "files", label: "文件库", icon: <IconFolder /> },
+  { key: "workbench", label: "视频解析", icon: <IconVideo /> },
+  { key: "tasks", label: "任务中心", icon: <IconTask /> },
+];
+
+const SETTINGS: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
+  { key: "system", label: "系统", icon: <IconGear /> },
+  { key: "model", label: "模型参数", icon: <IconSliders /> },
+  { key: "presets", label: "参数预设", icon: <IconHistory /> },
+  { key: "api", label: "API 密钥", icon: <IconInfo /> },
 ];
 
 export function Sidebar({
   page,
+  settingsTab,
   onNavigate,
+  onNavigateSettings,
   counts,
 }: {
   page: Page;
+  settingsTab: SettingsTab;
   onNavigate: (p: Page) => void;
+  onNavigateSettings: (tab: SettingsTab) => void;
   counts?: { files?: number; tasks?: number };
 }) {
-  const groups = Array.from(new Set(NAV.map((n) => n.group)));
   return (
     <aside className="sidebar">
       <nav className="sb-nav">
-        {groups.map((g) => (
-          <div key={g}>
-            <div className="sb-group-label">{g}</div>
-            {NAV.filter((n) => n.group === g).map((item) => {
-              const count = item.key === "files" ? counts?.files
-                : item.key === "tasks" ? counts?.tasks : undefined;
-              return (
-                <button
-                  key={item.key}
-                  className={"sb-nav-item" + (page === item.key ? " active" : "")}
-                  onClick={() => onNavigate(item.key)}
-                  title={item.label}
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                  {count !== undefined && count > 0 && <span className="sb-count">{count}</span>}
-                </button>
-              );
-            })}
-          </div>
+        <div className="sb-group-label">业务</div>
+        {BUSINESS.map((item) => {
+          const count = item.key === "files" ? counts?.files : item.key === "tasks" ? counts?.tasks : undefined;
+          return (
+            <button
+              key={item.key}
+              className={"sb-nav-item" + (page === item.key ? " active" : "")}
+              onClick={() => onNavigate(item.key as Page)}
+              title={item.label}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+              {count !== undefined && count > 0 && <span className="sb-count">{count}</span>}
+            </button>
+          );
+        })}
+
+        <div className="sb-group-label">系统设置</div>
+        {SETTINGS.map((item) => (
+          <button
+            key={item.key}
+            className={"sb-nav-item" + (page === "settings" && settingsTab === item.key ? " active" : "")}
+            onClick={() => onNavigateSettings(item.key)}
+            title={item.label}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </button>
         ))}
       </nav>
+
       <SystemMonitor />
     </aside>
   );

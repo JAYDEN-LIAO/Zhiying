@@ -1,140 +1,149 @@
 /* ════════════════════════════════════════════════════════════
-   TaskCenter — 任务中心（v0.34 桌面重构）
-   处理任务状态表格：统计卡 + 状态筛选 Tab + 任务表格（状态徽章/进度条/
-   操作）。数据 = 共享视频列表（4s 轮询），按 status 过滤。
+   TaskCenter — 任务中心（v0.34 桌面重构 · 照 demo TaskCenter 表格）
+   顶栏（标题+已选N+批量操作） + 筛选 Tab（全部/处理中/已完成失败） +
+   任务表格（checkbox/任务文件/所属/状态/提交时间/操作）。
+   数据 = 共享视频列表（4s 轮询），按 status 过滤。
    ════════════════════════════════════════════════════════════ */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useApp } from "../AppContext";
 import type { VideoListItem } from "../types";
 import { fmtDate, fmtDuration } from "../utils/helpers";
-import { IconTask, IconVideo } from "./icons";
+import { IconTask } from "./icons";
 
 const FILTERS = [
   { key: "all", label: "全部任务" },
   { key: "active", label: "处理中" },
-  { key: "done", label: "已完成" },
-  { key: "failed", label: "失败" },
+  { key: "history", label: "已完成/失败" },
 ] as const;
-
 type FilterKey = typeof FILTERS[number]["key"];
 
-function statusBadge(v: VideoListItem): { cls: string; label: string; pulse?: boolean } {
-  switch (v.status) {
-    case "completed": return { cls: "ok", label: "已完成" };
-    case "processing": return { cls: "run", label: "处理中", pulse: true };
-    case "pending": return { cls: "wait", label: "等待参数" };
-    case "failed": return { cls: "err", label: "失败" };
-    default: return { cls: "wait", label: v.status };
+function StatusBadge({ v }: { v: VideoListItem }) {
+  if (v.status === "processing") {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="g-badge run">处理中 {Math.round(v.progress)}%</span>
+        <div className="g-progress w-16"><div style={{ width: `${v.progress}%` }} /></div>
+      </div>
+    );
   }
+  const map: Record<string, [string, string]> = {
+    pending: ["待参数", "wait"],
+    completed: ["已完成", "ok"],
+    failed: ["失败", "err"],
+  };
+  const [label, cls] = map[v.status] || [v.status, "wait"];
+  return <span className={"g-badge " + cls}>{label}</span>;
 }
 
 export function TaskCenter() {
-  const { videos, openWorkbench, deleteVideo } = useApp();
+  const { videos, videoGroups, openWorkbench, deleteVideo } = useApp();
   const [filter, setFilter] = useState<FilterKey>("all");
-  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [checked, setChecked] = useState<Set<string>>(new Set());
 
-  const active = videos.filter((v) => v.status === "processing" || v.status === "pending").length;
-  const done = videos.filter((v) => v.status === "completed").length;
-  const failed = videos.filter((v) => v.status === "failed").length;
-
-  const filtered = videos.filter((v) => {
+  const filtered = useMemo(() => {
     switch (filter) {
-      case "active": return v.status === "processing" || v.status === "pending";
-      case "done": return v.status === "completed";
-      case "failed": return v.status === "failed";
-      default: return true;
+      case "active": return videos.filter((v) => v.status === "processing" || v.status === "pending");
+      case "history": return videos.filter((v) => v.status === "completed" || v.status === "failed");
+      default: return videos;
     }
-  });
+  }, [videos, filter]);
+
+  const doneCount = videos.filter((v) => v.status === "completed").length;
+  const failedCount = videos.filter((v) => v.status === "failed").length;
+
+  const toggleCheck = (id: string) => {
+    setChecked((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+  const allChecked = filtered.length > 0 && checked.size === filtered.length;
+  const toggleAll = () => setChecked(allChecked ? new Set() : new Set(filtered.map((v) => v.id)));
 
   const handleDelete = async (id: string) => {
     if (!window.confirm("确定删除该任务？将同时释放磁盘空间。")) return;
-    setDeletingIds((prev) => new Set(prev).add(id));
-    try {
-      await deleteVideo(id);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "删除失败");
-    }
-    setDeletingIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    try { await deleteVideo(id); }
+    catch (err) { alert(err instanceof Error ? err.message : "删除失败"); }
+  };
+
+  const batchDelete = async () => {
+    if (checked.size === 0) return;
+    if (!window.confirm(`确定删除所选 ${checked.size} 个任务？`)) return;
+    for (const id of checked) { try { await deleteVideo(id); } catch { /* 单个失败继续 */ } }
+    setChecked(new Set());
   };
 
   return (
-    <div className="page-pad" style={{ display: "flex", flexDirection: "column" }}>
-      {/* 页头 */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 20, fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: 8 }}>
-          <IconTask />
-          任务中心
-        </h1>
+    <div className="h-full flex flex-col">
+      {/* ══ 顶栏 ══ */}
+      <div className="h-[52px] px-5 bg-white border-b border-gray-200 flex items-center justify-between shrink-0">
+        <div>
+          <h1 className="text-[15px] font-semibold text-gray-900 leading-tight flex items-center gap-2">
+            <IconTask /> 任务中心
+          </h1>
+          <p className="text-[11.5px] text-gray-400 leading-tight">后台进程监控与历史记录追溯</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11.5px] text-gray-400 mr-1">已选 {checked.size} 项</span>
+          <button className="g-btn" onClick={batchDelete} disabled={!checked.size}>批量删除</button>
+        </div>
       </div>
 
-      {/* 统计卡 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 16 }}>
-        <div className="stat-card"><div className="stat-ic blue"><IconTask /></div><div><div className="stat-num">{videos.length}</div><div className="stat-lbl">全部任务</div></div></div>
-        <div className="stat-card"><div className="stat-ic amber"><IconVideo /></div><div><div className="stat-num">{active}</div><div className="stat-lbl">处理中</div></div></div>
-        <div className="stat-card"><div className="stat-ic green"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg></div><div><div className="stat-num">{done}</div><div className="stat-lbl">已完成</div></div></div>
-        <div className="stat-card"><div className="stat-ic red"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg></div><div><div className="stat-num">{failed}</div><div className="stat-lbl">失败</div></div></div>
+      {/* ══ 筛选栏 ══ */}
+      <div className="px-5 py-2 bg-white border-b border-gray-100 flex items-center gap-1 shrink-0">
+        {FILTERS.map((f) => (
+          <button key={f.key} className={"g-tab " + (filter === f.key ? "active" : "")} onClick={() => setFilter(f.key)}>
+            {f.label}
+          </button>
+        ))}
+        <span className="ml-auto text-[11.5px] text-gray-400">完成 {doneCount} · 失败 {failedCount} · 每 4 秒自动刷新</span>
       </div>
 
-      {/* 任务表格卡片 */}
-      <div className="g-card" style={{ flex: 1, minHeight: 0 }}>
-        <div className="g-card-hd">
-          <div style={{ display: "flex", gap: 4 }}>
-            {FILTERS.map((f) => (
-              <button key={f.key} className={"g-tab" + (filter === f.key ? " active" : "")} onClick={() => setFilter(f.key)}>
-                {f.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="g-table-wrap" style={{ flex: 1, overflow: "auto" }}>
-          <table className="g-table">
-            <thead>
-              <tr>
-                <th>视频文件</th>
-                <th>状态</th>
-                <th>进度</th>
-                <th>时长</th>
-                <th>提交时间</th>
-                <th style={{ textAlign: "right" }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 && (
-                <tr><td colSpan={6}><div className="g-empty" style={{ padding: 40 }}>暂无任务</div></td></tr>
-              )}
-              {filtered.map((v) => {
-                const sb = statusBadge(v);
-                const pct = v.progress ?? 0;
-                return (
-                  <tr key={v.id} style={{ opacity: deletingIds.has(v.id) ? 0.5 : 1 }}>
-                    <td>
-                      <div style={{ fontWeight: 500, color: "#1e293b", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.file_name}</div>
-                      {v.group_id && <div style={{ fontSize: 10, color: "#94a3b8" }}>分组任务</div>}
-                    </td>
-                    <td><span className={"g-badge " + sb.cls}>{sb.pulse && <span className="pulse" />}{sb.label}</span></td>
-                    <td>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, width: 180 }}>
-                        <div className="g-progress" style={{ flex: 1 }}>
-                          <div className={"g-progress-fill" + (v.status === "completed" ? " ok" : v.status === "failed" ? " err" : "")} style={{ width: `${pct}%` }} />
-                        </div>
-                        <span style={{ fontSize: 11, color: "#64748b", fontFamily: "var(--font-mono)" }}>{pct.toFixed(0)}%</span>
-                      </div>
-                    </td>
-                    <td style={{ fontSize: 12, color: "#64748b" }}>{v.duration != null ? fmtDuration(v.duration) : "—"}</td>
-                    <td style={{ fontSize: 12, color: "#94a3b8" }}>{fmtDate(v.created_at)}</td>
-                    <td>
-                      <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
-                        <button className="g-btn g-btn-sm" onClick={() => openWorkbench(v.id)}>查看结果</button>
-                        <button className="g-btn g-btn-sm g-btn-danger" onClick={() => handleDelete(v.id)} disabled={deletingIds.has(v.id)}>删除</button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+      {/* ══ 任务表格 ══ */}
+      <div className="flex-1 min-h-0 bg-white overflow-auto">
+        <table className="g-table">
+          <thead>
+            <tr>
+              <th className="w-9">
+                <input type="checkbox" className="accent-[#4f7cff] cursor-pointer" checked={allChecked} onChange={toggleAll} />
+              </th>
+              <th>任务 / 文件</th>
+              <th className="w-40">所属</th>
+              <th className="w-52">状态</th>
+              <th className="w-36">提交时间</th>
+              <th className="w-24">时长</th>
+              <th className="w-[180px] text-right pr-4">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((v) => {
+              const gid = v.group_id;
+              const groupCount = gid ? videoGroups.find((g) => g.groupId === gid)?.videoIds.length ?? 1 : 0;
+              return (
+                <tr key={v.id} className={checked.has(v.id) ? "bg-brand/5" : ""}>
+                  <td>
+                    <input type="checkbox" className="accent-[#4f7cff] cursor-pointer" checked={checked.has(v.id)} onChange={() => toggleCheck(v.id)} />
+                  </td>
+                  <td>
+                    <div className="text-[13px] text-gray-800 truncate max-w-[280px]" title={v.file_name}>{v.file_name}</div>
+                    <div className="text-[11px] text-gray-400 font-mono">{v.id.slice(0, 8)}</div>
+                  </td>
+                  <td className="text-gray-600">{gid ? `分组 ${groupCount} 个视频` : <span className="text-gray-300">未分组</span>}</td>
+                  <td><StatusBadge v={v} /></td>
+                  <td className="text-gray-500">{fmtDate(v.created_at)}</td>
+                  <td className="text-gray-500">{v.duration != null ? fmtDuration(v.duration) : "-"}</td>
+                  <td className="text-right pr-4 whitespace-nowrap">
+                    <button className="g-btn !px-2 !py-1 mr-1" onClick={() => openWorkbench(v.id)}>查看结果</button>
+                    <button className="g-btn g-btn-danger !px-2 !py-1" onClick={() => handleDelete(v.id)}>删除</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {filtered.length === 0 && <div className="g-empty"><span>当前筛选下暂无任务</span></div>}
       </div>
     </div>
   );

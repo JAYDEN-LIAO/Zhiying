@@ -12,10 +12,14 @@ import { useYunzhi } from "./platform/YunzhiProvider";
 import type { YunzhiResource } from "./platform/yunzhi-bridge";
 
 export type Page = "files" | "workbench" | "tasks" | "settings";
+export type SettingsTab = "system" | "model" | "presets" | "api";
 
 interface AppCtx {
   page: Page;
   navigate: (p: Page) => void;
+  /* 系统设置 4 子页（系统/模型参数/参数预设/API 密钥）—— 拆入左侧导航 */
+  settingsTab: SettingsTab;
+  navigateSettings: (tab: SettingsTab) => void;
   /* 跨页选视频：跳工作台并（可选）自动打开参数面板 */
   selectedVideoId: string | null;
   openWorkbench: (videoId: string, opts?: { openParams?: boolean }) => void;
@@ -46,6 +50,7 @@ export function useApp(): AppCtx {
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [page, setPage] = useState<Page>("files");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("system");
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
   const [paramsTick, setParamsTick] = useState(0);
   const [videos, setVideos] = useState<VideoListItem[]>([]);
@@ -58,6 +63,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const { mock: yunzhiMock, selectFiles: yunzhiSelectFiles } = useYunzhi();
 
   const navigate = useCallback((p: Page) => setPage(p), []);
+
+  const navigateSettings = useCallback((tab: SettingsTab) => {
+    setSettingsTab(tab);
+    setPage("settings");
+  }, []);
 
   const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean }) => {
     setSelectedVideoId(videoId);
@@ -196,7 +206,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [uploadFiles]);
 
   const value: AppCtx = {
-    page, navigate,
+    page, navigate, settingsTab, navigateSettings,
     selectedVideoId, openWorkbench, paramsTick,
     videos, videoGroups, refreshList,
     isUploading, uploadFiles, registerExternalFiles, handleUploadClick,
