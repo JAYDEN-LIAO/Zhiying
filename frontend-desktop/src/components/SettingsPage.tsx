@@ -276,7 +276,7 @@ export function SettingsPage() {
   return (
     <div className="flex-1 min-h-0 flex bg-[var(--color-page-bg)]">
       {/* ── 左导航 ── */}
-      <nav className="w-44 flex-shrink-0 pt-[72px] pl-5 pr-2">
+      <nav className="w-44 flex-shrink-0 pt-5 pl-5 pr-2">
         <div className="flex flex-col gap-1">
           <button onClick={() => setSection("system")} className={navItemCls(section === "system")}>
             系统

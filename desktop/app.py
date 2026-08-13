@@ -193,10 +193,15 @@ def run_gui(args) -> int:
         already_running=False,
     )
 
+    # v0.34 桌面重构：frameless 无边框 + shadow（Windows EdgeChromium 保留圆角/阴影），
+    # 标题栏由前端自绘（drag-region + 窗口控制按钮经 js_api 桥接）。
+    main_api = SplashApi(ctx)
     main_window = webview.create_window(
         "智影视频分析", html=SPLASH_HTML, width=1280, height=800, min_size=(1024, 700),
-        confirm_close=True, js_api=SplashApi(ctx),
+        confirm_close=True, js_api=main_api,
+        frameless=True, shadow=True,
     )
+    main_api.set_window(main_window)  # 注入窗口引用，供 minimize/toggle_maximize 等使用
     control = webview.create_window(
         "智影 · 启动日志", html=LOG_HTML, width=680, height=460, js_api=LogApi(ctx),
     )

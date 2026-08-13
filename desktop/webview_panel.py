@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import threading
+import time
 import webbrowser
 from dataclasses import dataclass
 from typing import Callable
@@ -198,14 +200,136 @@ class Ctx:
 
 
 class SplashApi:
-    """主窗 splash 的 js_api。"""
+    """主窗 js_api：起步 splash + 真实前端共用（load_url 后桥接仍指向本实例）。
+
+    扩展能力（v0.34 桌面重构）：
+    - 窗口控制：minimize / toggle_maximize / is_maximized / quit —— frameless 标题栏按钮
+    - 系统监控：get_system_stats —— 侧栏 CPU/内存/GPU/网络（psutil + nvidia-smi，纯桌面壳，不动后端）
+    """
+
+    _GPU_REFRESH_SEC = 5.0  # nvidia-smi 子进程有成本，缓存 5s
+    _NET_PREV_ATTR = "_net_prev"
 
     def __init__(self, ctx: Ctx) -> None:
         self._ctx = ctx
+        self._window = None            # app.py 创建主窗后注入
+        self._maximized = False        # pywebview 无 is_maximized 查询，本地标志跟踪
+        self._gpu_cache: dict | None = None
+        self._gpu_cache_at = 0.0
+        self._net_prev: tuple | None = None
+        self._net_prev_at = 0.0
+
+    def set_window(self, window) -> None:
+        """注入主窗引用（create_window 返回后调用）。"""
+        self._window = window
 
     def get_status(self) -> dict:
         s = app_state.get()
         return s
+
+    # ── 窗口控制（frameless 标题栏按钮）──────────────────────────
+    def minimize(self) -> None:
+        if self._window:
+            self._window.minimize()
+
+    def toggle_maximize(self) -> bool:
+        w = self._window
+        if not w:
+            return self._maximized
+        if self._maximized:
+            w.restore()
+            self._maximized = False
+        else:
+            w.maximize()
+            self._maximized = True
+        return self._maximized
+
+    def is_maximized(self) -> bool:
+        return self._maximized
+
+    def quit(self) -> None:
+        # 从 GUI 线程触发退出：停后端 + 关窗（同 LogApi.shutdown）
+        threading.Thread(target=self._ctx.request_shutdown, daemon=True).start()
+
+    # ── 系统监控（侧栏 CPU/内存/GPU/网络）────────────────────────
+    def get_system_stats(self) -> dict:
+        cpu = self._cpu_stats()
+        mem = self._memory_stats()
+        gpu = self._gpu_stats()
+        net = self._net_stats()
+        return {"cpu": cpu, "memory": mem, "gpu": gpu, "net": net, "ts": time.time()}
+
+    @staticmethod
+    def _cpu_stats() -> dict | None:
+        try:
+            import psutil
+            # interval=None：按上次调用差值，不阻塞；首次返回 0.0
+            return {"percent": round(psutil.cpu_percent(interval=None) or 0.0)}
+        except Exception:
+            return None
+
+    @staticmethod
+    def _memory_stats() -> dict | None:
+        try:
+            import psutil
+            vm = psutil.virtual_memory()
+            return {
+                "percent": round(vm.percent),
+                "used_gb": round(vm.used / 1024 ** 3, 1),
+                "total_gb": round(vm.total / 1024 ** 3, 1),
+            }
+        except Exception:
+            return None
+
+    def _gpu_stats(self) -> dict | None:
+        now = time.monotonic()
+        if self._gpu_cache is not None and now - self._gpu_cache_at < self._GPU_REFRESH_SEC:
+            return self._gpu_cache
+        try:
+            out = subprocess.run(
+                ["nvidia-smi",
+                 "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=3,
+            )
+            if out.returncode != 0 or not out.stdout.strip():
+                self._gpu_cache = None
+                return None
+            p = [x.strip() for x in out.stdout.strip().split(",")]
+            if len(p) < 5:
+                self._gpu_cache = None
+                return None
+            self._gpu_cache = {
+                "name": p[4],
+                "percent": max(0, min(100, int(round(float(p[0]))))),
+                "used_mb": int(round(float(p[1]))),
+                "total_mb": int(round(float(p[2]))),
+                "temp_c": int(round(float(p[3]))),
+            }
+            self._gpu_cache_at = now
+            return self._gpu_cache
+        except Exception:
+            self._gpu_cache = None
+            return None
+
+    def _net_stats(self) -> dict | None:
+        try:
+            import psutil
+            cur = psutil.net_io_counters()
+            now = time.monotonic()
+            prev = self._net_prev
+            self._net_prev = (cur.bytes_recv, cur.bytes_sent)
+            if prev is None or now - self._net_prev_at <= 0:
+                self._net_prev_at = now
+                return {"down_bps": 0, "up_bps": 0}
+            dt = now - self._net_prev_at
+            self._net_prev_at = now
+            return {
+                "down_bps": max(0, int((cur.bytes_recv - prev[0]) / dt)),
+                "up_bps": max(0, int((cur.bytes_sent - prev[1]) / dt)),
+            }
+        except Exception:
+            return None
 
 
 class LogApi:

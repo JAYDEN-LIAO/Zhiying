@@ -340,12 +340,12 @@ export function ParameterPanel({
       aria-checked={checked}
       disabled={disabled}
       className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-all duration-300 ease-out
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#083344]
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white
         ${disabled
-          ? "bg-white/10 cursor-not-allowed"
+          ? "bg-gray-200 cursor-not-allowed"
           : checked
-            ? "bg-teal-600 cursor-pointer shadow-[0_0_10px_rgba(13,148,136,0.35)]"
-            : "bg-white/15 cursor-pointer hover:bg-white/25"
+            ? "bg-teal-600 cursor-pointer shadow-[0_0_10px_rgba(79,124,255,0.35)]"
+            : "bg-gray-200 cursor-pointer hover:bg-gray-300"
         }`}
       onClick={() => !disabled && onChange()}
     >
@@ -361,15 +361,15 @@ export function ParameterPanel({
 
   return (
     <div className="w-[380px] h-full flex flex-col">
-      {/* Header — dark to match slide panel */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
-        <h2 className="font-bold text-white text-base">参数设置</h2>
-        <button onClick={onClose} className="text-white/50 hover:text-white transition-colors cursor-pointer">
+      {/* Header — light（v0.34 桌面重构改浅色 Modal） */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 shrink-0">
+        <h2 className="font-bold text-slate-800 text-base">参数设置</h2>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
           <IconClose />
         </button>
       </div>
 
-      {/* Scrollable content — dark theme matches slide panel */}
+      {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
         {/* L1: 场景类型 */}
         <section>
@@ -624,10 +624,10 @@ export function ParameterPanel({
                     key={opt.key}
                     className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-all ${
                       opt.disabled
-                        ? "opacity-50 cursor-not-allowed bg-white/40 border-gray-200/60"
+                        ? "opacity-50 cursor-not-allowed bg-gray-50 border-gray-200/60"
                         : summaryMode === opt.key
                           ? "bg-teal-600/15 border-teal-500/70 cursor-pointer"
-                          : "bg-white/60 border-gray-200/60 cursor-pointer hover:border-gray-300"
+                          : "bg-gray-50 border-gray-200/60 cursor-pointer hover:border-gray-300"
                     }`}
                   >
                     <input
