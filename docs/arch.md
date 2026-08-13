@@ -5,7 +5,8 @@
 > 历史: v0.22 部署系统+设置/参数+Detection重构+删除处理中 / v0.24 云智接入+生产部署 / v0.26 平台文件id跳转 / v0.27 搜索修正+车牌模糊搜索 / v0.28 云智嵌入UI / v0.29 人脸链路重构+搜索隔离 / v0.31 人脸交互+搜索范围+跨视频穿透+置信度
 > v0.32: 全局任务队列（PipelineQueue FIFO + worker 池 + pipeline_tasks 表持久化，批量上传排队防 OOM；重启恢复 + 排队中回调 + 幂等）
 > v0.33: 摘要链路根治重构（max_scenes 场景数上限 / caption 并发+降级+配置穿透 / text_encode 批量 / summary 预算截断 / 增量补摘要修复 / keyframe 抽帧 resize / summary_mode 默认 vlm_llm）
-> v0.34 候选（桌面端重构，未发版，桌面前端/部署侧）: 浅蓝管理后台主题 + frameless 自定义窗口外框（TitleBar 拖拽/窗口按钮/版本徽章, js_api 桥接）+ 4 页模型（文件库/视频解析/任务中心/系统设置）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane）+ 系统监控（psutil）+ `update.bat` 一键更新
+> v0.34 候选（桌面端重构 + 文件库/多版本/任务中心，未发版，桌面前端/部署侧）: 浅蓝管理后台主题 + frameless 自定义窗口外框（TitleBar 拖拽/窗口按钮/版本徽章, js_api 桥接）+ 4 页模型（文件库/视频解析/任务中心/系统设置）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane）+ 系统监控（psutil）+ `update.bat` 一键更新
+> v0.34 候选（文件库/多版本/任务中心/页面裂解，未发版）: 后端 videos.file_id/version_no 版本链 + video_groups.number/owner + task_logs 表 + /groups /files /versions /reanalyze /tasks 端点 + 任务日志生命周期 + 耗时（processing_started_at）+ 导出报告（/tasks/{id}/report md + /tasks/export-batch zip）；前端 TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2 + 卡片空隙透渐变
 > 桌面 EXE + 双部署路径（未发版）: build_exe.ps1 -Deploy 一条命令打纯壳 exe + setup_linux.sh/setup_windows.ps1 补全 + bump 全机接入
 
 ## System Data Flow
@@ -217,6 +218,13 @@ Persist: bulk_insert_scenes + insert transcript + update videos (duration/summar
   ├─ 重启恢复：queued 重入队；running yunzhi 续跑（有 video_id 复用，防重复建视频）；running pipeline/incremental 标失败
   ├─ 幂等：dedup_key 列，进程内 dict 快路径 + DB 兜底（跨重启）
   └─ worker 数随设置运行时 configure() 调整；shutdown() 哨兵退出优雅关停
+
+文件库 / 多版本 / 任务中心 (v0.34):
+  ├─ 版本模型：videos.file_id + version_no 版本链（一次解析 = 一个版本行，产物按 video_id 天然隔离，唯一索引 (file_id, version_no)）；遗留视频 file_id NULL = 独立文件（自身即版本 1）
+  ├─ 文件库：GET /files 每 file_id 一行；GET /videos/{id}/versions 版本链；POST /videos/{id}/reanalyze 建新版本行（复用 reuse 复制机制）；video_groups.number/owner 案例编号/负责人；/groups/{id}/assets 案例素材
+  ├─ 任务中心：GET /tasks scope 过滤（all/active/history）；「耗时」= updated_at − videos.processing_started_at（_set_processing 写入，排队不计入，retry 置空重新计时）
+  ├─ 日志生命周期：统一 append_task_log（core/repository，task_logs 表 seq 递增）— create_video / PUT params / reanalyze / engine（开始/完成/失败）/ retry
+  └─ 导出报告：GET /tasks/{id}/report 生成 Markdown（report_service.build_report_md，产物表单表异常降级）；POST /tasks/export-batch zip 打包；中文文件名 URL 编码（HTTP header 仅 latin-1）
 ```
 
 ## Module Dependency
@@ -333,6 +341,9 @@ videos
   ├─ status_detail (管道实时操作描述)
   ├─ source_owned (Boolean, 默认 true; 平台共享文件= false → 删除不 unlink 源文件, v0.24)
   ├─ external_file_id (Int, nullable, v0.26) — 云智平台文件库资源 ID，前端凭它自动跳转
+  ├─ file_id (UUID, nullable, v0.34) — 逻辑文件 ID：首次解析生成，同文件多版本共享；唯一索引 (file_id, version_no)
+  ├─ version_no (Int, nullable, v0.34) — 每文件版本号 1,2,3…（版本行 = 一次解析，产物按 video_id 天然隔离）
+  ├─ processing_started_at (Timestamptz, nullable, v0.34) — 管道真正开始处理时间（入队/排队不计入），任务中心「耗时」= updated_at − 此列
   ├─ group_id (UUID FK → video_groups.id, nullable, v0.19) — NULL=单视频未分组
   └─ created_at, updated_at
 
@@ -410,6 +421,12 @@ pipeline_tasks (v0.32 任务队列持久化)
   ├─ payload_json (Text — 序列化任务载荷, yunzhi 含回调 URL + jobToken)
   ├─ status (queued/running/completed/failed), error (Text)
   └─ created_at, updated_at
+
+task_logs (v0.34 任务生命周期日志)
+  ├─ id (SERIAL PK), task_id (UUID = 版本行 videos.id, index)
+  ├─ seq (Int — 每 task 递增), level (info/error), message (Text)
+  └─ created_at (Timestamptz)
+  写入统一走 core/repository.append_task_log：create_video(任务已创建) / PUT params(参数已提交，任务入队) / reanalyze(重新解析新版本) / engine(管道开始/完成/失败) / retry(任务重试)
 ```
 
 ## API Endpoints
@@ -459,6 +476,17 @@ pipeline_tasks (v0.32 任务队列持久化)
 | GET | /api/v1/videos/{id}/export/thumbnails | 导出场景缩略图 zip (直接下载) |
 | POST | /api/v1/maintenance/sweep | 存储孤儿清扫 (body {dry_run}, true=预览/默认, false=执行) |
 | GET | /api/v1/maintenance/storage | 存储用量概览 (各目录大小 + 可回收量) |
+| GET | /api/v1/files | 文件库列表（每 file_id 一行：根行信息 + 当前版本状态，含遗留 NULL，v0.34） |
+| GET/POST | /api/v1/groups | 案例列表 / 新建案例（name/number/owner，v0.34） |
+| PUT/DELETE | /api/v1/groups/{id} | 改案例 / 删案例（组内视频清 group_id，v0.34） |
+| GET/POST | /api/v1/groups/{id}/assets | 案例素材列表 / 上传（图片等非视频，v0.34） |
+| GET | /api/v1/videos/{id}/versions | 版本链列表（同 file_id 全部版本行，v0.34） |
+| POST | /api/v1/videos/{id}/reanalyze | 重新解析：复制文件信息建新版本行 + 版本号递增 + 入队（v0.34） |
+| GET | /api/v1/tasks | 任务中心列表（scope: all/active/history，v0.34） |
+| GET | /api/v1/tasks/{id}/log | 任务日志（task_logs 表，v0.34） |
+| POST | /api/v1/tasks/{id}/retry | 重试：清空产物 + 重置 pending + processing_started_at 置空 + 重新入队（v0.34） |
+| GET | /api/v1/tasks/{id}/report | 导出任务报告 Markdown（中文文件名 URL 编码，v0.34） |
+| POST | /api/v1/tasks/export-batch | 批量导出任务报告 zip（body {task_ids}，v0.34） |
 | POST | /internal/yunzhi/jobs | 云智平台异步任务 (根路径挂载非 /api/v1, 立即202+幂等, 进度/完成/失败回调, v0.24) |
 
 ## Frontend Architecture
@@ -518,18 +546,23 @@ React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @them
   │   ├── TitleBar           ← 自定义窗口标题栏（frameless 拖拽区 + 版本徽章 +
   │   │                         最小化/最大化/关闭，经 pywebview js_api 桥接）
   │   ├── Sidebar            ← w-56 浅蓝渐变侧栏：业务(文件库/视频解析/任务中心) +
-  │   │                         系统设置 4 子页(系统/模型参数/参数预设/API密钥) + SystemMonitor
+  │   │                         系统设置 2 子页(系统设置/模型参数) + SystemMonitor
   │   ├── SystemMonitor      ← 底部真机监控（等 pywebviewready 后轮询 get_system_stats，
   │   │                         psutil CPU/内存/网络 + nvidia-smi GPU，迷你柱状图）
   │   ├── FileLibrary        ← 文件库：左分组树 + 右表格(类型/文件名/时长/时间/状态/操作)
   │   ├── Workbench          ← 视频解析（照智影 v2 demo 骨架：外层 SplitPane 60%
   │   │                         左舞台播放器/时间轴 + 右栏 摘要⇄信息 toggle | 检测|搜索 42%
   │   │                         分栏；ParameterPanel 以 Modal 打开）
-  │   ├── TaskCenter         ← 任务中心：checkbox + 筛选 Tab + 状态徽章/进度条
+  │   ├── TaskCenter         ← 任务中心：裂解 TaskHeader(顶部卡) + TaskBody(正文卡：
+  │   │                         筛选 Tab + 表格 任务文件/版本/所属/状态/提交时间/耗时 + 操作
+  │   │                         导出报告/日志/重试[失败])；4s 轮询；无删除按钮
   │   ├── SplitPane          ← 可拖拽分栏（自 demo SplitPane.jsx 移植）
-  │   ├── SettingsPage       ← 系统设置（4 子页受控于 AppContext settingsTab）
+  │   ├── SettingsPage       ← 系统设置：4 子页收敛 2（系统设置=系统+参数预设 / 模型参数=
+  │   │                         模型参数+API密钥），各页裂解子组件（PresetSection/StorageSection/
+  │   │                         PipelineSection · EncoderSection/DetectionSection/ApiKeysSection）
   │   └── …现有组件（VideoPlayer/DetectionTimeline/DetectionPanel/VideoSearchCard 等换肤复用）
   4 页模型：文件库 / 视频解析 / 任务中心 / 系统设置（无 Router，AppContext state 切换）
+  页面卡片空隙：外层 app-main-flat 透明背景 + 页面根容器透明（不透明白底挡死渐变）+ space/gap 卡片间距 → 渐变透出（TaskCenter/FileLibrary/SettingsPage 一致）
 ```
 
 **桌面端窗口壳（`desktop/`，v0.34）**：
@@ -586,7 +619,7 @@ React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @them
 | **搜索数据隔离 (v0.29)** | search/face + search/image 的 video_ids 等改 Form(...) 声明修复全库泄漏；单视频搜索严格隔离 |
 
 ## Current Status
-**核心链路全部 ✅**：Pipeline DAG(15 ops) / 4-path 编码 / 双层 ReID / 7-path 搜索+图搜 / 人脸+车牌识别 / 双模式摘要(vlm_llm 默认) / 多格式(remux+proxy) / 存储卫生 / 4级参数+增量 / 系统设置+参数预设 / 全局 GPU 锁+共享实例 / 任务队列(v0.32) / 云智嵌入 UI / 桌面端 v0.34 重构 / 生产部署 / Health。详见 README「Development Status」。
+**核心链路全部 ✅**：Pipeline DAG(15 ops) / 4-path 编码 / 双层 ReID / 7-path 搜索+图搜 / 人脸+车牌识别 / 双模式摘要(vlm_llm 默认) / 多格式(remux+proxy) / 存储卫生 / 4级参数+增量 / 系统设置+参数预设 / 全局 GPU 锁+共享实例 / 任务队列(v0.32) / 文件库+多版本解析+任务中心(v0.34) / 云智嵌入 UI / 桌面端 v0.34 重构+组件裂解 / 生产部署 / Health。详见 README「Development Status」。
 
 **非完全状态**：
 | Module | Status | Note |

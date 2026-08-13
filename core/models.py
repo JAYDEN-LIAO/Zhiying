@@ -307,6 +307,10 @@ class Video(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc), nullable=False,
     )
+    processing_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="管道真正开始处理的时间（入队/排队不计入），任务中心「耗时」数据源",
+    )
 
     # ── 关联 ──
     group: Mapped["VideoGroup | None"] = relationship(

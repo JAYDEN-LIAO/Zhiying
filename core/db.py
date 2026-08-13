@@ -404,6 +404,12 @@ async def init_db():
             ON task_logs (task_id, seq)
         """))
 
+        # ── 增量迁移 v0.34: 任务中心耗时（管道开始处理时间） ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ
+        """))
+
         # ── 清理：删除废弃的列、枚举类型、触发器 ──
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS ai_detect_enabled

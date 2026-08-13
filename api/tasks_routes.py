@@ -6,10 +6,13 @@ api/tasks_routes.py
 列表按 scope 过滤；日志读 task_logs；重试 = 清空产物 + 重置 pending + 重新入队。
 """
 
+import io
 import uuid
+import zipfile
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from sqlalchemy import select, delete as sa_delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +24,7 @@ from core.models import (
     TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection,
 )
 from core.schemas import TaskItem
+from core.repository import append_task_log
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +45,10 @@ async def _task_to_dto(session: AsyncSession, v: Video) -> TaskItem:
         )
         g = row.first()
         group_name = g[0] if g else None
+    # 真实处理时长 = 完成/失败时间 − 管道开始处理时间（入队排队不计入）
+    duration_sec = None
+    if v.processing_started_at and v.updated_at:
+        duration_sec = (v.updated_at - v.processing_started_at).total_seconds()
     return TaskItem(
         id=v.id,
         version_no=v.version_no,
@@ -52,6 +60,7 @@ async def _task_to_dto(session: AsyncSession, v: Video) -> TaskItem:
         params=None,
         created_at=v.created_at,
         updated_at=v.updated_at,
+        duration_sec=duration_sec,
     )
 
 
@@ -120,12 +129,14 @@ async def retry_task(
         await db.execute(
             sa_delete(model).where(model.video_id == v.id)
         )
-    # 重置状态
+    # 重置状态（processing_started_at 置空 → 下次 _set_processing 重新计时）
     v.status = VideoStatus.PENDING
     v.progress = 0.0
     v.error_message = None
     v.summary = None
+    v.processing_started_at = None
     await db.commit()
+    await append_task_log(db, v.id, "任务重试：产物已清空，重新入队")
 
     # 重新入队（复用全局队列）
     queue = getattr(request.app.state, "pipeline_queue", None)
@@ -137,3 +148,61 @@ async def retry_task(
         import asyncio
         asyncio.create_task(_build_service(request.app).process_video(v.id))
     return APIResponse(data={"ok": True, "id": str(v.id)})
+
+
+# ──────────────────────────────────────────────────────────────
+# 导出报告（v0.34）
+# ──────────────────────────────────────────────────────────────
+
+@router.get("/tasks/{task_id}/report")
+async def export_task_report(
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """导出单个任务报告（Markdown 下载）。"""
+    import urllib.parse
+    v = await db.get(Video, task_id)
+    if v is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    from services.report_service import build_report_md
+    md = await build_report_md(db, v)
+    safe_name = (v.file_name or str(v.id)).replace("/", "_").replace("\\", "_")
+    # 中文文件名必须 URL 编码（HTTP header 仅 latin-1），RFC 5987 filename* 兜底
+    ascii_name = urllib.parse.quote(safe_name)
+    return Response(
+        content=md,
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="report_{ascii_name}.md"; filename*=UTF-8\'\'report_{ascii_name}.md',
+        },
+    )
+
+
+@router.post("/tasks/export-batch")
+async def export_tasks_batch(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """批量导出任务报告 — body {task_ids: [uuid...]} → zip 打包下载。"""
+    from services.report_service import build_report_md
+    body = await request.json()
+    task_ids = body.get("task_ids", [])
+    if not task_ids:
+        raise HTTPException(status_code=400, detail="未指定任务")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for tid in task_ids:
+            v = await db.get(Video, tid)
+            if v is None:
+                continue
+            md = await build_report_md(db, v)
+            safe_name = (v.file_name or str(v.id)).replace("/", "_").replace("\\", "_")
+            zf.writestr(f"report_{safe_name}.md", md)
+    buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename=reports_{len(task_ids)}.zip",
+        },
+    )

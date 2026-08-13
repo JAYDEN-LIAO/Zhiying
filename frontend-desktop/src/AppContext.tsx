@@ -12,7 +12,7 @@ import { useYunzhi } from "./platform/YunzhiProvider";
 import type { YunzhiResource } from "./platform/yunzhi-bridge";
 
 export type Page = "files" | "workbench" | "tasks" | "settings";
-export type SettingsTab = "system" | "model" | "presets" | "api";
+export type SettingsTab = "system" | "model";
 
 interface AppCtx {
   page: Page;

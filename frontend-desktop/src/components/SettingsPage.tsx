@@ -34,8 +34,418 @@ const ENCODE_PROFILE_RECOMMEND: Record<string, { encode_width: number; encode_he
 };
 const strOr = (v: number | undefined): string => (v != null ? String(v) : "");
 
-type SettingsSection = "system" | "model" | "presets" | "api";
+/* ── 统一样式（模块级，供各子组件复用） ── */
+const cardCls = "bg-white rounded-[var(--radius-lg)] border border-[var(--color-border-light)] shadow-[var(--shadow-card)] p-6";
+const inputCls = "w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-text-primary)] placeholder:text-gray-400 outline-none focus:border-[var(--color-accent-blue)] focus:ring-2 focus:ring-teal-600/15 transition-colors";
+const inputSmCls = "w-full px-2 py-1.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md text-xs text-[var(--color-text-primary)] placeholder:text-gray-400 outline-none focus:border-[var(--color-accent-blue)] focus:ring-1 focus:ring-teal-600/15 transition-colors";
+const labelCls = "text-xs text-[var(--color-text-muted)] mb-1.5 block";
+const hintCls = "text-[10px] text-[var(--color-text-dim)] mt-1 leading-relaxed";
+const cardTitleCls = "text-sm font-semibold text-[var(--color-text-primary)] mb-1";
+const cardDescCls = "text-[11px] text-[var(--color-text-dim)] mb-4 leading-relaxed";
+
+type SettingsSection = "system" | "model";
 export type { SettingsSection };
+
+/* ═══════════════════════ 系统设置：① 参数预设 ═══════════════════════ */
+function PresetSection({
+  presets, newPresetName, setNewPresetName,
+  renamingId, setRenamingId, renameValue, setRenameValue,
+  saving, onCreate, onApply, onRename, onDelete,
+}: {
+  presets: PipelinePreset[];
+  newPresetName: string;
+  setNewPresetName: (v: string) => void;
+  renamingId: string | null;
+  setRenamingId: (v: string | null) => void;
+  renameValue: string;
+  setRenameValue: (v: string) => void;
+  saving: string | null;
+  onCreate: () => void;
+  onApply: (p: PipelinePreset) => void;
+  onRename: (p: PipelinePreset) => void;
+  onDelete: (p: PipelinePreset) => void;
+}) {
+  return (
+    <>
+      {/* ── 保存当前参数为新预设 ── */}
+      <div className={cardCls}>
+        <h3 className={cardTitleCls}>保存当前参数为新预设</h3>
+        <p className={cardDescCls}>把当前生效的管道性能 / 模型参数存成一套命名快照（未保存的编辑请先点对应卡片「保存」）；预设不含存储路径与 API 密钥</p>
+        <div className="flex gap-3">
+          <input type="text" value={newPresetName} placeholder="如：开发机 GB10 / 24GB 推荐"
+            onChange={(e) => setNewPresetName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") onCreate(); }}
+            className={inputCls} />
+          <button onClick={onCreate} disabled={saving === "preset-create"} className="g-btn g-btn-primary shrink-0">
+            {saving === "preset-create" ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── 已有预设 ── */}
+      <div className={cardCls}>
+        <h3 className={cardTitleCls}>已有预设</h3>
+        <p className={cardDescCls}>一键套用任意一套参数（写入当前生效配置；量化需重启后端）</p>
+        {presets.length === 0 ? (
+          <p className="text-xs text-[var(--color-text-dim)] py-2">暂无预设，先在上方保存一套</p>
+        ) : (
+          <div className="space-y-2">
+            {presets.map((p) => {
+              const isRenaming = renamingId === p.id;
+              return (
+                <div key={p.id} className="border border-[var(--color-border-light)] rounded-lg p-3 flex items-center gap-3">
+                  {isRenaming ? (
+                    <input type="text" value={renameValue} autoFocus
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") onRename(p);
+                        if (e.key === "Escape") setRenamingId(null);
+                      }}
+                      className={`${inputCls} flex-1`} />
+                  ) : (
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-[var(--color-text-primary)] truncate">{p.name}</div>
+                      <div className="text-[10px] text-[var(--color-text-dim)]">
+                        {p.created_at ? fmtFullDate(p.created_at) : ""}
+                      </div>
+                    </div>
+                  )}
+                  {!isRenaming && (
+                    <button onClick={() => onApply(p)} disabled={saving === `apply-${p.id}`}
+                      className="px-2.5 py-1 text-[11px] font-medium bg-[#0d9488] text-white rounded-md hover:bg-[#14b8a6] disabled:opacity-40 transition-colors cursor-pointer flex-shrink-0">
+                      {saving === `apply-${p.id}` ? "套用中..." : "套用"}
+                    </button>
+                  )}
+                  {isRenaming ? (
+                    <button onClick={() => onRename(p)} disabled={saving === `rename-${p.id}`}
+                      className="px-2.5 py-1 text-[11px] font-medium bg-[var(--color-accent-green)] text-white rounded-md hover:opacity-80 disabled:opacity-40 transition-colors cursor-pointer flex-shrink-0">
+                      确定
+                    </button>
+                  ) : (
+                    <button onClick={() => { setRenamingId(p.id); setRenameValue(p.name); }}
+                      className="px-2.5 py-1 text-[11px] font-medium border border-[var(--color-border)] rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] transition-colors cursor-pointer flex-shrink-0">
+                      重命名
+                    </button>
+                  )}
+                  <button onClick={() => onDelete(p)} disabled={saving === `del-${p.id}`}
+                    className="px-2.5 py-1 text-[11px] font-medium border border-red-200 rounded-md text-red-500 hover:bg-red-50 transition-colors cursor-pointer flex-shrink-0">
+                    删除
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* ═══════════════════════ 系统设置：② 存储路径 ═══════════════════════ */
+function StorageSection({
+  storageEdit, setStorageEdit, saving, onSave,
+}: {
+  storageEdit: { video_dir: string; artifact_dir: string };
+  setStorageEdit: (e: { video_dir: string; artifact_dir: string }) => void;
+  saving: string | null;
+  onSave: () => void;
+}) {
+  return (
+    <div className={cardCls}>
+      <h3 className={cardTitleCls}>存储路径</h3>
+      <p className={cardDescCls}>新上传的视频与处理制品存放目录，保存后新上传 / 转码 / 导出立即生效</p>
+      <div className="space-y-4">
+        <div>
+          <label className={labelCls}>视频目录</label>
+          <input type="text" value={storageEdit.video_dir} placeholder="data/videos"
+            onChange={(e) => setStorageEdit({ ...storageEdit, video_dir: e.target.value })}
+            className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>制品目录</label>
+          <input type="text" value={storageEdit.artifact_dir} placeholder="data/artifacts"
+            onChange={(e) => setStorageEdit({ ...storageEdit, artifact_dir: e.target.value })}
+            className={inputCls} />
+        </div>
+        <div className="flex justify-end">
+          <button onClick={onSave} disabled={saving === "storage"} className="g-btn g-btn-primary">
+            {saving === "storage" ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════ 系统设置：③ 管道设置 ═══════════════════════ */
+function PipelineSection({
+  pipelineEdit, setPipelineEdit, saving, onSave,
+}: {
+  pipelineEdit: PipelineSettingsUpdate;
+  setPipelineEdit: (p: PipelineSettingsUpdate) => void;
+  saving: string | null;
+  onSave: () => void;
+}) {
+  return (
+    <div className={cardCls}>
+      <h3 className={cardTitleCls}>管道设置</h3>
+      <p className={cardDescCls}>解码与编码路径开关、并发管道上限（低显存机器防批量并发 OOM；留空并保存恢复配置默认）</p>
+      <div className="space-y-4">
+        <div className="flex gap-6">
+          <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] cursor-pointer">
+            <input type="checkbox" checked={!!pipelineEdit.use_nvdec}
+              onChange={(e) => setPipelineEdit({ ...pipelineEdit, use_nvdec: e.target.checked })}
+              className="w-3.5 h-3.5 accent-teal-600" />
+            NVDEC 硬解
+          </label>
+          <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] cursor-pointer">
+            <input type="checkbox" checked={!!pipelineEdit.chunk_encoding}
+              onChange={(e) => setPipelineEdit({ ...pipelineEdit, chunk_encoding: e.target.checked })}
+              className="w-3.5 h-3.5 accent-teal-600" />
+            chunk 编码
+          </label>
+        </div>
+        <div>
+          <label className={labelCls}>并发管道上限 (max_concurrent_videos)</label>
+          <input type="number" min={0} max={16} step={1} value={pipelineEdit.max_concurrent_videos} placeholder="0"
+            onChange={(e) => setPipelineEdit({ ...pipelineEdit, max_concurrent_videos: e.target.value })}
+            className={inputCls} />
+          <p className={hintCls}>推荐 0（不限）；0-16。24GB 建议 1（激活峰值按并发数叠加）</p>
+        </div>
+        {/* 场景分割（v0.33：从参数面板高级参数移入，全局生效） */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>采样帧率 (sample_fps)</label>
+            <input type="number" min={0.5} max={3.0} step={0.1} value={pipelineEdit.sample_fps} placeholder="1.0"
+              onChange={(e) => setPipelineEdit({ ...pipelineEdit, sample_fps: e.target.value })}
+              className={inputCls} />
+            <p className={hintCls}>TransNetV2 镜头分割采样帧率；0.5-3.0（留空恢复默认）</p>
+          </div>
+          <div>
+            <label className={labelCls}>场景切换敏感度 (segment_threshold)</label>
+            <input type="number" min={0.2} max={0.8} step={0.1} value={pipelineEdit.segment_threshold} placeholder="0.5"
+              onChange={(e) => setPipelineEdit({ ...pipelineEdit, segment_threshold: e.target.value })}
+              className={inputCls} />
+            <p className={hintCls}>0.2 敏感 / 0.8 保守（留空恢复默认）</p>
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button onClick={onSave} disabled={saving === "system"} className="g-btn g-btn-primary">
+            {saving === "system" ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════ 模型参数：① 编码 ═══════════════════════ */
+function EncoderSection({
+  pipelineEdit, setPipelineEdit, profileEdit, setProfileEdit, saving, onSave,
+}: {
+  pipelineEdit: PipelineSettingsUpdate;
+  setPipelineEdit: (p: PipelineSettingsUpdate) => void;
+  profileEdit: Record<string, EncodeProfileSettingsUpdate>;
+  setProfileEdit: (updater: (prev: Record<string, EncodeProfileSettingsUpdate>) => Record<string, EncodeProfileSettingsUpdate>) => void;
+  saving: string | null;
+  onSave: () => void;
+}) {
+  return (
+    <div className={cardCls}>
+      <h3 className={cardTitleCls}>编码（Embedder）</h3>
+      <p className={cardDescCls}>三档编码模板可各调分辨率与批大小（placeholder 为推荐值）；参数面板选档 = 用该档值。分辨率 224-960，批大小 8-1024（8 倍数）</p>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>默认编码预设 (default_encode_profile)</label>
+            <select value={pipelineEdit.default_encode_profile}
+              onChange={(e) => setPipelineEdit({ ...pipelineEdit, default_encode_profile: e.target.value })}
+              className={inputCls}>
+              <option value="">跟随 config.yaml</option>
+              {ENCODE_PROFILE_IDS.map((pid) => (
+                <option key={pid} value={pid}>{ENCODE_PROFILE_LABEL[pid]}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>Embedder 量化 (quantization)</label>
+            <select value={pipelineEdit.quantization}
+              onChange={(e) => setPipelineEdit({ ...pipelineEdit, quantization: e.target.value })}
+              className={inputCls}>
+              <option value="">跟随 config.yaml</option>
+              <option value="none">none（FP16，质量最好）</option>
+              <option value="8bit">8bit（~8GB，推荐 24GB）</option>
+              <option value="4bit">4bit（~4GB，最省）</option>
+            </select>
+            <p className={hintCls}>⚠️ 需重启后端；8bit/4bit 需 pip install bitsandbytes</p>
+          </div>
+        </div>
+
+        {/* 三档模板表格 */}
+        <div>
+          <label className={labelCls}>三档编码模板（分辨率宽 × 高 / 批大小）</label>
+          <div className="border border-[var(--color-border-light)] rounded-lg overflow-hidden">
+            <div className="grid grid-cols-[96px_1fr_1fr_1fr] gap-2 px-3 py-2 bg-[var(--color-surface)] text-[10px] text-[var(--color-text-dim)] font-medium">
+              <span>档位</span><span>分辨率宽</span><span>分辨率高</span><span>批大小</span>
+            </div>
+            {ENCODE_PROFILE_IDS.map((pid) => {
+              const p = profileEdit[pid] ?? {};
+              const rec = ENCODE_PROFILE_RECOMMEND[pid];
+              return (
+                <div key={pid} className="grid grid-cols-[96px_1fr_1fr_1fr] gap-2 px-3 py-2 border-t border-[var(--color-border-light)]">
+                  <span className="text-xs font-medium text-[var(--color-text-secondary)] self-center">{ENCODE_PROFILE_LABEL[pid]}</span>
+                  <input type="number" min={224} max={960} step={1} value={p.encode_width}
+                    placeholder={String(rec.encode_width)}
+                    onChange={(e) => setProfileEdit((prev) => ({ ...prev, [pid]: { ...prev[pid], encode_width: e.target.value } }))}
+                    className={inputSmCls} />
+                  <input type="number" min={224} max={960} step={1} value={p.encode_height}
+                    placeholder={String(rec.encode_height)}
+                    onChange={(e) => setProfileEdit((prev) => ({ ...prev, [pid]: { ...prev[pid], encode_height: e.target.value } }))}
+                    className={inputSmCls} />
+                  <input type="number" min={8} max={1024} step={8} value={p.encode_batch_size}
+                    placeholder={String(rec.encode_batch_size)}
+                    onChange={(e) => setProfileEdit((prev) => ({ ...prev, [pid]: { ...prev[pid], encode_batch_size: e.target.value } }))}
+                    className={inputSmCls} />
+                </div>
+              );
+            })}
+          </div>
+          <p className={hintCls}>留空 = 该档该字段保持 config 默认；保存后参数面板选档即生效该档模板</p>
+        </div>
+
+        <div className="flex justify-end">
+          <button onClick={onSave} disabled={saving === "encode"} className="g-btn g-btn-primary">
+            {saving === "encode" ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════ 模型参数：② 物体检测 ═══════════════════════ */
+function DetectionSection({
+  pipelineEdit, setPipelineEdit, saving, onSave,
+}: {
+  pipelineEdit: PipelineSettingsUpdate;
+  setPipelineEdit: (p: PipelineSettingsUpdate) => void;
+  saving: string | null;
+  onSave: () => void;
+}) {
+  return (
+    <div className={cardCls}>
+      <h3 className={cardTitleCls}>物体检测（YOLO）</h3>
+      <p className={cardDescCls}>检测帧率 / GPU 批大小 / 推理分辨率 / 置信度与 IoU 阈值（批大小与分辨率直接决定 YOLO 显存峰值）</p>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>检测帧率 (detection_fps)</label>
+            <input type="number" min={1} max={30} step={1} value={pipelineEdit.detection_fps} placeholder="10"
+              onChange={(e) => setPipelineEdit({ ...pipelineEdit, detection_fps: e.target.value })}
+              className={inputCls} />
+            <p className={hintCls}>推荐 10；1-30</p>
+          </div>
+          <div>
+            <label className={labelCls}>YOLO 批大小 (detector_batch_size)</label>
+            <input type="number" min={1} max={512} step={1} value={pipelineEdit.detector_batch_size} placeholder="128"
+              onChange={(e) => setPipelineEdit({ ...pipelineEdit, detector_batch_size: e.target.value })}
+              className={inputCls} />
+            <p className={hintCls}>推荐 128；1-512</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>置信度阈值 (confidence_threshold)</label>
+            <input type="number" min={0.05} max={0.95} step={0.05} value={pipelineEdit.confidence_threshold} placeholder="0.4"
+              onChange={(e) => setPipelineEdit({ ...pipelineEdit, confidence_threshold: e.target.value })}
+              className={inputCls} />
+            <p className={hintCls}>推荐 0.4；0.05-0.95</p>
+          </div>
+          <div>
+            <label className={labelCls}>IoU 阈值 (iou_threshold)</label>
+            <input type="number" min={0.05} max={0.9} step={0.05} value={pipelineEdit.iou_threshold} placeholder="0.5"
+              onChange={(e) => setPipelineEdit({ ...pipelineEdit, iou_threshold: e.target.value })}
+              className={inputCls} />
+            <p className={hintCls}>推荐 0.5；0.05-0.9</p>
+          </div>
+        </div>
+        <div>
+          <label className={labelCls}>YOLO 推理分辨率 (yolo_imgsz)</label>
+          <input type="number" min={320} max={640} step={32} value={pipelineEdit.yolo_imgsz} placeholder="640"
+            onChange={(e) => setPipelineEdit({ ...pipelineEdit, yolo_imgsz: e.target.value })}
+            className={inputCls} />
+          <p className={hintCls}>推荐 640（32 倍数）；320-640。512 / 416 激活近似减半，检测精度略降</p>
+        </div>
+        <div className="flex justify-end">
+          <button onClick={onSave} disabled={saving === "detect"} className="g-btn g-btn-primary">
+            {saving === "detect" ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════ 模型参数：③ API 密钥与服务 ═══════════════════════ */
+function ApiKeysSection({
+  settings, providerEdit, setProviderEdit, apiKeyEdit, setApiKeyEdit, saving, onSave,
+}: {
+  settings: SettingsData | null;
+  providerEdit: Record<string, { base_url: string; model: string }>;
+  setProviderEdit: (p: Record<string, { base_url: string; model: string }>) => void;
+  apiKeyEdit: Record<string, string>;
+  setApiKeyEdit: (p: Record<string, string>) => void;
+  saving: string | null;
+  onSave: () => void;
+}) {
+  return (
+    <div className={cardCls}>
+      <h3 className={cardTitleCls}>API 密钥与服务</h3>
+      <p className={cardDescCls}>摘要 vlm_llm 模式使用；端点 + 模型名 + 密钥均可改（密钥留空则保持不变）</p>
+      <div className="space-y-4">
+        {PROVIDER_IDS.map((pid) => {
+          const keyInfo = settings?.api_keys?.[pid];
+          const edit = providerEdit[pid] ?? { base_url: "", model: "" };
+          return (
+            <div key={pid} className="border border-[var(--color-border-light)] rounded-lg p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-[var(--color-text-secondary)]">{keyInfo?.label ?? pid}</span>
+                <span className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-dim)]">
+                  <span className={`inline-block w-2 h-2 rounded-full ${keyInfo?.configured ? "bg-[var(--color-accent-green)]" : "bg-gray-300"}`} />
+                  {keyInfo?.configured ? `已配置 · ${keyInfo.masked_value}` : "密钥未配置"}
+                </span>
+              </div>
+              <div>
+                <label className={labelCls}>接口地址 (Base URL)</label>
+                <input type="text" value={edit.base_url} placeholder="https://..."
+                  onChange={(e) => setProviderEdit({ ...providerEdit, [pid]: { ...providerEdit[pid], base_url: e.target.value } })}
+                  className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>模型名</label>
+                <input type="text" value={edit.model} placeholder={pid === "dashscope" ? "qwen-vl-max" : "deepseek-chat"}
+                  onChange={(e) => setProviderEdit({ ...providerEdit, [pid]: { ...providerEdit[pid], model: e.target.value } })}
+                  className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>API 密钥（{PROVIDER_HINT[pid]}）</label>
+                <input type="password" placeholder={keyInfo?.configured ? "••••••••（留空保持不变）" : "未配置"}
+                  value={apiKeyEdit[pid] ?? ""}
+                  onChange={(e) => setApiKeyEdit({ ...apiKeyEdit, [pid]: e.target.value })}
+                  className={inputCls} />
+              </div>
+            </div>
+          );
+        })}
+        <div className="flex justify-end">
+          <button onClick={onSave} disabled={saving === "keys"} className="g-btn g-btn-primary">
+            {saving === "keys" ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function SettingsPage({
   section,
@@ -263,359 +673,75 @@ export function SettingsPage({
     finally { setSaving(null); }
   };
 
-  /* ── 统一样式（对齐工作台设计变量）── */
-  const cardCls = "bg-white rounded-[var(--radius-lg)] border border-[var(--color-border-light)] shadow-[var(--shadow-card)] p-6";
-  const inputCls = "w-full px-3 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-text-primary)] placeholder:text-gray-400 outline-none focus:border-[var(--color-accent-blue)] focus:ring-2 focus:ring-teal-600/15 transition-colors";
-  const inputSmCls = "w-full px-2 py-1.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md text-xs text-[var(--color-text-primary)] placeholder:text-gray-400 outline-none focus:border-[var(--color-accent-blue)] focus:ring-1 focus:ring-teal-600/15 transition-colors";
-  const btnCls = "px-3 py-1.5 text-[11px] font-medium bg-[#0d9488] text-white rounded-md hover:bg-[#14b8a6] disabled:opacity-40 transition-colors cursor-pointer";
-  const labelCls = "text-xs text-[var(--color-text-muted)] mb-1.5 block";
-  const hintCls = "text-[10px] text-[var(--color-text-dim)] mt-1 leading-relaxed";
-  const cardTitleCls = "text-sm font-semibold text-[var(--color-text-primary)] mb-1";
-  const cardDescCls = "text-[11px] text-[var(--color-text-dim)] mb-4 leading-relaxed";
-  const navItemCls = (active: boolean) =>
-    `w-full text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-colors cursor-pointer ${
-      active
-        ? "bg-white text-[var(--color-accent-blue)] border border-[var(--color-border-light)] shadow-[var(--shadow-sm)]"
-        : "text-[var(--color-text-muted)] hover:bg-white hover:text-[var(--color-text-primary)]"
-    }`;
-
   return (
-    <div className="h-full bg-[var(--color-page-bg)] overflow-y-auto">
+    <div className="h-full overflow-y-auto">
       {/* 内容（子页切换由左侧导航控制，见 AppContext settingsTab） */}
-      <div className="px-6 pt-6 pb-10 max-w-[900px]">
+      <div className="p-2">
+        <div className="space-y-4 max-w-[900px]">
           {loading ? (
             <div className="space-y-4">
               <div className={`${cardCls} h-44 animate-pulse`} />
               <div className={`${cardCls} h-72 animate-pulse`} />
             </div>
           ) : section === "model" ? (
-            /* ════════ 模型参数：编码 + 检测 ════════ */
+            /* ════════ 模型参数：编码 + 物体检测 + API 密钥与服务 ════════ */
             <div className="space-y-4">
-              {/* ── 编码（Embedder）── */}
-              <div className={cardCls}>
-                <h3 className={cardTitleCls}>编码（Embedder）</h3>
-                <p className={cardDescCls}>三档编码模板可各调分辨率与批大小（placeholder 为推荐值）；参数面板选档 = 用该档值。分辨率 224-960，批大小 8-1024（8 倍数）</p>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className={labelCls}>默认编码预设 (default_encode_profile)</label>
-                      <select value={pipelineEdit.default_encode_profile}
-                        onChange={(e) => setPipelineEdit((p) => ({ ...p, default_encode_profile: e.target.value }))}
-                        className={inputCls}>
-                        <option value="">跟随 config.yaml</option>
-                        {ENCODE_PROFILE_IDS.map((pid) => (
-                          <option key={pid} value={pid}>{ENCODE_PROFILE_LABEL[pid]}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className={labelCls}>Embedder 量化 (quantization)</label>
-                      <select value={pipelineEdit.quantization}
-                        onChange={(e) => setPipelineEdit((p) => ({ ...p, quantization: e.target.value }))}
-                        className={inputCls}>
-                        <option value="">跟随 config.yaml</option>
-                        <option value="none">none（FP16，质量最好）</option>
-                        <option value="8bit">8bit（~8GB，推荐 24GB）</option>
-                        <option value="4bit">4bit（~4GB，最省）</option>
-                      </select>
-                      <p className={hintCls}>⚠️ 需重启后端；8bit/4bit 需 pip install bitsandbytes</p>
-                    </div>
-                  </div>
-
-                  {/* 三档模板表格 */}
-                  <div>
-                    <label className={labelCls}>三档编码模板（分辨率宽 × 高 / 批大小）</label>
-                    <div className="border border-[var(--color-border-light)] rounded-lg overflow-hidden">
-                      <div className="grid grid-cols-[96px_1fr_1fr_1fr] gap-2 px-3 py-2 bg-[var(--color-surface)] text-[10px] text-[var(--color-text-dim)] font-medium">
-                        <span>档位</span><span>分辨率宽</span><span>分辨率高</span><span>批大小</span>
-                      </div>
-                      {ENCODE_PROFILE_IDS.map((pid) => {
-                        const p = profileEdit[pid] ?? {};
-                        const rec = ENCODE_PROFILE_RECOMMEND[pid];
-                        return (
-                          <div key={pid} className="grid grid-cols-[96px_1fr_1fr_1fr] gap-2 px-3 py-2 border-t border-[var(--color-border-light)]">
-                            <span className="text-xs font-medium text-[var(--color-text-secondary)] self-center">{ENCODE_PROFILE_LABEL[pid]}</span>
-                            <input type="number" min={224} max={960} step={1} value={p.encode_width}
-                              placeholder={String(rec.encode_width)}
-                              onChange={(e) => setProfileEdit((prev) => ({ ...prev, [pid]: { ...prev[pid], encode_width: e.target.value } }))}
-                              className={inputSmCls} />
-                            <input type="number" min={224} max={960} step={1} value={p.encode_height}
-                              placeholder={String(rec.encode_height)}
-                              onChange={(e) => setProfileEdit((prev) => ({ ...prev, [pid]: { ...prev[pid], encode_height: e.target.value } }))}
-                              className={inputSmCls} />
-                            <input type="number" min={8} max={1024} step={8} value={p.encode_batch_size}
-                              placeholder={String(rec.encode_batch_size)}
-                              onChange={(e) => setProfileEdit((prev) => ({ ...prev, [pid]: { ...prev[pid], encode_batch_size: e.target.value } }))}
-                              className={inputSmCls} />
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <p className={hintCls}>留空 = 该档该字段保持 config 默认；保存后参数面板选档即生效该档模板</p>
-                  </div>
-
-                  <div className="flex justify-end">
-                    <button onClick={saveEncode} disabled={saving === "encode"} className={btnCls}>
-                      {saving === "encode" ? "保存中..." : "保存"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── 物体检测（YOLO）── */}
-              <div className={cardCls}>
-                <h3 className={cardTitleCls}>物体检测（YOLO）</h3>
-                <p className={cardDescCls}>检测帧率 / GPU 批大小 / 推理分辨率 / 置信度与 IoU 阈值（批大小与分辨率直接决定 YOLO 显存峰值）</p>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className={labelCls}>检测帧率 (detection_fps)</label>
-                      <input type="number" min={1} max={30} step={1} value={pipelineEdit.detection_fps} placeholder="10"
-                        onChange={(e) => setPipelineEdit((p) => ({ ...p, detection_fps: e.target.value }))}
-                        className={inputCls} />
-                      <p className={hintCls}>推荐 10；1-30</p>
-                    </div>
-                    <div>
-                      <label className={labelCls}>YOLO 批大小 (detector_batch_size)</label>
-                      <input type="number" min={1} max={512} step={1} value={pipelineEdit.detector_batch_size} placeholder="128"
-                        onChange={(e) => setPipelineEdit((p) => ({ ...p, detector_batch_size: e.target.value }))}
-                        className={inputCls} />
-                      <p className={hintCls}>推荐 128；1-512</p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className={labelCls}>置信度阈值 (confidence_threshold)</label>
-                      <input type="number" min={0.05} max={0.95} step={0.05} value={pipelineEdit.confidence_threshold} placeholder="0.4"
-                        onChange={(e) => setPipelineEdit((p) => ({ ...p, confidence_threshold: e.target.value }))}
-                        className={inputCls} />
-                      <p className={hintCls}>推荐 0.4；0.05-0.95</p>
-                    </div>
-                    <div>
-                      <label className={labelCls}>IoU 阈值 (iou_threshold)</label>
-                      <input type="number" min={0.05} max={0.9} step={0.05} value={pipelineEdit.iou_threshold} placeholder="0.5"
-                        onChange={(e) => setPipelineEdit((p) => ({ ...p, iou_threshold: e.target.value }))}
-                        className={inputCls} />
-                      <p className={hintCls}>推荐 0.5；0.05-0.9</p>
-                    </div>
-                  </div>
-                  <div>
-                    <label className={labelCls}>YOLO 推理分辨率 (yolo_imgsz)</label>
-                    <input type="number" min={320} max={640} step={32} value={pipelineEdit.yolo_imgsz} placeholder="640"
-                      onChange={(e) => setPipelineEdit((p) => ({ ...p, yolo_imgsz: e.target.value }))}
-                      className={inputCls} />
-                    <p className={hintCls}>推荐 640（32 倍数）；320-640。512 / 416 激活近似减半，检测精度略降</p>
-                  </div>
-                  <div className="flex justify-end">
-                    <button onClick={saveDetect} disabled={saving === "detect"} className={btnCls}>
-                      {saving === "detect" ? "保存中..." : "保存"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : section === "api" ? (
-            /* ════════ API 密钥与服务 ════════ */
-            <div className={cardCls}>
-              <h3 className={cardTitleCls}>API 密钥与服务</h3>
-              <p className={cardDescCls}>摘要 vlm_llm 模式使用；端点 + 模型名 + 密钥均可改（密钥留空则保持不变）</p>
-              <div className="space-y-4">
-                {PROVIDER_IDS.map((pid) => {
-                  const keyInfo = settings?.api_keys?.[pid];
-                  const edit = providerEdit[pid] ?? { base_url: "", model: "" };
-                  return (
-                    <div key={pid} className="border border-[var(--color-border-light)] rounded-lg p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-[var(--color-text-secondary)]">{keyInfo?.label ?? pid}</span>
-                        <span className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-dim)]">
-                          <span className={`inline-block w-2 h-2 rounded-full ${keyInfo?.configured ? "bg-[var(--color-accent-green)]" : "bg-gray-300"}`} />
-                          {keyInfo?.configured ? `已配置 · ${keyInfo.masked_value}` : "密钥未配置"}
-                        </span>
-                      </div>
-                      <div>
-                        <label className={labelCls}>接口地址 (Base URL)</label>
-                        <input type="text" value={edit.base_url} placeholder="https://..."
-                          onChange={(e) => setProviderEdit((p) => ({ ...p, [pid]: { ...p[pid], base_url: e.target.value } }))}
-                          className={inputCls} />
-                      </div>
-                      <div>
-                        <label className={labelCls}>模型名</label>
-                        <input type="text" value={edit.model} placeholder={pid === "dashscope" ? "qwen-vl-max" : "deepseek-chat"}
-                          onChange={(e) => setProviderEdit((p) => ({ ...p, [pid]: { ...p[pid], model: e.target.value } }))}
-                          className={inputCls} />
-                      </div>
-                      <div>
-                        <label className={labelCls}>API 密钥（{PROVIDER_HINT[pid]}）</label>
-                        <input type="password" placeholder={keyInfo?.configured ? "••••••••（留空保持不变）" : "未配置"}
-                          value={apiKeyEdit[pid] ?? ""}
-                          onChange={(e) => setApiKeyEdit((p) => ({ ...p, [pid]: e.target.value }))}
-                          className={inputCls} />
-                      </div>
-                    </div>
-                  );
-                })}
-                <div className="flex justify-end">
-                  <button onClick={saveKeys} disabled={saving === "keys"} className={btnCls}>
-                    {saving === "keys" ? "保存中..." : "保存"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : section === "presets" ? (
-            /* ════════ 参数预设 ════════ */
-            <div className="space-y-4">
-              {/* ── 保存当前参数为新预设 ── */}
-              <div className={cardCls}>
-                <h3 className={cardTitleCls}>保存当前参数为新预设</h3>
-                <p className={cardDescCls}>把当前生效的管道性能 / 模型参数存成一套命名快照（未保存的编辑请先点对应卡片「保存」）；预设不含存储路径与 API 密钥</p>
-                <div className="flex gap-3">
-                  <input type="text" value={newPresetName} placeholder="如：开发机 GB10 / 24GB 推荐"
-                    onChange={(e) => setNewPresetName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleCreatePreset(); }}
-                    className={inputCls} />
-                  <button onClick={handleCreatePreset} disabled={saving === "preset-create"}
-                    className={`${btnCls} flex-shrink-0`}>
-                    {saving === "preset-create" ? "保存中..." : "保存为新预设"}
-                  </button>
-                </div>
-              </div>
-
-              {/* ── 已有预设 ── */}
-              <div className={cardCls}>
-                <h3 className={cardTitleCls}>已有预设</h3>
-                <p className={cardDescCls}>一键套用任意一套参数（写入当前生效配置；量化需重启后端）</p>
-                {presets.length === 0 ? (
-                  <p className="text-xs text-[var(--color-text-dim)] py-2">暂无预设，先在上方保存一套</p>
-                ) : (
-                  <div className="space-y-2">
-                    {presets.map((p) => {
-                      const isRenaming = renamingId === p.id;
-                      return (
-                        <div key={p.id} className="border border-[var(--color-border-light)] rounded-lg p-3 flex items-center gap-3">
-                          {isRenaming ? (
-                            <input type="text" value={renameValue} autoFocus
-                              onChange={(e) => setRenameValue(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") handleRenamePreset(p);
-                                if (e.key === "Escape") setRenamingId(null);
-                              }}
-                              className={`${inputCls} flex-1`} />
-                          ) : (
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-medium text-[var(--color-text-primary)] truncate">{p.name}</div>
-                              <div className="text-[10px] text-[var(--color-text-dim)]">
-                                {p.created_at ? fmtFullDate(p.created_at) : ""}
-                              </div>
-                            </div>
-                          )}
-                          {!isRenaming && (
-                            <button onClick={() => handleApplyPreset(p)} disabled={saving === `apply-${p.id}`}
-                              className="px-2.5 py-1 text-[11px] font-medium bg-[#0d9488] text-white rounded-md hover:bg-[#14b8a6] disabled:opacity-40 transition-colors cursor-pointer flex-shrink-0">
-                              {saving === `apply-${p.id}` ? "套用中..." : "套用"}
-                            </button>
-                          )}
-                          {isRenaming ? (
-                            <button onClick={() => handleRenamePreset(p)} disabled={saving === `rename-${p.id}`}
-                              className="px-2.5 py-1 text-[11px] font-medium bg-[var(--color-accent-green)] text-white rounded-md hover:opacity-80 disabled:opacity-40 transition-colors cursor-pointer flex-shrink-0">
-                              确定
-                            </button>
-                          ) : (
-                            <button onClick={() => { setRenamingId(p.id); setRenameValue(p.name); }}
-                              className="px-2.5 py-1 text-[11px] font-medium border border-[var(--color-border)] rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] transition-colors cursor-pointer flex-shrink-0">
-                              重命名
-                            </button>
-                          )}
-                          <button onClick={() => handleDeletePreset(p)} disabled={saving === `del-${p.id}`}
-                            className="px-2.5 py-1 text-[11px] font-medium border border-red-200 rounded-md text-red-500 hover:bg-red-50 transition-colors cursor-pointer flex-shrink-0">
-                            删除
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              <EncoderSection
+                pipelineEdit={pipelineEdit}
+                setPipelineEdit={setPipelineEdit}
+                profileEdit={profileEdit}
+                setProfileEdit={setProfileEdit}
+                saving={saving}
+                onSave={saveEncode}
+              />
+              <DetectionSection
+                pipelineEdit={pipelineEdit}
+                setPipelineEdit={setPipelineEdit}
+                saving={saving}
+                onSave={saveDetect}
+              />
+              <ApiKeysSection
+                settings={settings}
+                providerEdit={providerEdit}
+                setProviderEdit={setProviderEdit}
+                apiKeyEdit={apiKeyEdit}
+                setApiKeyEdit={setApiKeyEdit}
+                saving={saving}
+                onSave={saveKeys}
+              />
             </div>
           ) : (
-            /* ════════ 系统：存储 + 管道 ════════ */
+            /* ════════ 系统设置：参数预设 + 存储路径 + 管道设置 ════════ */
             <div className="space-y-4">
-              {/* ── 存储路径 ── */}
-              <div className={cardCls}>
-                <h3 className={cardTitleCls}>存储路径</h3>
-                <p className={cardDescCls}>新上传的视频与处理制品存放目录，保存后新上传 / 转码 / 导出立即生效</p>
-                <div className="space-y-4">
-                  <div>
-                    <label className={labelCls}>视频目录</label>
-                    <input type="text" value={storageEdit.video_dir} placeholder="data/videos"
-                      onChange={(e) => setStorageEdit((p) => ({ ...p, video_dir: e.target.value }))}
-                      className={inputCls} />
-                  </div>
-                  <div>
-                    <label className={labelCls}>制品目录</label>
-                    <input type="text" value={storageEdit.artifact_dir} placeholder="data/artifacts"
-                      onChange={(e) => setStorageEdit((p) => ({ ...p, artifact_dir: e.target.value }))}
-                      className={inputCls} />
-                  </div>
-                  <div className="flex justify-end">
-                    <button onClick={saveStorage} disabled={saving === "storage"} className={btnCls}>
-                      {saving === "storage" ? "保存中..." : "保存"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── 管道（解码 / chunk / 并发）── */}
-              <div className={cardCls}>
-                <h3 className={cardTitleCls}>管道</h3>
-                <p className={cardDescCls}>解码与编码路径开关、并发管道上限（低显存机器防批量并发 OOM；留空并保存恢复配置默认）</p>
-                <div className="space-y-4">
-                  <div className="flex gap-6">
-                    <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] cursor-pointer">
-                      <input type="checkbox" checked={!!pipelineEdit.use_nvdec}
-                        onChange={(e) => setPipelineEdit((p) => ({ ...p, use_nvdec: e.target.checked }))}
-                        className="w-3.5 h-3.5 accent-teal-600" />
-                      NVDEC 硬解
-                    </label>
-                    <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] cursor-pointer">
-                      <input type="checkbox" checked={!!pipelineEdit.chunk_encoding}
-                        onChange={(e) => setPipelineEdit((p) => ({ ...p, chunk_encoding: e.target.checked }))}
-                        className="w-3.5 h-3.5 accent-teal-600" />
-                      chunk 编码
-                    </label>
-                  </div>
-                  <div>
-                    <label className={labelCls}>并发管道上限 (max_concurrent_videos)</label>
-                    <input type="number" min={0} max={16} step={1} value={pipelineEdit.max_concurrent_videos} placeholder="0"
-                      onChange={(e) => setPipelineEdit((p) => ({ ...p, max_concurrent_videos: e.target.value }))}
-                      className={inputCls} />
-                    <p className={hintCls}>推荐 0（不限）；0-16。24GB 建议 1（激活峰值按并发数叠加）</p>
-                  </div>
-                  {/* 场景分割（v0.33：从参数面板高级参数移入，全局生效） */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className={labelCls}>采样帧率 (sample_fps)</label>
-                      <input type="number" min={0.5} max={3.0} step={0.1} value={pipelineEdit.sample_fps} placeholder="1.0"
-                        onChange={(e) => setPipelineEdit((p) => ({ ...p, sample_fps: e.target.value }))}
-                        className={inputCls} />
-                      <p className={hintCls}>TransNetV2 镜头分割采样帧率；0.5-3.0（留空恢复默认）</p>
-                    </div>
-                    <div>
-                      <label className={labelCls}>场景切换敏感度 (segment_threshold)</label>
-                      <input type="number" min={0.2} max={0.8} step={0.1} value={pipelineEdit.segment_threshold} placeholder="0.5"
-                        onChange={(e) => setPipelineEdit((p) => ({ ...p, segment_threshold: e.target.value }))}
-                        className={inputCls} />
-                      <p className={hintCls}>0.2 敏感 / 0.8 保守（留空恢复默认）</p>
-                    </div>
-                  </div>
-                  <div className="flex justify-end">
-                    <button onClick={saveSystem} disabled={saving === "system"} className={btnCls}>
-                      {saving === "system" ? "保存中..." : "保存"}
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <PresetSection
+                presets={presets}
+                newPresetName={newPresetName}
+                setNewPresetName={setNewPresetName}
+                renamingId={renamingId}
+                setRenamingId={setRenamingId}
+                renameValue={renameValue}
+                setRenameValue={setRenameValue}
+                saving={saving}
+                onCreate={handleCreatePreset}
+                onApply={handleApplyPreset}
+                onRename={handleRenamePreset}
+                onDelete={handleDeletePreset}
+              />
+              <StorageSection
+                storageEdit={storageEdit}
+                setStorageEdit={setStorageEdit}
+                saving={saving}
+                onSave={saveStorage}
+              />
+              <PipelineSection
+                pipelineEdit={pipelineEdit}
+                setPipelineEdit={setPipelineEdit}
+                saving={saving}
+                onSave={saveSystem}
+              />
             </div>
           )}
+        </div>
       </div>
 
       {/* 全局提示 */}

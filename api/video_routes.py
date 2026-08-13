@@ -28,6 +28,7 @@ from core.repository import (
     create_video, get_video_with_relations, get_video_by_external_file_id,
     list_videos, delete_video,
     list_file_roots, list_file_versions, resolve_file_id,
+    append_task_log,
 )
 from core.cancellation import mark_cancelled, unmark_cancelled
 from services.video_service import VideoService, RUNNING_VIDEOS
@@ -431,6 +432,7 @@ async def update_video_params(
             detector=getattr(request.app.state, "detector", None),
         )
         await request.app.state.pipeline_queue.enqueue("pipeline", {"video_id": str(video.id)})
+        await append_task_log(db, video.id, "参数已提交，任务入队")
         logger.info("[Params] video=%s full pipeline starting", video_id)
 
         # ★ 如果是组内视频，同组其他 pending 视频也应用相同参数并启动 pipeline
@@ -976,6 +978,9 @@ async def reanalyze_video(
         detector=getattr(request.app.state, "detector", None),
     )
     new_video = await service.create_reanalyze_version(video_id, payload)
+    # 日志生命周期：新版本行（不经过 create_video/PUT params，这里补写）
+    await append_task_log(db, new_video.id, "任务已创建（重新解析新版本）")
+    await append_task_log(db, new_video.id, "参数已提交，任务入队")
 
     queue = getattr(request.app.state, "pipeline_queue", None)
     if queue is not None:

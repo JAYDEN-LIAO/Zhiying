@@ -27,7 +27,7 @@ function Shell() {
       <div className="app-body">
         <Sidebar page={page} settingsTab={settingsTab} onNavigate={navigate} onNavigateSettings={navigateSettings} counts={counts} />
 
-        <main className={"app-main" + (page === "files" || page === "workbench" ? " app-main-flat" : "")}>
+        <main className={"app-main" + (page === "files" || page === "workbench" || page === "tasks" || page === "settings" ? " app-main-flat" : "")}>
           {page === "files" && <FileLibrary />}
           {page === "workbench" && <Workbench />}
           {page === "tasks" && <TaskCenter />}

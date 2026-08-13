@@ -417,6 +417,20 @@ export const api = {
   retryTask(taskId: string) {
     return request<{ ok: boolean }>(`${BASE}/tasks/${taskId}/retry`, { method: "POST" });
   },
+  /* ═══ 任务导出报告（v0.34） ═══ */
+  async exportTaskReport(taskId: string, fileName: string): Promise<void> {
+    const res = await fetch(`${BASE}/tasks/${taskId}/report`);
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.detail || `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    downloadFile(blob, `report_${sanitizeFile(fileName)}.md`);
+  },
+  async exportTasksBatch(taskIds: string[], zipName: string): Promise<void> {
+    const blob = await downloadBlob(`${BASE}/tasks/export-batch`, { task_ids: taskIds });
+    downloadFile(blob, zipName);
+  },
   /* ═══ 案例素材（图片等非视频） ═══ */
   getGroupAssets(groupId: string): Promise<{ videos: FileItem[]; images: CaseAssetItem[] }> {
     return request(`${BASE}/groups/${groupId}/assets`);
@@ -450,6 +464,11 @@ async function downloadBlob(url: string, body: unknown): Promise<Blob> {
 }
 
 /* ── Trigger browser file download from a Blob ── */
+
+/* 文件名清洗：去路径分隔符/控制字符，保留下划线连字符点 */
+function sanitizeFile(name: string): string {
+  return name.replace(/[\\/:"*?<>| -]/g, "_").slice(0, 80) || "task";
+}
 
 export function downloadFile(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);

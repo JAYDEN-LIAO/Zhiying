@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from core.models import (
     Video, Scene, VideoStatus, FrameEmbedding, Chunk, FrameDetection, Track,
-    VideoGroup,
+    VideoGroup, TaskLog,
 )
 from core.schemas import VideoCreate
 
@@ -60,11 +60,37 @@ async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video:
         await session.commit()
         await session.refresh(video)
         logger.info("[Repo] Video created: %s", video.id)
+        # 任务日志首行：任务生命周期起点（上传/平台注册/重解析等一切创建入口统一走这）
+        await append_task_log(session, video.id, "任务已创建（待配置参数）")
         return video
     except Exception:
         await session.rollback()
         logger.exception("[Repo] Failed to create video")
         raise
+
+
+# ──────────────────────────────────────────────────────────
+# 任务日志（v0.34）
+# ──────────────────────────────────────────────────────────
+
+async def append_task_log(
+    session: AsyncSession,
+    task_id: uuid.UUID | str,
+    message: str,
+    level: str = "info",
+) -> None:
+    """追加任务日志行（task_id = 版本行 videos.id）。供上传/参数/管道/重试全链路复用。"""
+    last = await session.execute(
+        select(func.max(TaskLog.seq)).where(TaskLog.task_id == task_id)
+    )
+    next_seq = int(last.scalar() or 0) + 1
+    session.add(TaskLog(
+        task_id=task_id,
+        seq=next_seq,
+        level=level,
+        message=message,
+    ))
+    await session.commit()
 
 
 # ──────────────────────────────────────────────────────────

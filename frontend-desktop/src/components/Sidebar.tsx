@@ -4,7 +4,7 @@
    系统/模型参数/参数预设/API 密钥，照 demo Layout 二级菜单拆出）
    ════════════════════════════════════════════════════════════ */
 
-import { IconFolder, IconVideo, IconTask, IconGear, IconSliders, IconHistory, IconInfo } from "./icons";
+import { IconFolder, IconVideo, IconTask, IconGear, IconSliders } from "./icons";
 import { SystemMonitor } from "./SystemMonitor";
 import type { SettingsTab } from "../AppContext";
 
@@ -23,10 +23,8 @@ const BUSINESS: NavItem[] = [
 ];
 
 const SETTINGS: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
-  { key: "system", label: "系统", icon: <IconGear /> },
+  { key: "system", label: "系统设置", icon: <IconGear /> },
   { key: "model", label: "模型参数", icon: <IconSliders /> },
-  { key: "presets", label: "参数预设", icon: <IconHistory /> },
-  { key: "api", label: "API 密钥", icon: <IconInfo /> },
 ];
 
 export function Sidebar({

@@ -583,23 +583,21 @@ class PipelineEngine:
         logger.info("[Pipeline] Loaded %d scenes from DB for incremental run", len(self.ctx.scenes))
 
     async def _set_processing(self) -> None:
-        """修改视频状态为 processing。"""
+        """修改视频状态为 processing，并记录处理开始时间（任务中心「耗时」）。"""
+        from datetime import datetime, timezone
         async with self.db_session_factory() as session:
             await session.execute(
                 update(Video)
                 .where(Video.id == self.video.id)
-                .values(status=VideoStatus.PROCESSING)
+                .values(
+                    status=VideoStatus.PROCESSING,
+                    processing_started_at=datetime.now(timezone.utc),
+                )
             )
             await session.commit()
 
     async def _log_task(self, message: str, level: str = "info") -> None:
         """追加任务日志行（v0.34，task_id = 版本行 video.id）。"""
-        from sqlalchemy import select, func
-        from core.models import TaskLog
+        from core.repository import append_task_log
         async with self.db_session_factory() as session:
-            last = await session.execute(
-                select(func.max(TaskLog.seq)).where(TaskLog.task_id == self.video.id)
-            )
-            next_seq = int(last.scalar() or 0) + 1
-            session.add(TaskLog(task_id=self.video.id, seq=next_seq, level=level, message=message))
-            await session.commit()
+            await append_task_log(session, self.video.id, message, level)

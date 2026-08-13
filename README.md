@@ -94,6 +94,9 @@ curl -X POST -H "Content-Type: application/json" \
 | 云智平台集成 (v0.24) | `POST /api/v1/videos/register-external`（平台共享文件就地引用，`source_owned=false` 删视频不删源文件）+ `POST /internal/yunzhi/jobs`（立即 202，进度/完成/失败回调，幂等）+ 前端 Bridge SDK | ✅ |
 | 平台文件 id 自动跳转 (v0.26) | `GET /api/v1/videos/external/{file_id}` — 平台文件库资源 ID 存入 `videos.external_file_id`（register-external + jobs 透传）；Bridge connect() 后凭 `context.resource.id` 自动打开对应视频历史详情（非文件入口/无匹配 → 默认工作台） | ✅ |
 | 桌面端启动器 + 桌面前端（v0.34 重构） | `desktop/` pywebview 壳（**frameless 自定义窗口外框** + 窗口控制/系统监控 js_api）+ `build_exe.ps1 -Deploy` 一键构建部署纯产品启动器 exe + `frontend-desktop/` 独立前端（**浅蓝管理后台主题 + 4 页模型：文件库/视频解析/任务中心/系统设置 + 工作台 SplitPane 分栏 + 系统监控**，`ZHIYING_FRONTEND=desktop` 挂载）+ 根目录 `update.bat` 一键自动更新 | ✅ |
+| 文件库 + 多版本解析 (v0.34) | `videos.file_id/version_no` 版本链（一次解析=一个版本行）+ `video_groups.number/owner` 案例编号/负责人 + `/groups /files /videos/{id}/versions /videos/{id}/reanalyze` 端点 + 案例素材 `/groups/{id}/assets` | ✅ |
+| 任务中心 (v0.34) | `GET /tasks` scope 过滤 + `/tasks/{id}/log` + `/tasks/{id}/retry`；**耗时** `processing_started_at`（排队不计入）；**日志生命周期** 上传/参数/重解析/管道/重试全链写入 `task_logs`；**导出报告** `GET /tasks/{id}/report`（Markdown）+ `POST /tasks/export-batch`（zip） | ✅ |
+| 桌面端页面组件裂解 (v0.34) | TaskCenter 裂解 TaskHeader/TaskBody；SettingsPage 4 子页收敛 2（系统设置=系统+参数预设，模型参数=模型参数+API密钥）+ 各页裂解子组件；卡片空隙靠透明根容器 + `app-main-flat` 透出渐变 | ✅ |
 
 ## Architecture Overview
 
@@ -270,7 +273,7 @@ zhiying/
 ├── config/               # YAML config, prompts, schema
 ├── deploy/               # 部署套件: setup_windows.ps1 (Windows 裸机一键安装) + setup_linux.sh (Linux 开发机一键安装) + download_models.py / deploy.md / deploy_feedback.md
 ├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开窗→日志面板→优雅关闭; desktop.bat 入口; build_exe.ps1 -Deploy 一键构建部署 exe)
-├── frontend-desktop/     # 桌面独立前端（v0.34 重构：浅蓝管理后台主题 + frameless 自定义窗口标题栏 + 4 页模型 文件库/视频解析/任务中心/系统设置 + AppContext 导航 + 工作台 SplitPane 分栏 + 系统监控；与服务器 frontend/ 完全隔离; desktop.bat 加载其 dist）
+├── frontend-desktop/     # 桌面独立前端（v0.34 重构：浅蓝管理后台主题 + frameless 自定义窗口标题栏 + 4 页模型 文件库/视频解析/任务中心/系统设置 + AppContext 导航 + 工作台 SplitPane 分栏 + 系统监控；TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2；与服务器 frontend/ 完全隔离; desktop.bat 加载其 dist）
 ├── frontend-shared/      # 双前端共享后端对接层 (api/types/labels/helpers 一份实现, 两端 services/api.ts 等是再导出指针; 后端接口/字段变更只改这里)
 ├── scripts/              # 运维工具: sweep_storage.py 存储清扫 CLI (默认 dry-run, --apply 执行) + bump_version.py 一键版本提升 + mock_yunzhi_platform.py (mock 平台回调服务器)
 └── docs/                 # Design documents + search architecture docs
@@ -279,6 +282,8 @@ zhiying/
 ## Development Status
 
 - **桌面端重构（未发版，桌面前端/部署侧）**: 浅蓝管理后台主题 + frameless 自定义窗口外框 + 4 页模型（文件库/视频解析/任务中心/系统设置，设置 4 子页拆入导航）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane 分栏）+ 系统监控（psutil）+ 根目录 `update.bat` 一键更新。
+- **文件库 + 多版本解析 + 任务中心（未发版）**: 后端 `videos.file_id/version_no` 版本链 + `video_groups.number/owner` + `task_logs` 表 + `/groups /files /versions /reanalyze /tasks` 端点；前端案例库/视频解析/任务中心界面重构；任务中心日志生命周期（上传→完成全链）+ 耗时（`processing_started_at`）+ 导出报告（Markdown/zip）。
+- **桌面端页面组件裂解（未发版）**: TaskCenter 裂解 TaskHeader/TaskBody（删删除按钮、失败任务导出报告左侧加重试、字段顺序 任务文件/版本/所属 + 耗时列）；SettingsPage 4 子页收敛 2（系统设置=系统+参数预设，模型参数=模型参数+API密钥）+ 每页裂解子组件；设置页根容器去白底 + `app-main-flat` 透渐变实现卡片空隙；设置保存按钮统一 `g-btn g-btn-primary`。
 - **v0.33（本次发版）— 摘要链路根治重构**: 场景数上限 `max_scenes`；caption 并发限流+失败降级+配置穿透；text_encode 批量；summary 输入预算截断；增量补摘要修复；keyframe 抽帧 resize；summary_mode 默认 vlm_llm。
 - **v0.32 — 全局任务队列**: `pipeline_queue.py` FIFO + worker 池 + `pipeline_tasks` 表持久化；批量上传排队防 OOM；重启恢复 + 排队中回调 + 幂等。
 - **桌面 EXE + 双部署路径（未发版）**: `build_exe.ps1 -Deploy` 一键打纯壳 exe + `setup_linux.sh`/`setup_windows.ps1` 补全 + bump 全机接入。详见 `deploy/deploy.md` / `desktop/README.md`。

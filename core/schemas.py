@@ -466,6 +466,7 @@ class TaskItem(BaseModel):
     params: dict | None = None
     created_at: datetime
     updated_at: datetime | None = None
+    duration_sec: float | None = None      # 真实处理时长（updated_at − processing_started_at）
 
 
 class GroupCreate(BaseModel):

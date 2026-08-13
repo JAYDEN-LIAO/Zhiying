@@ -22,7 +22,9 @@ api/export_routes.py       — Export endpoints: clip/frames/track/thumbnails (7
 api/face_routes.py          — Face data API (GET face/data + face/thumbnail; v0.29 track_to_identity 身份↔track 映射; v0.31 每身份返回 appearances 按 track 聚合时间段)
 api/plate_routes.py         — Plate data API (GET plate/data + plate/thumbnail)
 api/maintenance_routes.py  — 存储清扫端点 (POST /maintenance/sweep dry-run/执行, GET /maintenance/storage)
-core/models.py             — ORM: Video (+8 format fields + group_id FK), VideoGroup, Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection, PipelineTask (13 tables)
+api/tasks_routes.py        — 任务中心 API: GET /tasks (scope 过滤) + /tasks/{id}/log + /tasks/{id}/retry + 导出报告 (GET /tasks/{id}/report md + POST /tasks/export-batch zip, v0.34)
+api/groups_routes.py       — 案例/文件库 API: /groups CRUD + /files + /groups/{id}/assets 案例素材 (v0.34)
+core/models.py             — ORM: Video (+8 format fields + group_id/file_id/version_no + processing_started_at), VideoGroup (+number/owner), Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection, PipelineTask, TaskLog, CaseAsset (15 tables)
 core/schemas.py            — Pydantic v2 DTOs + JSONB validation models + FormatInfo/ProxyStatus
 core/interfaces.py         — 10 abstract base classes (ABCs) + Scene/VideoContext dataclasses
 core/search.py             — 6 search functions: frame/chunk/text/track/plate/face (async def)
@@ -68,6 +70,7 @@ services/video_service.py  — Pipeline 调用与后台调度 (RUNNING_VIDEOS �
 services/yunzhi_job_service.py — 云智任务执行: 建视频(source_owned=false)→管道→进度/完成/失败回调(httpx async with 内) + 默认参数映射
 services/format_service.py — 格式兼容: probe(ffprobe) / remux(容器标准化, -c copy) / proxy(按需h264_nvenc)
 services/export_service.py — 导出业务逻辑 (clip/frames/track/thumbnails zip)
+services/report_service.py — 任务导出报告: build_report_md() 聚合版本行信息/产物统计/日志 → Markdown (v0.34)
 utils/video_util.py        — FFmpeg 工具函数 + stream_frames() (NVDEC MJPEG pipe / cv2 fallback)
 utils/metadata.py          — 视频元数据提取 (pymediainfo → exiftool → ffprobe 三级)
 utils/video_source.py      — 视频来源分析: 规则引擎分类 phone/camera/surveillance/... + 监控品牌（文件头魔数嗅探 IMKH→海康威视, magic_bytes>filename>metadata）
@@ -87,7 +90,7 @@ frontend/src/utils/helpers.ts — 再导出指针 → frontend-shared/helpers (f
 frontend/src/services/api.ts — 再导出指针 → frontend-shared/api（API wrapper + 轮询辅助; 后端接口变更只改 frontend-shared）
 frontend/src/platform/        — 云智 Bridge SDK: yunzhi-bridge.ts/client.ts/YunzhiProvider/mock (VITE_YUNZHI_MOCK 切换真实/模拟; 仅服务器前端)
 frontend/src/types/index.ts — 再导出指针 → frontend-shared/types (mirrors backend schemas + ProxyStatus)
-frontend-desktop/             — 桌面独立前端（v0.34 重构：浅蓝管理后台主题 + frameless 自定义窗口标题栏 + 4 页模型 文件库/视频解析/任务中心/系统设置 + AppContext 导航 + 工作台 SplitPane 分栏 + 系统监控; 与服务器 frontend/ UI 完全隔离; 构建 cd frontend-desktop && npm run build; 加载经 ZHIYING_FRONTEND=desktop）
+frontend-desktop/             — 桌面独立前端（v0.34 重构：浅蓝管理后台主题 + frameless 自定义窗口标题栏 + 4 页模型 文件库/视频解析/任务中心/系统设置 + AppContext 导航 + 工作台 SplitPane 分栏 + 系统监控; TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2; 与服务器 frontend/ UI 完全隔离; 构建 cd frontend-desktop && npm run build; 加载经 ZHIYING_FRONTEND=desktop）
 scripts/sweep_storage.py   — 存储卫生清扫 CLI (默认 dry-run 只报告, --apply 执行, --json 机器可读)
 frontend-shared/           — 双前端共享后端对接层（api/types/labels/helpers 一份实现; frontend/ 与 frontend-desktop/ 各留 1 行再导出指针; 后端接口/字段变更只改这里）
 scripts/mock_yunzhi_platform.py — 本地 mock 云智平台回调服务器 (监听 /progress /complete /fail, 联调验证用)
@@ -113,6 +116,13 @@ desktop/                   — 桌面端启动器（pywebview 壳, Windows 桌�
     → 批量 DELETE videos 行 (DB ON DELETE CASCADE 级联 10 张子表)
     → 同事务空组清理 → commit → StorageManager 引用判定清盘 → 返回 freed_bytes
   孤儿清扫: POST /maintenance/sweep (dry_run 默认) / scripts/sweep_storage.py --apply
+
+文件库 / 多版本 / 任务中心 (v0.34):
+  POST /videos/upload → videos.file_id=uuid (首次) + version_no=1; POST /videos/{id}/reanalyze → 复制文件信息建新版本行 (file_id 同, version_no 递增) + 入队
+  GET /files → 每 file_id 一行 (根行信息 + 当前版本状态); GET /videos/{id}/versions → 同 file_id 全部版本行
+  PUT /params / reanalyze / retry → append_task_log 写 task_logs ("任务已创建/参数已提交/重新解析新版本/任务重试")
+  PipelineEngine._set_processing → videos.processing_started_at=now; mark_completed/failed → updated_at → 任务中心「耗时」= updated_at − processing_started_at
+  GET /tasks (scope) → 版本行列表; GET /tasks/{id}/log → task_logs; GET /tasks/{id}/report → Markdown; POST /tasks/export-batch → zip
 
 云智平台接入 (v0.24):
   POST /api/v1/videos/register-external → 平台共享文件就地引用 (source_owned=false, 删视频绝不 unlink 源文件; probe + 异步 remux 与上传同流程; 可选带 external_file_id)
@@ -149,6 +159,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **全局 GPU 锁**: 所有 GPU 前向（embedder 4 个 encode_* 与 YOLO detect，含模型加载/tracker 初始化/批量推理）必须持 `core/gpu_lock.gpu_lock`（`async with gpu_lock`）串行——24GB 机器上 YOLO 卷积与 8bit matmul 并发会触发 GPU 驱动硬故障（蓝屏/卡死）。锁只串行 GPU 计算，不串行 NVDEC 解码/DB。detection 攒批因此用 **128**（1024 长批持锁 ~20s 会饿死 embedder）。
 - **共享单实例**: embedder 与 detector 都在启动时预载到 `app.state`（detector 模型懒加载，首次 detect 才载 ~2GB，避免每视频重载），业务逻辑经 `shared_detector` 注入 PipelineEngine，禁用 `load_plugin("detector"/"embedder")` 重复实例化；captioner 按需加载。
 - **全局任务队列（v0.32）**: `core/pipeline_queue.py` PipelineQueue — FIFO + N worker（N=max_concurrent_videos，0/未设=1 串行）+ `pipeline_tasks` 表 DB 持久化。所有管道触发点（yunzhi jobs / 上传 params / 组同步 / 增量）统一入队，接口保持异步（jobs 202）。重启恢复：queued 重入队 / running yunzhi 续跑（防重复建视频）/ running pipeline 标失败；yunzhi payload_json 存回调 URL+token，恢复后照常发 complete/fail；入队即发"排队中"低进度回调。worker 数随设置运行时调整（configure）。
+- **任务中心（v0.34）**: `api/tasks_routes.py` + `services/report_service.py`。一次解析 = 一个版本行（videos 行），任务中心列表按 scope 过滤（all/active/history）；「耗时」= `updated_at − processing_started_at`（管道开跑才计时，排队不计入，重试重置）；**日志生命周期**：所有写入统一走 `core/repository.append_task_log`（task_logs 表，seq 递增）——覆盖 create_video（"任务已创建"）、PUT params（"参数已提交，任务入队"）、reanalyze（"重新解析新版本"）、engine（管道开始/完成/失败）、retry（"任务重试"）；导出报告 = `GET /tasks/{id}/report`（Markdown 下载，中文文件名 URL 编码）+ `POST /tasks/export-batch`（zip 打包，Python 3.13 zipfile 自动 UTF-8 中文名），产物表统计单表异常降级不阻塞整份报告。
 - **配置模板化 + 自动降级**: `config/config.yaml` **机器相关、gitignored、不入库**（v0.25.1 起；模板 `config/config.yaml.example`，新机复制后自改路径/密钥）——embedder 相对模型路径自动解析到项目根；captioner 配 `qwen3_vl` 但本地 8B 模型缺失 → `load_config()` 自动降级 `qwen_api`（DashScope，打 WARNING），摘要模式由 `runners/base.py effective_summary_mode()` 兜底 `native_video→vlm_llm`。**摘要默认 vlm_llm**（native_video 已置灰退役，前端不再可选；模板 captioner 默认 `qwen_api`，本地 captioner 8B 不再下载）。无需 `config.windows.yaml` / `ZHIYING_CONFIG`（后者仅保留为自定义配置覆盖入口）。
 - **向量维度**: 4096（人脸 512）; 无 pgvector HNSW（超 2000 上限，demo 规模全扫描 <1ms）。
 - **DB 连接读 config（v0.27 起）**: `core/db.py` 连接地址解析顺序 = **环境变量 `POSTGRES_URI` → config.yaml 的 `database.uri` → 兜底 5432**（不再有"忽略 config 的硬编码"陷阱）。服务器 2026-08-08 因系统 postgres 抢 5432 迁到 **5433**（config.yaml `database.uri=5433`；start.sh 的 POSTGRES_URI=5433 冗余但无害）。新部署机在 config.yaml 配好 `database.uri` 即可。
@@ -157,7 +168,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **4 级参数系统**: L1 场景 → L2 感知模块 → L3 功能开关 → L4 高级参数; detection 双门控（config backend + per-video），face/plate 三门控（+face_enabled/plate_enabled）。
 - **DAG 扩展**: 新感知模块 = 新 runner + `operations.py` 一个 Operation 条目，engine.py 零改动。
 - **摘要双模式（native_video 已置灰退役）**: vlm_llm（API, 默认）/ native_video（本地 GPU + Python 聚合器, 前端置灰不可选, 后端代码保留仅兼容历史记录）; 切换封装在 runner 内部; `summary_mode` 变更需新建记录（不可增量）。
-- **双前端共存 + 共享对接层**: `frontend/`（服务器, v0.28 云智嵌入 UI）+ `frontend-desktop/`（桌面独立前端）UI 层完全隔离, 共用同一后端; main.py 按 `ZHIYING_FRONTEND` 切挂载（默认服务器, 桌面启动器传 desktop）。**后端对接层 `frontend-shared/`（api/types/labels/helpers）一份实现, 双端各留再导出指针复用**——后端接口/字段变更只改共享目录一处, 两端自动同步, 无「改两遍」负担。UI 层各自演进不共享。**桌面端（v0.34）结构**：`AppContext` 持有跨页导航（page/selectedVideoId/settingsTab）+ 共享视频列表轮询 + 上传/删除/拖拽编排；4 页模型（FileLibrary 文件库 / Workbench 视频解析 / TaskCenter 任务中心 / SettingsPage 系统设置）；TitleBar 自绘标题栏（`pywebview-drag-region` 拖拽 + 窗口控制经 js_api）；SplitPane 可拖拽分栏（自智影 v2 demo 移植）；SystemMonitor 底部真机监控（等 `pywebviewready` 再轮询 `get_system_stats`）。**发布**：根目录 `update.bat` 一键自动更新（Windows）。
+- **双前端共存 + 共享对接层**: `frontend/`（服务器, v0.28 云智嵌入 UI）+ `frontend-desktop/`（桌面独立前端）UI 层完全隔离, 共用同一后端; main.py 按 `ZHIYING_FRONTEND` 切挂载（默认服务器, 桌面启动器传 desktop）。**后端对接层 `frontend-shared/`（api/types/labels/helpers）一份实现, 双端各留再导出指针复用**——后端接口/字段变更只改共享目录一处, 两端自动同步, 无「改两遍」负担。UI 层各自演进不共享。**桌面端（v0.34）结构**：`AppContext` 持有跨页导航（page/selectedVideoId/settingsTab）+ 共享视频列表轮询 + 上传/删除/拖拽编排；4 页模型（FileLibrary 文件库 / Workbench 视频解析 / TaskCenter 任务中心 / SettingsPage 系统设置）；TitleBar 自绘标题栏（`pywebview-drag-region` 拖拽 + 窗口控制经 js_api）；SplitPane 可拖拽分栏（自智影 v2 demo 移植）；SystemMonitor 底部真机监控（等 `pywebviewready` 再轮询 `get_system_stats`）。**页面组件裂解（与后端任务中心/设置新架构对齐）**：TaskCenter 裂解为 TaskHeader（顶部卡）+ TaskBody（正文卡，筛选 Tab + 表格 + 日志弹窗，4s 轮询）；SettingsPage 4 子页收敛为 2（系统设置=系统+参数预设，模型参数=模型参数+API密钥），每页再裂解为子组件（系统设置 PresetSection/StorageSection/PipelineSection，模型参数 EncoderSection/DetectionSection/ApiKeysSection），样式类模块级复用、state 留主组件、子组件纯展示+回调；**卡片空隙**靠外层 `app-main-flat` 透明背景 + 页面根容器透明（不透明白底会挡死渐变，TaskCenter/FileLibrary/SettingsPage 根容器均透明）实现渐变透出。**发布**：根目录 `update.bat` 一键自动更新（Windows）。
 - **多格式两层**: remux（容器标准化, -c copy）+ proxy（NVENC h264, 按需懒生成）; 管道优先读 remuxed; proxy 永不主动生成。
 - **NVDEC**: MJPEG pipe（~100KB/帧）默认启用，自动 fallback cv2。
 - **ReID 双层**: 在线 BoT-SORT with_reid（`config/botsort.yaml` `model: "models/yolo26n-cls.pt"` 本地外观模型——实测 ultralytics 8.4.115 的 `auto` 仍会从 GitHub 下载，故本地预置避免运行时下载）+ 全局 tracklet 缝合（crop mean pool → cosine ≥0.85 + 同类 + 时序不重叠）; 缝合完成后修改需新建记录。
@@ -172,7 +183,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | Table | Key Columns | Purpose |
 |---|---|---|
 | `video_groups` | id(UUID PK), name, created_at, updated_at | 视频分组 — 批量上传时自动创建，组内单个视频删除自动清理空组 |
-| `videos` | id, status, progress, status_detail, summary(JSONB), content_type, summary_mode (native_video/vlm_llm), perception switches (vision/audio/ocr/grounding/caption/detection_enabled/summary_enabled), function switches (search_index_enabled), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail, encode_profile), language, format fields (container_format, video_codec, audio_codec, has_audio, remuxed_path, proxy_path, proxy_status, proxy_progress), **source_owned**(平台共享文件=false, 删视频不删源文件), **group_id(UUID FK → video_groups.id)**, **external_file_id**(平台文件库资源ID, 前端自动跳转用, v0.26) | Video master |
+| `videos` | id, status, progress, status_detail, summary(JSONB), content_type, summary_mode (native_video/vlm_llm), perception switches (vision/audio/ocr/grounding/caption/detection_enabled/summary_enabled), function switches (search_index_enabled), advanced params (sample_fps, segment_threshold, caption_with_context, summary_detail, encode_profile), language, format fields (container_format, video_codec, audio_codec, has_audio, remuxed_path, proxy_path, proxy_status, proxy_progress), **source_owned**(平台共享文件=false, 删视频不删源文件), **group_id(UUID FK → video_groups.id)**, **external_file_id**(平台文件库资源ID, 前端自动跳转用, v0.26), **file_id+version_no**(版本链: 同文件多版本行, v0.34), **processing_started_at**(管道开始处理时间, 任务中心「耗时」数据源, v0.34) | Video master |
 | `scenes` | id, video_id(FK), scene_index, text_embedding(Vector4096), caption, ocr_text, aligned_transcript, entities(JSONB) | Core search grain (text_embedding = caption+ocr+transcript 语义) |
 | `transcripts` | id, video_id(FK, UNIQUE), full_text, words(JSONB) | Speech transcripts |
 | `frame_embeddings` | id, video_id(FK), timestamp_sec, embedding(Vector4096), is_keyframe | 1fps frame vectors |
@@ -184,9 +195,10 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 | `face_detections` | id, video_id(FK), identity_id(FK), track_id, timestamp_sec, bbox(JSONB), quality_score, face_embedding(Vector512) | Per-frame face detections, linked to YOLO person tracks |
 | `plate_detections` | id, video_id(FK), track_id, class_name, timestamp_sec, plate_text, plate_type, char_confidences(JSONB), bbox(JSONB), detection_confidence | HyperLPR3 license plate recognition results (per-vehicle-track, pre-ReID merge) |
 | `pipeline_tasks` | id(UUID PK), type(yunzhi_job/pipeline/incremental), dedup_key, video_id, payload_json(Text), status(queued/running/completed/failed), error, created_at, updated_at | 全局任务队列持久化（v0.32）— 重启恢复 + 幂等查重 + 回调 URL/token 存档 |
+| `task_logs` | id(SERIAL PK), task_id(UUID=版本行 videos.id), seq, level, message, created_at | 任务生命周期日志（v0.34）— 上传/参数/重解析/管道/重试各点写入，任务中心展示 |
 
 ## Current Implementation Status
-**已完成**：Pipeline DAG(15 ops) / 4-path 编码 / Detection+Tracking(双层 ReID) / 7-path 搜索+图搜 / 人脸+车牌识别 / 双模式摘要(vlm_llm 默认) / 多格式(remux+proxy) / 存储卫生 / 4级参数+增量 / 系统设置+参数预设 / 全局 GPU 锁+共享实例 / 任务队列(v0.32) / 云智嵌入 UI / 桌面端启动器+前端(v0.34 重构) / 生产部署 / OCR 设计(docs/ocr.md)。关键实现文件见上方 Quick File Map。
+**已完成**：Pipeline DAG(15 ops) / 4-path 编码 / Detection+Tracking(双层 ReID) / 7-path 搜索+图搜 / 人脸+车牌识别 / 双模式摘要(vlm_llm 默认) / 多格式(remux+proxy) / 存储卫生 / 4级参数+增量 / 系统设置+参数预设 / 全局 GPU 锁+共享实例 / 任务队列(v0.32) / 文件库+多版本解析+任务中心(v0.34: 版本行=一次解析, 日志生命周期, 耗时, 导出报告) / 云智嵌入 UI / 桌面端启动器+前端(v0.34 重构+页面组件裂解) / 生产部署 / OCR 设计(docs/ocr.md)。关键实现文件见上方 Quick File Map。
 
 **待办**：OCR 实现 / Grounding(Florence-2)。
 

@@ -294,6 +294,7 @@ export interface TaskItem {
   params: Record<string, unknown> | null;
   created_at: string;
   updated_at: string | null;
+  duration_sec: number | null;          // 真实处理时长（秒）
 }
 
 export interface TaskLogLine {
