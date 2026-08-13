@@ -280,7 +280,7 @@ export function SettingsPage({
     }`;
 
   return (
-    <div className="flex-1 min-h-0 bg-[var(--color-page-bg)] overflow-y-auto">
+    <div className="h-full bg-[var(--color-page-bg)] overflow-y-auto">
       {/* 内容（子页切换由左侧导航控制，见 AppContext settingsTab） */}
       <div className="px-6 pt-6 pb-10 max-w-[900px]">
           {loading ? (
