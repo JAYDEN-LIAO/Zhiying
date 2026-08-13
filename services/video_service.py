@@ -11,11 +11,11 @@ VideoService 作为 Pipeline 的调用方，负责:
 import uuid
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.models import Video
-from core.schemas import VideoCreate, VideoResponse
+from core.schemas import VideoCreate, VideoResponse, PipelineParams
 from core.config_loader import load_config
 from core.repository import create_video
 from core.status_tracker import StatusTracker
@@ -56,6 +56,67 @@ class VideoService:
         async with self.db_session_factory() as session:
             video = await create_video(session, dto)
         return VideoResponse.model_validate(video)
+
+    async def create_reanalyze_version(
+        self, video_id: uuid.UUID, params: PipelineParams,
+    ) -> Video:
+        """为已有视频创建新版本行（v0.34 多版本解析）。
+
+        - 源视频 file_id 为 NULL（独立文件）→ 生成 file_id 并回写源行 version_no=1
+        - 版本号 = 该 file_id 下 max(version_no)+1
+        - 新行复制文件信息 + 写入请求参数，返回（由路由负责入队管道）
+        """
+        async with self.db_session_factory() as session:
+            result = await session.execute(select(Video).where(Video.id == video_id))
+            src = result.scalar_one_or_none()
+            if src is None:
+                raise ValueError("源视频不存在")
+
+            file_id = src.file_id
+            if file_id is None:
+                file_id = uuid.uuid4()
+                src.file_id = file_id
+                src.version_no = 1
+                await session.flush()
+
+            max_row = await session.execute(
+                select(func.max(Video.version_no)).where(Video.file_id == file_id)
+            )
+            new_no = int(max_row.scalar() or 1) + 1
+
+            new_video = Video(
+                file_path=src.file_path,
+                file_name=src.file_name,
+                file_size=src.file_size,
+                source_owned=src.source_owned,
+                external_file_id=src.external_file_id,
+                group_id=src.group_id,
+                file_id=file_id,
+                version_no=new_no,
+                # 请求参数（L1-L4）
+                content_type=params.content_type,
+                language=params.language,
+                vision_enabled=params.vision_enabled,
+                audio_enabled=params.audio_enabled,
+                ocr_enabled=params.ocr_enabled,
+                caption_enabled=params.caption_enabled,
+                detection_enabled=params.detection_enabled,
+                detection_classes=params.detection_classes,
+                face_enabled=params.face_enabled,
+                plate_enabled=params.plate_enabled,
+                summary_enabled=params.summary_enabled,
+                summary_mode=params.summary_mode,
+                search_index_enabled=params.search_index_enabled,
+                sample_fps=params.sample_fps,
+                segment_threshold=params.segment_threshold,
+                caption_with_context=params.caption_with_context,
+                summary_detail=params.summary_detail,
+                encode_profile=params.encode_profile,
+            )
+            session.add(new_video)
+            await session.commit()
+            await session.refresh(new_video)
+            return new_video
 
     async def incremental_process(self, video_id: uuid.UUID, added_modalities: set[str]) -> None:
         """增量后台任务：对已完成的视频补跑指定功能阶段。"""

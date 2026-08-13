@@ -24,6 +24,11 @@ import type {
   ExportFramesRequest,
   ExportTrackRequest,
   ExportThumbnailsRequest,
+  VideoGroup,
+  FileItem,
+  VersionInfo,
+  TaskItem,
+  CaseAssetItem,
 } from "./types";
 
 const BASE = "/api/v1";
@@ -75,7 +80,7 @@ export const api = {
   },
 
   /* ── Batch upload multiple videos (v0.19) ── */
-  async uploadBatch(files: File[], params?: Partial<PipelineParams>): Promise<VideoResponse[]> {
+  async uploadBatch(files: File[], params?: Partial<PipelineParams>, groupId?: string): Promise<VideoResponse[]> {
     const form = new FormData();
     for (const file of files) {
       form.append("files", file);
@@ -100,6 +105,7 @@ export const api = {
     form.append("segment_threshold", String(params?.segment_threshold ?? 0.5));
     form.append("caption_with_context", String(params?.caption_with_context ?? true));
     form.append("summary_detail", params?.summary_detail ?? "standard");
+    if (groupId) form.append("group_id", groupId);
 
     return request<VideoResponse[]>(`${BASE}/videos/upload/batch`, {
       method: "POST",
@@ -108,9 +114,10 @@ export const api = {
   },
 
   /* ── Upload a video (does NOT start pipeline) ── */
-  upload(file: File, params?: Partial<PipelineParams>) {
+  upload(file: File, params?: Partial<PipelineParams>, groupId?: string) {
     const form = new FormData();
     form.append("file", file);
+    if (groupId) form.append("group_id", groupId);
     form.append("content_type", params?.content_type ?? "general");
     form.append("language", params?.language ?? "auto");
     form.append("audio_enabled", String(params?.audio_enabled ?? false));
@@ -359,6 +366,72 @@ export const api = {
   getThumbnailsExportUrl(videoId: string): string {
     return `${BASE}/videos/${videoId}/export/thumbnails`;
   },
+
+  /* ═══ v0.34 文件库 / 多版本 / 任务中心 ═══ */
+  listGroups() {
+    return request<VideoGroup[]>(`${BASE}/groups`).then((items) =>
+      (items ?? []).map((g) => ({
+        groupId: g.id ?? g.groupId,
+        id: g.id ?? g.groupId,
+        name: g.name,
+        number: g.number,
+        owner: g.owner,
+        file_count: g.file_count,
+        created_at: g.created_at,
+        videoIds: g.videoIds ?? [],
+      })),
+    );
+  },
+  createGroup(body: { name: string; number?: string; owner?: string }) {
+    return request<VideoGroup>(`${BASE}/groups`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  },
+  updateGroup(groupId: string, body: { name: string; number?: string; owner?: string }) {
+    return request<VideoGroup>(`${BASE}/groups/${groupId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  },
+  deleteGroup(groupId: string) {
+    return request<{ ok: boolean }>(`${BASE}/groups/${groupId}`, { method: "DELETE" });
+  },
+  listFiles() {
+    return request<FileItem[]>(`${BASE}/files`);
+  },
+  deleteFile(fileId: string) {
+    return request<{ ok: boolean; freed_bytes?: number }>(`${BASE}/files/${fileId}`, { method: "DELETE" });
+  },
+  listVersions(videoId: string) {
+    return request<VersionInfo[]>(`${BASE}/videos/${videoId}/versions`);
+  },
+  reanalyze(videoId: string, params: PipelineParams) {
+    return request<VideoResponse>(`${BASE}/videos/${videoId}/reanalyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+  },
+  listTasks(scope?: "all" | "active" | "history") {
+    const q = scope && scope !== "all" ? `?scope=${scope}` : "";
+    return request<TaskItem[]>(`${BASE}/tasks${q}`);
+  },
+  getTaskLog(taskId: string) {
+    return request<{ log: { seq: number; level: string; message: string; created_at: string }[] }>(`${BASE}/tasks/${taskId}/log`);
+  },
+  retryTask(taskId: string) {
+    return request<{ ok: boolean }>(`${BASE}/tasks/${taskId}/retry`, { method: "POST" });
+  },
+  /* ═══ 案例素材（图片等非视频） ═══ */
+  getGroupAssets(groupId: string): Promise<{ videos: FileItem[]; images: CaseAssetItem[] }> {
+    return request(`${BASE}/groups/${groupId}/assets`);
+  },
+  uploadGroupAssets(groupId: string, files: File[]): Promise<CaseAssetItem[]> {
+    const form = new FormData();
+    for (const f of files) form.append("files", f);
+    return request<CaseAssetItem[]>(`${BASE}/groups/${groupId}/assets`, { method: "POST", body: form });
+  },
+  getAssetFileUrl(groupId: string, assetId: string): string {
+    return `${BASE}/groups/${groupId}/assets/${assetId}/file`;
+  },
+  deleteGroupAsset(groupId: string, assetId: string) {
+    return request<{ ok: boolean }>(`${BASE}/groups/${groupId}/assets/${assetId}`, { method: "DELETE" });
+  },
 };
 
 /* ── Binary download helper (POST → blob) ── */
@@ -429,3 +502,5 @@ export function pollVideoUntilDone(
     if (timer) clearInterval(timer);
   };
 }
+
+/* ═══ 案例素材（图片等非视频） ═══ */

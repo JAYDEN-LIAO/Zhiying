@@ -239,6 +239,7 @@ class PipelineEngine:
 
         try:
             await self._set_processing()
+            await self._log_task("管道开始")
 
             # 1. 门控过滤
             enabled = [op for op in ALL_OPERATIONS if op.gate(v, self.config)]
@@ -301,6 +302,7 @@ class PipelineEngine:
                     if asyncio.iscoroutine(result):
                         await result
 
+            await self._log_task("管道完成")
             await tracker.mark_completed()
             logger.info("[Pipeline] video %s completed", self.video.id)
 
@@ -310,6 +312,7 @@ class PipelineEngine:
                 logger.info("[Pipeline] video %s deleted mid-run, aborting (%s)", self.video.id, e)
                 return
             logger.exception("[Pipeline] video %s failed: %s", self.video.id, e)
+            await self._log_task(f"管道失败: {e}", level="error")
             tracker = self._new_tracker()
             await tracker.mark_failed(str(e))
 
@@ -587,4 +590,16 @@ class PipelineEngine:
                 .where(Video.id == self.video.id)
                 .values(status=VideoStatus.PROCESSING)
             )
+            await session.commit()
+
+    async def _log_task(self, message: str, level: str = "info") -> None:
+        """追加任务日志行（v0.34，task_id = 版本行 video.id）。"""
+        from sqlalchemy import select, func
+        from core.models import TaskLog
+        async with self.db_session_factory() as session:
+            last = await session.execute(
+                select(func.max(TaskLog.seq)).where(TaskLog.task_id == self.video.id)
+            )
+            next_seq = int(last.scalar() or 0) + 1
+            session.add(TaskLog(task_id=self.video.id, seq=next_seq, level=level, message=message))
             await session.commit()

@@ -10,7 +10,7 @@ core/repository.py
 import uuid
 import logging
 
-from sqlalchemy import select, update, insert, delete, func, bindparam
+from sqlalchemy import select, update, insert, delete, func, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -76,9 +76,25 @@ async def list_videos(
     limit: int = 100,
     offset: int = 0,
 ) -> list[Video]:
-    """查询视频列表，按创建时间降序排列。"""
+    """查询视频列表，按创建时间降序排列。
+
+    v0.34：只返回「根文件」（独立视频 file_id NULL，或某文件链的最小版本行），
+    版本行不重复出现在文件列表（避免多版本刷屏）。
+    """
+    from sqlalchemy.orm import aliased
+    Video2 = aliased(Video)
+    root_cond = (
+        (Video.file_id.is_(None))
+        | (
+            Video.version_no
+            == select(func.min(Video2.version_no))
+            .where(Video2.file_id == Video.file_id)
+            .scalar_subquery()
+        )
+    )
     stmt = (
         select(Video)
+        .where(root_cond)
         .order_by(Video.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -543,3 +559,96 @@ async def bulk_insert_plate_detections(
         await session.rollback()
         logger.exception("[Repo] Failed to bulk insert plate detections")
         raise
+
+
+# ═══════════════════════════════════════════════════════════
+# 文件库 / 多版本（v0.34）
+# ═══════════════════════════════════════════════════════════
+
+async def list_file_roots(session: AsyncSession) -> list[dict]:
+    """文件库列表：每个文件一行（根行全部字段 + current_status/progress/summary 取当前版本）。
+
+    版本化文件（file_id 非空）取该 file_id 分组中 version_no 最小（根）行；
+    独立文件（file_id NULL）自身即根。当前版本 = 最新 completed，否则最新 version_no。
+    """
+    result = await session.execute(text("""
+        WITH ranked AS (
+            SELECT v.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY COALESCE(v.file_id, v.id)
+                       ORDER BY v.version_no NULLS FIRST, v.created_at
+                   ) AS rn,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY COALESCE(v.file_id, v.id)
+                       ORDER BY (v.status::text = 'completed') DESC, v.version_no DESC NULLS LAST
+                   ) AS cur_rn
+            FROM videos v
+        )
+        SELECT r.*, cv.status AS current_status, cv.progress AS current_progress,
+               cv.summary AS current_summary, cv.version_no AS current_version_no,
+               COUNT(*) OVER (PARTITION BY COALESCE(r.file_id, r.id)) AS versions_count
+        FROM ranked r
+        LEFT JOIN videos cv ON cv.id = (
+            SELECT c2.id FROM (
+                SELECT v2.*, ROW_NUMBER() OVER (
+                    PARTITION BY COALESCE(v2.file_id, v2.id)
+                    ORDER BY (v2.status::text = 'completed') DESC, v2.version_no DESC NULLS LAST
+                ) AS r2
+                FROM videos v2
+            ) c2
+            WHERE COALESCE(c2.file_id, c2.id) = COALESCE(r.file_id, r.id) AND c2.r2 = 1
+        )
+        WHERE r.rn = 1
+        ORDER BY r.created_at DESC
+    """))
+    return [dict(row) for row in result.mappings()]
+
+
+async def list_file_versions(session: AsyncSession, file_id: uuid.UUID) -> list[Video]:
+    """某文件（file_id）的全部版本行，按 version_no 升序。"""
+    result = await session.execute(
+        select(Video)
+        .where(Video.file_id == file_id)
+        .order_by(Video.version_no.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def current_version_for_file(session: AsyncSession, file_id: uuid.UUID) -> Video | None:
+    """文件的当前版本：最新 completed，否则最新 version_no。"""
+    result = await session.execute(
+        select(Video)
+        .where(Video.file_id == file_id, Video.status == VideoStatus.COMPLETED)
+        .order_by(Video.version_no.desc())
+        .limit(1)
+    )
+    v = result.scalar_one_or_none()
+    if v is not None:
+        return v
+    result = await session.execute(
+        select(Video)
+        .where(Video.file_id == file_id)
+        .order_by(Video.version_no.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def resolve_file_id(video: Video) -> uuid.UUID:
+    """解析一个 video 行所属的逻辑文件 ID：file_id 非空用它，否则自身（独立文件）。"""
+    return video.file_id or video.id
+
+
+async def append_task_log(
+    session: AsyncSession, task_id: uuid.UUID, message: str,
+    level: str = "info",
+) -> None:
+    """追加一行任务日志（task_id 关联版本行 videos.id）。"""
+    from core.models import TaskLog
+    last = await session.execute(
+        select(func.coalesce(func.max(TaskLog.seq), 0))
+        .where(TaskLog.task_id == task_id)
+    )
+    next_seq = int(last.scalar() or 0) + 1
+    session.add(TaskLog(task_id=task_id, seq=next_seq, level=level, message=message))
+    await session.commit()

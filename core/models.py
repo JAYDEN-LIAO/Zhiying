@@ -59,6 +59,12 @@ class VideoGroup(Base):
     name: Mapped[str | None] = mapped_column(
         String(256), nullable=True, comment="组名（可选）",
     )
+    number: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="文件编号（案例/文件库标识，v0.34）",
+    )
+    owner: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="负责人（v0.34）",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
     )
@@ -281,6 +287,18 @@ class Video(Base):
         comment="所属分组 ID，NULL=单视频未分组",
     )
 
+    # ── 版本链（v0.34 文件库/多版本解析） ──
+    # 一行 videos = 一次解析；同文件多次解析 = 多个 videos 行共享同一 file_id，
+    # 产物按 video_id 天然隔离。文件 = 该 file_id 的根（version_no 最小）行。
+    file_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True, index=True,
+        comment="逻辑文件 ID：首次解析时生成，同文件后续版本共享；NULL=独立文件（自身即版本 1）",
+    )
+    version_no: Mapped[int | None] = mapped_column(
+        Integer, nullable=True,
+        comment="每文件版本号 1,2,3...（同一 file_id 下单调递增）",
+    )
+
     # ── 时间戳 ──
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
@@ -324,7 +342,8 @@ class Video(Base):
     )
 
     __table_args__ = (
-        {"comment": "视频主表 — 元数据 / 状态 / 摘要"},
+        UniqueConstraint("file_id", "version_no", name="uq_videos_file_version"),
+        {"comment": "视频主表 — 元数据 / 状态 / 摘要 / 版本链"},
     )
 
 
@@ -966,4 +985,85 @@ class PipelineTask(Base):
     __table_args__ = (
         Index("ix_pipeline_tasks_status", "status"),
         {"comment": "管道任务队列表 — FIFO + DB 持久化"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# TaskLog — 任务执行日志（v0.34 任务中心）
+# ═══════════════════════════════════════════════════════════
+
+class TaskLog(Base):
+    """任务日志表 — 一次解析（一个版本行/一个 task）的管道执行日志行。
+
+    由 status_tracker / engine 各阶段追加写入；任务中心据此展示执行日志。
+    task_id 关联 videos.id（版本行）或 pipeline_tasks.id，二者之一。
+    """
+
+    __tablename__ = "task_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), nullable=False, index=True,
+        comment="关联任务 id（版本行 videos.id 或 pipeline_tasks.id）",
+    )
+    seq: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0,
+        comment="日志序号（task 内递增，展示顺序）",
+    )
+    level: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="info",
+        comment="info / warn / error",
+    )
+    message: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="日志内容",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_task_logs_task_seq", "task_id", "seq"),
+        {"comment": "任务执行日志表 — 管道各阶段追加"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# CaseAsset — 案例内的非视频素材（v0.34 图片等）
+# ═══════════════════════════════════════════════════════════
+
+class CaseAsset(Base):
+    """案例素材表 — 一个案例（video_groups）下除视频外的其它素材（图片等）。
+
+    视频分析以 videos 表（版本链）为唯一实体；此处存归档性质的图片素材，
+    不参与管道分析，仅展示/预览。删除案例时随 group 级联清理磁盘目录。
+    """
+
+    __tablename__ = "case_assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("video_groups.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+        comment="所属案例（分组）",
+    )
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="image",
+        comment="素材类型: image",
+    )
+    name: Mapped[str] = mapped_column(
+        String(512), nullable=False, comment="文件名",
+    )
+    path: Mapped[str] = mapped_column(
+        String(1024), nullable=False, comment="绝对路径",
+    )
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+
+    __table_args__ = (
+        {"comment": "案例素材表 — 图片等非视频归档素材"},
     )

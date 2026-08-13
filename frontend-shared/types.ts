@@ -238,8 +238,64 @@ export interface PipelineParams {
 /* ── Video Group (v0.19 多视频处理) ── */
 
 export interface VideoGroup {
+  id?: string;
   groupId: string;
+  name?: string | null;
+  number?: string | null;
+  owner?: string | null;
+  file_count?: number;
+  created_at?: string | null;
   videoIds: string[];
+}
+
+/* ═══ v0.34 文件库 / 多版本 / 任务中心 ═══ */
+
+export interface FileItem {
+  id: string;                       // 文件 ID = file_id（独立文件 = 自身 id）
+  name: string;
+  group_id: string | null;
+  duration: number | null;
+  file_size: number | null;
+  created_at: string | null;
+  current_version_no: number | null;
+  current_status: string | null;
+  current_progress: number;
+  current_summary: { one_liner?: string } | null;
+  versions_count: number;
+}
+
+export interface VersionInfo {
+  id: string;                       // 版本行 videos.id（作 task_id）
+  video_id: string | null;
+  version_no: number | null;
+  status: string;
+  progress: number;
+  error_message: string | null;
+  file_name: string | null;
+  group_id: string | null;
+  params: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface TaskItem {
+  id: string;                       // 版本行 videos.id
+  version_no: number | null;
+  file_name: string | null;
+  group_name: string | null;
+  status: string;
+  progress: number;
+  error_message: string | null;
+  params: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface TaskLogLine {
+  seq: number;
+  level: string;
+  message: string;
+  created_at: string;
 }
 
 /* ── Settings ── */
@@ -536,4 +592,14 @@ export interface ExportTrackRequest {
 
 export interface ExportThumbnailsRequest {
   scene_indices?: number[] | null;
+}
+
+export interface CaseAssetItem {
+  id: string;
+  group_id: string | null;
+  kind: string;
+  name: string;
+  path: string;
+  file_size: number;
+  created_at: string | null;
 }

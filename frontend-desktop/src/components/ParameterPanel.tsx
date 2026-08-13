@@ -360,7 +360,7 @@ export function ParameterPanel({
   const presetLabel = sceneType === "custom" ? "自定义" : (SCENE_PRESETS[sceneType]?.label ?? "自定义");
 
   return (
-    <div className="w-[380px] h-full flex flex-col">
+    <div className="w-[460px] h-full flex flex-col">
       {/* Header — light（v0.34 桌面重构改浅色 Modal） */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 shrink-0">
         <h2 className="font-bold text-slate-800 text-base">参数设置</h2>

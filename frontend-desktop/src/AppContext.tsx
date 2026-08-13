@@ -30,9 +30,9 @@ interface AppCtx {
   refreshList: () => void;
   /* 上传：统一入口，上传后跳工作台 + 打开参数 */
   isUploading: boolean;
-  uploadFiles: (files: FileList | File[]) => Promise<void>;
+  uploadFiles: (files: FileList | File[], groupId?: string, opts?: { stay?: boolean }) => Promise<void>;
   registerExternalFiles: (items: YunzhiResource[]) => Promise<void>;
-  handleUploadClick: () => void;
+  handleUploadClick: (groupId?: string, opts?: { stay?: boolean }) => void;
   /* 删除协调 */
   removeVideoState: (id: string) => void;
   deleteVideo: (id: string) => Promise<void>;
@@ -114,21 +114,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [removeVideoState, refreshList]);
 
   /* ── 上传（原 Dashboard handleFiles + registerExternal） ── */
-  const uploadFiles = useCallback(async (fileList: FileList | File[]) => {
+  const uploadFiles = useCallback(async (fileList: FileList | File[], groupId?: string, opts?: { stay?: boolean }) => {
     const files = Array.from(fileList);
     if (files.length === 0) return;
     setIsUploading(true);
     try {
       let newId: string;
       if (files.length === 1) {
-        const r = await api.upload(files[0]);
+        const r = await api.upload(files[0], undefined, groupId);
         newId = r.id;
       } else {
-        const results = await api.uploadBatch(files);
+        const results = await api.uploadBatch(files, undefined, groupId);
         newId = results[0].id;
       }
       refreshList();
-      openWorkbench(newId, { openParams: true });
+      // 文件库归档场景 stay=true → 不跳转工作台（视频留待「智能解析」再配置）
+      if (!opts?.stay) openWorkbench(newId, { openParams: true });
     } catch (err) {
       alert(err instanceof Error ? err.message : "上传失败");
     }
@@ -159,7 +160,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setIsUploading(false);
   }, [refreshList, openWorkbench]);
 
-  const handleUploadClick = useCallback(() => {
+  const handleUploadClick = useCallback((groupId?: string, opts?: { stay?: boolean }) => {
     if (!yunzhiMock) {
       void yunzhiSelectFiles()
         .then((items) => registerExternalFiles(items))
@@ -174,7 +175,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     input.type = "file";
     input.accept = ".mp4,.mov,.avi,.mkv,.webm";
     input.multiple = true;
-    input.onchange = () => { uploadFiles(input.files ?? []); input.value = ""; };
+    input.onchange = () => { uploadFiles(input.files ?? [], groupId, opts); input.value = ""; };
     input.click();
   }, [yunzhiMock, yunzhiSelectFiles, registerExternalFiles, uploadFiles]);
 

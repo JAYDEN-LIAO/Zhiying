@@ -1,14 +1,20 @@
 /* ════════════════════════════════════════════════════════════
-   FileLibrary — 文件库（v0.34 桌面重构 · 照 demo CaseLibrary 结构）
-   顶栏（标题+检索+上传） + 左侧视频分组树 + 右侧文件表格
-   （类型/文件名/时长/上传时间/状态/操作：查看结果/智能解析/预览/删除）
+   FileLibrary — 案例库（v0.34 三卡片布局）
+   拆成 3 个组件（中间留间隙、全圆角）：
+     ① CaseHeader  顶部卡：案例库标题 + 新建案例
+     ② CaseList    左卡：案例列表（编号/负责人/时间/文件数 + 删除）
+     ③ CaseContent 右卡：案例内容（文件表格：视频 + 图片 + 上传 + 状态筛选）
+   数据源 = /files + /groups + /groups/{id}/assets
    ════════════════════════════════════════════════════════════ */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../services/api";
 import { useApp } from "../AppContext";
-import type { VideoListItem } from "../types";
-import { fmtDuration, fmtDate } from "../utils/helpers";
-import { IconFolder } from "./icons";
+import type { FileItem, VideoGroup, CaseAssetItem } from "../types";
+import { fmtDuration, fmtDate, fmtBytes } from "../utils/helpers";
+import { IconFolder, IconPlus } from "./icons";
+
+type TreeKey = "all" | "ungrouped" | `g:${string}`;
 
 const STATUS_META: Record<string, { label: string; cls: string; pulse?: boolean }> = {
   pending: { label: "待参数", cls: "wait" },
@@ -16,16 +22,6 @@ const STATUS_META: Record<string, { label: string; cls: string; pulse?: boolean 
   completed: { label: "已完成", cls: "ok" },
   failed: { label: "失败", cls: "err" },
 };
-
-const STATUS_OPTIONS = [
-  { value: "all", label: "全部状态" },
-  { value: "pending", label: "待参数" },
-  { value: "processing", label: "处理中" },
-  { value: "completed", label: "已完成" },
-  { value: "failed", label: "失败" },
-];
-
-type TreeKey = "all" | "ungrouped" | `g:${string}`;
 
 function VideoIcon() {
   return (
@@ -35,177 +31,390 @@ function VideoIcon() {
   );
 }
 
-export function FileLibrary() {
-  const { videos, videoGroups, selectedVideoId, openWorkbench, deleteVideo, handleUploadClick, isUploading } = useApp();
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [tree, setTree] = useState<TreeKey>("all");
-  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
-
-  /* ── 分组树节点 ── */
-  const treeNodes = useMemo(() => {
-    const nodes: { key: TreeKey; label: string; count: number }[] = [
-      { key: "all", label: "全部视频", count: videos.length },
-    ];
-    videoGroups.forEach((g, i) => {
-      const first = videos.find((v) => v.id === g.videoIds[0]);
-      const label = first ? first.file_name.slice(0, 8) + "…" : `分组 ${i + 1}`;
-      nodes.push({ key: `g:${g.groupId}`, label, count: g.videoIds.length });
-    });
-    const ungrouped = videos.filter((v) => !v.group_id).length;
-    nodes.push({ key: "ungrouped", label: "未分组", count: ungrouped });
-    return nodes;
-  }, [videos, videoGroups]);
-
-  /* ── 当前树节点下的视频 ── */
-  const treeFiltered = useMemo(() => {
-    if (tree === "all") return videos;
-    if (tree === "ungrouped") return videos.filter((v) => !v.group_id);
-    const gid = tree.slice(2);
-    return videos.filter((v) => v.group_id === gid);
-  }, [tree, videos]);
-
-  const displayVideos = useMemo(() => {
-    let list = treeFiltered;
-    if (statusFilter !== "all") list = list.filter((v) => v.status === statusFilter);
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      list = list.filter((v) => v.file_name.toLowerCase().includes(q));
-    }
-    return list;
-  }, [treeFiltered, statusFilter, search]);
-
-  const currentLabel = treeNodes.find((n) => n.key === tree)?.label ?? "全部视频";
-
-  const handleDelete = async (v: VideoListItem) => {
-    if (!window.confirm(`确认删除「${v.file_name}」？将同时释放磁盘空间。`)) return;
-    setDeletingIds((prev) => new Set(prev).add(v.id));
-    try { await deleteVideo(v.id); }
-    catch (err) { alert(err instanceof Error ? err.message : "删除失败"); }
-    setDeletingIds((prev) => { const n = new Set(prev); n.delete(v.id); return n; });
-  };
-
+/* ═══════════════════════ ① 顶部卡 ═══════════════════════ */
+function CaseHeader({ onNewCase }: { onNewCase: () => void }) {
   return (
-    <div className="h-full flex flex-col">
-      {/* ══ 顶栏 ══ */}
-      <div className="h-[52px] px-5 bg-white border-b border-gray-200 flex items-center justify-between shrink-0">
-        <div>
-          <h1 className="text-[15px] font-semibold text-gray-900 leading-tight">文件库</h1>
-          <p className="text-[11.5px] text-gray-400 leading-tight">视频数据资产管理中心 · 按分组归档管理</p>
+    <div className="case-card flex items-center justify-between px-5 h-[56px] shrink-0">
+      <div>
+        <h1 className="text-[16px] font-semibold text-gray-900 leading-tight">案例库</h1>
+        <p className="text-[12px] text-gray-500 leading-tight">案例素材归档</p>
+      </div>
+      <button className="g-btn g-btn-primary" onClick={onNewCase}>
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 3h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+        新建案例
+      </button>
+    </div>
+  );
+}
+
+/* ═══════════════════════ ② 案例列表卡 ═══════════════════════ */
+function CaseList({
+  groups, files, tree, onSelect, onDeleteCase,
+}: {
+  groups: VideoGroup[];
+  files: FileItem[];
+  tree: TreeKey;
+  onSelect: (gid: string) => void;
+  onDeleteCase: (g: VideoGroup) => void;
+}) {
+  return (
+    <div className="w-[290px] shrink-0 case-card flex flex-col min-h-0">
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between shrink-0">
+        <span className="text-[12px] font-semibold text-gray-700">案例</span>
+        <span className="text-[11.5px] text-gray-500">{groups.length} 个案例</span>
+      </div>
+      <div className="flex-1 overflow-auto py-1.5">
+        {groups.map((g) => {
+          const active = tree === `g:${g.groupId}`;
+          const cnt = files.filter((f) => f.group_id === g.groupId).length;
+          return (
+            <div key={g.groupId}
+              className={"group relative mx-1.5 px-3 py-2.5 rounded-md cursor-pointer border-l-[3px] transition-all duration-150 " +
+                (active ? "bg-brand/5 border-[#4f7cff] shadow-sm" : "border-transparent hover:bg-white hover:shadow-sm")}
+              onClick={() => onSelect(g.groupId)}
+            >
+              <div className="flex items-center gap-2">
+                <span className={active ? "text-[#4f7cff]" : "text-gray-400"}><IconFolder /></span>
+                <span className={"text-[13px] truncate flex-1 " + (active ? "text-[#4f7cff] font-semibold" : "text-gray-800")}>{g.name || "未命名案例"}</span>
+                <span className="text-[11px] text-gray-600 bg-gray-100 rounded-full px-1.5 py-0.5">{cnt}</span>
+                <button
+                  className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
+                  title="删除案例"
+                  onClick={(e) => { e.stopPropagation(); onDeleteCase(g); }}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
+                </button>
+              </div>
+              <div className="text-[11px] text-gray-600 mt-1 pl-6 flex items-center gap-1.5 whitespace-nowrap min-w-0">
+                <span className="w-[72px] truncate" title={g.number ?? ""}>{g.number || "—"}</span>
+                <span className="text-gray-300">·</span>
+                <span className="w-[56px] truncate" title={g.owner ?? ""}>{g.owner || "—"}</span>
+                <span className="ml-auto font-mono shrink-0">{g.created_at ? fmtDate(g.created_at) : ""}</span>
+              </div>
+            </div>
+          );
+        })}
+        {groups.length === 0 && <div className="g-empty"><span>暂无案例，点击「新建案例」</span></div>}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════ ③ 案例内容卡 ═══════════════════════ */
+function CaseContent({
+  group, displayFiles, images, search, statusFilter, tree, isUploading,
+  onSearch, onStatusFilter, onUpload, onOpenFile, onDeleteFile, onDeleteImage,
+}: {
+  group: VideoGroup | undefined;
+  displayFiles: FileItem[];
+  images: CaseAssetItem[];
+  search: string;
+  statusFilter: string;
+  tree: TreeKey;
+  isUploading: boolean;
+  onSearch: (q: string) => void;
+  onStatusFilter: (s: string) => void;
+  onUpload: () => void;
+  onOpenFile: (f: FileItem, openParams: boolean) => void;
+  onDeleteFile: (f: FileItem) => void;
+  onDeleteImage: (img: CaseAssetItem) => void;
+}) {
+  const [previewImg, setPreviewImg] = useState<CaseAssetItem | null>(null);
+  return (
+    <div className="flex-1 min-w-0 case-card flex flex-col min-h-0">
+      {/* 工具栏：案例名称(大加粗) + 编号/负责人 + 文件数 + 检索 | 状态筛选 + 上传 */}
+      <div className="px-4 py-2.5 border-b-2 border-[#e4e9f2] flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-2.5 whitespace-nowrap min-w-0">
+          <span className="text-[15px] font-bold text-gray-900 max-w-[220px] truncate" title={group?.name ?? ""}>{group?.name || "案例库"}</span>
+          <span className="text-[12px] text-gray-600 font-medium w-[90px] truncate" title={group?.number ?? ""}>{group?.number || "—"}</span>
+          <span className="text-[12px] text-gray-600 font-medium w-[70px] truncate" title={group?.owner ?? ""}>{group?.owner || "—"}</span>
+          <span className="text-[11.5px] text-gray-500 shrink-0">{displayFiles.length} 个文件</span>
         </div>
-        <div className="flex items-center gap-2.5">
-          <div className="relative">
-            <svg className="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input className="g-input !w-[240px] !pl-8" placeholder="文件检索" value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
-          <button className="g-btn g-btn-primary" onClick={handleUploadClick} disabled={isUploading}>
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" d="M12 4v16m8-8H4" /></svg>
-            {isUploading ? "上传中..." : "上传视频"}
+        <div className="flex items-center gap-2">
+          <input
+            className="g-input !w-[130px] !h-[30px] !text-[12px]" placeholder="检索文件"
+            value={search} onChange={(e) => onSearch(e.target.value)}
+          />
+          <select className="g-input !w-[110px] !h-[30px] !text-[12px]" value={statusFilter} onChange={(e) => onStatusFilter(e.target.value)}>
+            <option value="all">全部状态</option>
+            <option value="pending">待参数</option>
+            <option value="processing">处理中</option>
+            <option value="completed">已完成</option>
+            <option value="failed">失败</option>
+          </select>
+          {/* 上传文件：白底 outline（与新建案例蓝色等大） */}
+          <button className="g-btn" onClick={onUpload} disabled={isUploading}>
+            <IconPlus />
+            {isUploading ? "上传中..." : "上传文件"}
           </button>
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex">
-        {/* ══ 左侧视频分组树 ══ */}
-        <aside className="w-[260px] shrink-0 bg-white border-r border-gray-200 flex flex-col min-h-0">
-          <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between shrink-0">
-            <span className="text-[12px] font-semibold text-gray-500">视频分组</span>
-            <span className="text-[11.5px] text-gray-400">{videoGroups.length + (videos.some((v) => !v.group_id) ? 1 : 0) + 1} 项</span>
-          </div>
-          <div className="flex-1 overflow-auto py-1.5">
-            {treeNodes.map((n) => (
-              <div
-                key={n.key}
-                className={"mx-1.5 px-3 py-2 rounded-md cursor-pointer border-l-[3px] " + (tree === n.key ? "bg-brand/5 border-[#4f7cff]" : "border-transparent hover:bg-gray-50")}
-                onClick={() => setTree(n.key)}
-              >
-                <div className="flex items-center gap-2">
-                  <span className={tree === n.key ? "text-[#4f7cff]" : "text-gray-400"}><IconFolder /></span>
-                  <span className={"text-[13px] truncate flex-1 " + (tree === n.key ? "text-[#4f7cff] font-semibold" : "text-gray-800")}>{n.label}</span>
-                  <span className="text-[11px] text-gray-400 bg-gray-100 rounded-full px-1.5 py-0.5">{n.count}</span>
-                </div>
-              </div>
-            ))}
-            {treeNodes.length === 0 && <div className="g-empty"><span>暂无视频</span></div>}
-          </div>
-        </aside>
-
-        {/* ══ 右侧文件表格 ══ */}
-        <section className="flex-1 min-w-0 flex flex-col bg-white min-h-0">
-          <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between shrink-0">
-            <div className="flex items-center gap-2.5">
-              <span className="text-[13px] font-semibold text-gray-900">{currentLabel}</span>
-              <span className="text-[11.5px] text-gray-400">{displayVideos.length} 个视频</span>
-              <select className="g-input !w-[120px] !h-[30px] !text-[12px]" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-                {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-            <button className="g-btn" onClick={handleUploadClick} disabled={isUploading}>
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 8l5-5 5 5m-5-5v11" /></svg>
-              {isUploading ? "上传中..." : "上传文件"}
-            </button>
-          </div>
-
-          <div className="flex-1 min-h-0 overflow-auto">
-            <table className="g-table">
-              <thead>
-                <tr>
-                  <th className="w-10">类型</th>
-                  <th>文件名</th>
-                  <th className="w-24">时长</th>
-                  <th className="w-36">上传时间</th>
-                  <th className="w-28">状态</th>
-                  <th className="w-[240px] text-right pr-4">操作</th>
+      <div className="flex-1 min-h-0 overflow-auto">
+        <table className="g-table">
+          <thead>
+            <tr>
+              <th className="w-10">类型</th>
+              <th>文件名</th>
+              <th className="w-24">大小</th>
+              <th className="w-24">时长</th>
+              <th className="w-36">上传时间</th>
+              <th className="w-28">状态</th>
+              <th className="w-[220px] text-right pr-4">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayFiles.map((f) => {
+              const sm = STATUS_META[f.current_status ?? "pending"] || STATUS_META.pending;
+              return (
+                <tr key={f.id}>
+                  <td><span className="inline-flex items-center justify-center w-6 h-6 rounded bg-gray-50 text-gray-500"><VideoIcon /></span></td>
+                  <td className="text-gray-900 max-w-[320px] truncate font-medium" title={f.name}>{f.name}</td>
+                  <td className="text-gray-500">{fmtBytes(f.file_size)}</td>
+                  <td className="text-gray-500">{f.duration != null ? fmtDuration(f.duration) : "-"}</td>
+                  <td className="text-gray-500">{f.created_at ? fmtDate(f.created_at) : "-"}</td>
+                  <td>
+                    <span className={"g-badge " + sm.cls}>
+                      {sm.pulse && <span className="pulse" />}
+                      {sm.label}
+                    </span>
+                  </td>
+                  <td className="text-right pr-4 whitespace-nowrap">
+                    <button className="g-btn g-btn-primary !px-2 !py-1 mr-1"
+                      title={f.current_status === "completed" ? "打开工作台查看结果" : "配置参数并解析"}
+                      onClick={() => onOpenFile(f, f.current_status !== "completed")}>
+                      {f.current_status === "completed" ? "查看结果" : "智能解析"}
+                    </button>
+                    <button className="g-btn !px-2 !py-1 mr-1" title="预览视频" onClick={() => onOpenFile(f, false)}>
+                      预览
+                    </button>
+                    <button className="g-btn g-btn-danger !px-2 !py-1" onClick={() => onDeleteFile(f)}>删除</button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {displayVideos.map((v) => {
-                  const sm = STATUS_META[v.status] || STATUS_META.pending;
-                  const hasResult = v.status === "completed";
-                  return (
-                    <tr key={v.id} style={{ opacity: deletingIds.has(v.id) ? 0.5 : 1 }}>
-                      <td>
-                        <span className="inline-flex items-center justify-center w-6 h-6 rounded bg-gray-50 text-gray-500"><VideoIcon /></span>
-                      </td>
-                      <td className="text-gray-800 max-w-[320px] truncate" title={v.file_name}>{v.file_name}</td>
-                      <td className="text-gray-500">{v.duration != null ? fmtDuration(v.duration) : "-"}</td>
-                      <td className="text-gray-500">{fmtDate(v.created_at)}</td>
-                      <td>
-                        <span className={"g-badge " + sm.cls}>
-                          {sm.pulse && <span className="pulse" />}
-                          {sm.label}
-                        </span>
-                      </td>
-                      <td className="text-right pr-4 whitespace-nowrap">
-                        <button
-                          className="g-btn g-btn-primary !px-2 !py-1 mr-1"
-                          title={hasResult ? "打开工作台查看结果" : "配置参数并解析"}
-                          onClick={() => openWorkbench(v.id, { openParams: !hasResult })}
-                        >
-                          {hasResult ? "查看结果" : "智能解析"}
-                        </button>
-                        <button className="g-btn !px-2 !py-1 mr-1" title="预览" onClick={() => openWorkbench(v.id)}>
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                          预览
-                        </button>
-                        <button className="g-btn g-btn-danger !px-2 !py-1" onClick={() => handleDelete(v)}>删除</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {displayVideos.length === 0 && (
-              <div className="g-empty">
-                <IconFolder />
-                <span>{search || statusFilter !== "all" ? "当前筛选下暂无视频" : "拖拽视频文件到此处，或点击「上传视频」批量归档"}</span>
-              </div>
-            )}
+              );
+            })}
+            {/* 图片素材行 */}
+            {images.filter((img) => !search.trim() || img.name.toLowerCase().includes(search.trim().toLowerCase())).map((img) => (
+              <tr key={img.id}>
+                <td><span className="inline-flex items-center justify-center w-6 h-6 rounded bg-gray-50 text-gray-500">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path strokeLinecap="round" strokeLinejoin="round" d="M21 15l-5-5L5 21" /></svg>
+                </span></td>
+                <td className="text-gray-800 max-w-[320px] truncate" title={img.name}>{img.name}</td>
+                <td className="text-gray-500">{fmtBytes(img.file_size)}</td>
+                <td className="text-gray-400">—</td>
+                <td className="text-gray-500">{img.created_at ? fmtDate(img.created_at) : "-"}</td>
+                <td><span className="g-badge wait">图片</span></td>
+                <td className="text-right pr-4 whitespace-nowrap">
+                  {tree.startsWith("g:") && (
+                    <button className="g-btn !px-2 !py-1 mr-1" onClick={() => setPreviewImg(img)}>预览</button>
+                  )}
+                  <button className="g-btn g-btn-danger !px-2 !py-1" onClick={() => onDeleteImage(img)}>删除</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {displayFiles.length === 0 && images.length === 0 && (
+          <div className="g-empty">
+            <IconFolder />
+            <span>{search || statusFilter !== "all" ? "当前筛选下暂无文件" : "点击「上传文件」归档视频/图片到此案例"}</span>
           </div>
-        </section>
+        )}
       </div>
+
+      {/* 图片预览弹窗 */}
+      {previewImg && group && (
+        <div className="g-modal-overlay" onClick={() => setPreviewImg(null)}>
+          <div className="g-modal" style={{ maxWidth: "70vw" }} onClick={(e) => e.stopPropagation()}>
+            <div className="g-card-hd">
+              <span className="g-card-tt">{previewImg.name}</span>
+              <button className="g-btn g-btn-sm" onClick={() => setPreviewImg(null)}>关闭</button>
+            </div>
+            <div className="p-4 flex items-center justify-center bg-gray-50" style={{ minHeight: 320 }}>
+              <img src={api.getAssetFileUrl(group.groupId, previewImg.id)} alt={previewImg.name}
+                style={{ maxWidth: "100%", maxHeight: "62vh", objectFit: "contain" }} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════ 页面编排 ═══════════════════════ */
+export function FileLibrary() {
+  const { openWorkbench, uploadFiles, isUploading } = useApp();
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [groups, setGroups] = useState<VideoGroup[]>([]);
+  const [images, setImages] = useState<CaseAssetItem[]>([]);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [tree, setTree] = useState<TreeKey>("all");
+  const [showNewGroup, setShowNewGroup] = useState(false);
+  const [form, setForm] = useState({ name: "", number: "", owner: "" });
+  const [creatingGroup, setCreatingGroup] = useState(false);
+
+  const load = () => {
+    api.listFiles().then((data) => setFiles(data ?? [])).catch(() => {});
+    api.listGroups().then((data) => setGroups(data ?? [])).catch(() => {});
+  };
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const iv = setInterval(load, 4000);
+    return () => clearInterval(iv);
+  }, []);
+
+  /* 选中案例 → 拉取该案例图片素材 */
+  useEffect(() => {
+    setImages([]);
+    if (!tree.startsWith("g:")) return;
+    let cancelled = false;
+    api.getGroupAssets(tree.slice(2)).then((d) => {
+      if (!cancelled) setImages(d?.images ?? []);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [tree]);
+
+  const handleUploadFiles = () => {
+    if (!tree.startsWith("g:")) { alert("请先选择案例"); return; }
+    const gid = tree.slice(2);
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".mp4,.mov,.avi,.mkv,.webm,image/*";
+    input.multiple = true;
+    input.onchange = async () => {
+      const files = Array.from(input.files ?? []);
+      if (!files.length) return;
+      const vids = files.filter((f) => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name) || f.type.startsWith("video/"));
+      const imgs = files.filter((f) => f.type.startsWith("image/"));
+      if (vids.length) await uploadFiles(vids, gid, { stay: true });
+      if (imgs.length) {
+        try { await api.uploadGroupAssets(gid, imgs); } catch (err) { alert(err instanceof Error ? err.message : "图片上传失败"); }
+      }
+      try {
+        const d = await api.getGroupAssets(gid);
+        setImages(d?.images ?? []);
+      } catch { /* ignore */ }
+      load();
+      input.value = "";
+    };
+    input.click();
+  };
+
+  const createGroup = async () => {
+    if (!form.name.trim()) { alert("请填写文件名称"); return; }
+    setCreatingGroup(true);
+    try {
+      const g = await api.createGroup({ name: form.name.trim(), number: form.number.trim() || undefined, owner: form.owner.trim() || undefined });
+      setShowNewGroup(false);
+      setForm({ name: "", number: "", owner: "" });
+      setTree(`g:${g.groupId}`);
+      load();
+    } catch (err) { alert(err instanceof Error ? err.message : "创建失败"); }
+    setCreatingGroup(false);
+  };
+
+  const deleteCase = async (g: VideoGroup) => {
+    if (!window.confirm(`确认删除案例「${g.name}」？将删除其下全部视频与图片，不可恢复。`)) return;
+    try {
+      await api.deleteGroup(g.groupId);
+      if (tree === `g:${g.groupId}`) setTree("all");
+      load();
+    } catch (err) { alert(err instanceof Error ? err.message : "删除失败"); }
+  };
+
+  const deleteFile = async (f: FileItem) => {
+    if (!window.confirm(`确认删除「${f.name}」？将删除该文件全部解析版本并释放磁盘空间。`)) return;
+    try { await api.deleteFile(f.id); load(); }
+    catch (err) { alert(err instanceof Error ? err.message : "删除失败"); }
+  };
+
+  const deleteImage = async (img: CaseAssetItem) => {
+    if (!window.confirm(`确认删除图片「${img.name}」？`)) return;
+    try {
+      await api.deleteGroupAsset(tree.slice(2), img.id);
+      setImages((prev) => prev.filter((x) => x.id !== img.id));
+    } catch (err) { alert(err instanceof Error ? err.message : "删除失败"); }
+  };
+
+  /* 树选中失效（组被删）→ 回退第一个案例 */
+  useEffect(() => {
+    if (groups.length && !groups.some((g) => tree === `g:${g.groupId}`)) {
+      setTree(`g:${groups[0].groupId}`);
+    }
+  }, [groups, tree]);
+
+  const treeFiltered = useMemo(() => {
+    if (tree === "all") return files;
+    if (tree === "ungrouped") return files.filter((f) => !f.group_id);
+    const gid = tree.slice(2);
+    return files.filter((f) => f.group_id === gid);
+  }, [tree, files]);
+
+  const displayFiles = useMemo(() => {
+    let list = treeFiltered;
+    if (statusFilter !== "all") list = list.filter((f) => f.current_status === statusFilter);
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter((f) => f.name.toLowerCase().includes(q));
+    }
+    return list;
+  }, [treeFiltered, statusFilter, search]);
+
+  const selectedGroup = groups.find((g) => tree === `g:${g.groupId}`);
+
+  return (
+    <div className="h-full flex flex-col gap-2 p-2">
+      {/* ① 顶部卡 */}
+      <CaseHeader onNewCase={() => setShowNewGroup(true)} />
+
+      {/* ② 左卡 + ③ 右卡 */}
+      <div className="flex flex-1 gap-2 min-h-0">
+        <CaseList
+          groups={groups} files={files} tree={tree}
+          onSelect={(gid) => setTree(`g:${gid}`)}
+          onDeleteCase={deleteCase}
+        />
+        <CaseContent
+          group={selectedGroup} displayFiles={displayFiles} images={images}
+          search={search} statusFilter={statusFilter} tree={tree} isUploading={isUploading}
+          onSearch={setSearch} onStatusFilter={setStatusFilter} onUpload={handleUploadFiles}
+          onOpenFile={(f, openParams) => openWorkbench(f.id, { openParams })}
+          onDeleteFile={deleteFile} onDeleteImage={deleteImage}
+        />
+      </div>
+
+      {/* 新建案例弹窗 */}
+      {showNewGroup && (
+        <div className="g-modal-overlay">
+          <div className="g-modal" style={{ width: 440 }}>
+            <div className="g-card-hd">
+              <span className="g-card-tt">新建案例</span>
+              <button className="g-btn g-btn-sm" onClick={() => setShowNewGroup(false)}>×</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="g-label">文件名称 <span style={{ color: "#ef4444" }}>*</span></label>
+                <input className="g-input w-full" placeholder="如：2024-甲区抢劫案" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              </div>
+              <div>
+                <label className="g-label">文件编号</label>
+                <input className="g-input w-full" placeholder="如：A-2024-0117" value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} />
+              </div>
+              <div>
+                <label className="g-label">负责人</label>
+                <input className="g-input w-full" placeholder="如：张建国" value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button className="g-btn" onClick={() => setShowNewGroup(false)}>取消</button>
+                <button className="g-btn g-btn-primary" onClick={createGroup} disabled={creatingGroup}>
+                  {creatingGroup ? "创建中…" : "创建案例"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

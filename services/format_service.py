@@ -635,6 +635,7 @@ class FormatService:
                     video_codec=info.video_codec,
                     audio_codec=info.audio_codec,
                     has_audio=info.has_audio,
+                    duration=info.duration,  # v0.34: 上传探测即写时长（此前只有管道才写→未处理时为空）
                 )
             )
             await session.commit()

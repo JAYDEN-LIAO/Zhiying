@@ -33,6 +33,14 @@ function formatInTz(d: Date, opts: Intl.DateTimeFormatOptions): string {
 }
 
 /** 短格式：M/D HH:mm（历史记录上传时间） */
+export function fmtBytes(bytes: number | null | undefined): string {
+  if (bytes == null || bytes < 0) return "-";
+  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + " GB";
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
+  if (bytes >= 1024) return (bytes / 1024).toFixed(0) + " KB";
+  return bytes + " B";
+}
+
 export function fmtDate(iso: string): string {
   return formatInTz(parseUtcIso(iso), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 }

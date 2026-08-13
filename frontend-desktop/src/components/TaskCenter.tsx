@@ -1,14 +1,13 @@
 /* ════════════════════════════════════════════════════════════
-   TaskCenter — 任务中心（v0.34 桌面重构 · 照 demo TaskCenter 表格）
-   顶栏（标题+已选N+批量操作） + 筛选 Tab（全部/处理中/已完成失败） +
-   任务表格（checkbox/任务文件/所属/状态/提交时间/操作）。
-   数据 = 共享视频列表（4s 轮询），按 status 过滤。
+   TaskCenter — 任务中心（v0.34 接线 /tasks 后端）
+   顶栏 + 筛选 Tab + 任务表格（checkbox/任务文件/所属/状态/提交时间/操作:
+   日志/重试/删除）。4s 轮询 api.listTasks(scope)。
    ════════════════════════════════════════════════════════════ */
 
-import { useMemo, useState } from "react";
-import { useApp } from "../AppContext";
-import type { VideoListItem } from "../types";
-import { fmtDate, fmtDuration } from "../utils/helpers";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../services/api";
+import type { TaskItem, TaskLogLine } from "../types";
+import { fmtDate } from "../utils/helpers";
 import { IconTask } from "./icons";
 
 const FILTERS = [
@@ -18,61 +17,65 @@ const FILTERS = [
 ] as const;
 type FilterKey = typeof FILTERS[number]["key"];
 
-function StatusBadge({ v }: { v: VideoListItem }) {
-  if (v.status === "processing") {
-    return (
-      <div className="flex items-center gap-2">
-        <span className="g-badge run">处理中 {Math.round(v.progress)}%</span>
-        <div className="g-progress w-16"><div style={{ width: `${v.progress}%` }} /></div>
-      </div>
-    );
-  }
-  const map: Record<string, [string, string]> = {
-    pending: ["待参数", "wait"],
-    completed: ["已完成", "ok"],
-    failed: ["失败", "err"],
-  };
-  const [label, cls] = map[v.status] || [v.status, "wait"];
-  return <span className={"g-badge " + cls}>{label}</span>;
-}
+const STATUS_META: Record<string, { label: string; cls: string; pulse?: boolean }> = {
+  pending: { label: "待参数", cls: "wait" },
+  processing: { label: "处理中", cls: "run", pulse: true },
+  completed: { label: "已完成", cls: "ok" },
+  failed: { label: "失败", cls: "err" },
+};
 
 export function TaskCenter() {
-  const { videos, videoGroups, openWorkbench, deleteVideo } = useApp();
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [filter, setFilter] = useState<FilterKey>("all");
-  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [logTask, setLogTask] = useState<TaskItem | null>(null);
+  const [logs, setLogs] = useState<TaskLogLine[]>([]);
+  const [loadingLog, setLoadingLog] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const filtered = useMemo(() => {
-    switch (filter) {
-      case "active": return videos.filter((v) => v.status === "processing" || v.status === "pending");
-      case "history": return videos.filter((v) => v.status === "completed" || v.status === "failed");
-      default: return videos;
+  const load = () => {
+    api.listTasks(filter).then((data) => setTasks(data ?? [])).catch(() => {});
+  };
+  useEffect(() => { load(); }, [filter]);
+  useEffect(() => {
+    const iv = setInterval(load, 4000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
+
+  const counts = useMemo(() => {
+    const done = tasks.filter((t) => t.status === "completed").length;
+    const failed = tasks.filter((t) => t.status === "failed").length;
+    return { done, failed };
+  }, [tasks]);
+
+  const openLog = async (t: TaskItem) => {
+    setLogTask(t);
+    setLogs([]);
+    setLoadingLog(true);
+    try {
+      const d = await api.getTaskLog(t.id);
+      setLogs(d?.log ?? []);
+    } catch { setLogs([]); }
+    setLoadingLog(false);
+  };
+
+  const retry = async (t: TaskItem) => {
+    setBusyId(t.id);
+    try {
+      await api.retryTask(t.id);
+      load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "重试失败");
     }
-  }, [videos, filter]);
-
-  const doneCount = videos.filter((v) => v.status === "completed").length;
-  const failedCount = videos.filter((v) => v.status === "failed").length;
-
-  const toggleCheck = (id: string) => {
-    setChecked((prev) => {
-      const n = new Set(prev);
-      if (n.has(id)) n.delete(id); else n.add(id);
-      return n;
-    });
-  };
-  const allChecked = filtered.length > 0 && checked.size === filtered.length;
-  const toggleAll = () => setChecked(allChecked ? new Set() : new Set(filtered.map((v) => v.id)));
-
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("确定删除该任务？将同时释放磁盘空间。")) return;
-    try { await deleteVideo(id); }
-    catch (err) { alert(err instanceof Error ? err.message : "删除失败"); }
+    setBusyId(null);
   };
 
-  const batchDelete = async () => {
-    if (checked.size === 0) return;
-    if (!window.confirm(`确定删除所选 ${checked.size} 个任务？`)) return;
-    for (const id of checked) { try { await deleteVideo(id); } catch { /* 单个失败继续 */ } }
-    setChecked(new Set());
+  const del = async (t: TaskItem) => {
+    if (!window.confirm(`确定删除「${t.file_name ?? t.id}」？将释放磁盘空间。`)) return;
+    try {
+      await api.deleteVideo(t.id);
+      load();
+    } catch (err) { alert(err instanceof Error ? err.message : "删除失败"); }
   };
 
   return (
@@ -83,11 +86,7 @@ export function TaskCenter() {
           <h1 className="text-[15px] font-semibold text-gray-900 leading-tight flex items-center gap-2">
             <IconTask /> 任务中心
           </h1>
-          <p className="text-[11.5px] text-gray-400 leading-tight">后台进程监控与历史记录追溯</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[11.5px] text-gray-400 mr-1">已选 {checked.size} 项</span>
-          <button className="g-btn" onClick={batchDelete} disabled={!checked.size}>批量删除</button>
+          <p className="text-[11.5px] text-gray-500 leading-tight">后台进程监控与历史记录追溯</p>
         </div>
       </div>
 
@@ -98,7 +97,7 @@ export function TaskCenter() {
             {f.label}
           </button>
         ))}
-        <span className="ml-auto text-[11.5px] text-gray-400">完成 {doneCount} · 失败 {failedCount} · 每 4 秒自动刷新</span>
+        <span className="ml-auto text-[11.5px] text-gray-500">完成 {counts.done} · 失败 {counts.failed} · 每 4 秒自动刷新</span>
       </div>
 
       {/* ══ 任务表格 ══ */}
@@ -106,45 +105,73 @@ export function TaskCenter() {
         <table className="g-table">
           <thead>
             <tr>
-              <th className="w-9">
-                <input type="checkbox" className="accent-[#4f7cff] cursor-pointer" checked={allChecked} onChange={toggleAll} />
-              </th>
+              <th>版本</th>
               <th>任务 / 文件</th>
-              <th className="w-40">所属</th>
+              <th className="w-36">所属</th>
               <th className="w-52">状态</th>
               <th className="w-36">提交时间</th>
-              <th className="w-24">时长</th>
-              <th className="w-[180px] text-right pr-4">操作</th>
+              <th className="w-[200px] text-right pr-4">操作</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((v) => {
-              const gid = v.group_id;
-              const groupCount = gid ? videoGroups.find((g) => g.groupId === gid)?.videoIds.length ?? 1 : 0;
+            {tasks.map((t) => {
+              const sm = STATUS_META[t.status] || STATUS_META.pending;
               return (
-                <tr key={v.id} className={checked.has(v.id) ? "bg-brand/5" : ""}>
-                  <td>
-                    <input type="checkbox" className="accent-[#4f7cff] cursor-pointer" checked={checked.has(v.id)} onChange={() => toggleCheck(v.id)} />
+                <tr key={t.id}>
+                  <td className="text-[12px] font-mono text-gray-500">
+                    {t.version_no != null ? `V${t.version_no}` : "—"}
                   </td>
                   <td>
-                    <div className="text-[13px] text-gray-800 truncate max-w-[280px]" title={v.file_name}>{v.file_name}</div>
-                    <div className="text-[11px] text-gray-400 font-mono">{v.id.slice(0, 8)}</div>
+                    <div className="text-[13px] text-gray-800 truncate max-w-[280px]" title={t.file_name ?? ""}>{t.file_name ?? t.id.slice(0, 8)}</div>
+                    <div className="text-[11px] text-gray-500 font-mono">{t.id.slice(0, 8)}</div>
                   </td>
-                  <td className="text-gray-600">{gid ? `分组 ${groupCount} 个视频` : <span className="text-gray-300">未分组</span>}</td>
-                  <td><StatusBadge v={v} /></td>
-                  <td className="text-gray-500">{fmtDate(v.created_at)}</td>
-                  <td className="text-gray-500">{v.duration != null ? fmtDuration(v.duration) : "-"}</td>
+                  <td className="text-gray-600">{t.group_name ?? <span className="text-gray-300">未分组</span>}</td>
+                  <td>
+                    <div className="flex items-center gap-2">
+                      <span className={"g-badge " + sm.cls}>{sm.pulse && <span className="pulse" />}{sm.label}</span>
+                      {(t.status === "processing" || t.status === "pending") && (
+                        <div className="g-progress w-16"><div style={{ width: `${t.progress}%` }} /></div>
+                      )}
+                    </div>
+                  </td>
+                  <td className="text-gray-500">{fmtDate(t.created_at)}</td>
                   <td className="text-right pr-4 whitespace-nowrap">
-                    <button className="g-btn !px-2 !py-1 mr-1" onClick={() => openWorkbench(v.id)}>查看结果</button>
-                    <button className="g-btn g-btn-danger !px-2 !py-1" onClick={() => handleDelete(v.id)}>删除</button>
+                    <button className="g-btn !px-2 !py-1 mr-1" onClick={() => openLog(t)}>日志</button>
+                    {t.status === "failed" && (
+                      <button className="g-btn !px-2 !py-1 mr-1" onClick={() => retry(t)} disabled={busyId === t.id}>
+                        {busyId === t.id ? "重试中…" : "重试"}
+                      </button>
+                    )}
+                    <button className="g-btn g-btn-danger !px-2 !py-1" onClick={() => del(t)}>删除</button>
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
-        {filtered.length === 0 && <div className="g-empty"><span>当前筛选下暂无任务</span></div>}
+        {tasks.length === 0 && <div className="g-empty"><span>当前筛选下暂无任务</span></div>}
       </div>
+
+      {/* ══ 日志 Modal ══ */}
+      {logTask && (
+        <div className="g-modal-overlay">
+          <div className="g-modal" style={{ width: 600 }}>
+            <div className="g-card-hd">
+              <span className="g-card-tt">任务日志 · {logTask.file_name ?? ""}</span>
+              <button className="g-btn g-btn-sm" onClick={() => setLogTask(null)}>关闭</button>
+            </div>
+            <div className="p-4" style={{ maxHeight: "60vh", overflowY: "auto", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+              {loadingLog && <div className="text-gray-500">加载中…</div>}
+              {!loadingLog && logs.length === 0 && <div className="text-gray-500">暂无日志</div>}
+              {logs.map((l) => (
+                <div key={l.seq} style={{ color: l.level === "error" ? "#ef4444" : "#334155", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                  <span className="text-gray-500">{String(l.seq).padStart(2, "0")}</span>  {l.message}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

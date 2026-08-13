@@ -260,6 +260,9 @@ class VideoGroupResponse(BaseModel):
 
     id: uuid.UUID
     name: str | None = None
+    number: str | None = None          # v0.34 文件编号
+    owner: str | None = None           # v0.34 负责人
+    file_count: int = 0                # 组内文件（根 videos）数
     video_ids: list[uuid.UUID] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
@@ -305,6 +308,10 @@ class VideoResponse(BaseModel):
 
     # ── 分组 (v0.19) ──
     group_id: uuid.UUID | None     = None
+
+    # ── 版本链 (v0.34) ──
+    file_id: uuid.UUID | None      = None
+    version_no: int | None         = None
 
     # ── 云智平台外部文件 ID (v0.25.x) ──
     external_file_id: int | None   = None
@@ -354,6 +361,10 @@ class VideoListItem(BaseModel):
     # ── 分组 (v0.19) ──
     group_id: uuid.UUID | None     = None
 
+    # ── 版本链 (v0.34) ──
+    file_id: uuid.UUID | None      = None
+    version_no: int | None         = None
+
     # ── 格式信息 (v0.13) ──
     container_format: str | None        = None
     video_codec: str | None             = None
@@ -393,3 +404,84 @@ class TranscriptResponse(BaseModel):
     language: str | None              = None
     duration_transcribed: float | None = None
     created_at: datetime
+
+
+# ═══════════════════════════════════════════════════════════
+# v0.34 文件库 / 多版本 / 任务中心 DTO
+# ═══════════════════════════════════════════════════════════
+
+class FileItem(BaseModel):
+    """文件库列表项 — 一个文件（根行信息 + 当前版本状态）。"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID                    # 文件 ID = file_id（独立文件 = 自身 id）
+    name: str                        # 文件名（根行 file_name）
+    group_id: uuid.UUID | None = None
+    duration: float | None = None
+    file_size: int | None = None
+    created_at: datetime | None = None
+
+    # 当前版本（最新 completed，否则最新 version_no）
+    current_version_no: int | None = None
+    current_status: str | None = None
+    current_progress: float = 0.0
+    current_summary: dict | None = None
+    versions_count: int = 0
+
+
+class VersionInfo(BaseModel):
+    """单个解析版本信息（版本列表/任务中心共用）。"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID                    # 版本行 videos.id（作 task_id）
+    video_id: uuid.UUID | None = None
+    version_no: int | None = None
+    status: VideoStatus
+    progress: float = 0.0
+    error_message: str | None = None
+    file_name: str | None = None
+    group_id: uuid.UUID | None = None
+    params: dict | None = None       # PipelineParams 快照
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class TaskItem(BaseModel):
+    """任务中心列表项 — 一次解析（一个版本行）。"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID                    # 版本行 videos.id
+    version_no: int | None = None
+    file_name: str | None = None
+    group_name: str | None = None
+    status: VideoStatus
+    progress: float = 0.0
+    error_message: str | None = None
+    params: dict | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class GroupCreate(BaseModel):
+    """创建/更新分组（案例）。"""
+    name: str
+    number: str | None = None
+    owner: str | None = None
+
+
+class ReanalyzeRequest(BaseModel):
+    """重解析请求 — 复用 PipelineParams（见上）。"""
+    pass
+
+
+class CaseAssetItem(BaseModel):
+    """案例素材项（图片等非视频）。"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    group_id: uuid.UUID | None = None
+    kind: str = "image"
+    name: str
+    path: str
+    file_size: int = 0
+    created_at: datetime | None = None

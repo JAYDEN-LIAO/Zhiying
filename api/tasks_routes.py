@@ -1,0 +1,139 @@
+"""
+api/tasks_routes.py
+═══════════════════════════════════════════════════════════
+任务中心 API（v0.34）— 一次解析 = 一个版本行（videos 行）。
+
+列表按 scope 过滤；日志读 task_logs；重试 = 清空产物 + 重置 pending + 重新入队。
+"""
+
+import uuid
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import select, delete as sa_delete, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api.deps import get_db
+from api.schemas import APIResponse
+from core.models import (
+    Video, TaskLog, VideoStatus,
+    Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track,
+    TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection,
+)
+from core.schemas import TaskItem
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+_PRODUCT_MODELS = [
+    Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track,
+    TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection,
+]
+
+
+async def _task_to_dto(session: AsyncSession, v: Video) -> TaskItem:
+    """版本行 → TaskItem（补 file_name/group_name）。"""
+    group_name = None
+    if v.group_id:
+        row = await session.execute(
+            text("SELECT name FROM video_groups WHERE id = :gid"), {"gid": v.group_id}
+        )
+        g = row.first()
+        group_name = g[0] if g else None
+    return TaskItem(
+        id=v.id,
+        version_no=v.version_no,
+        file_name=v.file_name,
+        group_name=group_name,
+        status=v.status,
+        progress=v.progress,
+        error_message=v.error_message,
+        params=None,
+        created_at=v.created_at,
+        updated_at=v.updated_at,
+    )
+
+
+@router.get("/tasks", response_model=APIResponse[list[TaskItem]])
+async def list_tasks(
+    scope: str = Query("all", pattern="^(all|active|history)$"),
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[list[TaskItem]]:
+    """任务列表 — scope: all(全部) / active(处理中+待参数) / history(已完成+失败)。"""
+    stmt = select(Video).order_by(Video.created_at.desc())
+    if scope == "active":
+        stmt = stmt.where(
+            Video.status.in_([VideoStatus.PROCESSING, VideoStatus.PENDING])
+        )
+    elif scope == "history":
+        stmt = stmt.where(
+            Video.status.in_([VideoStatus.COMPLETED, VideoStatus.FAILED])
+        )
+    result = await db.execute(stmt)
+    videos = list(result.scalars().all())
+    items = [await _task_to_dto(db, v) for v in videos]
+    return APIResponse(data=items)
+
+
+@router.get("/tasks/{task_id}", response_model=APIResponse[TaskItem])
+async def get_task(
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[TaskItem]:
+    v = await db.get(Video, task_id)
+    if v is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return APIResponse(data=await _task_to_dto(db, v))
+
+
+@router.get("/tasks/{task_id}/log", response_model=APIResponse[dict])
+async def get_task_log(
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """任务日志 — task_logs 表（task_id = 版本行 id）。"""
+    result = await db.execute(
+        select(TaskLog)
+        .where(TaskLog.task_id == task_id)
+        .order_by(TaskLog.seq.asc())
+    )
+    logs = list(result.scalars().all())
+    return APIResponse(data={
+        "log": [{"seq": l.seq, "level": l.level, "message": l.message, "created_at": l.created_at.isoformat()} for l in logs],
+    })
+
+
+@router.post("/tasks/{task_id}/retry", response_model=APIResponse[dict])
+async def retry_task(
+    task_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """重试 — 清空该版本行产物 + 重置 pending + 重新入队。"""
+    v = await db.get(Video, task_id)
+    if v is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 清空产物（防 failed 半程残留 + 重跑累积）
+    for model in _PRODUCT_MODELS:
+        await db.execute(
+            sa_delete(model).where(model.video_id == v.id)
+        )
+    # 重置状态
+    v.status = VideoStatus.PENDING
+    v.progress = 0.0
+    v.error_message = None
+    v.summary = None
+    await db.commit()
+
+    # 重新入队（复用全局队列）
+    queue = getattr(request.app.state, "pipeline_queue", None)
+    if queue is not None:
+        await queue.enqueue("pipeline", {"video_id": str(v.id)})
+    else:
+        # 无队列（如单测）→ 直接触发
+        from services.video_service import _build_service
+        import asyncio
+        asyncio.create_task(_build_service(request.app).process_video(v.id))
+    return APIResponse(data={"ok": True, "id": str(v.id)})

@@ -20,12 +20,14 @@ from api.schemas import APIResponse, VideoStatusResponse, ReuseRequest
 from core.schemas import (
     VideoCreate, VideoResponse, VideoListItem, VideoGroupResponse,
     PipelineParams, ExternalVideoRegister, ContentType,
+    FileItem, VersionInfo,
 )
 from core.config_loader import load_config
 from core.models import Video, VideoGroup, VideoStatus
 from core.repository import (
     create_video, get_video_with_relations, get_video_by_external_file_id,
     list_videos, delete_video,
+    list_file_roots, list_file_versions, resolve_file_id,
 )
 from core.cancellation import mark_cancelled, unmark_cancelled
 from services.video_service import VideoService, RUNNING_VIDEOS
@@ -78,6 +80,7 @@ async def upload_video(
     segment_threshold: float = Form(0.5),
     caption_with_context: bool = Form(True),
     summary_detail: str = Form("standard"),
+    group_id: uuid.UUID | None = Form(None),  # v0.34 归入指定文件库分组
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[VideoResponse]:
     """上传视频文件，创建 Video 记录（status=pending），不自动启动 Pipeline。"""
@@ -126,6 +129,7 @@ async def upload_video(
         segment_threshold=segment_threshold,
         caption_with_context=caption_with_context,
         summary_detail=summary_detail,
+        group_id=group_id,
     )
 
     video = await create_video(db, dto)
@@ -224,6 +228,7 @@ async def upload_videos_batch(
     segment_threshold: float = Form(0.5),
     caption_with_context: bool = Form(True),
     summary_detail: str = Form("standard"),
+    group_id: uuid.UUID | None = Form(None),  # v0.34 归入指定文件库分组（否则自动建组）
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[list[VideoResponse]]:
     """批量上传视频文件，创建 VideoGroup 并将所有视频关联到该组。
@@ -238,11 +243,13 @@ async def upload_videos_batch(
         raise HTTPException(status_code=400, detail="请至少上传一个文件")
 
     # 1. 创建 VideoGroup 记录（使用主 session，需 commit 以供其他 session 可见）
-    group = VideoGroup(name=None)
-    db.add(group)
-    await db.commit()  # commit 让独立 session 能读到 group
-    await db.refresh(group)
-    group_id = group.id
+    #    v0.34：若指定 group_id 则复用该组（文件库新建文件后上传归组），否则自动建组
+    if group_id is None:
+        group = VideoGroup(name=None)
+        db.add(group)
+        await db.commit()  # commit 让独立 session 能读到 group
+        await db.refresh(group)
+        group_id = group.id
 
     # 解析 detection_classes
     detection_classes_list: list[str] | None = None
@@ -880,3 +887,96 @@ async def _cache_source_analysis(
     except Exception as e:
         logger.warning("[SourceAnalysis] Failed to cache for %s: %s", video_id, e)
 
+
+
+# ═══════════════════════════════════════════════════════════
+# v0.34 文件库 / 多版本解析
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/files", response_model=APIResponse[list[FileItem]])
+async def list_files(db: AsyncSession = Depends(get_db)) -> APIResponse[list[FileItem]]:
+    """文件库列表 — 每个文件一行（根行信息 + 当前版本状态/进度/摘要）。"""
+    rows = await list_file_roots(db)
+    items = [FileItem(
+        id=r["id"],                          # 根 videos 行 id（前端打开用，Workbench 再解析当前版本）
+        name=r["file_name"],
+        group_id=r.get("group_id"),
+        duration=r.get("duration"),
+        file_size=r.get("file_size"),
+        created_at=r.get("created_at"),
+        current_version_no=r.get("current_version_no"),
+        current_status=r.get("current_status"),
+        current_progress=float(r.get("current_progress") or 0.0),
+        current_summary=r.get("current_summary"),
+        versions_count=int(r.get("versions_count") or 1),
+    ) for r in rows]
+    return APIResponse(data=items)
+
+
+@router.get("/videos/{video_id}/versions", response_model=APIResponse[list[VersionInfo]])
+async def list_versions(
+    video_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[list[VersionInfo]]:
+    """某文件的全部解析版本（版本链）— 输入任一版本行 id 即可。"""
+    video = await db.get(Video, video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="视频不存在")
+    file_id = resolve_file_id(video)
+    versions = await list_file_versions(db, file_id)
+    items = [VersionInfo.model_validate(v) for v in versions]
+    return APIResponse(data=items)
+
+
+@router.post("/videos/{video_id}/reanalyze", response_model=APIResponse[VideoResponse])
+async def reanalyze_video(
+    video_id: uuid.UUID,
+    payload: PipelineParams,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[VideoResponse]:
+    """重解析 — 为已有视频创建新版本行（复制文件信息 + 版本链）并入队管道。"""
+    video = await db.get(Video, video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="视频不存在")
+
+    service = VideoService(
+        config=load_config(),
+        db_session_factory=request.app.state.db_session_factory,
+        embedder=getattr(request.app.state, "embedder", None),
+        captioner=getattr(request.app.state, "captioner", None),
+        detector=getattr(request.app.state, "detector", None),
+    )
+    new_video = await service.create_reanalyze_version(video_id, payload)
+
+    queue = getattr(request.app.state, "pipeline_queue", None)
+    if queue is not None:
+        await queue.enqueue("pipeline", {"video_id": str(new_video.id)})
+    return APIResponse(data=VideoResponse.model_validate(new_video))
+
+
+@router.delete("/files/{file_id}", response_model=APIResponse[dict])
+async def delete_file(
+    file_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """删除文件库中的一个文件（整个版本链）— 删该 file_id 全部 videos 行（级联产物）。
+
+    file_id 传入任一版本行 id 均可：解析其 file_id 后删链上全部版本行。
+    磁盘清理走 StorageManager（repository.delete_video 内部按引用判定）。
+    """
+    video = await db.get(Video, file_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    # 独立视频（file_id NULL，未重解析过）：直接删自身
+    # 版本化文件：删该 file_id 链上全部版本行
+    if video.file_id is None:
+        versions = [video]
+    else:
+        versions = await list_file_versions(db, video.file_id)
+    freed = 0
+    sm = getattr(request.app.state, "storage_manager", None)
+    for v in versions:
+        freed += await delete_video(db, v, storage_manager=sm)
+    return APIResponse(data={"ok": True, "freed_bytes": freed})

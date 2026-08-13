@@ -345,6 +345,65 @@ async def init_db():
             ON videos (external_file_id)
         """))
 
+        # ── 增量迁移 v0.34: 版本链（文件库/多版本解析） ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS file_id uuid
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS version_no integer
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_videos_file_id
+            ON videos (file_id)
+        """))
+        await conn.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_videos_file_version
+            ON videos (file_id, version_no)
+            WHERE file_id IS NOT NULL
+        """))
+        # ── 增量迁移 v0.34: 案例/文件库字段（编号/负责人） ──
+        await conn.execute(text("""
+            ALTER TABLE video_groups
+            ADD COLUMN IF NOT EXISTS number VARCHAR(64)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE video_groups
+            ADD COLUMN IF NOT EXISTS owner VARCHAR(64)
+        """))
+        # ── 增量迁移 v0.34: 案例素材表（图片等非视频） ──
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS case_assets (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                group_id UUID NOT NULL REFERENCES video_groups(id) ON DELETE CASCADE,
+                kind VARCHAR(16) NOT NULL DEFAULT 'image',
+                name VARCHAR(512) NOT NULL,
+                path VARCHAR(1024) NOT NULL,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_case_assets_group
+            ON case_assets (group_id)
+        """))
+        # ── 增量迁移 v0.34: 任务日志表 ──
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS task_logs (
+                id SERIAL PRIMARY KEY,
+                task_id UUID NOT NULL,
+                seq INTEGER NOT NULL DEFAULT 0,
+                level VARCHAR(16) NOT NULL DEFAULT 'info',
+                message TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_task_logs_task_seq
+            ON task_logs (task_id, seq)
+        """))
+
         # ── 清理：删除废弃的列、枚举类型、触发器 ──
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS ai_detect_enabled
