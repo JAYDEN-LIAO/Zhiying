@@ -50,6 +50,11 @@ export function fmtFullDate(iso: string): string {
   return formatInTz(parseUtcIso(iso), { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
+/** 时分秒：HH:mm:ss（任务日志时间点） */
+export function fmtTime(iso: string): string {
+  return formatInTz(parseUtcIso(iso), { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
 export function formatSec(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);

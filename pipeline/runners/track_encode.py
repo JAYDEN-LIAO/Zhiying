@@ -88,6 +88,11 @@ class TrackEncodeRunner(OperationRunner):
             "[TrackEncode] Read %d crops from cache for %d tracks (%.1f/track)",
             len(crops), len(tracks), len(crops) / max(1, len(tracks)),
         )
+        if pctx.log:
+            await pctx.log(
+                f"物体语义编码：读取缓存 {len(crops)} 个 crop（{len(tracks)} 条轨迹，"
+                f"{len(crops) / max(1, len(tracks)):.1f}/条）"
+            )
 
         # ── 批量编码 ──
         TRACK_BATCH = 64
@@ -153,6 +158,8 @@ class TrackEncodeRunner(OperationRunner):
             "[TrackEncode] Done: %d embeddings, %d tracks (merged %d)",
             len(track_embeddings), n_after, n_before - n_after,
         )
+        if pctx.log:
+            await pctx.log(f"物体语义编码完成：{len(track_embeddings)} 条轨迹向量（全局缝合合并 {n_before - n_after} 条）")
 
     # ── 静态方法 ──
 

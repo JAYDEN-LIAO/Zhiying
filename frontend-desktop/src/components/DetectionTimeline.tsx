@@ -141,8 +141,25 @@ export const DetectionTimeline = memo(function DetectionTimeline({ videoId, vide
   const rectsRef = useRef(rects); rectsRef.current = rects;
   const laneCountRef = useRef(laneCount); laneCountRef.current = laneCount;
 
-  const videoDur = videoRef.current?.duration;
-  const duration = (videoDur && videoDur > 0 && !Number.isNaN(videoDur))
+  /* 视频时长响应式：metadata 加载是异步的，渲染期读 ref 不触发重渲染。
+     监听 loadedmetadata/durationchange 刷新 duration state。 */
+  const [videoDur, setVideoDur] = useState<number | null>(null);
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    const refresh = () => {
+      const d = el.duration;
+      if (d && d > 0 && !Number.isNaN(d)) setVideoDur(d);
+    };
+    refresh();
+    el.addEventListener("loadedmetadata", refresh);
+    el.addEventListener("durationchange", refresh);
+    return () => {
+      el.removeEventListener("loadedmetadata", refresh);
+      el.removeEventListener("durationchange", refresh);
+    };
+  }, [videoRef, videoId, streamReady]);
+  const duration = (videoDur && videoDur > 0)
     ? videoDur
     : ((data?.tracks?.length ? Math.max(...data.tracks.map((t) => t.last_seen)) : 0) + 1);
   const durationRef = useRef(duration); durationRef.current = duration;

@@ -126,3 +126,5 @@ class PlateRunner(OperationRunner):
             "[PlateRunner] Done: %d plates from %d vehicle tracks",
             len(plate_detections), len(vehicle_tracks),
         )
+        if pctx.log:
+            await pctx.log(f"车牌识别完成：{len(plate_detections)} 个车牌（来自 {len(vehicle_tracks)} 条车辆轨迹）")

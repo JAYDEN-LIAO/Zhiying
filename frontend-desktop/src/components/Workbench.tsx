@@ -19,6 +19,7 @@ import { ExportMenu } from "./ExportMenu";
 import { ParameterPanel } from "./ParameterPanel";
 import { VideoPlayer } from "./VideoPlayer";
 import { DetectionTimeline } from "./DetectionTimeline";
+import { PipelineBar } from "./PipelineBar";
 import { VideoSummaryCard } from "./VideoSummaryCard";
 import { VideoInfoCard } from "./VideoInfoCard";
 import { DetectionPanel } from "./DetectionPanel";
@@ -37,9 +38,9 @@ const langLabel: Record<string, string> = { auto: "自动", zh: "中文", en: "E
 
 /* ═══════════════ ① 顶部卡 ═══════════════ */
 function WbHeader({
-  videoName, groupName, curVersionName, hasVideo, isPending, onReanalyze, onOpenHistory, onOpenExport,
+  videoName, groupName, curVersionName, hasVideo, isPending, isProcessing, onReanalyze, onOpenHistory, onOpenExport,
 }: {
-  videoName: string; groupName: string | null; curVersionName: string; hasVideo: boolean; isPending: boolean;
+  videoName: string; groupName: string | null; curVersionName: string; hasVideo: boolean; isPending: boolean; isProcessing: boolean;
   onReanalyze: () => void; onOpenHistory: () => void; onOpenExport: () => void;
 }) {
   return (
@@ -65,7 +66,7 @@ function WbHeader({
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
           历史记录
         </button>
-        <button className="g-btn g-btn-primary" onClick={onReanalyze} disabled={!hasVideo || isPending}>
+        <button className="g-btn g-btn-primary" onClick={onReanalyze} disabled={!hasVideo || isProcessing}>
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 1112.9 5.3M4.5 12V7.5M4.5 12h4.5M19.5 12a7.5 7.5 0 01-12.9-5.3M19.5 12v4.5M19.5 12H15" /></svg>
           {isPending ? "开始解析" : "重新解析"}
         </button>
@@ -96,6 +97,13 @@ function WbSummary({ currentVideo }: { currentVideo: VideoResponse | null }) {
           <svg className="w-4 h-4 text-[#4f7cff]" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6M9 8h6M5 19V5a2 2 0 012-2h10a2 2 0 012 2v14l-3-2-2 2-2-2-2 2-2-2-3 2z" /></svg>
           <span className="text-[13px] font-semibold text-gray-800">视频摘要</span>
         </div>
+        {currentVideo?.summary?.tags != null && currentVideo.summary.tags.length > 0 && (
+          <div className="sum-tags !mt-0 flex-1 justify-end overflow-hidden">
+            {currentVideo.summary.tags.slice(0, 4).map((tag) => (
+              <span key={tag} className="sum-tag">{tag}</span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex-1 min-h-0 overflow-auto p-2">
         <VideoSummaryCard video={currentVideo} />
@@ -108,12 +116,12 @@ function WbSummary({ currentVideo }: { currentVideo: VideoResponse | null }) {
 function WbAnalysis({ detection, search }: { detection: React.ReactNode; search: React.ReactNode }) {
   return (
     <div className="case-card h-full flex flex-col p-2 min-h-0 overflow-hidden">
-      <SplitPane direction="row" initial={42} min={25} max={68} className="h-full w-full">
+      <SplitPane direction="row" initial={42} min={32} max={68} className="h-full w-full">
         <div className="w-full h-full flex flex-col bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="flex-1 min-h-0 overflow-auto">{detection}</div>
+          <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">{detection}</div>
         </div>
         <div className="w-full h-full flex flex-col bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="flex-1 min-h-0 overflow-hidden">{search}</div>
+          <div className="flex-1 min-h-0 min-w-0 overflow-hidden">{search}</div>
         </div>
       </SplitPane>
     </div>
@@ -121,7 +129,7 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
 }
 
 export function Workbench() {
-  const { selectedVideoId, paramsTick, videos, videoGroups, caseGroups, navigate, deleteVideo, handleUploadClick, isUploading } = useApp();
+  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, videos, videoGroups, caseGroups, navigate, handleUploadClick, isUploading } = useApp();
   const currentVideoId = selectedVideoId;
 
   /* ── 版本切换（v0.34）：打开文件 → 拉取版本链 → 默认当前版本 ── */
@@ -140,6 +148,12 @@ export function Workbench() {
       .then((vs) => {
         if (cancelled || !vs?.length) return;
         setVersions(vs);
+        // 跳转定位版本：任务中心跳转带 initialVersionId → 精确定位该版本行
+        const targeted = initialVersionId ? vs.find((v) => v.id === initialVersionId) : undefined;
+        if (targeted) {
+          setActiveVersionId(targeted.id);
+          return;
+        }
         // 默认当前版本 = 最新 completed，否则最新 version_no
         const cur = [...vs].sort((a, b) => (b.version_no ?? 0) - (a.version_no ?? 0))
           .find((v) => v.status === "completed");
@@ -148,7 +162,7 @@ export function Workbench() {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [currentVideoId]);
+  }, [currentVideoId, initialVersionId]);
 
   /* ── 视频详情与状态 ── */
   const [currentVideo, setCurrentVideo] = useState<VideoResponse | null>(null);
@@ -188,14 +202,18 @@ export function Workbench() {
     setDetectionVideoId(null);
   }, [vid]);
 
-  /* ── 自动打开参数面板（上传/智能解析后） ── */
+  /* ── 自动打开参数面板（上传/智能解析后）——一次性消费：弹过即归零，
+     预览（openParams=false）或切页回来不再重复弹 ── */
   useEffect(() => {
-    if (paramsTick > 0 && currentVideoId) setParamsOpen(true);
-  }, [paramsTick, currentVideoId]);
+    if (paramsTick > 0 && currentVideoId) {
+      setParamsOpen(true);
+      consumeParamsTick();
+    }
+  }, [paramsTick, currentVideoId, consumeParamsTick]);
 
   /* ── 派生布尔 ── */
   const isPending = currentVideo?.status === "pending";
-  const isProcessing = currentVideo?.status === "processing" || isPending;
+  const isProcessing = currentVideo?.status === "processing";
   const isCompleted = currentVideo?.status === "completed";
   const showDetection = !!(currentVideo?.detection_enabled && isCompleted);
 
@@ -204,7 +222,15 @@ export function Workbench() {
 
   useVideoPolling({
     videoId: vid,
-    onUpdate: useCallback((data: VideoResponse) => { setCurrentVideo(data); }, []),
+    onUpdate: useCallback((data: VideoResponse) => {
+      setCurrentVideo(data);
+      // 版本历史状态同步：处理中 → 终态时刷新版本链（否则历史面板徽章卡在"处理中"）
+      if (data.status === "completed" || data.status === "failed") {
+        api.listVersions(currentVideoId ?? data.id)
+          .then((vs) => { if (vs?.length) setVersions(vs); })
+          .catch(() => {});
+      }
+    }, [currentVideoId]),
   });
 
   const needsProxy = useMemo(() => {
@@ -320,16 +346,17 @@ export function Workbench() {
 
   const handleDelete = useCallback(async () => {
     if (!vid) return;
-    if (!window.confirm("确定删除该视频？将同时释放磁盘空间。")) return;
+    if (!window.confirm("确定删除该视频（含全部解析版本）？将同时释放磁盘空间。")) return;
     setDeleting(true);
     try {
-      await deleteVideo(vid);
+      // 删除整个文件链（根行 currentVideoId → 全部版本），而非仅当前版本行
+      await api.deleteFile(currentVideoId ?? vid);
       navigate("files");
     } catch (err) {
       alert(err instanceof Error ? err.message : "删除失败");
     }
     setDeleting(false);
-  }, [vid, deleteVideo, navigate]);
+  }, [vid, currentVideoId, navigate]);
 
   /* ── 重解析（v0.34）：以当前版本参数建新版本并入队 ── */
   const handleReanalyze = useCallback(async () => {
@@ -369,22 +396,17 @@ export function Workbench() {
     return (
       <div className="h-full flex flex-col gap-2 p-2">
         <WbHeader
-          videoName="" groupName={null} curVersionName="" hasVideo={false} isPending={false}
+          videoName="" groupName={null} curVersionName="" hasVideo={false} isPending={false} isProcessing={false}
           onReanalyze={() => {}} onOpenHistory={() => {}} onOpenExport={() => {}}
         />
         <div className="flex-1 min-h-0">
           <SplitPane direction="row" initial={60} min={32} max={72} className="h-full w-full">
-            {/* 左舞台卡：空态 CTA */}
+            {/* 左舞台卡：空态 CTA（只留虚线按钮） */}
             <WbStage
               player={
-                <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 gap-3 bg-[#0b0f16]">
-                  <div className="w-20 h-20 rounded-full border border-gray-700 flex items-center justify-center">
-                    <svg className="w-9 h-9 ml-1 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5.14v13.72L19 12 8 5.14z" /></svg>
-                  </div>
-                  <div className="text-[15px] font-medium text-gray-300 mt-2">上传或选择视频开始分析</div>
-                  <div className="text-[12.5px] text-gray-500">前往「案例库」选择视频，点击「查看结果」或「智能解析」</div>
+                <div className="w-full h-full flex items-center justify-center bg-[#0b0f16]">
                   <button
-                    className="mt-2 w-[300px] h-[110px] rounded-lg border-2 border-dashed border-gray-700 flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer hover:border-[#4f7cff]/60"
+                    className="w-[300px] h-[110px] rounded-lg border-2 border-dashed border-gray-700 flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer hover:border-[#4f7cff]/60"
                     onClick={() => navigate("files")}
                   >
                     <svg className="w-7 h-7 text-gray-500" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>
@@ -423,6 +445,7 @@ export function Workbench() {
         curVersionName={curVersionName}
         hasVideo={!!currentVideo}
         isPending={isPending}
+        isProcessing={isProcessing}
         onReanalyze={() => { setReparseMode(true); setParamsOpen(true); }}
         onOpenHistory={() => setTopPanel((p) => (p === "history" ? null : "history"))}
         onOpenExport={() => setTopPanel((p) => (p === "export" ? null : "export"))}
@@ -483,16 +506,16 @@ export function Workbench() {
                   videoRef={videoRef}
                   onTrackSelect={handleTrackSelect}
                 />
-                {/* 分析进度浮层（demo：进度在视频顶部） */}
+                {/* 分析进度浮层（完整 PipelineBar：阶段点 + 状态 + 百分比） */}
                 {isProcessing && (
                   <div className="analyse-overlay">
-                    <div className="flex items-center gap-3">
-                      <div className="g-progress flex-1 !bg-white/10" style={{ height: 6 }}>
-                        <div style={{ width: `${currentVideo?.progress ?? 0}%`, background: "#4f7cff" }} />
-                      </div>
-                      <span className="text-white text-[12px] font-semibold shrink-0">{Math.round(currentVideo?.progress ?? 0)}%</span>
-                      <span className="text-white/70 text-[11.5px] shrink-0">管道处理中…</span>
-                    </div>
+                    <PipelineBar
+                      dark
+                      progress={currentVideo?.progress ?? 0}
+                      statusDetail={currentVideo?.status_detail}
+                      stages={pipelineStages}
+                      subtitle={`管道处理中… ${Math.round((currentVideo?.progress ?? 0) * 100)}%`}
+                    />
                   </div>
                 )}
                 {/* 视频信息浮层 */}
@@ -502,9 +525,8 @@ export function Workbench() {
                   </svg>
                 </button>
                 {showStageInfo && currentVideo && (
-                  <div className="absolute top-12 right-3 z-20 w-[320px] rounded-lg bg-white border border-gray-200 shadow-xl overflow-hidden">
-                    <div className="g-card-title"><span className="g-card-tt text-[13px]">视频信息</span></div>
-                    <div className="p-2 max-h-[55vh] overflow-auto">
+                  <div className="absolute top-12 right-3 z-20 w-[320px] rounded-lg bg-[#0d1117] border border-gray-700 shadow-xl overflow-hidden">
+                    <div className="video-info-dark p-2 max-h-[55vh] overflow-auto">
                       <VideoInfoCard videoId={vid!} video={currentVideo} />
                     </div>
                   </div>
@@ -589,9 +611,14 @@ export function Workbench() {
               onParamsSet={() => {
                 setParamsOpen(false);
                 setReparseMode(false);
-                // 重新解析后刷新版本列表
+                // 重新解析后刷新版本列表，并切到最新版本（轮询新版本 → 状态实时刷新，不再卡 pending）
                 if (currentVideoId) {
-                  api.listVersions(currentVideoId).then((vs) => { if (vs?.length) setVersions(vs); }).catch(() => {});
+                  api.listVersions(currentVideoId).then((vs) => {
+                    if (!vs?.length) return;
+                    setVersions(vs);
+                    const latest = [...vs].sort((a, b) => (b.version_no ?? 0) - (a.version_no ?? 0))[0];
+                    if (latest) setActiveVersionId(latest.id);
+                  }).catch(() => {});
                 }
               }}
             />

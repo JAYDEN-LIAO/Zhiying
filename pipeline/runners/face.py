@@ -354,3 +354,5 @@ class FaceRunner(OperationRunner):
             "[FaceRunner] Done: %d faces → %d identities",
             len(face_records), n_identities,
         )
+        if pctx.log:
+            await pctx.log(f"人脸识别完成：{len(face_records)} 张人脸 → {n_identities} 个身份")

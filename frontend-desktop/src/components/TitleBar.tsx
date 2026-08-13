@@ -25,7 +25,15 @@ declare global {
 export function TitleBar() {
   const [version, setVersion] = useState<string | null>(null);
   const [isMax, setIsMax] = useState(false);
-  const inPywebview = !!window.pywebview;
+  // pywebview 桥是异步注入的（React 挂载时可能未就绪）→ 用 state + pywebviewready 事件监听
+  const [inPywebview, setInPywebview] = useState(false);
+
+  useEffect(() => {
+    const check = () => { if (window.pywebview?.api) setInPywebview(true); };
+    check();
+    window.addEventListener("pywebviewready", check);
+    return () => window.removeEventListener("pywebviewready", check);
+  }, []);
 
   useEffect(() => {
     api.getHealth()

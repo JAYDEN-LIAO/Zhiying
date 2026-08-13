@@ -10,7 +10,7 @@
    CSS 见 index.css .split-pane 系列
    ════════════════════════════════════════════════════════════ */
 
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 interface Props {
   direction: "row" | "col";
@@ -33,6 +33,12 @@ export function SplitPane({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [ratio, setRatio] = useState(initial);
+  // 拖拽进行中标记：卸载时兜底清理（防 pointercancel/组件销毁后 body 光标/userSelect 卡死）
+  const draggingRef = useRef<{ cleanup: () => void } | null>(null);
+
+  useEffect(() => {
+    return () => draggingRef.current?.cleanup();
+  }, []);
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -49,15 +55,19 @@ export function SplitPane({
       else pct = ((ev.clientY - rect.top) / rect.height) * 100;
       setRatio(Math.min(max, Math.max(min, pct)));
     };
-    const onUp = () => {
+    const end = () => {
+      draggingRef.current = null;
       container.classList.remove("resizing");
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
       document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointerup", end);
+      document.removeEventListener("pointercancel", end);
     };
+    draggingRef.current = { cleanup: end };
     document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointerup", end);
+    document.addEventListener("pointercancel", end);
   };
 
   return (

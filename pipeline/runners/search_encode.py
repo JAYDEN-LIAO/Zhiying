@@ -139,6 +139,8 @@ class SearchEncodeRunner(OperationRunner):
 
         await pctx.tracker.update("search_encode", sub_progress=1.0)
         logger.info("[SearchEncodeRunner] Queue mode done: %d frames encoded", len(all_frame_rows))
+        if pctx.log:
+            await pctx.log(f"搜索索引构建完成：{len(all_frame_rows)} 帧编码")
 
     async def _run_encode(
         self,
@@ -217,6 +219,8 @@ class SearchEncodeRunner(OperationRunner):
 
         await pctx.tracker.update("search_encode", sub_progress=1.0)
         logger.info("[SearchEncodeRunner] Done: %d frames encoded", len(all_frame_rows))
+        if pctx.log:
+            await pctx.log(f"搜索索引构建完成：{len(all_frame_rows)} 帧编码")
 
     @staticmethod
     async def _encode_batch(

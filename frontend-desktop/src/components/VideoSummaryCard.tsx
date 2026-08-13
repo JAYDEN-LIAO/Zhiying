@@ -28,17 +28,8 @@ export function VideoSummaryCard({ video }: { video: VideoResponse | null }) {
 
 
         <div className="minor-card-bd">
-          {/* One-liner */}
+          {/* One-liner（Tags 已上移卡片标题栏右侧） */}
           <div className="sum-one">{summary.one_liner}</div>
-
-          {/* Tags（一句话下面、具体描述上面） */}
-          {summary.tags.length > 0 && (
-            <div className="sum-tags">
-              {summary.tags.map((tag) => (
-                <span key={tag} className="sum-tag">{tag}</span>
-              ))}
-            </div>
-          )}
 
           {/* Scenes */}
           {summary.scenes_summary.length > 0 && (

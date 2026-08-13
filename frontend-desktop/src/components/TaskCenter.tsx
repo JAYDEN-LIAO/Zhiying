@@ -7,8 +7,9 @@
 
 import { useEffect, useState } from "react";
 import { api } from "../services/api";
+import { useApp } from "../AppContext";
 import type { TaskItem, TaskLogLine } from "../types";
-import { fmtDate, fmtDuration } from "../utils/helpers";
+import { fmtDate, fmtDuration, fmtTime, versionName } from "../utils/helpers";
 import { IconDownload } from "./icons";
 
 const FILTERS = [
@@ -43,13 +44,14 @@ function TaskHeader({ onExportAll }: { onExportAll: () => void }) {
 
 /* ═══════════════════════ ② 正文卡 ═══════════════════════ */
 function TaskBody({
-  tasks, filter, onFilter, onOpenLog, onExportReport, busyId, onRetry,
+  tasks, filter, onFilter, onOpenLog, onExportReport, onOpenTask, busyId, onRetry,
 }: {
   tasks: TaskItem[];
   filter: FilterKey;
   onFilter: (f: FilterKey) => void;
   onOpenLog: (t: TaskItem) => void;
   onExportReport: (t: TaskItem) => void;
+  onOpenTask: (t: TaskItem) => void;
   busyId: string | null;
   onRetry: (t: TaskItem) => void;
 }) {
@@ -70,9 +72,9 @@ function TaskBody({
         <table className="g-table">
           <thead>
             <tr>
-              <th className="!pr-2">任务 / 文件</th>
-              <th className="w-16 !px-2">版本</th>
-              <th className="w-36 !pl-2 !pr-9">所属</th>
+              <th className="!pr-0">任务 / 文件</th>
+              <th className="w-56 !px-0">版本</th>
+              <th className="w-36 !pl-0 !pr-12">所属</th>
               <th className="w-52 !pl-2 !pr-1">状态</th>
               <th className="w-36 !px-1">提交时间</th>
               <th className="w-24 !pl-1">耗时</th>
@@ -84,14 +86,19 @@ function TaskBody({
               const sm = STATUS_META[t.status] || STATUS_META.pending;
               return (
                 <tr key={t.id}>
-                  <td className="!pr-2">
-                    <div className="text-[13px] text-gray-800 truncate max-w-[280px]" title={t.file_name ?? ""}>{t.file_name ?? t.id.slice(0, 8)}</div>
+                  <td className="!pr-0">
+                    <div
+                      className="text-[13px] text-gray-800 truncate max-w-[280px] cursor-pointer hover:text-[#4f7cff] transition-colors"
+                      title="点击进入视频解析" onClick={() => onOpenTask(t)}
+                    >{t.file_name ?? t.id.slice(0, 8)}</div>
                     <div className="text-[11px] text-gray-500 font-mono">{t.id.slice(0, 8)}</div>
                   </td>
-                  <td className="text-[12px] font-mono text-gray-500 !px-2">
-                    {t.version_no != null ? `V${t.version_no}` : "—"}
+                  <td className="text-[12px] text-gray-600 !px-0">
+                    <span className="truncate block max-w-[200px]" title={t.version_no != null ? versionName(t) : ""}>
+                      {t.version_no != null ? versionName(t) : "—"}
+                    </span>
                   </td>
-                  <td className="text-gray-600 !pl-2 !pr-9">{t.group_name ?? <span className="text-gray-300">未分组</span>}</td>
+                  <td className="text-gray-600 !pl-0 !pr-12">{t.group_name ?? <span className="text-gray-300">未分组</span>}</td>
                   <td className="!pl-2 !pr-1">
                     <div className="flex items-center gap-2">
                       <span className={"g-badge " + sm.cls}>{sm.pulse && <span className="pulse" />}{sm.label}</span>
@@ -123,6 +130,7 @@ function TaskBody({
 }
 
 export function TaskCenter() {
+  const { openWorkbench } = useApp();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [logTask, setLogTask] = useState<TaskItem | null>(null);
@@ -193,6 +201,7 @@ export function TaskCenter() {
         onFilter={setFilter}
         onOpenLog={openLog}
         onExportReport={exportReport}
+        onOpenTask={(t) => openWorkbench(t.id, { openParams: false, versionId: t.id })}
         busyId={busyId}
         onRetry={retry}
       />
@@ -205,12 +214,13 @@ export function TaskCenter() {
               <span className="g-card-tt">任务日志 · {logTask.file_name ?? ""}</span>
               <button className="g-btn g-btn-sm" onClick={() => setLogTask(null)}>关闭</button>
             </div>
-            <div className="p-4" style={{ maxHeight: "60vh", overflowY: "auto", fontFamily: "var(--font-mono)", fontSize: 12 }}>
-              {loadingLog && <div className="text-gray-500">加载中…</div>}
-              {!loadingLog && logs.length === 0 && <div className="text-gray-500">暂无日志</div>}
+            <div className="p-4" style={{ maxHeight: "60vh", overflowY: "auto", fontFamily: "var(--font-mono)", fontSize: 12, background: "#0d1117", color: "#d1d5db" }}>
+              {loadingLog && <div className="text-gray-400">加载中…</div>}
+              {!loadingLog && logs.length === 0 && <div className="text-gray-400">暂无日志</div>}
               {logs.map((l) => (
-                <div key={l.seq} style={{ color: l.level === "error" ? "#ef4444" : "#334155", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-                  <span className="text-gray-500">{String(l.seq).padStart(2, "0")}</span>  {l.message}
+                <div key={l.seq} style={{ color: l.level === "error" ? "#f87171" : "#d1d5db", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+                  <span className="text-gray-600 font-mono">{l.created_at ? fmtTime(l.created_at) : ""}</span>{" "}
+                  <span className="text-gray-600">{String(l.seq).padStart(2, "0")}</span>  {l.message}
                 </div>
               ))}
             </div>

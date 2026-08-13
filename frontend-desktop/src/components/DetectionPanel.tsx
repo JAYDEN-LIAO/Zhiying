@@ -133,7 +133,7 @@ const TrackRow = memo(function TrackRow({
         {isDropdownOpen && (
           <>
             <div className="fixed inset-0 z-10" onClick={onCloseDropdown} />
-            <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden min-w-[140px]">
+            <div className="absolute right-0 top-full mt-1 bg-gray-50 rounded-lg shadow-xl border border-gray-300 z-20 overflow-hidden min-w-[140px]">
               <button onClick={(e) => { e.stopPropagation(); onCloseDropdown(); onDownloadThumb(track.track_id, displayId); }}
                 className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
                 <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>
@@ -416,13 +416,13 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     <div className="major-card">
       {/* Header */}
       <div className="major-card-hd">
-        <div className="major-card-tt">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <div className="major-card-tt min-w-0">
+          <svg className="shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" />
           </svg>
-          物体检测
+          <span className="truncate whitespace-nowrap">物体检测</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {/* v0.19: 组内视频选择器 */}
           {(groupVideos && groupVideos.length > 1 && onDetectionVideoChange) && (
             <select
@@ -439,67 +439,61 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
               })}
             </select>
           )}
-          <span className="major-card-badge">{faceViewOpen ? `${faceData?.identities.length ?? 0} 人` : `${tracks.length} 条`}</span>
+          {/* 类别筛选下拉栏（标题栏右侧，条数已并入下拉项，删除原条数 badge） */}
+          {(classEntries.length > 0 || showFaceBtn) && (
+            <div className="relative">
+              <button onClick={() => setDropdownOpen(!dropdownOpen)} className="dtc-filter-btn">
+                {faceViewOpen ? (
+                  <span><span className="dot" style={{ background: "#8b5cf6" }} />人脸</span>
+                ) : isAll ? (
+                  <span>全部 · {tracks.length}</span>
+                ) : (
+                  <><span className="dot" style={{ background: activeColor }} />{zh(classFilter)} · {classCounts[classFilter]}</>
+                )}
+                <svg className={`w-3 h-3 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="currentColor"><path d="M3 5l3 3 3-3" /></svg>
+              </button>
+              {dropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setDropdownOpen(false)} />
+                  <div className="absolute top-full right-0 mt-1 bg-gray-50 rounded-lg shadow-xl border border-gray-300 z-20 overflow-hidden min-w-[160px]">
+                    <button
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 ${!faceViewOpen && isAll ? "font-semibold text-gray-900" : "text-gray-600"}`}
+                      onClick={() => { onClassFilterChange(null); onFaceViewChange(false); setDropdownOpen(false); }}
+                    >
+                      全部 · {tracks.length}
+                    </button>
+                    {classEntries.map(([cls, count]) => (
+                      <button
+                        key={cls}
+                        className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 ${!faceViewOpen && classFilter === cls ? "font-semibold text-gray-900" : "text-gray-600"}`}
+                        onClick={() => { onClassFilterChange(cls); onFaceViewChange(false); setDropdownOpen(false); }}
+                      >
+                        <span className="dot" style={{ background: colorOf(cls) }} />{zh(cls)} · {count}
+                      </button>
+                    ))}
+                    {showFaceBtn && (
+                      <button
+                        className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 border-t border-gray-100 ${faceViewOpen ? "font-semibold text-purple-600" : "text-gray-600"}`}
+                        onClick={() => { onClassFilterChange(null); onFaceViewChange(true); setDropdownOpen(false); }}
+                      >
+                        <span className="dot" style={{ background: "#8b5cf6" }} />人脸 · {faceData?.identities.length ?? 0}
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="major-card-bd" style={{ padding: "6px 10px 8px", display: "flex", flexDirection: "column", overflow: "visible" }}>
-        {/* Class filter — dropdown（v0.30: 人脸作为一类并入下拉栏，移除顶部独立按钮；
-           单类别也走下拉栏，消除"人 x465"降级文本标签） */}
-        {(classEntries.length > 0 || showFaceBtn) && (
-          <div className="relative mb-2 shrink-0">
-            <button
-              onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="dtc-filter-btn"
-            >
-              {faceViewOpen ? (
-                <span><span className="dot" style={{ background: "#8b5cf6" }} />人脸</span>
-              ) : isAll ? (
-                <span>全部 · {tracks.length}</span>
-              ) : (
-                <><span className="dot" style={{ background: activeColor }} />{zh(classFilter)} · {classCounts[classFilter]}</>
-              )}
-              <svg className={`w-3 h-3 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="currentColor"><path d="M3 5l3 3 3-3" /></svg>
-            </button>
-            {dropdownOpen && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setDropdownOpen(false)} />
-                <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden min-w-[160px]">
-                  <button
-                    className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 ${!faceViewOpen && isAll ? "font-semibold text-gray-900" : "text-gray-600"}`}
-                    onClick={() => { onClassFilterChange(null); onFaceViewChange(false); setDropdownOpen(false); }}
-                  >
-                    全部 · {tracks.length}
-                  </button>
-                  {classEntries.map(([cls, count]) => (
-                    <button
-                      key={cls}
-                      className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 ${!faceViewOpen && classFilter === cls ? "font-semibold text-gray-900" : "text-gray-600"}`}
-                      onClick={() => { onClassFilterChange(cls); onFaceViewChange(false); setDropdownOpen(false); }}
-                    >
-                      <span className="dot" style={{ background: colorOf(cls) }} />{zh(cls)} · {count}
-                    </button>
-                  ))}
-                  {showFaceBtn && (
-                    <button
-                      className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 border-t border-gray-100 ${faceViewOpen ? "font-semibold text-purple-600" : "text-gray-600"}`}
-                      onClick={() => { onClassFilterChange(null); onFaceViewChange(true); setDropdownOpen(false); }}
-                    >
-                      <span className="dot" style={{ background: "#8b5cf6" }} />人脸 · {faceData?.identities.length ?? 0}
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
+      <div className="major-card-bd" style={{ padding: "6px 10px 8px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Objects tab — 虚拟滚动 (v0.22)；空筛选提示（切视频后陈旧 filter 命中空类） */}
         {!faceViewOpen && (filtered.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-xs text-gray-400">该类别暂无轨迹</div>
         ) : (
           <div className="dtc-list" ref={listRef}
-            style={{ position: "relative", overflowY: "visible", flex: 1, minHeight: 0 }}
+            style={{ position: "relative", overflowY: "auto", overflowX: "hidden", flex: 1, minHeight: 0 }}
             onScroll={handleListScroll}
           >
             <div style={{ height: filtered.length * ROW_STEP, position: "relative", flexShrink: 0 }}>
@@ -548,7 +542,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
 
         {/* Faces tab（v0.30: 行样式与物体 TrackRow 统一为 dtc-item 布局） */}
         {faceViewOpen && faceData?.has_face && (
-          <div className="dtc-list" ref={listRef} style={{ position: "relative", overflowY: "visible", flex: 1, minHeight: 0 }}>
+          <div className="dtc-list" ref={listRef} style={{ position: "relative", overflowY: "visible", overflowX: "hidden", flex: 1, minHeight: 0 }}>
             {faceData.identities.map((ident) => {
               const isSel = expandedFaceId === ident.id;
               return (
@@ -611,7 +605,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                       {faceDropdownId === ident.id && (
                         <>
                           <div className="fixed inset-0 z-10" onClick={() => setFaceDropdownId(null)} />
-                          <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden min-w-[140px]">
+                          <div className="absolute right-0 top-full mt-1 bg-gray-50 rounded-lg shadow-xl border border-gray-300 z-20 overflow-hidden min-w-[140px]">
                             {ident.best_thumbnail_url && (
                               <button onClick={(e) => { e.stopPropagation(); setFaceDropdownId(null); window.open(ident.best_thumbnail_url!, "_blank"); }}
                                 className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">

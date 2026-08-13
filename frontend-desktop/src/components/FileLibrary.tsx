@@ -177,6 +177,9 @@ function CaseContent({
                     <span className={"g-badge " + sm.cls}>
                       {sm.pulse && <span className="pulse" />}
                       {sm.label}
+                      {f.current_status === "completed" && (f.versions_count ?? 1) > 1 && (
+                        <span className="opacity-80"> · 共 {f.versions_count} 版</span>
+                      )}
                     </span>
                   </td>
                   <td className="text-right pr-4 whitespace-nowrap">
@@ -243,7 +246,7 @@ function CaseContent({
 
 /* ═══════════════════════ 页面编排 ═══════════════════════ */
 export function FileLibrary() {
-  const { openWorkbench, uploadFiles, isUploading } = useApp();
+  const { openWorkbench, uploadFiles, isUploading, refreshCaseGroups } = useApp();
   const [files, setFiles] = useState<FileItem[]>([]);
   const [groups, setGroups] = useState<VideoGroup[]>([]);
   const [images, setImages] = useState<CaseAssetItem[]>([]);
@@ -310,6 +313,7 @@ export function FileLibrary() {
       setForm({ name: "", number: "", owner: "" });
       setTree(`g:${g.groupId}`);
       load();
+      refreshCaseGroups();
     } catch (err) { alert(err instanceof Error ? err.message : "创建失败"); }
     setCreatingGroup(false);
   };
@@ -320,6 +324,7 @@ export function FileLibrary() {
       await api.deleteGroup(g.groupId);
       if (tree === `g:${g.groupId}`) setTree("all");
       load();
+      refreshCaseGroups();
     } catch (err) { alert(err instanceof Error ? err.message : "删除失败"); }
   };
 

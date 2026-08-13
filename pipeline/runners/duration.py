@@ -36,3 +36,5 @@ class DurationRunner(OperationRunner):
             info = json.loads(stdout)
             pctx.ctx.duration = float(info["format"]["duration"])
             logger.info("[DurationRunner] Duration: %.1fs", pctx.ctx.duration)
+            if pctx.log:
+                await pctx.log(f"视频时长：{pctx.ctx.duration:.1f}s")

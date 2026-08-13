@@ -230,6 +230,8 @@ class SummaryRunner(OperationRunner):
         await pctx.tracker.update("summary")
         one_liner = (summary or {}).get("one_liner", "")[:80]
         logger.info("[SummaryRunner] Done: %s", one_liner)
+        if pctx.log:
+            await pctx.log(f"智能摘要完成：{one_liner or '（无概述）'}")
 
     @staticmethod
     def _fallback_summary(scenes: list[Scene]) -> dict:

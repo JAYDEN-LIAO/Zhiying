@@ -83,6 +83,8 @@ export function VideoSearchCard({
   const detInScope = scopeVideos.some(v => v.detection_enabled);
   const faceDisabled = !detInScope || !scopeVideos.some(v => v.face_enabled);
   const plateDisabled = !detInScope || !scopeVideos.some(v => v.plate_enabled);
+  // 语义/图搜可用性：无视频=全库搜索恒可用；有视频=范围需开搜索索引
+  const semanticReady = !video || scopeVideos.some(v => v.search_index_enabled) || searchVideoIds == null;
 
   // 视频切换：手动切换（header/历史）→ 重置搜索上下文；搜索结果自己发起的切换 → 抑制（保留结果与范围）
   useEffect(() => {
@@ -214,11 +216,18 @@ export function VideoSearchCard({
   return (
     <div className="major-card">
       <div className="major-card-hd">
-        <div className="major-card-tt">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-          视频搜索
+        <div className="major-card-tt min-w-0">
+          <svg className="shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+          <span className="truncate">视频搜索</span>
         </div>
-        {resultCount > 0 && <span className="major-card-badge">{resultCount} 条</span>}
+        <div className="flex items-center gap-1 shrink-0 min-w-0 overflow-hidden">
+          {/* 搜索能力可用性 label：点亮=当前范围可搜，未开=置灰（nowrap 防窄面板换行挤压） */}
+          {resultCount > 0 && <span className="major-card-badge mr-1 whitespace-nowrap shrink-0">{resultCount} 条</span>}
+          <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${semanticReady ? "bg-blue-50 text-blue-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title="语义搜索（文本/场景/物体）">语义</span>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${semanticReady ? "bg-teal-50 text-teal-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title="通用图搜（以图搜图）">图搜</span>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${!plateDisabled ? "bg-amber-50 text-amber-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title="车牌识别">车牌</span>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${!faceDisabled ? "bg-purple-50 text-purple-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title="人脸识别">人脸</span>
+        </div>
       </div>
 
       <div className="major-card-bd" style={{ scrollbarGutter: "stable", paddingRight: 8 }}>
@@ -241,7 +250,7 @@ export function VideoSearchCard({
             {scopeOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setScopeOpen(false)} />
-                <div className="absolute left-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden w-44 py-1.5">
+                <div className="absolute left-0 top-full mt-1 bg-gray-50 rounded-xl shadow-xl border border-gray-300 z-50 overflow-hidden w-44 py-1.5">
                   {/* 快捷范围 */}
                   <div className="px-3 pt-1 pb-1 text-[10px] font-semibold text-gray-400 tracking-widest">搜索范围</div>
                   <button
@@ -324,7 +333,7 @@ export function VideoSearchCard({
           <button
             onClick={() => { if (!plateDisabled || plateMode) setPlateMode(v => !v); }}
             title={plateDisabled ? "未开启车牌处理" : (plateMode ? "退出车牌模糊搜索模式" : "车牌模糊搜索：输入任意字符/数字，列出所有相关车牌")}
-            className={`absolute right-[52px] top-1/2 -translate-y-1/2 h-6 min-w-6 px-1 rounded flex items-center justify-center text-[11px] font-bold transition-colors ${
+            className={`absolute right-7 top-1/2 -translate-y-1/2 h-6 min-w-6 px-1 rounded flex items-center justify-center text-[11px] font-bold transition-colors ${
               plateDisabled ? "bg-gray-200 text-gray-600"
                 : plateMode ? "bg-amber-400 text-white"
                 : "bg-amber-50 text-amber-600 hover:bg-amber-100"
@@ -333,10 +342,10 @@ export function VideoSearchCard({
             牌
           </button>
 
-          {/* Image search (inside input right) */}
+          {/* Image search (inside input right) — 顺序最左 */}
           <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageSearch} className="hidden" />
           <button onClick={() => imageInputRef.current?.click()} disabled={imageSearching}
-            className="absolute right-7 top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-teal-50 hover:bg-teal-100 text-teal-600 flex items-center justify-center transition-colors disabled:opacity-50" title="以图搜图">
+            className="absolute right-[52px] top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-teal-50 hover:bg-teal-100 text-teal-600 flex items-center justify-center transition-colors disabled:opacity-50" title="以图搜图">
             {imageSearching ? <span className="inline-block w-3 h-3 border-2 border-teal-300 border-t-teal-500 rounded-full animate-spin" /> : (
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />

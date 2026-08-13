@@ -467,6 +467,12 @@ class TaskItem(BaseModel):
     created_at: datetime
     updated_at: datetime | None = None
     duration_sec: float | None = None      # 真实处理时长（updated_at − processing_started_at）
+    # ── 功能开关（版本详细命名：V2-物体检测(车牌识别)-搜索功能）──
+    detection_enabled: bool = False
+    face_enabled: bool = False
+    plate_enabled: bool = False
+    search_index_enabled: bool = False
+    summary_enabled: bool = False
 
 
 class GroupCreate(BaseModel):

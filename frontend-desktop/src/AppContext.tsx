@@ -22,12 +22,16 @@ interface AppCtx {
   navigateSettings: (tab: SettingsTab) => void;
   /* 跨页选视频：跳工作台并（可选）自动打开参数面板 */
   selectedVideoId: string | null;
-  openWorkbench: (videoId: string, opts?: { openParams?: boolean }) => void;
+  initialVersionId: string | null;
+  openWorkbench: (videoId: string, opts?: { openParams?: boolean; versionId?: string }) => void;
   paramsTick: number;
+  consumeParamsTick: () => void; // 参数面板自动打开意图一次性消费（预览/切页不再重复弹）
   /* 共享视频列表（4s 轮询 + 组重建） */
   videos: VideoListItem[];
   videoGroups: VideoGroup[];
   caseGroups: VideoGroup[];
+  refreshCaseGroups: () => void;
+  activeTaskCount: number;
   refreshList: () => void;
   /* 上传：统一入口，上传后跳工作台 + 打开参数 */
   isUploading: boolean;
@@ -53,10 +57,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [page, setPage] = useState<Page>("files");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("system");
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  const [initialVersionId, setInitialVersionId] = useState<string | null>(null); // 跳转精确定位版本行（任务中心）
   const [paramsTick, setParamsTick] = useState(0);
   const [videos, setVideos] = useState<VideoListItem[]>([]);
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
   const [caseGroups, setCaseGroups] = useState<VideoGroup[]>([]);
+  const [activeTaskCount, setActiveTaskCount] = useState(0); // 任务中心 active 数（含多版本处理中，侧栏徽章用）
   const [listKey, setListKey] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -71,11 +77,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPage("settings");
   }, []);
 
-  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean }) => {
+  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean; versionId?: string }) => {
     setSelectedVideoId(videoId);
+    setInitialVersionId(opts?.versionId ?? null); // 精确定位版本行（任务中心跳转）
     setPage("workbench");
     if (opts?.openParams) setParamsTick((t) => t + 1);
   }, []);
+
+  /* 参数面板自动打开意图一次性消费：弹过一次后归零，避免预览/切页回来重复弹 */
+  const consumeParamsTick = useCallback(() => setParamsTick(0), []);
 
   /* ── 视频列表 + 组重建（原 Dashboard 逻辑） ── */
   useEffect(() => {
@@ -85,6 +95,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const iv = setInterval(() => {
       api.listVideos().then((data) => { if (data) setVideos(data); }).catch(() => {});
+      // 任务徽章：按任务中心 active 列表（含多版本文件的处理中版本），而非根行状态
+      api.listTasks("active").then((data) => setActiveTaskCount(data?.length ?? 0)).catch(() => {});
     }, 4000);
     return () => clearInterval(iv);
   }, []);
@@ -216,8 +228,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value: AppCtx = {
     page, navigate, settingsTab, navigateSettings,
-    selectedVideoId, openWorkbench, paramsTick,
-    videos, videoGroups, caseGroups, refreshList,
+    selectedVideoId, openWorkbench, initialVersionId, paramsTick, consumeParamsTick,
+    videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups, activeTaskCount, refreshList,
     isUploading, uploadFiles, registerExternalFiles, handleUploadClick,
     removeVideoState, deleteVideo,
     dragActive,

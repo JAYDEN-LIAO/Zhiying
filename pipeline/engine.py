@@ -48,13 +48,22 @@ class EventDrivenScheduler:
         operations: list[Operation],
         pctx: PipelineContext,
         tracker: StatusTracker,
+        on_log: object | None = None,
     ):
         self._ops = {op.name: op for op in operations}
         self._pctx = pctx
         self._tracker = tracker
+        self._on_log = on_log  # 可选异步日志钩子 (message, level) → 任务日志（阶段级明细）
         self._done: dict[str, asyncio.Event] = {
             name: asyncio.Event() for name in self._ops
         }
+
+    async def _log(self, message: str, level: str = "info") -> None:
+        if self._on_log is not None:
+            try:
+                await self._on_log(message, level)
+            except Exception:
+                logger.exception("[Scheduler] task log write failed (non-blocking)")
 
     async def run(self) -> None:
         """启动所有 op, 每个内部先等依赖完成, 再执行。"""
@@ -82,11 +91,15 @@ class EventDrivenScheduler:
         import time as _time
         _t0 = _time.time()
         logger.info("[Scheduler] START %s", name)
+        # 阶段级任务日志：op 中文标签 + 描述（任务中心可见详细处理过程）
+        await self._log(f"「{op.label}」开始：{op.description}")
         try:
             await op.runner.run(self._pctx)
         finally:
             self._done[name].set()
-            logger.info("[Scheduler] DONE  %s in %.1fs", name, _time.time() - _t0)
+            _elapsed = _time.time() - _t0
+            logger.info("[Scheduler] DONE  %s in %.1fs", name, _elapsed)
+            await self._log(f"「{op.label}」完成（耗时 {_elapsed:.1f}s）")
 
 
 # ── 保留：增量处理仍需拓扑分批（逻辑简单，不改）──
@@ -244,7 +257,10 @@ class PipelineEngine:
             # 1. 门控过滤
             enabled = [op for op in ALL_OPERATIONS if op.gate(v, self.config)]
 
-            # 2. 拓扑排序 → 分批
+            # 2. 管道配置快照（任务日志——系统/模型/量化/fps 等全量参数，方便溯源）
+            await self._log_pipeline_config(v, enabled)
+
+            # 3. 拓扑排序 → 分批
             batches = topological_batches(enabled)
 
             # 3. 加载所需插件（从 enabled operations 的 required_plugins 推导）
@@ -282,10 +298,11 @@ class PipelineEngine:
                 embedder_lock=asyncio.Lock(),
                 frame_queue=frame_queue,
                 search_frame_queue=search_frame_queue,
+                log=self._log_task,
             )
 
             # 5. 事件驱动调度 (替代原拓扑分批+gather)
-            scheduler = EventDrivenScheduler(enabled, pctx, tracker)
+            scheduler = EventDrivenScheduler(enabled, pctx, tracker, on_log=self._log_task)
             await scheduler.run()
 
             # 6. 持久化 — 视频被删除（允许删处理中记录）→ 中止，避免写已删行 FK 异常
@@ -293,6 +310,22 @@ class PipelineEngine:
                 logger.info("[Pipeline] video %s deleted, aborting pipeline", self.video.id)
                 return
             await self._persist()
+
+            # 产物落库汇总（各表行数——对照后端 Bulk inserted 明细，方便核对）
+            parts = [f"场景 {len(self.ctx.scenes)}"]
+            if self.ctx.transcript_full:
+                parts.append("转录 1")
+            if self.ctx.frame_detections:
+                parts.append(f"帧检测 {len(self.ctx.frame_detections)}")
+            if self.ctx.tracks:
+                parts.append(f"轨迹 {len(self.ctx.tracks)}")
+            if self.ctx.track_embeddings:
+                parts.append(f"轨迹向量 {len(self.ctx.track_embeddings)}")
+            if self.ctx.face_detections:
+                parts.append(f"人脸检测 {len(self.ctx.face_detections)}")
+            if self.ctx.plate_detections:
+                parts.append(f"车牌 {len(self.ctx.plate_detections)}")
+            await self._log_task("产物落库：" + "、".join(parts))
 
             # 卸载 captioner（仅当不是共享实例时才释放 GPU 显存）
             if self._shared_captioner is None:
@@ -312,7 +345,12 @@ class PipelineEngine:
                 logger.info("[Pipeline] video %s deleted mid-run, aborting (%s)", self.video.id, e)
                 return
             logger.exception("[Pipeline] video %s failed: %s", self.video.id, e)
-            await self._log_task(f"管道失败: {e}", level="error")
+            # 完整错误入任务日志（含 traceback，多行）——排查必须能看到调用栈
+            import traceback
+            tb = traceback.format_exc()
+            await self._log_task("管道失败", level="error")
+            for line in tb.rstrip("\n").splitlines():
+                await self._log_task(f"  {line}", level="error")
             tracker = self._new_tracker()
             await tracker.mark_failed(str(e))
 
@@ -401,6 +439,7 @@ class PipelineEngine:
                 prompt_loader=self.prompt_loader,
                 frame_queue=frame_queue,
                 search_frame_queue=search_frame_queue,
+                log=self._log_task,
             )
 
             for batch in batches:
@@ -601,3 +640,48 @@ class PipelineEngine:
         from core.repository import append_task_log
         async with self.db_session_factory() as session:
             await append_task_log(session, self.video.id, message, level)
+
+    async def _log_pipeline_config(self, v: Video, enabled: list) -> None:
+        """管道配置快照 → 任务日志（系统参数/感知开关/编码/检测/量化/fps 全量，溯源用）。"""
+        pl = self.config.get("pipeline", {})
+        det = self.config.get("plugins", {}).get("detector", {}) or {}
+        emb = self.config.get("plugins", {}).get("embedder", {}) or {}
+        cap = self.config.get("plugins", {}).get("captioner", {}) or {}
+        profiles = pl.get("encode_profiles", {}) or {}
+        cur_profile = v.encode_profile or pl.get("default_encode_profile") or "fast"
+        prof = profiles.get(cur_profile, {}) or {}
+
+        def _on(label: str, flag: bool) -> str:
+            return f"{label}={'开' if flag else '关'}"
+
+        # 感知/功能开关（多行，每行独立——任务中心逐行可读）
+        switches = "  ".join([
+            _on("视觉", v.vision_enabled), _on("音频", v.audio_enabled),
+            _on("OCR", v.ocr_enabled), _on("描述", v.caption_enabled),
+            _on("检测", v.detection_enabled), _on("人脸", v.face_enabled),
+            _on("车牌", v.plate_enabled), _on("摘要", v.summary_enabled),
+            _on("搜索索引", v.search_index_enabled),
+        ])
+        await self._log_task(
+            f"管道配置：场景类型={v.content_type} 摘要模式={v.summary_mode} 语言={v.language} "
+            f"采样帧率={v.sample_fps}fps 场景敏感度={v.segment_threshold} 编码预设={cur_profile} {switches}"
+        )
+        if v.detection_classes:
+            await self._log_task(f"  检测类别：{', '.join(v.detection_classes)}")
+        await self._log_task(
+            f"  编码（{cur_profile}）：{prof.get('encode_width', '?')}×{prof.get('encode_height', '?')} "
+            f"批大小={prof.get('encode_batch_size', '?')} 量化={emb.get('quantization', '无')}"
+        )
+        if v.detection_enabled:
+            await self._log_task(
+                f"  检测：YOLO@{det.get('detection_fps', pl.get('detection_fps', 10))}fps "
+                f"批大小={det.get('batch_size', 128)} imgsz={det.get('imgsz', 640)} "
+                f"置信度={det.get('confidence_threshold', 0.4)} IoU={det.get('iou_threshold', 0.5)}"
+            )
+        # 实际启用的操作链（含后端/模型来源）
+        op_chain = " → ".join(op.label for op in enabled) or "（无启用操作）"
+        await self._log_task(f"  操作链：{op_chain}")
+        await self._log_task(
+            f"  后端：检测={det.get('backend', 'yolo')} 编码器={emb.get('backend', '?')} "
+            f"描述={cap.get('backend', '?')}"
+        )

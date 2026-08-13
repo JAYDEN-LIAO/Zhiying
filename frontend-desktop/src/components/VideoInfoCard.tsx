@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from "react";
 import { api } from "../services/api";
-import type { VideoMetadata, VideoResponse, SourceAnalysis, AIDetectResult } from "../types";
+import type { VideoMetadata, VideoResponse, SourceAnalysis } from "../types";
 import { fmtDuration, fmtFullDate } from "../utils/helpers";
 
 export function VideoInfoCard({
@@ -31,9 +31,6 @@ export function VideoInfoCard({
           if (cancelled) return;
           setMeta(d);
           setLoading(false);
-          if (d?.ai_detect?.status === "analyzing") {
-            setTimeout(fetchMeta, 3000);
-          }
         })
         .catch((err) => {
           if (cancelled) return;
@@ -51,7 +48,6 @@ export function VideoInfoCard({
   const dev = meta?.device;
   const ts = meta?.timestamps;
   const sa = meta?.source_analysis;
-  const ad = meta?.ai_detect;
 
   /* ── Header portion ── */
   const hd = (
@@ -99,8 +95,7 @@ export function VideoInfoCard({
 
   /* ── Has data ── */
   const hasSa = !!(sa && (sa.source_type || sa.source_label));
-  const hasAd = !!(ad && ad.status === "completed");
-  const showSeparator = hasSa || hasAd;
+  const showSeparator = hasSa;
 
   return (
     <div className="minor-card">
@@ -111,13 +106,6 @@ export function VideoInfoCard({
         {hasSa && (
           <div className="vif-grid">
             <SourceAnalysisItems sa={sa!} />
-          </div>
-        )}
-
-        {/* ═══ AI Detection (top) ═══ */}
-        {hasAd && (
-          <div className="vif-grid">
-            <AIDetectItems ad={ad!} />
           </div>
         )}
 
@@ -188,9 +176,6 @@ export function VideoInfoCard({
             {ts.modified && <div className="vif-item"><span className="vif-lbl">修改</span><span className="vif-val">{fmtISODate(ts.modified)}</span></div>}
           </div>
         )}
-
-        {/* AI Detection — non-completed states at very bottom */}
-        {ad && ad.status !== "completed" && <AIDetectFallback ad={ad} />}
       </div>
     </div>
   );
@@ -223,71 +208,7 @@ function SourceAnalysisItems({ sa }: { sa: SourceAnalysis }) {
   );
 }
 
-/* ════════════════════════════════════════════════════════════
-   AI Detection — vif-item rows (completed)
-   ════════════════════════════════════════════════════════════ */
-
-function AIDetectItems({ ad }: { ad: AIDetectResult }) {
-  const isAi = ad.verdict === "ai_generated" || ad.verdict === "likely_ai";
-  const verdictLabel = ad.verdict === "ai_generated" ? "AI 生成" : ad.verdict === "likely_ai" ? "疑似 AI" : ad.verdict === "no_signal" ? "无信号" : "—";
-  const hasSignals = ad.signals.length > 0;
-
-  return (
-    <>
-      <div className="vif-item">
-        <span className="vif-lbl">
-          AI 检测{ad.deep_analysis_used ? " [深度]" : ""}
-        </span>
-        <span className="vif-val">{isAi ? "⚠ " : "✓ "}{verdictLabel}</span>
-      </div>
-      {ad.score != null && (
-        <div className="vif-item">
-          <span className="vif-lbl">分数</span>
-          <span className="vif-val">{ad.score >= 0.5 ? `${(ad.score * 100).toFixed(0)}%` : `${(ad.score * 100).toFixed(1)}%`}</span>
-        </div>
-      )}
-      {hasSignals ? (
-        ad.signals.map((s, i) => (
-          <div key={i} className="vif-item">
-            <span className="vif-lbl">{s.source}</span>
-            <span className="vif-val">
-              {s.tool && <span className="text-[10px]">{s.tool}</span>}
-              {s.description && <span className="block text-[10px] text-gray-400">{s.description}</span>}
-            </span>
-          </div>
-        ))
-      ) : (
-        <div className="vif-item">
-          <span className="vif-lbl">检测项</span>
-          <span className="vif-val text-[10px]">C2PA / H.264 SEI / MP4 元数据</span>
-        </div>
-      )}
-      {ad.software_info.length > 0 && (
-        <div className="vif-item">
-          <span className="vif-lbl">检测工具</span>
-          <span className="vif-val text-[10px]">{ad.software_info.map(s => s[0]).join(", ")}</span>
-        </div>
-      )}
-    </>
-  );
-}
-
-/* ════════════════════════════════════════════════════════════
-   AI Detection — fallback for non-completed states
-   ════════════════════════════════════════════════════════════ */
-
-function AIDetectFallback({ ad }: { ad: AIDetectResult }) {
-  if (ad.status === "not_run") {
-    return <div className="text-[10px] text-gray-400 pt-1">AI 检测待分析</div>;
-  }
-  if (ad.status === "analyzing") {
-    return <div className="text-[10px] text-amber-500 pt-1">AI 检测中…</div>;
-  }
-  if (ad.status === "error") {
-    return <div className="text-[10px] text-red-500 pt-1">AI 检测失败{ad.error_message ? `: ${ad.error_message}` : ""}</div>;
-  }
-  return null;
-}
+/* ── 辅助函数 ── */
 
 const BRAND_LABELS: Record<string, string> = {
   hikvision: "海康威视", dahua: "大华", ezviz: "萤石", reolink: "Reolink",

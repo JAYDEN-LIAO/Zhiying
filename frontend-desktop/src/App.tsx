@@ -12,11 +12,11 @@ import { TaskCenter } from "./components/TaskCenter";
 import { SettingsPage } from "./components/SettingsPage";
 
 function Shell() {
-  const { page, navigate, settingsTab, navigateSettings, videos, dragActive } = useApp();
+  const { page, navigate, settingsTab, navigateSettings, videos, activeTaskCount, dragActive } = useApp();
 
   const counts = {
     files: videos.length,
-    tasks: videos.filter((v) => v.status === "processing" || v.status === "pending").length,
+    tasks: activeTaskCount,
   };
 
   return (

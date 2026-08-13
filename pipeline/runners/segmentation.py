@@ -69,6 +69,8 @@ class SegmentRunner(OperationRunner):
             description=f"镜头分割完成: 共 {len(scenes)} 个场景",
         )
         logger.info("[SegmentRunner] Done: %d scenes", len(scenes))
+        if pctx.log:
+            await pctx.log(f"场景分割完成：共 {len(scenes)} 个场景")
 
     # ── 辅助方法 ──
 

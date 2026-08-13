@@ -107,6 +107,11 @@ class DetectionRunner(OperationRunner):
             "[DetectionRunner] @%.1ffps dur=%.0fs ~%dframes → %d batch(s) @%d frames/batch",
             detection_fps, duration, total_samples, total_batches, _BATCH_SIZE,
         )
+        if pctx.log:
+            await pctx.log(
+                f"检测配置：@{detection_fps:.1f}fps 时长={duration:.0f}s "
+                f"~{total_samples}帧 → {total_batches} batch(s) @{_BATCH_SIZE}帧/batch"
+            )
 
         # ── 设置目标类别过滤（per-video config）──
         target_classes = getattr(pctx.video, "detection_classes", None)
@@ -264,6 +269,8 @@ class DetectionRunner(OperationRunner):
             "[DetectionRunner] Done: %d detections, %d tracks across %d frames @ %.1f fps",
             len(frame_detections), unique_tracks, processed, detection_fps,
         )
+        if pctx.log:
+            await pctx.log(f"物体检测结果：{len(frame_detections)} 个检测框，{unique_tracks} 条轨迹（{processed} 帧）")
 
     # ── 内部方法 ──
 

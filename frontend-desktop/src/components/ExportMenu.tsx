@@ -35,8 +35,7 @@ export function ExportMenu({
   };
 
   return (
-    <div className="absolute right-0 top-10 z-50 w-[280px] rounded-2xl bg-white shadow-2xl border border-gray-200"
-         onClick={(e) => e.stopPropagation()}>
+    <div className="w-full" onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
         <h3 className="font-bold text-gray-900 text-sm">导出视频片段或节点</h3>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">

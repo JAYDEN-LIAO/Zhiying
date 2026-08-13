@@ -142,3 +142,5 @@ class KeyframeRunner(OperationRunner):
         total_frames = sum(len(s.keyframes) for s in scenes if hasattr(s, "keyframes") and s.keyframes)
         await pctx.tracker.update("keyframes", sub_progress=1.0)
         logger.info("[KeyframeRunner] Frame pool: %d frames @ 1fps (stream)", total_frames)
+        if pctx.log:
+            await pctx.log(f"关键帧抽取完成：{total_frames} 帧 @ 1fps")

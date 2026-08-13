@@ -9,11 +9,13 @@ export function PipelineBar({
   statusDetail,
   stages,
   subtitle,
+  dark,
 }: {
   progress: number;
   statusDetail?: string | null;
   stages: PipelineStage[];
   subtitle?: string | null;
+  dark?: boolean; // 暗色 variant（视频顶部浮层用）
 }) {
   const isEmpty = progress === 0 && !subtitle;
   const isComplete = progress >= 1;
@@ -22,7 +24,7 @@ export function PipelineBar({
     || (isEmpty ? "选择视频后查看处理进度" : isComplete ? "处理完成 ✓" : (statusDetail || "处理中..."));
 
   return (
-    <div className="pipeline-bar">
+    <div className={"pipeline-bar" + (dark ? " dark" : "")}>
       {/* Progress bar */}
       <div className="pipeline-progress">
         <div

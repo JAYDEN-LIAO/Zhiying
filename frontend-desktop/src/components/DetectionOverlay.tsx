@@ -27,6 +27,7 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
   const pendingClickRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onTrackSelectRef = useRef(onTrackSelect); onTrackSelectRef.current = onTrackSelect;
   // v0.30: 选中人脸身份的归属 person track 集合（金色高亮，draw 热路径读 ref）
   const selectedFaceRef = useRef(selectedFaceTrackIds); selectedFaceRef.current = selectedFaceTrackIds;
@@ -283,7 +284,8 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
       } else if (!hasLoadedRange(currentTime)) {
         // 数据未就绪（刚 seek/快进，窗口还在路上）：记 pending，version 到达后重试；超时兜底反选。
         pendingClickRef.current = { x: e.clientX, y: e.clientY, t: currentTime };
-        setTimeout(() => {
+        pendingTimerRef.current = setTimeout(() => {
+          pendingTimerRef.current = null;
           if (pendingClickRef.current) {
             pendingClickRef.current = null;
             onTrackSelectRef.current(-1, "");
@@ -345,6 +347,13 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
     };
     // enabled 也进依赖：enabled 翻转（canvas 挂载/卸载）时重挂监听，避免幽灵失效
   }, [hasDetection, enabled, handleClick, handleMove]);
+
+  /* ── 卸载清理 pending-click 超时（防卸载后悬空回调） ── */
+  useEffect(() => {
+    return () => {
+      if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+    };
+  }, []);
 
   if (!enabled || !hasDetection) return null;
 

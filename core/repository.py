@@ -600,30 +600,45 @@ async def list_file_roots(session: AsyncSession) -> list[dict]:
     result = await session.execute(text("""
         WITH ranked AS (
             SELECT v.*,
+                   LOWER(v.status::text) AS status_lower,
                    ROW_NUMBER() OVER (
                        PARTITION BY COALESCE(v.file_id, v.id)
                        ORDER BY v.version_no NULLS FIRST, v.created_at
                    ) AS rn,
+                   -- 当前状态优先级：处理中 > 已完成 > 待参数 > 失败（活跃状态优先；
+                   --   待参数不覆盖已完成——老版本已完成、新版本刚建 pending ≠ 整个文件待参数）
                    ROW_NUMBER() OVER (
                        PARTITION BY COALESCE(v.file_id, v.id)
-                       ORDER BY (v.status::text = 'completed') DESC, v.version_no DESC NULLS LAST
+                       ORDER BY (v.status::text = 'processing') DESC,
+                                (v.status::text = 'completed') DESC,
+                                (v.status::text = 'pending') DESC,
+                                v.version_no DESC NULLS LAST
                    ) AS cur_rn
             FROM videos v
+        ),
+        -- 每文件版本数（在 CTE 内算，避免外层 WHERE rn=1 把窗口作用域压成单行）
+        with_cnt AS (
+            SELECT COALESCE(file_id, id) AS fkey, COUNT(*) AS versions_count
+            FROM videos
+            GROUP BY COALESCE(file_id, id)
+        ),
+        -- 当前版本行（completed 优先，否则最新 version_no）
+        current_row AS (
+            SELECT r2.id, COALESCE(r2.file_id, r2.id) AS fkey,
+                   r2.status_lower AS cur_status,
+                   r2.progress AS cur_progress, r2.summary AS cur_summary, r2.version_no AS cur_vno
+            FROM ranked r2
+            WHERE r2.cur_rn = 1
         )
-        SELECT r.*, cv.status AS current_status, cv.progress AS current_progress,
-               cv.summary AS current_summary, cv.version_no AS current_version_no,
-               COUNT(*) OVER (PARTITION BY COALESCE(r.file_id, r.id)) AS versions_count
+        SELECT r.*,
+               cr.cur_status AS current_status,
+               cr.cur_progress AS current_progress,
+               cr.cur_summary AS current_summary,
+               cr.cur_vno AS current_version_no,
+               wc.versions_count
         FROM ranked r
-        LEFT JOIN videos cv ON cv.id = (
-            SELECT c2.id FROM (
-                SELECT v2.*, ROW_NUMBER() OVER (
-                    PARTITION BY COALESCE(v2.file_id, v2.id)
-                    ORDER BY (v2.status::text = 'completed') DESC, v2.version_no DESC NULLS LAST
-                ) AS r2
-                FROM videos v2
-            ) c2
-            WHERE COALESCE(c2.file_id, c2.id) = COALESCE(r.file_id, r.id) AND c2.r2 = 1
-        )
+        LEFT JOIN with_cnt wc ON wc.fkey = COALESCE(r.file_id, r.id)
+        LEFT JOIN current_row cr ON cr.fkey = COALESCE(r.file_id, r.id)
         WHERE r.rn = 1
         ORDER BY r.created_at DESC
     """))

@@ -6,7 +6,7 @@ Runner 基础设施 — OperationRunner ABC + Operation 数据类 + PipelineCont
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -94,6 +94,7 @@ class PipelineContext:
     embedder_lock: object | None = None  # asyncio.Lock — 防 embedder 并发竞争
     frame_queue: object | None = None    # asyncio.Queue — keyframes → frame_encode 流式通道
     search_frame_queue: object | None = None  # asyncio.Queue — detection → search_encode 共享流
+    log: Callable[[str, str], Awaitable[None]] | None = None  # 任务日志钩子 (message, level) — 关键中间结果入日志
 
 
 class OperationRunner(ABC):

@@ -87,6 +87,8 @@ class CaptionRunner(OperationRunner):
 
         captioned = sum(1 for s in scenes if s.caption)
         logger.info("[CaptionRunner] Captioned %d/%d scenes", captioned, len(scenes))
+        if pctx.log:
+            await pctx.log(f"画面描述完成：{captioned}/{len(scenes)} 个场景")
 
     # ── 配置读取（CONFIG-1 根治：从 params 子层读；video.caption_with_context 已废弃）──
 

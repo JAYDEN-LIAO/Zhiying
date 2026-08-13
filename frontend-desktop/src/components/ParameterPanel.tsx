@@ -268,7 +268,8 @@ export function ParameterPanel({
       // 画面描述已并入智能摘要（v0.33 合并）：摘要开启即含逐场景 VLM 描述
       caption_enabled: functions.summary,
       detection_enabled: modules.detection,
-      detection_classes: modules.detection ? detectionClasses : null,
+      // 自定义类别留空 = 归一为 null（全部检测）——避免后端把 [] 当作"不检测任何物体"静默跑空
+      detection_classes: modules.detection ? (detectionClasses?.length ? detectionClasses : null) : null,
       face_enabled: modules.detection ? faceEnabled : false,
       plate_enabled: modules.detection ? plateEnabled : false,
       search_index_enabled: functions.searchIndex,
@@ -514,7 +515,7 @@ export function ParameterPanel({
                       ).slice(0, 6);
                       if (!matches.length) return null;
                       return (
-                        <div className="absolute top-full left-0 right-0 mt-0.5 bg-white border border-gray-200 rounded-md shadow-lg z-10 max-h-[140px] overflow-y-auto custom-scrollbar">
+                        <div className="absolute top-full left-0 right-0 mt-0.5 bg-gray-50 border border-gray-300 rounded-md shadow-xl z-10 max-h-[140px] overflow-y-auto custom-scrollbar">
                           {matches.map((c) => (
                             <button
                               key={c}
