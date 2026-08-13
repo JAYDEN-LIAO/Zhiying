@@ -2,17 +2,11 @@
 
 > Version: 0.33 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4（双前端: frontend/ 服务器 + frontend-desktop/ 桌面, 共享 frontend-shared/ 对接层）
-> v0.22: Windows 从零部署 + 系统设置/参数预设 + 全局 GPU 锁 + Detection 渲染重构 + 删除处理中/管道取消 + ARM64 多架构
-> v0.24: 云智(Yunzhi)平台接入（register-external + /internal/yunzhi/jobs 异步任务）+ 生产部署（systemd, 8011, pgvector:pg17, 静态托管前端）
-> v0.26: 平台文件 id → 视频自动跳转（videos.external_file_id + GET /videos/external/{file_id} + 前端 connect() 后自动打开对应视频）
-> v0.27: 搜索修正（统一 track 编号 + 范围 fail-closed + 车牌搜索修正）+ 车牌模糊搜索模式（字符归一化 + 前端「牌」模式按钮）
-> v0.28: 云智嵌入 UI 重构（移除侧边栏 / 导航上移 header / 参数历史右侧抽屉 / 搜索检测门控）
-> v0.29: 人脸识别链路重构（护栏式双阈值聚类 + 多帧采样 + 最典型脸锚点）+ 搜索数据隔离修复 + 五种搜索样式统一 + 前端交互优化
-> v0.31: 人脸搜索交互完善（结果定位检测栏人脸视图 + 身份展开出现时间段 + 选中高亮 + 时间轴联动）+ 搜索范围模型（当前/全组/全部/自定义多选，无视频直接搜索）+ 跨视频检索穿透定位 + 通用置信度 confidence
-> v0.32: 全局任务队列（已发版，PipelineQueue FIFO + worker 池 + pipeline_tasks 表 DB 持久化，批量上传排队防 GPU OOM；重启恢复 yunzhi 续跑/pipeline 标失败；排队中回调；幂等跨重启）
-> v0.33: 摘要链路根治重构（本次发版——场景数上限 max_scenes / caption 并发+降级+配置穿透 / text_encode 批量 / summary 预算截断 / 增量补摘要修复 / keyframe 抽帧 resize / resolve_encode_profile 统一 / summary_mode 默认 vlm_llm）
-> 桌面端: desktop/ pywebview 启动器 + frontend-desktop/ 独立前端 + 摘要默认 vlm_llm（native_video 置灰退役）
-> 桌面 EXE + 双部署路径（未发版，桌面前端/部署侧）: desktop/build_exe.ps1 -Deploy 一条命令构建并部署纯产品启动器 exe（PyInstaller onedir，仅桌面壳；壳修复：pywebviewready JS 轮询 + CREATE_NO_WINDOW + spec SPECPATH）+ deploy/setup_linux.sh Linux 开发机一键安装 + setup_windows.ps1 补 config.yaml 生成与前端 dist 构建 + bump 命令全机接入
+> 历史: v0.22 部署系统+设置/参数+Detection重构+删除处理中 / v0.24 云智接入+生产部署 / v0.26 平台文件id跳转 / v0.27 搜索修正+车牌模糊搜索 / v0.28 云智嵌入UI / v0.29 人脸链路重构+搜索隔离 / v0.31 人脸交互+搜索范围+跨视频穿透+置信度
+> v0.32: 全局任务队列（PipelineQueue FIFO + worker 池 + pipeline_tasks 表持久化，批量上传排队防 OOM；重启恢复 + 排队中回调 + 幂等）
+> v0.33: 摘要链路根治重构（max_scenes 场景数上限 / caption 并发+降级+配置穿透 / text_encode 批量 / summary 预算截断 / 增量补摘要修复 / keyframe 抽帧 resize / summary_mode 默认 vlm_llm）
+> v0.34 候选（桌面端重构，未发版，桌面前端/部署侧）: 浅蓝管理后台主题 + frameless 自定义窗口外框（TitleBar 拖拽/窗口按钮/版本徽章, js_api 桥接）+ 4 页模型（文件库/视频解析/任务中心/系统设置）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane）+ 系统监控（psutil）+ `update.bat` 一键更新
+> 桌面 EXE + 双部署路径（未发版）: build_exe.ps1 -Deploy 一条命令打纯壳 exe + setup_linux.sh/setup_windows.ps1 补全 + bump 全机接入
 
 ## System Data Flow
 
@@ -250,7 +244,7 @@ core/  models.py (12 表) · schemas.py (DTO) · repository.py (数据访问) ·
        prompt_loader.py · status_tracker.py (进度) · interfaces.py (10 插件 ABC) · exceptions.py
 config/  config.yaml (server/db/storage/plugins/pipeline) · config_schema.py · prompts.yaml
 frontend/  Dashboard.tsx + components/ (19, v0.28 删 Sidebar) + hooks/ (8) + 对接层指针（实现见 frontend-shared/）
-frontend-desktop/  独立前端（v0.27 含 Sidebar）; frontend-shared/  api/types/labels/helpers 一份实现（双端复用）
+frontend-desktop/  独立前端（v0.34 浅蓝管理后台 4 页模型, 见下「桌面端前端」小节）; frontend-shared/  api/types/labels/helpers 一份实现（双端复用）
 utils/  video_util.py (FFmpeg) · metadata.py (三级元数据) · video_source.py (来源规则引擎)
 services/  video_service.py (管道调度) · format_service.py (remux/proxy) · export_service.py
 ```
@@ -469,7 +463,7 @@ pipeline_tasks (v0.32 任务队列持久化)
 
 ## Frontend Architecture
 
-**双前端共存**：服务器前端 `frontend/`（v0.28 云智嵌入 UI，本节描述）+ 桌面独立前端 `frontend-desktop/`（v0.27 独立工作台，UI 完全隔离）。**对接层 `frontend-shared/` 一份实现**（api/types/labels/helpers），两端 `services/api.ts`/`types`/`labels`/`helpers` 是 1 行再导出指针。后端按 `ZHIYING_FRONTEND` 切挂载（默认服务器 dist，桌面启动器传 desktop）。以下为服务器前端结构：
+**双前端共存**：服务器前端 `frontend/`（v0.28 云智嵌入 UI，本节描述）+ 桌面独立前端 `frontend-desktop/`（v0.34 浅蓝管理后台 4 页模型，见下「桌面端前端」小节）。**对接层 `frontend-shared/` 一份实现**（api/types/labels/helpers），两端 `services/api.ts`/`types`/`labels`/`helpers` 是 1 行再导出指针。后端按 `ZHIYING_FRONTEND` 切挂载（默认服务器 dist，桌面启动器传 desktop）。以下为服务器前端结构：
 
 ```
 React 19 + Vite 6 + Tailwind CSS 4
@@ -511,6 +505,40 @@ React 19 + Vite 6 + Tailwind CSS 4
 Vite 开发代理:
   /api → http://localhost:8011 (dev)
 ```
+
+**桌面端前端（`frontend-desktop/`，v0.34 重构）**——与服务器前端 UI 完全隔离，共用同一后端：
+
+```
+React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @theme 全局重映射）
+  │
+  ├── App.tsx                ← 应用壳：TitleBar + Sidebar + 4 页切换 + 拖拽上传遮罩
+  ├── AppContext.tsx         ← 跨页状态：page/selectedVideoId/settingsTab 导航 +
+  │                             共享视频列表轮询(4s) + 上传/删除/拖拽编排
+  ├── components/
+  │   ├── TitleBar           ← 自定义窗口标题栏（frameless 拖拽区 + 版本徽章 +
+  │   │                         最小化/最大化/关闭，经 pywebview js_api 桥接）
+  │   ├── Sidebar            ← w-56 浅蓝渐变侧栏：业务(文件库/视频解析/任务中心) +
+  │   │                         系统设置 4 子页(系统/模型参数/参数预设/API密钥) + SystemMonitor
+  │   ├── SystemMonitor      ← 底部真机监控（等 pywebviewready 后轮询 get_system_stats，
+  │   │                         psutil CPU/内存/网络 + nvidia-smi GPU，迷你柱状图）
+  │   ├── FileLibrary        ← 文件库：左分组树 + 右表格(类型/文件名/时长/时间/状态/操作)
+  │   ├── Workbench          ← 视频解析（照智影 v2 demo 骨架：外层 SplitPane 60%
+  │   │                         左舞台播放器/时间轴 + 右栏 摘要⇄信息 toggle | 检测|搜索 42%
+  │   │                         分栏；ParameterPanel 以 Modal 打开）
+  │   ├── TaskCenter         ← 任务中心：checkbox + 筛选 Tab + 状态徽章/进度条
+  │   ├── SplitPane          ← 可拖拽分栏（自 demo SplitPane.jsx 移植）
+  │   ├── SettingsPage       ← 系统设置（4 子页受控于 AppContext settingsTab）
+  │   └── …现有组件（VideoPlayer/DetectionTimeline/DetectionPanel/VideoSearchCard 等换肤复用）
+  4 页模型：文件库 / 视频解析 / 任务中心 / 系统设置（无 Router，AppContext state 切换）
+```
+
+**桌面端窗口壳（`desktop/`，v0.34）**：
+- 主窗 `create_window(..., frameless=True, shadow=True)` 去系统标题栏（Windows EdgeChromium 保留圆角阴影）
+- 前端标题栏 div 加 `.pywebview-drag-region`（对应 pywebview `settings['DRAG_REGION_SELECTOR']` 默认值）自动拖拽；窗口按钮置于拖拽区外（sibling）防误触
+- `webview_panel.py` SplashApi 扩展：`minimize/toggle_maximize/is_maximized/quit`（窗口控制）+ `get_system_stats`（psutil + nvidia-smi，GPU 缓存 5s）；load_url 到真实前端后 js_api 仍有效
+- `desktop/requirements.txt` 含 `psutil`；前端 `window.pywebview` 存在才渲染窗口按钮（浏览器 dev 隐藏）
+
+**更新发布**：根目录 `update.bat` 一键自动更新（Windows）：git pull（走 7897 代理）→ pip 装 desktop 依赖 → npm install/build（dist gitignored 必须本地建）→ `build_exe.ps1 -Deploy` 重打 exe。
 
 ## Key Design Decisions
 
@@ -558,70 +586,18 @@ Vite 开发代理:
 | **搜索数据隔离 (v0.29)** | search/face + search/image 的 video_ids 等改 Form(...) 声明修复全库泄漏；单视频搜索严格隔离 |
 
 ## Current Status
+**核心链路全部 ✅**：Pipeline DAG(15 ops) / 4-path 编码 / 双层 ReID / 7-path 搜索+图搜 / 人脸+车牌识别 / 双模式摘要(vlm_llm 默认) / 多格式(remux+proxy) / 存储卫生 / 4级参数+增量 / 系统设置+参数预设 / 全局 GPU 锁+共享实例 / 任务队列(v0.32) / 云智嵌入 UI / 桌面端 v0.34 重构 / 生产部署 / Health。详见 README「Development Status」。
 
+**非完全状态**：
 | Module | Status | Note |
 |---|---|---|
-| Pipeline Core (DAG) | ✅ | EventDrivenScheduler (v0.10): operations.py declares 15 ops, search/summary decoupled, gates/deps, events-driven |
-| Track Encoding (crop→embed) | ✅ | runners/track_encode.py: 读检测缓存多帧 640×384 crop（零 FFmpeg seek）→ mean pool → Qwen3-VL-Embedding 4096-dim。长视频友好（track_encode 不随 track 数 seek 爆炸） |
-| Global ReID Tracklet Stitch | ✅ | track_encode Phase 2: cosine ≥0.85 + 同类 + 时序不重叠（segments 真实片段, MAX_OVERLAP_SEC=1.0 + HIGH_SIM_OVERRIDE=0.90 容忍双跟踪伪影） |
-| Face Recognition | ✅ | plugins/face/insightface_face.py — SCRFD + ArcFace R50 (512d); FaceRunner v0.29 重构（多帧采样 + 护栏式双阈值聚类 + 最典型脸锚点） |
-| 搜索数据隔离 | ✅ | v0.29 修复 search/face + search/image 的 video_ids 泄漏全库 bug（Form 声明）；单视频搜索严格隔离 |
-| 五种搜索样式统一 | ✅ | v0.29 前端: 语义/图搜/物体/车牌/人脸统一 sr-item 卡片（标签右上角 + 主体1行 + 导出展开式） |
-| License Plate Recognition | ✅ | plugins/plate/hyperlpr_plate.py — HyperLPR3 detection + text recognition (paddle_plate.py alternative), PlateRunner |
-| Face Image Search | ✅ | POST /api/v1/search/face — upload image → ArcFace 512d → face_identities cosine match |
-| Plate Text Search（模糊） | ✅ | core/search.py plate_text_search — 归一化(全角/分隔符/大写) + Levenshtein≤2 + ILIKE 子串 + 相似度 LEAST 封顶；plate 按 (video_id, track_id) 独立去重；前端「牌」模式按钮 |
-| Semantic Search (7-path) | ✅ | frame + chunk + text + label + track + plate + image 并行召回, plate 独立 ILIKE |
-| Universal Image Search | ✅ | POST /api/v1/search/image — Qwen3-VL-Embedding 4096-dim → frame_embeddings, 独立 search_image_only() 路径 (帧不聚类、不补 scene、每帧独立精确到秒) |
-| Frontend Chinese Labels | ✅ | frontend/src/labels.ts — 统一 ZH_LABELS (80 COCO 类)+zh()/zhLabel()/colorOf(), 消除 3 份重复 CLASS_COLORS |
-| Frame-level Encoding | ✅ | runners/frame_encode.py: batch encode 4 frames |
-| Chunk-level Encoding | ⚠️ | config pipeline.chunk_encoding 控制，默认关闭 |
-| Text Semantic Encoding | ✅ | runners/text_encode.py: ctx 写入 → Persist 统一入库 |
-| Summary（双模式摘要） | ✅ | 默认 vlm_llm（API 驱动）；native_video 已置灰退役（前端不可选，后端 effective_summary_mode 保留兼容，旧视频仍正常处理；captioner 8B 不再下载） |
-| Object Detection + Tracking | ✅ | YOLO11s + BoT-SORT, 10fps 独立帧率（与 search 共享 NVDEC 流）, dual-gate control; 共享 app.state 单实例懒加载 + gpu_lock 串行, batch_size/imgsz 可配 |
-| AI Generation Detection | ❌ 已移除 | services/ai_detect_service.py + utils/ai_detect/ 已删除, upload 不再触发 AICheck。残留: ai_detect_result DB 列 + schema + 前端展示（恒为 not_run） |
-| Video Source Analysis | ✅ | utils/video_source.py: 规则引擎 classify_video_source(), phone/camera/screen_recording/surveillance/non_camera_source, 基于 EXIF + file naming + media structure + 文件头魔数嗅探（IMKH→海康威视, magic_bytes 内容级签名）, 首次 GET /metadata 触发, 结果缓存到 DB |
-| Metadata Extraction + Cache | ✅ | utils/metadata.py: 三级提取 (pymediainfo→exiftool→ffprobe); 结果缓存到 Video.metadata_json 列, 后续请求 <1ms 返回; ?verbose=true 查看原始数据 |
-| Clip Export | ✅ | services/export_service.py: 流复制 (-c copy) 极速导出 |
-| Frames Export | ✅ | 指定时间戳帧序列 → zip 打包 |
-| Track Segments Export | ✅ | 读 segments 字段按段导出 → zip |
-| Track Thumbnail Download | ✅ | 全尺寸物体裁剪图下载 |
-| Scene Thumbnails Export | ✅ | 全部/指定场景缩略图 → zip |
-| Multi-Format Support | ✅ | 两层: remux (-c copy) + proxy (NVENC H.264, 按需) |
-| Performance Optimizations | ✅ | embedder 可配置 3 档 (336-672), PIL resize 8线程并行, batch 512, NVDEC MJPEG pipe 默认启用, keyframes→frame_encode 生产者-消费者并发, float32 |
-| API Routes | ✅ | 30 endpoints: +batch upload +face/data +face/thumbnail +metadata cache +source_analysis +maintenance/sweep +maintenance/storage |
-| Pipeline Progress System | ✅ | 动态权重按 progress_weight 比例分配 + sub_progress 操作内插值 |
-| Parameter System (4-level) | ✅ | PipelineParams schemas, presets config, frontend cascade panel |
-| Incremental Processing | ✅ | run_incremental() on completed videos for summary/search_index |
-| Storage Hygiene (v0.21) | ✅ | core/storage_manager.py: 删除即清盘 (DB 级联 + 引用追踪) + 空组清理; POST /maintenance/sweep 清扫 + scripts/sweep_storage.py CLI; trackthumb 泄漏修复; 缩略图缺失 404 兜底 |
-| Delete-while-processing (v0.22) | ✅ | core/cancellation.py — 删除端点 mark_cancelled 登记, engine persist 前 is_cancelled 检查中止; 前端删除按钮放开 processing、去释放空间弹窗 |
-| Multi-Video Group (v0.19) | ✅ | POST /videos/upload/batch; VideoGroup ORM; 组参数同步; frontend 历史堆叠/展开/切换/跨视频搜索/独立检测面板 |
-| Settings API (Keys + Providers + Storage + Pipeline) | ✅ | core/settings_service.py, GET/PUT /api/v1/settings（密钥/端点/模型 + 存储路径 + pipeline 段: 编码三档/检测参数/量化/并发上限，settings.json backed，运行时生效，量化需重启） |
-| Pipeline Presets (v0.22) | ✅ | core/presets_service.py + /settings/presets CRUD + apply（data/presets.json 命名快照，一键套用） |
-| Global GPU Lock (v0.22) | ✅ | core/gpu_lock.py — embedder/YOLO 前向全局串行（防 24GB 机并发驱动故障）; detection 攒批 128 |
-| 并发管道限制 (v0.22→v0.32 队列) | ✅ | pipeline.max_concurrent_videos → core/pipeline_queue.py PipelineQueue worker 池（FIFO + DB 持久化，0/未设=1 串行） |
-| Embedder Quantization (v0.22) | ✅ | plugins/embedder/qwen_vl_embedder.py — none/8bit/4bit via bitsandbytes; 相对模型路径解析到项目根 |
-| Windows 从零部署 + 多架构 (v0.22) | ✅ | deploy/setup_windows.ps1 裸机一键安装器 + download_models.py (含 reid) + deploy_feedback.md; 单份 config 自动降级 captioner; requirements 环境标记支持 ARM64 (onnxruntime CPU) |
-| 服务器前端 (frontend/) | ✅ | React 19 + Vite + Tailwind, 19 components（v0.28 删 Sidebar）+ 8 hooks + 对接层指针（frontend-shared）|
-| 桌面前端 (frontend-desktop/) | ✅ | 独立工作台（v0.27, 含 Sidebar）+ native_video 置灰 + 无云智 Bridge, 经 ZHIYING_FRONTEND=desktop 挂载 |
-| 桌面端启动器 (desktop/) | ✅ | pywebview 壳: 检查模型→起 db→起 uvicorn→开窗→日志→优雅关停（看门狗防孤儿, 快捷方式/图标）|
-| Config Schema | ✅ | Pydantic v2 validation for config.yaml |
-| Prompt Templates | ✅ | config/prompts.yaml — caption/summarizer/grounding prompts |
-| DB Layer | ✅ | Async engine, pgvector, init_db(), incremental migration, 12 tables (+video_groups) |
-| TransNetV2 Segmenter | ✅ | Neural scene boundary detection |
-| faster-whisper Transcriber | ✅ | Plugin exists, config-disabled by default |
-| OCR | 📋 | PaddleOCR available as plate recognition alternative (plugins/plate/paddle_plate.py) |
+| Chunk-level Encoding | ⚠️ | config 控制，默认关闭 |
+| AI Generation Detection | ❌ 已移除 | ai_detect_result 列+前端展示保留（恒 not_run） |
+| OCR | 📋 | 设计见 docs/ocr.md；实现待办（PaddleOCR 已作车牌备选后端） |
 | Grounding | 📋 | Florence-2 shell only |
-| 云智平台接入 (v0.24) | ✅ | api/yunzhi_routes.py + services/yunzhi_job_service.py: POST /internal/yunzhi/jobs（根路径, 202+幂等, callback.progressUrl/completeUrl/failUrl, 结果写 workDirectory） |
-| 平台共享文件 (v0.24) | ✅ | POST /videos/register-external（source_owned=false 就地引用, 删除不 unlink 源文件）; StatusTracker.on_progress / engine.progress_callback 透传 |
-| 前端 Bridge (v0.24) | ✅ | frontend/src/platform/（yunzhi-bridge.ts/client.ts/YunzhiProvider/mock, VITE_YUNZHI_MOCK 切换真实/模拟） |
-| 平台文件 id 自动跳转 (v0.26) | ✅ | videos.external_file_id + GET /videos/external/{file_id} + Dashboard connect() 后凭 context.resource.id 自动打开对应视频 |
-| 生产部署 (v0.24) | ✅ | systemd `zhiying.service` @ 10.0.0.176:8011, pgvector:pg17 容器, 后端静态托管 frontend/dist 免 nginx; 运维见 docs/server.md |
-| Health | ✅ | main.py GET /health → {"status":"ok","service":"zhiying","version":"<__version__>","database":"ok"}（含 DB 连通性 + 版本号） |
 | Reindex | 🔶 | 待办 |
+
 
 ## 版本发布
 
-- **唯一事实来源**：`core/version.py` `__version__`（SemVer pre-1.0：MINOR=新功能，PATCH=热修）；`/health` 返回 `version` 字段，部署/回滚后 `curl /health` 即可核对服务器实际运行版本。
-- **发版**：`./bump minor|patch|0.24.0` —— 联动改 `core/version.py` + `frontend/package.json` + `package-lock.json`（含两处根版本，避免 npm ci 因版本不同步报错），随后交互式输入提交信息、确认 `git add .` commit / tag / push。机器不自动提交——每一步发布动作由你按 y 确认（不擅自动版本库）。
-- **tag 强绑定**：git tag 必须 `v<__version__>`，与 version.py 完全一致；回滚 = 服务器 `git checkout v<旧tag>` + 重启。版本与 tag 不一致时 `/health` 无法对质。
-- **多开发机**：`./bump` 是随仓库分发的 bash 启动器，任何开发机 `git pull` 后即可用（Windows 开发机用 `python scripts/bump_version.py`）。
+见 README「版本号与发布」（`./bump` 联动 core/version.py + frontend/package.json + tag 强绑定 v<__version__>）。
