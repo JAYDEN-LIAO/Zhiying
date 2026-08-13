@@ -418,9 +418,30 @@ class FormatService:
                     Video.video_codec,
                     Video.audio_codec,
                     Video.has_audio,
+                    Video.file_id,
                 ).where(Video.id == video_id)
             )
             row = result.one_or_none()
+
+            # v0.34 版本行缺格式 → 从同文件其它版本回退（共享同一物理文件，格式一致）
+            if row is not None and row.container_format is None and row.file_id is not None:
+                sibling = (await session.execute(
+                    select(
+                        Video.remuxed_path, Video.proxy_path, Video.proxy_status,
+                        Video.container_format, Video.video_codec, Video.audio_codec, Video.has_audio,
+                    ).where(
+                        Video.file_id == row.file_id,
+                        Video.container_format.isnot(None),
+                        Video.id != video_id,
+                    ).limit(1)
+                )).one_or_none()
+                if sibling is not None:
+                    row = row._replace(
+                        remuxed_path=sibling.remuxed_path, proxy_path=sibling.proxy_path,
+                        proxy_status=sibling.proxy_status, container_format=sibling.container_format,
+                        video_codec=sibling.video_codec, audio_codec=sibling.audio_codec,
+                        has_audio=sibling.has_audio,
+                    )
 
         if row is None:
             raise FileNotFoundError(f"Video not found: {video_id}")

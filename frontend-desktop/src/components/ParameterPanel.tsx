@@ -99,11 +99,13 @@ export function ParameterPanel({
   onClose,
   onParamsSet,
   onUploadDone,
+  reparse = false,
 }: {
   videoId?: string | null;
   onClose: () => void;
   onParamsSet: () => void;
   onUploadDone?: (newVideoId: string) => void;
+  reparse?: boolean;  // v0.34: 重新解析模式——提交时创建新版本而非原地更新
 }) {
   const [sceneType, setSceneType] = useState<ContentType>(() => {
     const saved = loadCustomParams();
@@ -312,6 +314,11 @@ export function ParameterPanel({
         const ac = new AbortController();
         window.addEventListener("focus", () => setTimeout(() => setSubmitting(false), 500), { signal: ac.signal, once: true });
         input.click();
+      } else if (reparse) {
+        // v0.34 重新解析 → 创建新版本（不覆盖当前版本）
+        await api.reanalyze(videoId, buildParams());
+        onParamsSet();
+        onClose();
       } else {
         // 已有视频 → 直接更新参数
         await api.updateParams(videoId, buildParams());
@@ -667,7 +674,7 @@ export function ParameterPanel({
           disabled={submitting}
           className="px-5 py-2 text-xs font-medium bg-gradient-to-r from-teal-600 to-teal-700 text-teal-950 rounded-lg hover:from-teal-700 hover:to-teal-800 disabled:opacity-50 transition-all shadow-sm"
         >
-          {submitting ? "启动中..." : "参数启动"}
+          {submitting ? "提交中..." : reparse ? "重新解析" : "参数启动"}
         </button>
       </div>
     </div>

@@ -575,6 +575,31 @@ async def get_video(
     video = await get_video_with_relations(db, video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="Video not found")
+    # v0.34 版本行缺格式 → 从同文件其它版本回退并回写（共享同一物理文件）
+    if video.video_codec is None and video.file_id is not None:
+        from sqlalchemy import select as sa_select
+        sibling = (await db.execute(
+            sa_select(Video.container_format, Video.video_codec, Video.audio_codec,
+                      Video.has_audio, Video.duration, Video.remuxed_path,
+                      Video.proxy_path, Video.proxy_status, Video.proxy_progress,
+                      Video.metadata_json)
+            .where(Video.file_id == video.file_id, Video.container_format.isnot(None))
+            .order_by(Video.version_no.asc()).limit(1)
+        )).one_or_none()
+        if sibling is not None:
+            video.container_format = sibling.container_format
+            video.video_codec = sibling.video_codec
+            video.audio_codec = sibling.audio_codec
+            video.has_audio = sibling.has_audio
+            if video.duration is None:
+                video.duration = sibling.duration
+            video.remuxed_path = sibling.remuxed_path
+            video.proxy_path = sibling.proxy_path
+            video.proxy_status = sibling.proxy_status
+            video.proxy_progress = sibling.proxy_progress
+            if video.metadata_json is None:
+                video.metadata_json = sibling.metadata_json
+            await db.commit()  # 回写，后续请求直接命中
     return APIResponse(data=VideoResponse.model_validate(video))
 
 
@@ -922,8 +947,11 @@ async def list_versions(
     video = await db.get(Video, video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="视频不存在")
-    file_id = resolve_file_id(video)
-    versions = await list_file_versions(db, file_id)
+    # 单版本（file_id NULL）→ 返回自身；版本化 → 返回整链
+    if video.file_id is None:
+        versions = [video]
+    else:
+        versions = await list_file_versions(db, video.file_id)
     items = [VersionInfo.model_validate(v) for v in versions]
     return APIResponse(data=items)
 

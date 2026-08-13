@@ -443,7 +443,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
         </div>
       </div>
 
-      <div className="major-card-bd" style={{ padding: "6px 10px 8px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div className="major-card-bd" style={{ padding: "6px 10px 8px", display: "flex", flexDirection: "column", overflow: "visible" }}>
         {/* Class filter — dropdown（v0.30: 人脸作为一类并入下拉栏，移除顶部独立按钮；
            单类别也走下拉栏，消除"人 x465"降级文本标签） */}
         {(classEntries.length > 0 || showFaceBtn) && (
@@ -499,7 +499,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
           <div className="flex-1 flex items-center justify-center text-xs text-gray-400">该类别暂无轨迹</div>
         ) : (
           <div className="dtc-list" ref={listRef}
-            style={{ position: "relative", overflowY: "auto", flex: 1, minHeight: 0 }}
+            style={{ position: "relative", overflowY: "visible", flex: 1, minHeight: 0 }}
             onScroll={handleListScroll}
           >
             <div style={{ height: filtered.length * ROW_STEP, position: "relative", flexShrink: 0 }}>
@@ -548,7 +548,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
 
         {/* Faces tab（v0.30: 行样式与物体 TrackRow 统一为 dtc-item 布局） */}
         {faceViewOpen && faceData?.has_face && (
-          <div className="dtc-list" ref={listRef} style={{ position: "relative", overflowY: "auto", flex: 1, minHeight: 0 }}>
+          <div className="dtc-list" ref={listRef} style={{ position: "relative", overflowY: "visible", flex: 1, minHeight: 0 }}>
             {faceData.identities.map((ident) => {
               const isSel = expandedFaceId === ident.id;
               return (

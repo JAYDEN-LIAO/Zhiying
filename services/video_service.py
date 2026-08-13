@@ -93,6 +93,17 @@ class VideoService:
                 group_id=src.group_id,
                 file_id=file_id,
                 version_no=new_no,
+                # 复制格式信息（v0.34：否则新版本 video_codec 为空 → 播放器一直"正在分析视频格式"）
+                container_format=src.container_format,
+                video_codec=src.video_codec,
+                audio_codec=src.audio_codec,
+                has_audio=src.has_audio,
+                duration=src.duration,
+                remuxed_path=src.remuxed_path,
+                proxy_path=src.proxy_path,
+                proxy_status=src.proxy_status,
+                proxy_progress=src.proxy_progress,
+                metadata_json=src.metadata_json,
                 # 请求参数（L1-L4）
                 content_type=params.content_type,
                 language=params.language,

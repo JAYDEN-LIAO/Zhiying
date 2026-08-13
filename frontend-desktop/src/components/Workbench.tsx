@@ -13,13 +13,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
 import type { VideoResponse, PipelineStage } from "../types";
-import { fmtDuration, fmtDate } from "../utils/helpers";
+import { fmtDuration, fmtDate, versionName } from "../utils/helpers";
 import { IconDownload, IconPlus } from "./icons";
 import { ExportMenu } from "./ExportMenu";
 import { ParameterPanel } from "./ParameterPanel";
 import { VideoPlayer } from "./VideoPlayer";
 import { DetectionTimeline } from "./DetectionTimeline";
 import { VideoSummaryCard } from "./VideoSummaryCard";
+import { VideoInfoCard } from "./VideoInfoCard";
 import { DetectionPanel } from "./DetectionPanel";
 import { VideoSearchCard } from "./VideoSearchCard";
 import { SplitPane } from "./SplitPane";
@@ -36,11 +37,10 @@ const langLabel: Record<string, string> = { auto: "自动", zh: "中文", en: "E
 
 /* ═══════════════ ① 顶部卡 ═══════════════ */
 function WbHeader({
-  videoName, statusCls, statusLabel, hasVideo, isPending, onReanalyze, onOpenHistory, onToggleExport, showExport, exportVideoId, onCloseExport,
+  videoName, groupName, curVersionName, hasVideo, isPending, onReanalyze, onOpenHistory, onOpenExport,
 }: {
-  videoName: string; statusCls: string; statusLabel: string; hasVideo: boolean; isPending: boolean;
-  onReanalyze: () => void; onOpenHistory: () => void; onToggleExport: () => void;
-  showExport: boolean; exportVideoId: string | null; onCloseExport: () => void;
+  videoName: string; groupName: string | null; curVersionName: string; hasVideo: boolean; isPending: boolean;
+  onReanalyze: () => void; onOpenHistory: () => void; onOpenExport: () => void;
 }) {
   return (
     <div className="case-card flex items-center justify-between px-5 h-[60px] shrink-0">
@@ -53,14 +53,15 @@ function WbHeader({
         {hasVideo ? (
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-[13px] text-gray-700 truncate max-w-[240px]">{videoName}</span>
-            <span className={"g-badge " + statusCls}>{statusLabel}</span>
+            {groupName && <span className="text-[11.5px] text-gray-500 shrink-0">所属案例：{groupName}</span>}
           </div>
         ) : (
           <span className="text-[12.5px] text-gray-500">未选择视频</span>
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <button className="g-btn" onClick={onOpenHistory} disabled={!hasVideo}>
+        <span className="text-[11.5px] text-[#4f7cff] font-medium bg-[#eaf1ff] rounded px-2 py-1 truncate max-w-[200px]" title={curVersionName}>{curVersionName || "未选择版本"}</span>
+        <button className="g-btn" onClick={onOpenHistory} disabled={!hasVideo} title="解析版本历史">
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
           历史记录
         </button>
@@ -68,15 +69,7 @@ function WbHeader({
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 1112.9 5.3M4.5 12V7.5M4.5 12h4.5M19.5 12a7.5 7.5 0 01-12.9-5.3M19.5 12v4.5M19.5 12H15" /></svg>
           {isPending ? "开始解析" : "重新解析"}
         </button>
-        <div style={{ position: "relative" }}>
-          <button className="g-btn" onClick={onToggleExport} disabled={!hasVideo}><IconDownload />导出</button>
-          {showExport && exportVideoId && (
-            <>
-              <div className="export-overlay" onClick={onCloseExport} />
-              <div className="absolute right-0 top-full mt-1 z-50"><ExportMenu videoId={exportVideoId} onClose={onCloseExport} /></div>
-            </>
-          )}
-        </div>
+        <button className="g-btn" onClick={onOpenExport} disabled={!hasVideo}><IconDownload />导出</button>
       </div>
     </div>
   );
@@ -95,50 +88,17 @@ function WbStage({ player, timeline }: { player: React.ReactNode; timeline: Reac
 }
 
 /* ═══════════════ ③ 右摘要卡（摘要 ⇄ 历史） ═══════════════ */
-function WbSummary({
-  showInfo, onToggleInfo, versions, vid, onSelectVersion, currentVideo,
-}: {
-  showInfo: boolean; onToggleInfo: (v: boolean) => void;
-  versions: VersionInfo[]; vid: string | null; onSelectVersion: (id: string) => void;
-  currentVideo: VideoResponse | null;
-}) {
+function WbSummary({ currentVideo }: { currentVideo: VideoResponse | null }) {
   return (
     <div className="case-card h-full flex flex-col min-h-0 overflow-hidden">
       <div className="g-card-title">
-        <div className="flex items-center gap-1">
-          <button className={"g-tab" + (!showInfo ? " active" : "")} style={{ fontSize: 13 }} onClick={() => onToggleInfo(false)}>
-            视频摘要 <span className="text-gray-400 text-[11px] font-normal">Summary</span>
-          </button>
-          <button className={"g-tab" + (showInfo ? " active" : "")} style={{ fontSize: 13 }} onClick={() => onToggleInfo(true)}>
-            历史记录 <span className="text-gray-400 text-[11px] font-normal">History</span>
-          </button>
+        <div className="flex items-center gap-1.5">
+          <svg className="w-4 h-4 text-[#4f7cff]" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6M9 8h6M5 19V5a2 2 0 012-2h10a2 2 0 012 2v14l-3-2-2 2-2-2-2 2-2-2-3 2z" /></svg>
+          <span className="text-[13px] font-semibold text-gray-800">视频摘要</span>
         </div>
       </div>
       <div className="flex-1 min-h-0 overflow-auto p-2">
-        {showInfo ? (
-          <div className="space-y-2">
-            {versions.map((v) => (
-              <div key={v.id}
-                className={"border rounded-lg p-2.5 cursor-pointer transition-colors " +
-                  (vid === v.id ? "border-[#4f7cff] bg-[#4f7cff]/5" : "border-gray-200 hover:border-gray-300")}
-                onClick={() => onSelectVersion(v.id)}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className={"text-[12.5px] font-semibold " + (vid === v.id ? "text-[#4f7cff]" : "text-gray-800")}>
-                    V{v.version_no ?? 1}
-                  </span>
-                  <span className={"g-badge " + (v.status === "completed" ? "ok" : v.status === "processing" ? "run" : v.status === "failed" ? "err" : "wait")}>
-                    {v.status === "completed" ? "已完成" : v.status === "processing" ? "处理中" : v.status === "failed" ? "失败" : v.status}
-                  </span>
-                </div>
-                <div className="text-[11px] text-gray-500 mt-1">{fmtDate(v.created_at)}</div>
-              </div>
-            ))}
-            {versions.length === 0 && <div className="text-gray-400 text-[12px] py-2">暂无历史版本</div>}
-          </div>
-        ) : (
-          <VideoSummaryCard video={currentVideo} />
-        )}
+        <VideoSummaryCard video={currentVideo} />
       </div>
     </div>
   );
@@ -150,11 +110,9 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
     <div className="case-card h-full flex flex-col p-2 min-h-0 overflow-hidden">
       <SplitPane direction="row" initial={42} min={25} max={68} className="h-full w-full">
         <div className="w-full h-full flex flex-col bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="g-card-title">物体检测 <span className="text-gray-400 text-[11px] font-normal">Object Detection</span></div>
           <div className="flex-1 min-h-0 overflow-auto">{detection}</div>
         </div>
         <div className="w-full h-full flex flex-col bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="g-card-title">视频搜索 <span className="text-gray-400 text-[11px] font-normal">Video Search</span></div>
           <div className="flex-1 min-h-0 overflow-hidden">{search}</div>
         </div>
       </SplitPane>
@@ -163,13 +121,15 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
 }
 
 export function Workbench() {
-  const { selectedVideoId, paramsTick, videos, videoGroups, navigate, deleteVideo, handleUploadClick, isUploading } = useApp();
+  const { selectedVideoId, paramsTick, videos, videoGroups, caseGroups, navigate, deleteVideo, handleUploadClick, isUploading } = useApp();
   const currentVideoId = selectedVideoId;
 
   /* ── 版本切换（v0.34）：打开文件 → 拉取版本链 → 默认当前版本 ── */
   const [versions, setVersions] = useState<VersionInfo[]>([]);
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
   const vid = activeVersionId ?? currentVideoId; // 有效分析版本行 id
+  const activeVersion = versions.find((v) => v.id === vid);
+  const curVersionName = activeVersion ? versionName(activeVersion) : "";
 
   useEffect(() => {
     setVersions([]);
@@ -194,10 +154,10 @@ export function Workbench() {
   const [currentVideo, setCurrentVideo] = useState<VideoResponse | null>(null);
   const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
   const [seekTarget, setSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
-  const [showExport, setShowExport] = useState(false);
+  const [topPanel, setTopPanel] = useState<"history" | "export" | null>(null);
   const [paramsOpen, setParamsOpen] = useState(false);
+  const [reparseMode, setReparseMode] = useState(false); // 重新解析：参数窗提交时建新版本
   const [deleting, setDeleting] = useState(false);
-  const [showInfo, setShowInfo] = useState(false); // 右上卡：摘要⇄历史
   const [showStageInfo, setShowStageInfo] = useState(false); // 播放器信息浮层
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -220,9 +180,8 @@ export function Workbench() {
     setFaceViewOpen(false);
     setExpandedFaceId(null);
     setSeekTarget(null);
-    setShowExport(false);
+    setTopPanel(null);
     setParamsOpen(false);
-    setShowInfo(false);
     setShowStageInfo(false);
     if (currentVideoId) setCurrentGroupVideos([currentVideoId]);
     else setCurrentGroupVideos([]);
@@ -410,9 +369,8 @@ export function Workbench() {
     return (
       <div className="h-full flex flex-col gap-2 p-2">
         <WbHeader
-          videoName="" statusCls="wait" statusLabel="" hasVideo={false} isPending={false}
-          onReanalyze={() => {}} onOpenHistory={() => {}}
-          onToggleExport={() => {}} showExport={false} exportVideoId={null} onCloseExport={() => {}}
+          videoName="" groupName={null} curVersionName="" hasVideo={false} isPending={false}
+          onReanalyze={() => {}} onOpenHistory={() => {}} onOpenExport={() => {}}
         />
         <div className="flex-1 min-h-0">
           <SplitPane direction="row" initial={60} min={32} max={72} className="h-full w-full">
@@ -439,10 +397,7 @@ export function Workbench() {
             {/* 右侧：摘要卡 + 分析卡（col 拖拽） */}
             <div className="h-full min-w-0">
               <SplitPane direction="col" initial={22} min={12} max={45} className="h-full w-full">
-                <WbSummary
-                  showInfo={false} onToggleInfo={() => {}} versions={[]} vid={null}
-                  onSelectVersion={() => {}} currentVideo={null}
-                />
+                <WbSummary currentVideo={null} />
                 <WbAnalysis
                   detection={<div className="flex items-center justify-center h-full text-gray-400 text-[12.5px]">选择视频后查看</div>}
                   search={<div className="flex items-center justify-center h-full text-gray-400 text-[12.5px]">输入条件后点击查询</div>}
@@ -455,28 +410,57 @@ export function Workbench() {
     );
   }
 
-  const groupName = (() => {
-    const g = videoGroups.find((grp) => grp.videoIds.includes(currentVideoId));
-    if (g && g.videoIds.length > 1) return `分组 ${g.videoIds.length} 个视频`;
-    return null;
-  })();
+  const groupName = currentVideo?.group_id
+    ? (caseGroups.find((g) => g.groupId === currentVideo.group_id)?.name ?? null)
+    : null;
 
   return (
-    <div className="h-full flex flex-col gap-2 p-2">
+    <div className="h-full flex flex-col gap-2 p-2 relative">
       {/* ① 顶部卡：标题/介绍/视频名/状态 + 历史记录/重新解析/导出 */}
       <WbHeader
         videoName={currentVideo?.file_name ?? ""}
-        statusCls={isCompleted ? "ok" : isProcessing ? "run" : currentVideo?.status === "failed" ? "err" : "wait"}
-        statusLabel={isCompleted ? "已完成" : isProcessing ? "处理中" : currentVideo?.status === "failed" ? "失败" : "等待参数"}
+        groupName={groupName}
+        curVersionName={curVersionName}
         hasVideo={!!currentVideo}
         isPending={isPending}
-        onReanalyze={() => (isPending ? setParamsOpen(true) : handleReanalyze())}
-        onOpenHistory={() => setShowInfo(true)}
-        onToggleExport={() => setShowExport((v) => !v)}
-        showExport={showExport}
-        exportVideoId={vid}
-        onCloseExport={() => setShowExport(false)}
+        onReanalyze={() => { setReparseMode(true); setParamsOpen(true); }}
+        onOpenHistory={() => setTopPanel((p) => (p === "history" ? null : "history"))}
+        onOpenExport={() => setTopPanel((p) => (p === "export" ? null : "export"))}
       />
+
+      {/* 顶部下沿滑出面板（历史记录 / 导出） */}
+      {topPanel && (
+        <>
+          <div className="absolute inset-0 z-40" onClick={() => setTopPanel(null)} />
+          <div className="absolute right-2 top-[68px] z-50 case-card overflow-hidden" style={{ width: 300 }}>
+            {topPanel === "history" ? (
+              <div className="flex flex-col" style={{ maxHeight: "48vh" }}>
+                <div className="g-card-title"><span className="g-card-tt text-[13px]">历史记录（切换版本）</span></div>
+                <div className="p-2 space-y-1.5 overflow-auto">
+                  {[...versions].sort((a, b) => (b.version_no ?? 0) - (a.version_no ?? 0)).map((v) => (
+                    <div key={v.id}
+                      className={"border rounded-lg px-2.5 py-2 cursor-pointer transition-colors " +
+                        (vid === v.id ? "border-[#4f7cff] bg-[#4f7cff]/5" : "border-gray-200 hover:border-gray-300")}
+                      onClick={() => { setActiveVersionId(v.id); setTopPanel(null); }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={"text-[12.5px] font-medium truncate " + (vid === v.id ? "text-[#4f7cff]" : "text-gray-700")}>{versionName(v)}</span>
+                        <span className={"g-badge " + (v.status === "completed" ? "ok" : v.status === "processing" ? "run" : v.status === "failed" ? "err" : "wait")}>
+                          {v.status === "completed" ? "已完成" : v.status === "processing" ? "处理中" : v.status === "failed" ? "失败" : v.status}
+                        </span>
+                      </div>
+                      <div className="text-[10.5px] text-gray-500 mt-0.5 font-mono">{fmtDate(v.created_at)}</div>
+                    </div>
+                  ))}
+                  {versions.length === 0 && <div className="text-gray-400 text-[12px] py-2">暂无历史版本</div>}
+                </div>
+              </div>
+            ) : (
+              <ExportMenu videoId={vid!} onClose={() => setTopPanel(null)} />
+            )}
+          </div>
+        </>
+      )}
 
       {/* ② 主体：左舞台卡 6:4 | 右侧 摘要卡 + 分析卡（全部拖拽保留） */}
       <div className="flex-1 min-h-0">
@@ -518,16 +502,11 @@ export function Workbench() {
                   </svg>
                 </button>
                 {showStageInfo && currentVideo && (
-                  <div className="absolute top-12 right-3 z-20 w-[280px] rounded-lg bg-gray-900/95 backdrop-blur border border-white/10 p-3.5 text-white text-[12px] space-y-1.5 shadow-xl">
-                    {[["文件名称", currentVideo.file_name], ["时长", currentVideo.duration != null ? fmtDuration(currentVideo.duration) : "-"],
-                      ["场景类型", ctLabel[currentVideo.content_type] || currentVideo.content_type],
-                      ["状态", isCompleted ? "已完成" : isProcessing ? "处理中 " + Math.round(currentVideo.progress ?? 0) + "%" : currentVideo.status === "failed" ? "失败" : "等待参数"],
-                    ].map(([k, v]) => (
-                      <div className="flex justify-between gap-3" key={k}>
-                        <span className="text-white/50 shrink-0">{k}</span>
-                        <span className="truncate text-right">{v}</span>
-                      </div>
-                    ))}
+                  <div className="absolute top-12 right-3 z-20 w-[320px] rounded-lg bg-white border border-gray-200 shadow-xl overflow-hidden">
+                    <div className="g-card-title"><span className="g-card-tt text-[13px]">视频信息</span></div>
+                    <div className="p-2 max-h-[55vh] overflow-auto">
+                      <VideoInfoCard videoId={vid!} video={currentVideo} />
+                    </div>
                   </div>
                 )}
               </div>
@@ -558,11 +537,7 @@ export function Workbench() {
           {/* 右侧：摘要卡 + 分析卡（col 拖拽） */}
           <div className="h-full min-w-0">
             <SplitPane direction="col" initial={22} min={12} max={45} className="h-full w-full">
-              <WbSummary
-                showInfo={showInfo} onToggleInfo={setShowInfo}
-                versions={versions} vid={vid} onSelectVersion={setActiveVersionId}
-                currentVideo={currentVideo}
-              />
+              <WbSummary currentVideo={currentVideo} />
               <WbAnalysis
                 detection={
                   <DetectionPanel
@@ -609,8 +584,16 @@ export function Workbench() {
           <div className="g-modal" style={{ height: "min(680px, 86vh)" }}>
             <ParameterPanel
               videoId={vid!}
-              onClose={() => setParamsOpen(false)}
-              onParamsSet={() => setParamsOpen(false)}
+              reparse={reparseMode}
+              onClose={() => { setParamsOpen(false); setReparseMode(false); }}
+              onParamsSet={() => {
+                setParamsOpen(false);
+                setReparseMode(false);
+                // 重新解析后刷新版本列表
+                if (currentVideoId) {
+                  api.listVersions(currentVideoId).then((vs) => { if (vs?.length) setVersions(vs); }).catch(() => {});
+                }
+              }}
             />
           </div>
         </div>

@@ -55,3 +55,17 @@ export function formatSec(sec: number): string {
   const s = Math.floor(sec % 60);
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
+
+/* 版本命名：V2-物体检测(车牌识别)-搜索功能 */
+export function versionName(v: { version_no?: number | null; detection_enabled?: boolean; face_enabled?: boolean; plate_enabled?: boolean; search_index_enabled?: boolean; summary_enabled?: boolean }): string {
+  const parts: string[] = [];
+  if (v.detection_enabled) {
+    const det = ["物体检测"];
+    if (v.face_enabled) det.push("人脸识别");
+    if (v.plate_enabled) det.push("车牌识别");
+    parts.push("(" + det.join("/") + ")");
+  }
+  if (v.search_index_enabled) parts.push("搜索功能");
+  if (v.summary_enabled) parts.push("摘要功能");
+  return `V${v.version_no ?? 1}` + (parts.length ? "-" + parts.join("-") : "");
+}

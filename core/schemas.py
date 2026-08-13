@@ -442,6 +442,12 @@ class VersionInfo(BaseModel):
     file_name: str | None = None
     group_id: uuid.UUID | None = None
     params: dict | None = None       # PipelineParams 快照
+    # ── 功能开关（版本命名：V2-物体检测(车牌识别)-搜索功能 等） ──
+    detection_enabled: bool = False
+    face_enabled: bool = False
+    plate_enabled: bool = False
+    search_index_enabled: bool = False
+    summary_enabled: bool = False
     created_at: datetime
     updated_at: datetime | None = None
 

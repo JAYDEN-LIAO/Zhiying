@@ -409,7 +409,7 @@ input, textarea, [contenteditable="true"] { user-select: text; }
 .vif-div { grid-column: 1 / -1; height: 1px; background: #f1f5f9; margin: 2px 0; }
 
 /* 检测面板 */
-.dtc-filter-btn { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; color: #475569; font-size: 11px; font-weight: 500; cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; }
+.dtc-filter-btn { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px; border: 1px solid #bfc9d8; background: #fff; color: #475569; font-size: 11px; font-weight: 500; cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; }
 .dtc-filter-btn:hover { border-color: #c8ccd2; background: #f8fafc; }
 .dtc-filter-btn .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .dtc-list { display: block; }
@@ -420,7 +420,8 @@ input, textarea, [contenteditable="true"] { user-select: text; }
 .dtc-item.sel .dtc-time { color: #92400E; font-weight: 600; }
 .dtc-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .dtc-info { flex: 1; min-width: 0; }
-.dtc-name { font-size: 12px; font-weight: 600; color: #1e293b; display: flex; align-items: center; gap: 4px; }
+.dtc-name, .dtc-time { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dtc-name { font-size: 12px; font-weight: 600; color: #1e293b; display: flex; align-items: center; gap: 4px; min-width: 0; }
 .dtc-id { font-size: 10px; color: #64748b; font-weight: 400; }
 .dtc-time { font-size: 10px; color: #64748b; font-family: var(--font-mono); text-align: left; }
 .dtc-plate { font-size: 11px; font-weight: 700; color: #0d9488; font-family: var(--font-mono); letter-spacing: 0.6px; }
@@ -472,7 +473,7 @@ input, textarea, [contenteditable="true"] { user-select: text; }
 
 /* 导出菜单 */
 .export-overlay { position: fixed; inset: 0; z-index: 40; }
-.export-menu { position: absolute; right: 0; top: 100%; z-index: 50; width: 360px; padding: 0; border-radius: 12px; background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,0.15); border: 1px solid #e2e8f0; }
+.export-menu { position: absolute; right: 0; top: 100%; z-index: 50; width: 280px; padding: 0; border-radius: 12px; background: #fff; box-shadow: 0 8px 32px rgba(0,0,0,0.15); border: 1px solid #e2e8f0; }
 
 /* 拖拽上传遮罩 */
 .drop-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: rgba(15,23,42,0.6); backdrop-filter: blur(3px); pointer-events: none; }

@@ -274,6 +274,11 @@ export interface VersionInfo {
   file_name: string | null;
   group_id: string | null;
   params: Record<string, unknown> | null;
+  detection_enabled: boolean;
+  face_enabled: boolean;
+  plate_enabled: boolean;
+  search_index_enabled: boolean;
+  summary_enabled: boolean;
   created_at: string;
   updated_at: string | null;
 }

@@ -27,6 +27,7 @@ interface AppCtx {
   /* 共享视频列表（4s 轮询 + 组重建） */
   videos: VideoListItem[];
   videoGroups: VideoGroup[];
+  caseGroups: VideoGroup[];
   refreshList: () => void;
   /* 上传：统一入口，上传后跳工作台 + 打开参数 */
   isUploading: boolean;
@@ -55,6 +56,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [paramsTick, setParamsTick] = useState(0);
   const [videos, setVideos] = useState<VideoListItem[]>([]);
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
+  const [caseGroups, setCaseGroups] = useState<VideoGroup[]>([]);
   const [listKey, setListKey] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -100,6 +102,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [videos]);
 
   const refreshList = useCallback(() => setListKey((k) => k + 1), []);
+
+  const loadCaseGroups = useCallback(() => {
+    api.listGroups().then((data) => setCaseGroups(data ?? [])).catch(() => {});
+  }, []);
+  useEffect(() => { loadCaseGroups(); }, [loadCaseGroups]);
+  useEffect(() => { if (caseGroups.length === 0) loadCaseGroups(); /* eslint-disable-line */ }, [videos.length]);
 
   /* ── 删除协调（原 Dashboard handleDelete） ── */
   const removeVideoState = useCallback((id: string) => {
@@ -209,7 +217,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value: AppCtx = {
     page, navigate, settingsTab, navigateSettings,
     selectedVideoId, openWorkbench, paramsTick,
-    videos, videoGroups, refreshList,
+    videos, videoGroups, caseGroups, refreshList,
     isUploading, uploadFiles, registerExternalFiles, handleUploadClick,
     removeVideoState, deleteVideo,
     dragActive,
