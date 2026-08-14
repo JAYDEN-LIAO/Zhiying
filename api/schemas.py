@@ -12,6 +12,8 @@ from typing import Generic, TypeVar
 
 from pydantic import BaseModel, Field, field_validator
 
+from core.schemas import PipelineParams
+
 
 # ═══════════════════════════════════════════════════════════
 # 通用响应信封
@@ -110,6 +112,15 @@ class ReuseRequest(BaseModel):
     segment_threshold: float = Field(default=0.5, ge=0.2, le=0.8)
     caption_with_context: bool = True
     summary_detail: str = "standard"
+
+
+class AnalyzeBatchRequest(BaseModel):
+    """批量解析：精确启动指定待处理视频的管道（不走组同步）。
+
+    params 可选：提供则整批应用该参数集；不提供则保持各视频上传时已存参数。
+    """
+    video_ids: list[uuid.UUID] = Field(..., min_length=1, description="待启动管道的视频 id 列表")
+    params: PipelineParams | None = Field(default=None, description="整批应用的处理参数")
 
 
 # ═══════════════════════════════════════════════════════════

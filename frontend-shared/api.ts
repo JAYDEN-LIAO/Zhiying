@@ -113,6 +113,15 @@ export const api = {
     });
   },
 
+  /* ── 批量解析：精确启动指定待处理视频管道（不走组同步，v0.35 案例库批量解析） ── */
+  analyzeBatch(videoIds: string[], params?: Partial<PipelineParams>): Promise<{ started: number; skipped: number }> {
+    return request(`${BASE}/videos/analyze-batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ video_ids: videoIds, ...(params ? { params } : {}) }),
+    });
+  },
+
   /* ── Upload a video (does NOT start pipeline) ── */
   upload(file: File, params?: Partial<PipelineParams>, groupId?: string) {
     const form = new FormData();

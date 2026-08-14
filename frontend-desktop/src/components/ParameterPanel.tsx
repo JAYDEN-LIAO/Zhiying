@@ -100,12 +100,16 @@ export function ParameterPanel({
   onParamsSet,
   onUploadDone,
   reparse = false,
+  batchCount,
+  onBatchSubmit,
 }: {
   videoId?: string | null;
   onClose: () => void;
   onParamsSet: () => void;
   onUploadDone?: (newVideoId: string) => void;
   reparse?: boolean;  // v0.34: 重新解析模式——提交时创建新版本而非原地更新
+  batchCount?: number;  // 批量解析模式：整批应用同一套参数
+  onBatchSubmit?: (params: PipelineParams) => Promise<void>;
 }) {
   const [sceneType, setSceneType] = useState<ContentType>(() => {
     const saved = loadCustomParams();
@@ -289,7 +293,12 @@ export function ParameterPanel({
     setError(null);
 
     try {
-      if (!videoId) {
+      if (onBatchSubmit) {
+        // 批量解析：整批应用同一套参数（精确勾选，不走组同步）
+        await onBatchSubmit(buildParams());
+        onParamsSet();
+        onClose();
+      } else if (!videoId) {
         // 无视频 → 先上传再启动
         const input = document.createElement("input");
         input.type = "file";
@@ -336,7 +345,7 @@ export function ParameterPanel({
     } catch (e) {
       setError(e instanceof Error ? e.message : "启动失败");
     } finally {
-      if (videoId) setSubmitting(false);
+      if (videoId || onBatchSubmit) setSubmitting(false);
     }
   };
 
@@ -371,7 +380,9 @@ export function ParameterPanel({
     <div className="w-[460px] h-full flex flex-col">
       {/* Header — light（v0.34 桌面重构改浅色 Modal） */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 shrink-0">
-        <h2 className="font-bold text-slate-800 text-base">参数设置</h2>
+        <h2 className="font-bold text-slate-800 text-base">
+          {batchCount ? `批量解析（${batchCount} 个文件）` : "参数设置"}
+        </h2>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
           <IconClose />
         </button>
@@ -675,7 +686,7 @@ export function ParameterPanel({
           disabled={submitting}
           className="px-5 py-2 text-xs font-medium bg-gradient-to-r from-teal-600 to-teal-700 text-teal-950 rounded-lg hover:from-teal-700 hover:to-teal-800 disabled:opacity-50 transition-all shadow-sm"
         >
-          {submitting ? "提交中..." : reparse ? "重新解析" : "参数启动"}
+          {submitting ? "提交中..." : onBatchSubmit ? "批量解析" : reparse ? "重新解析" : "参数启动"}
         </button>
       </div>
     </div>

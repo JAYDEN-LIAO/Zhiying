@@ -20,7 +20,7 @@ const FILTERS = [
 type FilterKey = typeof FILTERS[number]["key"];
 
 const STATUS_META: Record<string, { label: string; cls: string; pulse?: boolean }> = {
-  pending: { label: "待参数", cls: "wait" },
+  pending: { label: "待处理", cls: "wait" },
   processing: { label: "处理中", cls: "run", pulse: true },
   completed: { label: "已完成", cls: "ok" },
   failed: { label: "失败", cls: "err" },

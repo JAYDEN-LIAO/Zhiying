@@ -7,17 +7,18 @@
    数据源 = /files + /groups + /groups/{id}/assets
    ════════════════════════════════════════════════════════════ */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../services/api";
 import { useApp } from "../AppContext";
-import type { FileItem, VideoGroup, CaseAssetItem } from "../types";
+import type { FileItem, VideoGroup, CaseAssetItem, PipelineParams } from "../types";
 import { fmtDuration, fmtDate, fmtBytes } from "../utils/helpers";
-import { IconFolder, IconPlus } from "./icons";
+import { IconFolder, IconPlus, IconPlay2 } from "./icons";
+import { ParameterPanel } from "./ParameterPanel";
 
 type TreeKey = "all" | "ungrouped" | `g:${string}`;
 
 const STATUS_META: Record<string, { label: string; cls: string; pulse?: boolean }> = {
-  pending: { label: "待参数", cls: "wait" },
+  pending: { label: "待处理", cls: "wait" },
   processing: { label: "处理中", cls: "run", pulse: true },
   completed: { label: "已完成", cls: "ok" },
   failed: { label: "失败", cls: "err" },
@@ -103,7 +104,9 @@ function CaseList({
 /* ═══════════════════════ ③ 案例内容卡 ═══════════════════════ */
 function CaseContent({
   group, displayFiles, images, search, statusFilter, tree, isUploading,
-  onSearch, onStatusFilter, onUpload, onOpenFile, onDeleteFile, onDeleteImage,
+  selected, allPendingIds, analyzing,
+  onSearch, onStatusFilter, onUpload, onToggleSelect, onToggleSelectAll, onAnalyze,
+  onOpenFile, onDeleteFile, onDeleteImage,
 }: {
   group: VideoGroup | undefined;
   displayFiles: FileItem[];
@@ -112,9 +115,15 @@ function CaseContent({
   statusFilter: string;
   tree: TreeKey;
   isUploading: boolean;
+  selected: Set<string>;
+  allPendingIds: string[];
+  analyzing: boolean;
   onSearch: (q: string) => void;
   onStatusFilter: (s: string) => void;
   onUpload: () => void;
+  onToggleSelect: (id: string) => void;
+  onToggleSelectAll: () => void;
+  onAnalyze: () => void;
   onOpenFile: (f: FileItem, openParams: boolean) => void;
   onDeleteFile: (f: FileItem) => void;
   onDeleteImage: (img: CaseAssetItem) => void;
@@ -137,7 +146,7 @@ function CaseContent({
           />
           <select className="g-input !w-[110px] !h-[30px] !text-[12px]" value={statusFilter} onChange={(e) => onStatusFilter(e.target.value)}>
             <option value="all">全部状态</option>
-            <option value="pending">待参数</option>
+            <option value="pending">待处理</option>
             <option value="processing">处理中</option>
             <option value="completed">已完成</option>
             <option value="failed">失败</option>
@@ -147,6 +156,12 @@ function CaseContent({
             <IconPlus />
             {isUploading ? "上传中..." : "上传文件"}
           </button>
+          {/* 一键解析：未勾选 → 处理当前列表全部待处理；勾选后 → 批量解析勾选的 */}
+          <button className="g-btn g-btn-primary" onClick={onAnalyze}
+            disabled={analyzing || (selected.size === 0 && allPendingIds.length === 0)} title="配置参数并启动待处理视频">
+            <IconPlay2 />
+            {selected.size > 0 ? `批量解析 (${selected.size})` : `一键解析 (${allPendingIds.length})`}
+          </button>
         </div>
       </div>
 
@@ -154,6 +169,11 @@ function CaseContent({
         <table className="g-table">
           <thead>
             <tr>
+              <th className="w-10">
+                <input type="checkbox" className="cursor-pointer" title="全选待处理"
+                  checked={allPendingIds.length > 0 && allPendingIds.every((id) => selected.has(id))}
+                  disabled={allPendingIds.length === 0} onChange={onToggleSelectAll} />
+              </th>
               <th className="w-10">类型</th>
               <th>文件名</th>
               <th className="w-24">大小</th>
@@ -168,6 +188,12 @@ function CaseContent({
               const sm = STATUS_META[f.current_status ?? "pending"] || STATUS_META.pending;
               return (
                 <tr key={f.id}>
+                  <td>
+                    <input type="checkbox" className="cursor-pointer" title={f.current_status === "pending" ? "勾选后批量解析" : "仅待处理可批量解析"}
+                      checked={selected.has(f.id)}
+                      disabled={f.current_status !== "pending"}
+                      onChange={() => onToggleSelect(f.id)} />
+                  </td>
                   <td><span className="inline-flex items-center justify-center w-6 h-6 rounded bg-gray-50 text-gray-500"><VideoIcon /></span></td>
                   <td className="text-gray-900 max-w-[320px] truncate font-medium" title={f.name}>{f.name}</td>
                   <td className="text-gray-500">{fmtBytes(f.file_size)}</td>
@@ -199,6 +225,7 @@ function CaseContent({
             {/* 图片素材行 */}
             {images.filter((img) => !search.trim() || img.name.toLowerCase().includes(search.trim().toLowerCase())).map((img) => (
               <tr key={img.id}>
+                <td />
                 <td><span className="inline-flex items-center justify-center w-6 h-6 rounded bg-gray-50 text-gray-500">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path strokeLinecap="round" strokeLinejoin="round" d="M21 15l-5-5L5 21" /></svg>
                 </span></td>
@@ -256,6 +283,9 @@ export function FileLibrary() {
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [form, setForm] = useState({ name: "", number: "", owner: "" });
   const [creatingGroup, setCreatingGroup] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [analyzing, setAnalyzing] = useState(false);
+  const [batchTargets, setBatchTargets] = useState<string[] | null>(null);
 
   const load = () => {
     api.listFiles().then((data) => setFiles(data ?? [])).catch(() => {});
@@ -277,6 +307,9 @@ export function FileLibrary() {
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [tree]);
+
+  /* 切换视图（全部/未分组/案例）→ 清空勾选，避免跨范围误批量 */
+  useEffect(() => { setSelected(new Set()); }, [tree]);
 
   const handleUploadFiles = () => {
     if (!tree.startsWith("g:")) { alert("请先选择案例"); return; }
@@ -368,6 +401,53 @@ export function FileLibrary() {
 
   const selectedGroup = groups.find((g) => tree === `g:${g.groupId}`);
 
+  /* ── 批量解析：勾选（仅待处理可勾）或当前列表全部待处理 ── */
+  const displayPendingIds = useMemo(
+    () => displayFiles.filter((f) => f.current_status === "pending").map((f) => f.id),
+    [displayFiles],
+  );
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const allOn = displayPendingIds.every((id) => next.has(id));
+      if (allOn) displayPendingIds.forEach((id) => next.delete(id));
+      else displayPendingIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [displayPendingIds]);
+
+  /* 点按钮 → 打开参数面板（同一批应用一套参数），确认后整批启动 */
+  const handleAnalyze = () => {
+    const targets = selected.size > 0 ? Array.from(selected) : displayPendingIds;
+    if (targets.length === 0) return;
+    setBatchTargets(targets);
+  };
+
+  const handleBatchSubmit = async (params: PipelineParams) => {
+    if (!batchTargets) return;
+    setAnalyzing(true);
+    try {
+      const r = await api.analyzeBatch(batchTargets, params);
+      setSelected(new Set());
+      setBatchTargets(null);
+      load();
+      alert(`已提交 ${r.started} 个任务${r.skipped > 0 ? `，跳过 ${r.skipped} 个` : ""}`);
+    } catch (err) {
+      throw err instanceof Error ? err : new Error("批量解析失败");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col gap-2 p-2">
       {/* ① 顶部卡 */}
@@ -383,7 +463,9 @@ export function FileLibrary() {
         <CaseContent
           group={selectedGroup} displayFiles={displayFiles} images={images}
           search={search} statusFilter={statusFilter} tree={tree} isUploading={isUploading}
+          selected={selected} allPendingIds={displayPendingIds} analyzing={analyzing}
           onSearch={setSearch} onStatusFilter={setStatusFilter} onUpload={handleUploadFiles}
+          onToggleSelect={toggleSelect} onToggleSelectAll={toggleSelectAll} onAnalyze={handleAnalyze}
           onOpenFile={(f, openParams) => openWorkbench(f.id, { openParams })}
           onDeleteFile={deleteFile} onDeleteImage={deleteImage}
         />
@@ -417,6 +499,20 @@ export function FileLibrary() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 批量解析参数面板：整批应用同一套参数 */}
+      {batchTargets && (
+        <div className="g-modal-overlay">
+          <div className="g-modal" style={{ height: "min(680px, 86vh)" }}>
+            <ParameterPanel
+              batchCount={batchTargets.length}
+              onBatchSubmit={handleBatchSubmit}
+              onParamsSet={() => {}}
+              onClose={() => setBatchTargets(null)}
+            />
           </div>
         </div>
       )}

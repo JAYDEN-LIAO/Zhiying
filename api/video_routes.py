@@ -16,7 +16,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db
-from api.schemas import APIResponse, VideoStatusResponse, ReuseRequest
+from api.schemas import APIResponse, VideoStatusResponse, ReuseRequest, AnalyzeBatchRequest
 from core.schemas import (
     VideoCreate, VideoResponse, VideoListItem, VideoGroupResponse,
     PipelineParams, ExternalVideoRegister, ContentType,
@@ -245,12 +245,13 @@ async def upload_videos_batch(
 
     # 1. 创建 VideoGroup 记录（使用主 session，需 commit 以供其他 session 可见）
     #    v0.34：若指定 group_id 则复用该组（文件库新建文件后上传归组），否则自动建组
+    created_group: VideoGroup | None = None
     if group_id is None:
-        group = VideoGroup(name=None)
-        db.add(group)
+        created_group = VideoGroup(name=None)
+        db.add(created_group)
         await db.commit()  # commit 让独立 session 能读到 group
-        await db.refresh(group)
-        group_id = group.id
+        await db.refresh(created_group)
+        group_id = created_group.id
 
     # 解析 detection_classes
     detection_classes_list: list[str] | None = None
@@ -316,10 +317,68 @@ async def upload_videos_batch(
 
     results = await asyncio.gather(*[process_one(f) for f in files])
 
-    await db.refresh(group)
-    logger.info("[BatchUpload] group=%s files=%d", group.id, len(results))
+    if created_group is not None:
+        await db.refresh(created_group)
+        logger.info("[BatchUpload] group=%s files=%d", created_group.id, len(results))
+    else:
+        logger.info("[BatchUpload] group=%s (existing) files=%d", group_id, len(results))
 
     return APIResponse(data=results)
+
+
+@router.post("/videos/analyze-batch")
+async def analyze_videos_batch(
+    payload: AnalyzeBatchRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """批量解析：精确启动指定视频的管道（仅 pending），不触发组同步。
+
+    用于案例库「批量解析」——勾选谁就启动谁，同组其余 pending 兄弟保持不动
+    （区别于 PUT /params 的组同步行为）。params 可选：提供则整批应用该参数集。
+    """
+    params = payload.params
+    started = 0
+    skipped = 0
+    for vid in payload.video_ids:
+        result = await db.execute(select(Video).where(Video.id == vid))
+        video = result.scalar_one_or_none()
+        if video is None:
+            skipped += 1
+            continue
+        status_val = video.status.value if hasattr(video.status, "value") else video.status
+        if status_val != "pending":
+            skipped += 1
+            continue
+        if params is not None:
+            await db.execute(
+                update(Video).where(Video.id == video.id).values(
+                    content_type=params.content_type,
+                    vision_enabled=params.vision_enabled,
+                    audio_enabled=params.audio_enabled,
+                    ocr_enabled=params.ocr_enabled,
+                    caption_enabled=params.caption_enabled,
+                    detection_enabled=params.detection_enabled,
+                    detection_classes=params.detection_classes,
+                    face_enabled=params.face_enabled,
+                    plate_enabled=params.plate_enabled,
+                    summary_enabled=params.summary_enabled,
+                    summary_mode=params.summary_mode,
+                    search_index_enabled=params.search_index_enabled,
+                    language=params.language,
+                    sample_fps=params.sample_fps,
+                    segment_threshold=params.segment_threshold,
+                    caption_with_context=params.caption_with_context,
+                    summary_detail=params.summary_detail,
+                    encode_profile=params.encode_profile,
+                )
+            )
+        await request.app.state.pipeline_queue.enqueue("pipeline", {"video_id": str(video.id)})
+        await append_task_log(db, video.id, "批量解析：任务入队")
+        started += 1
+
+    logger.info("[AnalyzeBatch] requested=%d started=%d skipped=%d", len(payload.video_ids), started, skipped)
+    return APIResponse(data={"started": started, "skipped": skipped})
 
 
 @router.post("/videos/reuse", status_code=201)
