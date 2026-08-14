@@ -236,15 +236,27 @@ class SplashApi:
         w = self._window
         if not w:
             return self._maximized
-        if self._maximized:
+        if self.is_maximized():
             w.restore()
-            self._maximized = False
         else:
             w.maximize()
-            self._maximized = True
+        self._maximized = self.is_maximized()
         return self._maximized
 
     def is_maximized(self) -> bool:
+        """查询主窗是否最大化。
+
+        pywebview 无 is_maximized 接口，本地 _maximized 标志只在「仅通过本窗按钮改窗口状态」
+        时可靠；用户用系统快捷键（Win+方向键 / 拖到屏顶）最大化/还原后标志会失步，导致拖拽
+        toggle 方向反了（见 TitleBar 手动拖拽）。优先读真实窗体状态，读不到再退回本地标志。
+        """
+        try:
+            from System.Windows.Forms import FormWindowState  # type: ignore[import-not-found]
+            bv = getattr(self._window, "gui", None)  # winforms 后端 = BrowserForm (WinForms.Form)
+            if bv is not None and getattr(bv, "WindowState", None) is not None:
+                return bool(bv.WindowState == FormWindowState.Maximized)
+        except Exception:
+            pass
         return self._maximized
 
     def move(self, x: int, y: int) -> None:

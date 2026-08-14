@@ -1,9 +1,11 @@
 /* ════════════════════════════════════════════════════════════
    TitleBar — 自定义窗口标题栏（v0.34 桌面重构）
    frameless 模式下由前端自绘：Logo + 产品名 + 版本徽章 + 窗口控制。
-   拖拽区 = .pywebview-drag-region（pywebview 原生支持，对应 zhiy.html
-   的 .draggable/-webkit-app-region）。窗口按钮置于拖拽区外（sibling），
-   避免点击触发拖拽。浏览器 dev（无 pywebview）时隐藏窗口按钮。
+   拖拽 = 手动（onMouseDown → SplashApi.move 跟随），替代原生
+   -webkit-app-region: drag（原生对最大化窗拖拽行为不可控）。
+   最大化态先还原再跟随光标（桌面惯例「拖动缩小跟随」）。
+   窗口按钮置于拖拽区外（sibling），避免点击触发拖拽。
+   浏览器 dev（无 pywebview）时隐藏窗口按钮。
    ════════════════════════════════════════════════════════════ */
 
 import { useEffect, useRef, useState } from "react";
@@ -15,7 +17,7 @@ declare global {
       api: {
         minimize?: () => void;
         toggle_maximize?: () => Promise<boolean>;
-        is_maximized?: () => boolean;
+        is_maximized?: () => Promise<boolean>;
         quit?: () => void;
         move?: (x: number, y: number) => void;
       };
@@ -59,7 +61,10 @@ export function TitleBar() {
     e.preventDefault();
     let baseX = window.screenX;
     let baseY = window.screenY;
-    if (pv.is_maximized?.()) {
+    // ⚠️ js_api 桥返回 Promise，必须 await —— 此前误当同步布尔（恒为真），导致每次拖拽都先
+    // toggle 一次：还原态拖拽被再次最大化 → 「整个大页面直接拖动了」（测试反馈的 bug 根因）。
+    const isMax = !!(await pv.is_maximized?.());
+    if (isMax) {
       // 最大化：先还原，再把窗口移到光标下方（光标落在标题栏约 1/3 宽处），随后跟随拖动
       await pv.toggle_maximize?.();
       setIsMax(false);
