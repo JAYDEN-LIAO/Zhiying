@@ -163,6 +163,16 @@ export function IconInfo() {
   );
 }
 
+/* 时钟：TitleBar「最近更新」按钮用（与「视频信息」的 i 图标区分；下拉标题同款） */
+export function IconClock() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  );
+}
+
 export function IconDownload() {
   return (
     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -276,7 +276,7 @@ class SplashApi:
         # 从 GUI 线程触发退出：停后端 + 关窗（同 LogApi.shutdown）
         threading.Thread(target=self._ctx.request_shutdown, daemon=True).start()
 
-    def get_recent_commits(self, n: int = 8) -> list[dict]:
+    def get_recent_commits(self, n: int = 5) -> list[dict]:
         """TitleBar「最近更新」下拉：项目根 git log 最近 n 条提交（纯本地，git log 不联网）。
 
         桌面壳跑在项目根（exe 部署处），git 随 update.bat 安装必然可用。

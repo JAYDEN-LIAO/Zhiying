@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "../services/api";
-import { IconInfo, IconSun, IconMoon } from "./icons";
+import { IconClock, IconSun, IconMoon } from "./icons";
 
 declare global {
   interface Window {
@@ -51,7 +51,7 @@ export function TitleBar() {
     if (!commitsOpen && commits.length === 0 && !commitsLoading) {
       setCommitsLoading(true);
       try {
-        const list = (await window.pywebview?.api.get_recent_commits?.(8)) ?? [];
+        const list = (await window.pywebview?.api.get_recent_commits?.(5)) ?? [];
         setCommits(list);
       } catch {
         setCommits([]);
@@ -159,7 +159,7 @@ export function TitleBar() {
         {/* i：最近更新下拉 */}
         <div className="relative">
           <button className="tb-win-btn" onClick={() => void toggleCommits()} title="最近更新" aria-label="最近更新">
-            <IconInfo />
+            <IconClock />
           </button>
           {commitsOpen && (
             <>
@@ -177,7 +177,7 @@ export function TitleBar() {
                         <span className="font-mono text-[10px] font-semibold text-[#4f7cff]">{c.hash}</span>
                         <span className="text-[10px] text-gray-400">{c.date}</span>
                       </div>
-                      <div className="text-[12px] text-gray-700 mt-0.5 truncate" title={c.subject}>{c.subject}</div>
+                      <div className="text-[12px] text-gray-700 mt-0.5 leading-relaxed break-words" title={c.subject}>{c.subject}</div>
                     </div>
                   ))}
                 </div>

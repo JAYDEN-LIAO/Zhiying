@@ -557,8 +557,8 @@ export function Workbench() {
                   </svg>
                 </button>
                 {showStageInfo && currentVideo && (
-                  <div className="absolute top-12 right-3 z-20 w-[320px] rounded-lg bg-[#0d1117] border border-gray-700 shadow-xl overflow-hidden">
-                    <div className="video-info-dark p-2 max-h-[55vh] overflow-auto">
+                  <div className="stage-info-card absolute top-12 right-3 z-20 w-[320px] rounded-lg overflow-hidden">
+                    <div className="p-2 max-h-[55vh] overflow-auto">
                       <VideoInfoCard videoId={vid!} video={currentVideo} />
                     </div>
                   </div>
