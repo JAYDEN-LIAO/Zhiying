@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../services/api";
 import { IconClock, IconSun, IconMoon } from "./icons";
+import { useApp } from "../AppContext";
 
 declare global {
   interface Window {
@@ -28,6 +29,7 @@ declare global {
 }
 
 export function TitleBar() {
+  const { activeTaskCount } = useApp();
   const [version, setVersion] = useState<string | null>(null);
   const [isMax, setIsMax] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
@@ -226,13 +228,14 @@ export function TitleBar() {
         <div className="g-modal" style={{ width: 400 }} onClick={(e) => e.stopPropagation()}>
           <div className="g-card-hd">
             <span className="g-card-tt">退出确认</span>
-            <button className="g-btn g-btn-sm" onClick={() => setShowCloseConfirm(false)} aria-label="取消">×</button>
           </div>
           <div className="p-5">
-            <div className="text-gray-600" style={{ fontSize: 14 }}>确定退出？</div>
+            <div className="text-gray-600" style={{ fontSize: 14 }}>
+              {activeTaskCount > 0 ? "当前有任务正在运行，退出即中断" : "确定退出？"}
+            </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
-              <button className="g-btn" onClick={() => setShowCloseConfirm(false)}>取消</button>
-              <button className="g-btn g-btn-danger" onClick={doQuit}>退出</button>
+              <button className="q-btn" onClick={() => setShowCloseConfirm(false)}>取消</button>
+              <button className="q-btn q-btn-danger" onClick={doQuit}>退出</button>
             </div>
           </div>
         </div>

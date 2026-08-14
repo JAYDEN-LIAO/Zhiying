@@ -292,7 +292,7 @@ class SplashApi:
         try:
             from checks import project_root
             proc = subprocess.run(
-                ["git", "-C", str(project_root()), "log", f"-{int(n)}", "--date=short",
+                ["git", "-C", str(project_root()), "log", f"-{int(n)}", "--date=format:%Y-%m-%d %H:%M",
                  "--pretty=format:%h%x1f%ad%x1f%s"],
                 capture_output=True, text=True, timeout=5,
                 encoding="utf-8", errors="replace",

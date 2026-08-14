@@ -585,7 +585,7 @@ export function Workbench() {
                   streamReady={streamReady}
                 />
               </div>
-            ) : <div className="w-full h-full bg-[#0b0f16]" />}
+            ) : <div className="w-full h-full bg-[#0b0f16] rounded-lg" />}
           />
 
           {/* 右侧：摘要卡 + 分析卡（col 拖拽） */}
