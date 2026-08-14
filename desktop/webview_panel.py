@@ -73,8 +73,6 @@ SPLASH_HTML = """<!DOCTYPE html>
           box-shadow:0 10px 24px rgba(79,124,255,.35); }
   .logo svg { width:28px; height:28px; }
   h1 { font-size:20px; font-weight:600; letter-spacing:.5px; }
-  .sub { font-size:12px; color:#64748b; margin-top:4px; }
-  body.dark .sub { color:#98a0af; }
   .stage { margin-top:22px; font-size:13px; font-weight:500; color:#4f7cff; min-height:18px; }
   body.dark .stage { color:#a5b0fb; }
   .bar { height:7px; border-radius:999px; background:rgba(100,116,139,.18); margin-top:10px; overflow:hidden; }
@@ -83,16 +81,8 @@ SPLASH_HTML = """<!DOCTYPE html>
           transition:width .45s ease; }
   .pct { font-size:11px; color:#94a3b8; margin-top:6px; font-family:Consolas,monospace; }
   body.dark .pct { color:#6b7280; }
-  /* 日志区 */
-  .logs { margin-top:18px; text-align:left; background:rgba(15,23,42,.06); border:1px solid rgba(15,23,42,.08);
-          border-radius:10px; height:150px; overflow-y:auto; padding:10px 12px;
-          font-family:Consolas,"Microsoft YaHei",monospace; font-size:11px; line-height:1.65; color:#334155; }
-  body.dark .logs { background:rgba(0,0,0,.28); border-color:rgba(255,255,255,.07); color:#b4bbc9; }
-  .logs::-webkit-scrollbar { width:5px; }
-  .logs::-webkit-scrollbar-thumb { background:rgba(100,116,139,.3); border-radius:3px; }
-  .logs .ts { color:#94a3b8; }
   .err { color:#ef4444; font-size:12px; line-height:1.7; margin-top:12px; white-space:pre-wrap; text-align:left; display:none; }
-  .foot { margin-top:18px; font-size:11px; color:#94a3b8; }
+  .foot { margin-top:22px; font-size:11px; color:#94a3b8; }
   .spin { animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
 </style>
@@ -105,67 +95,69 @@ SPLASH_HTML = """<!DOCTYPE html>
       <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>
     </div>
     <h1>视频智能快速检索平台</h1>
-    <div class="sub">智影 · 桌面端</div>
     <div class="stage" id="stage">初始化…</div>
     <div class="bar"><div class="fill" id="fill"></div></div>
     <div class="pct" id="pct">0%</div>
-    <div class="logs" id="logs"><div id="logempty">正在启动本地服务…</div></div>
     <div class="err" id="err"></div>
-    <div class="foot">桌面启动器正在启动本地服务，首次启动约需 30s–60s</div>
+    <div class="foot">首次启动需加载模型与本地服务，约需 1–3 分钟</div>
   </div>
 <script>
   /* 暗色：与前端 index.html 防闪烁同逻辑 */
   try { if (localStorage.getItem('zhiying-theme') === 'dark') document.body.classList.add('dark'); } catch (e) {}
 
-  var NAMES = {"init":"初始化","checking":"环境检查","db_start":"启动数据库容器","backend_start":"启动后端服务",
+  var NAMES = {"init":"初始化","checking":"环境检查","db_start":"启动数据库容器","backend_start":"加载模型与服务",
                "ready":"就绪","stopping":"正在停止","stopped":"已停止","error":"出错了"};
-  var PROGRESS = {"init":5, "checking":20, "db_start":50, "backend_start":75, "ready":100};
+  /* 阶段基础进度：模型加载前各阶段只占前 10%，模型加载段（backend_start）映射 10%→90% */
+  var BASE = {"init":2, "checking":4, "db_start":7, "backend_start":10};
   var since = 0;
+  var modelPct = 0;      // 模型加载 tqdm 实时进度 0-100（从日志 "Loading weights: X%" 解析）
+  var lastState = null;
 
-  function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function setProgress(p) {
+    p = Math.max(0, Math.min(100, p));
     document.getElementById('fill').style.width = p + '%';
     document.getElementById('pct').textContent = Math.round(p) + '%';
   }
-  function appendLogs(lines) {
-    if (!lines || !lines.length) return;
-    var box = document.getElementById('logs');
-    var empty = document.getElementById('logempty');
-    if (empty) empty.remove();
-    for (var i = 0; i < lines.length; i++) {
-      var div = document.createElement('div');
-      var m = lines[i].match(/^(\\[[^\\]]*\\]) (.*)$/);
-      if (m) div.innerHTML = '<span class="ts">' + esc(m[1]) + '</span> ' + esc(m[2]);
-      else div.textContent = lines[i];
-      box.appendChild(div);
-    }
-    // 自动滚到底（接近底部才滚，不打断用户上翻）
-    var nearBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 60;
-    if (nearBottom) box.scrollTop = box.scrollHeight;
-    // 日志超量裁剪，避免 DOM 膨胀
-    while (box.children.length > 200) box.removeChild(box.firstChild);
+  // tqdm 进度行解析（兼容 \r 累积在同一行：取最后一段再匹配）
+  function parseModelProgress(line) {
+    var seg = line.split('\\r');
+    var m = seg[seg.length - 1].match(/Loading weights:\\s*(\\d+)%/);
+    if (m) { modelPct = Math.max(modelPct, parseInt(m[1], 10)); return true; }
+    return false;
+  }
+  function updateProgress() {
+    if (!lastState) return;
+    if (lastState.state === 'ready') { setProgress(100); return; }
+    if (lastState.state === 'error') { setProgress(BASE[lastState.state] != null ? BASE[lastState.state] : 50); return; }
+    // 模型加载段 = 10% → 90%（tqdm 进度 0-100 映射）；其余阶段占前 10%
+    if (lastState.state === 'backend_start') setProgress(10 + Math.round(modelPct * 0.8));
+    else setProgress(BASE[lastState.state] != null ? BASE[lastState.state] : 5);
   }
 
   function tick() {
     pywebview.api.get_status().then(function (s) {
       var stage = document.getElementById('stage');
       var err = document.getElementById('err');
+      lastState = s;
       if (s.state === 'ready') {
         stage.textContent = '✓ 就绪 · 版本 ' + (s.version || '') + '，正在进入…';
-        setProgress(100);
-      } else {
-        stage.textContent = (NAMES[s.state] || s.state) + (s.message ? ' · ' + s.message : '');
-        if (PROGRESS[s.state] != null) setProgress(PROGRESS[s.state]);
-      }
-      if (s.state === 'error') {
+      } else if (s.state === 'error') {
+        stage.textContent = '启动失败';
         err.style.display = 'block';
         err.textContent = s.detail || s.message || '启动失败，请查看 data/logs 后重启';
       } else {
+        stage.textContent = (NAMES[s.state] || s.state) + (s.message ? ' · ' + s.message : '');
         err.style.display = 'none';
       }
+      updateProgress();
     }).catch(function () {});
     pywebview.api.get_logs(since).then(function (r) {
-      if (r && r.next > since) { since = r.next; appendLogs(r.lines); }
+      if (r && r.next > since) {
+        var lines = r.lines || [];
+        for (var i = 0; i < lines.length; i++) parseModelProgress(lines[i]);
+        since = r.next;
+        updateProgress();
+      }
     }).catch(function () {});
     setTimeout(tick, 300);  // 链式轮询：上次返回后再发下次，避免 pywebview 回调覆盖竞态
   }
