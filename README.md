@@ -101,6 +101,7 @@ curl -X POST -H "Content-Type: application/json" \
 | 文件/素材重命名 + 后缀展示字段 | `PUT /api/v1/files/{file_id}`（更新全部版本行）+ `PUT /api/v1/groups/{id}/assets/{asset_id}`；`file_ext` 真实扩展名作**展示字段**（编辑框只含主名，重命名不影响后缀） | ✅ |
 | 案例编辑 + 编号自动填充 | 案例列表删除红色可见 + 编辑按钮（名称/编号/负责人，`PUT /groups/{id}`）+ 新建编号自动填充 `A-YYYY-MMDD-NN`（同天递增，可手动改） | ✅ |
 | 搜索卡案例-文件范围 + 跨视频切主视频 | 下拉改案例-文件结构（当前视频/案例/文件多选，未处理隐藏）；无视频可交互；跨视频结果点击**切主视频**（播放器/时间轴/检测/摘要同步）+ seek 可靠定位 + 搜索卡单实例跨空态保留结果 | ✅ |
+| 桌面端交互 + 暗色主题 (v0.34候选) | 标题栏「最近更新」下拉（SplashApi git log）+ 太阳/月亮主题切换（暗色=中性炭灰+靛蓝强调，`html.dark` 调色板重映射）；案例库闪电全状态（完成=实心+「重新配置参数解析」→ reparse 建新版本）+ 编辑按钮移入操作格；TaskCenter 导出报告/日志图标；参数面板 4:3 三段网格；设置页响应式两列卡片网格 | ✅ |
 
 ## Architecture Overview
 
@@ -277,7 +278,7 @@ zhiying/
 ├── config/               # YAML config, prompts, schema
 ├── deploy/               # 部署套件: setup_windows.ps1 (Windows 裸机一键安装) + setup_linux.sh (Linux 开发机一键安装) + download_models.py / deploy.md / deploy_feedback.md
 ├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开窗→日志面板→优雅关闭; desktop.bat 入口; build_exe.ps1 -Deploy 一键构建部署 exe)
-├── frontend-desktop/     # 桌面独立前端（v0.34 重构：浅蓝管理后台主题 + frameless 自定义窗口标题栏 + 4 页模型 文件库/视频解析/任务中心/系统设置 + AppContext 导航 + 工作台 SplitPane 分栏 + 系统监控；TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2；与服务器 frontend/ 完全隔离; desktop.bat 加载其 dist）
+├── frontend-desktop/     # 桌面独立前端（v0.34 重构：浅蓝管理后台主题 + frameless 自定义窗口标题栏 + 4 页模型 文件库/视频解析/任务中心/系统设置 + AppContext 导航 + 工作台 SplitPane 分栏 + 系统监控；TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2；标题栏「最近更新」+ 太阳/月亮暗色主题、案例库闪电全状态、设置页两列网格；与服务器 frontend/ 完全隔离; desktop.bat 加载其 dist）
 ├── frontend-shared/      # 双前端共享后端对接层 (api/types/labels/helpers 一份实现, 两端 services/api.ts 等是再导出指针; 后端接口/字段变更只改这里)
 ├── scripts/              # 运维工具: sweep_storage.py 存储清扫 CLI (默认 dry-run, --apply 执行) + bump_version.py 一键版本提升 + mock_yunzhi_platform.py (mock 平台回调服务器)
 └── docs/                 # Design documents + search architecture docs
@@ -285,6 +286,12 @@ zhiying/
 
 ## Development Status
 
+- **v0.34 候选（未发版，桌面前端/壳）— 桌面交互 + 暗色主题 + 布局**:
+  - **标题栏**：新增「最近更新」（i 按钮下拉 → SplashApi `get_recent_commits` 项目根 `git log` 最近 8 条）+ **太阳/月亮主题切换**（暗色 = 中性炭灰环境 + 靛蓝强调色；`html.dark` 类驱动 CSS 变量调色板重映射，`index.html` 内联防闪烁）
+  - **案例库/任务中心**：闪电按钮全状态显示（已完成 = 实心 `IconBoltSolid` + hover「重新配置参数解析」→ 打开工作台 **reparse 模式**建新版本）；编辑按钮移入操作格（编辑/解析/预览/删除 4 按钮整齐）+ 铅笔换 edit-3 风格；任务中心导出报告/日志换图标（`IconReport`/`IconLog`）
+  - **参数面板**：4:3 顶向下三段 + 段内网格铺满（场景类型满宽 → 感知模块 2×2 开关 + 目标类别/人脸/车牌 → 功能开关 2×开关 + 摘要模式）；物体检测/文字识别调换位置
+  - **工作台**：恒渲染 `DetectionPanel`（无视频也显示「物体检测」标题空态，与摘要/搜索一致）；播放器/时间轴/空态加小圆角；搜索卡人脸/车牌灰态 tooltip 说明原因
+  - **设置页**：去 `max-w-900px` 死区 → 响应式两列卡片网格（`xl:grid-cols-2`，窄窗回落单列），编码卡 `col-span-2` 独占整行保住三档模板表格宽度
 - **v0.34 候选（未发版，本次大批改动）— 案例库批量解析 + 案例库交互 + 搜索卡重构 + 桌面壳**:
   - **批量解析**：`POST /videos/analyze-batch` 精确勾选启动（不走组同步，可选整批参数）；文件列表勾选列（仅待处理可勾）+ 一键/批量解析按钮（弹参数面板整批应用）；`upload_videos_batch` 复用已有分组 bug 修复
   - **案例库**：案例编辑（名称/编号/负责人）+ 删除红色可见 + 编号自动填充 `A-YYYY-MMDD-NN`；文件与图片重命名（内联编辑，后端 `PUT /files/{id}` + `PUT /groups/{id}/assets/{id}`）；文件操作改图标按钮（智能解析/预览合并/删除）+ 文件名铅笔右对齐；**后缀作展示字段**（`file_ext` 真实扩展名，编辑框只含主名、重命名不影响后缀）

@@ -590,3 +590,156 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
 /* 搜索 Tab 切换过渡 */
 .search-pane { animation: search-pane-in 0.28s ease-out; }
 @keyframes search-pane-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ═══════════════════════════════════════════════════
+   暗色主题（TitleBar 太阳/月亮切换 → <html class="dark">）
+   设计：中性炭灰环境（非蓝）+ 单一柔和靛蓝强调色 —— 简约、协调、耐看。
+   背景中性深灰、卡片浅一档、主按钮/活动态用靛蓝点睛，整体无大面积饱和色。
+   ═══════════════════════════════════════════════════ */
+.dark {
+  /* ── 灰阶（中性冷灰，50 最深 / 900 最亮） ── */
+  --color-gray-50: #0f1218;
+  --color-gray-100: #252e3b;
+  --color-gray-200: #37404f;
+  --color-gray-300: #424c5d;
+  --color-gray-400: #6b7280;
+  --color-gray-500: #98a0af;
+  --color-gray-600: #b4bbc9;
+  --color-gray-700: #ccd2de;
+  --color-gray-800: #e1e5ec;
+  --color-gray-900: #eef1f6;
+  --color-slate-400: #6b7280;
+  --color-slate-500: #94a0b4;
+  --color-slate-600: #b3bccb;
+  --color-slate-700: #c9d2df;
+  --color-slate-800: #dfe5ee;
+  --color-slate-900: #eef2f8;
+  /* ── 浅色 tint 底色（badge/chip） ── */
+  --color-teal-50: #1b2130;
+  --color-teal-100: #232a3c;
+  --color-blue-50: #172033;
+  --color-blue-100: #1e2a42;
+  --color-purple-50: #251f36;
+  --color-amber-50: #332b1a;
+  --color-green-50: #0f2b22;
+  --color-red-50: #361d21;
+  /* ── 主色填充层 → 柔和靛蓝（单一强调色；文字 teal-950 深靛仍可读） ── */
+  --color-teal-500: #7a88f5;
+  --color-teal-600: #8f9bf7;
+  --color-teal-700: #a3adf9;
+  /* ── 语义变量 ── */
+  --color-primary: #a5b0fb;
+  --color-page-bg: #11141b;
+  --color-sidebar-bg: #0f1218;
+  --color-card-bg: #2c3542;
+  --color-text-main: #e1e5ec;
+  --color-text-sub: #98a0af;
+  --color-border: #424c5d;
+  --color-border-light: #37404f;
+}
+
+.dark body { background: #0f1218; color: #e1e5ec; }
+/* bg-white 卡片 → 炭灰（text-white 不受影响，仍白） */
+.dark .bg-white { background-color: #2c3542; }
+.dark ::-webkit-scrollbar-thumb { background: #424c5d; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #3a4252; }
+
+/* ── 应用壳 / 顶栏 / 侧栏（中性渐变，几乎不可见，只给深度） ── */
+.dark .app-shell { background: linear-gradient(180deg, #1b212c 0%, #151921 45%, #10131a 100%); }
+.dark .tb-title { color: #d5dbe6; text-shadow: none; }
+.dark .tb-badge { background: #332b1a; color: #fbbf24; border-color: #4a3d1c; }
+.dark .tb-win-btn { color: #98a0af; }
+.dark .tb-win-btn:hover { background: rgba(255, 255, 255, 0.08); color: #eef1f6; }
+.dark .sb-group-label { color: #6b7280; }
+.dark .sb-nav-item { color: #98a0af; }
+.dark .sb-nav-item:hover { background: rgba(255, 255, 255, 0.05); color: #a5b0fb; }
+.dark .sb-nav-item.active { background: rgba(129, 140, 248, 0.12); color: #a5b0fb; border-color: transparent; box-shadow: none; }
+.dark .sb-count { background: #232a3c; }
+.dark .sysmon { border-top-color: #37404f; background: linear-gradient(0deg, rgba(35, 42, 60, 0.3), transparent); }
+.dark .sysmon-row { color: #98a0af; }
+.dark .sysmon-l { color: #98a0af; }
+.dark .sysmon-l b { color: #d5dbe6; }
+
+/* ── 卡片 / 通用组件 ── */
+.dark .g-card, .dark .case-card, .dark .minor-card, .dark .major-card, .dark .stat-card,
+.dark .g-modal, .dark .export-menu { background: #2c3542; }
+.dark .g-card, .dark .case-card, .dark .minor-card, .dark .major-card, .dark .stat-card { border-color: transparent; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.28); }
+.dark .export-menu { border-color: #424c5d; }
+.dark .g-card-hd, .dark .minor-card-hd, .dark .major-card-hd, .dark .g-card-title { border-bottom-color: #37404f; }
+.dark .major-card-hd { background: #2c3542; }
+.dark .g-card-tt, .dark .g-card-title { color: #d5dbe6; }
+.dark .minor-card-tt { color: #b4bbc9; }
+.dark .major-card-tt { color: #e1e5ec; }
+.dark .minor-card-badge, .dark .major-card-badge { background: #232a3c; }
+.dark .g-btn { background: #37404f; border-color: #485262; color: #b4bbc9; }
+.dark .g-btn:hover { background: #3e4858; border-color: #434c5e; color: #eef1f6; }
+.dark .g-btn-primary { background: #8f9bf7; border-color: #8f9bf7; color: #0e1220; }
+.dark .g-btn-primary:hover { background: #a3adf9; border-color: #a3adf9; color: #0e1220; }
+.dark .g-btn-danger { border-color: #4a252c; }
+.dark .g-btn-danger:hover { background: #4a252c; border-color: #f87171; color: #f87171; }
+.dark .g-input, .dark .g-select { background: #202733; border-color: #485262; color: #e1e5ec; }
+.dark .g-input:focus, .dark .g-select:focus { background: #252e3b; }
+.dark .g-input::placeholder { color: #6b7280; }
+.dark .g-tab { color: #98a0af; }
+.dark .g-badge.ok { background: #0f2b22; color: #34d399; }
+.dark .g-badge.run { background: #172033; color: #60a5fa; }
+.dark .g-badge.warn { background: #332b1a; color: #fbbf24; }
+.dark .g-badge.err { background: #361d21; color: #f87171; }
+.dark .g-badge.wait { background: #37404f; color: #98a0af; }
+.dark .g-progress { background: #424c5d; }
+.dark .g-table th { background: #252e3b; color: #b4bbc9; border-bottom-color: #424c5d; }
+.dark .g-table td { color: #e1e5ec; border-bottom-color: #37404f; }
+.dark .g-table tbody tr:hover { background: #37404f; }
+.dark .g-empty { color: #6b7280; }
+.dark .stat-num { color: #eef1f6; }
+.dark .stat-ic.blue { background: #232a3c; }
+.dark .stat-ic.green { background: #0f2b22; }
+.dark .stat-ic.amber { background: #332b1a; }
+.dark .stat-ic.red { background: #361d21; }
+
+/* ── 工作台 ── */
+.dark .wb-toolbar { background: rgba(17, 20, 27, 0.85); border-bottom-color: #37404f; }
+.dark .pipeline-bar { background: #2c3542; border-color: #37404f; }
+
+/* ── 摘要 / 视频信息 / 检测 / 人脸 / 搜索 ── */
+.dark .sum-one { background: #252e3b; color: #b4bbc9; }
+.dark .sum-scene:hover { background: #37404f; }
+.dark .sum-thumb { background: #202733; border-color: #37404f; }
+.dark .sum-desc { color: #b4bbc9; }
+.dark .sum-tag { background: #252e3b; color: #b4bbc9; border-color: transparent; }
+.dark .vif-val { color: #e1e5ec; }
+.dark .vif-val code { background: #232a3c; }
+.dark .vif-div { background: transparent; }
+.dark .dtc-filter-btn { background: #37404f; border-color: #485262; color: #b4bbc9; }
+.dark .dtc-filter-btn:hover { background: #3e4858; }
+.dark .dtc-item:hover { background: #37404f; }
+.dark .dtc-name { color: #e1e5ec; }
+.dark .dtc-bar { background: #424c5d; }
+.dark .face-item:hover { background: #37404f; }
+.dark .face-name { color: #e1e5ec; }
+.dark .face-thumb { background: #202733; }
+.dark .sr-item { background: #2c3542; border-color: transparent; }
+.dark .sr-item:hover { background: #37404f; border-color: transparent; }
+.dark .sr-thumb { background: #202733; border-color: #37404f; }
+.dark .sr-text { color: #b4bbc9; }
+.dark .sr-track, .dark .sr-tag { color: #e1e5ec; }
+.dark .sr-act { color: #98a0af; }
+.dark .sr-act:hover { background: #232a3c; }
+.dark .search-item { border-color: transparent; }
+.dark .search-item:hover { background: rgba(129, 140, 248, 0.08); }
+.dark .timeline-track { background: #424c5d; }
+.dark input[type='range'].t-scrub { background: #424c5d; }
+
+/* ── 亮色暴露 / 暗色修复：白底 hover/focus、硬编码蓝、输入框、内联线框 ── */
+.dark .hover\:bg-white:hover { background-color: rgba(255, 255, 255, 0.06); }
+.dark .focus\:bg-white:focus { background-color: #202733; }
+.dark .bg-white\/80 { background-color: #202733; }
+.dark .bg-\[\#eaf1ff\] { background-color: #232a3c; }
+.dark .text-\[\#4f7cff\] { color: #a5b0fb; }
+.dark .border-\[\#4f7cff\] { border-color: #8f9bf7; }
+.dark .bg-\[\#4f7cff\] { background-color: #8f9bf7; }
+.dark .hover\:bg-\[\#4369f5\]:hover { background-color: #a3adf9; }
+.dark .border-\[\#e4e9f2\] { border-color: transparent; }
+.dark input[type='text'], .dark input[type='number'], .dark input[type='search'],
+.dark select, .dark textarea { background-color: #202733; color: #e1e5ec; }
+.dark .border-gray-100, .dark .border-gray-200 { border-color: transparent; }

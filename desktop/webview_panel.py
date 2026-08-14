@@ -276,6 +276,30 @@ class SplashApi:
         # 从 GUI 线程触发退出：停后端 + 关窗（同 LogApi.shutdown）
         threading.Thread(target=self._ctx.request_shutdown, daemon=True).start()
 
+    def get_recent_commits(self, n: int = 8) -> list[dict]:
+        """TitleBar「最近更新」下拉：项目根 git log 最近 n 条提交。
+
+        桌面壳跑在项目根（exe 部署处），git 随 update.bat 安装必然可用。
+        返回 [{hash, date, subject}, ...]；任何异常返回空列表（浏览器 dev 无 pywebview 时前端不调用）。
+        """
+        try:
+            from checks import project_root
+            proc = subprocess.run(
+                ["git", "-C", str(project_root()), "log", f"-{int(n)}", "--date=short",
+                 "--pretty=format:%h|%ad|%s"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            if proc.returncode != 0 or not proc.stdout.strip():
+                return []
+            out = []
+            for line in proc.stdout.strip().splitlines():
+                h, d, s = line.split("|", 2)
+                out.append({"hash": h, "date": d, "subject": s})
+            return out
+        except Exception:
+            return []
+
     # ── 系统监控（侧栏 CPU/内存/GPU/网络）────────────────────────
     def get_system_stats(self) -> dict:
         cpu = self._cpu_stats()

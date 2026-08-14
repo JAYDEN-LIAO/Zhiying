@@ -129,7 +129,7 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
 }
 
 export function Workbench() {
-  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
+  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
   const currentVideoId = selectedVideoId;
 
   /* ── 版本切换（v0.34）：打开文件 → 拉取版本链 → 默认当前版本 ── */
@@ -210,6 +210,7 @@ export function Workbench() {
     if (currentVideoId) setCurrentGroupVideos([currentVideoId]);
     else setCurrentGroupVideos([]);
     setDetectionVideoId(null);
+    setReparseMode(false);
   }, [vid]);
 
   /* ── 自动打开参数面板（上传/智能解析后）——一次性消费：弹过即归零，
@@ -217,9 +218,12 @@ export function Workbench() {
   useEffect(() => {
     if (paramsTick > 0 && currentVideoId) {
       setParamsOpen(true);
+      // 已完成文件从案例库点「重新配置参数解析」→ 参数面板直接进重新解析模式（提交建新版本）
+      if (reparseIntent) setReparseMode(true);
       consumeParamsTick();
+      consumeReparseIntent();
     }
-  }, [paramsTick, currentVideoId, consumeParamsTick]);
+  }, [paramsTick, currentVideoId, consumeParamsTick, consumeReparseIntent, reparseIntent]);
 
   /* ── 派生布尔 ── */
   const isPending = currentVideo?.status === "pending";
@@ -453,7 +457,7 @@ export function Workbench() {
 
   /* 无视频空态：舞台区 CTA 占位（合并渲染树后搜索卡恒为同一实例，结果跨切换保留） */
   const emptyStage = (
-    <div className="w-full h-full flex items-center justify-center bg-[#0b0f16]">
+    <div className="w-full h-full flex items-center justify-center bg-[#0b0f16] rounded-lg">
       <button
         className="w-[300px] h-[110px] rounded-lg border-2 border-dashed border-gray-700 flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer hover:border-[#4f7cff]/60"
         onClick={() => navigate("files")}
@@ -519,7 +523,7 @@ export function Workbench() {
           {/* 左舞台卡：播放器 + 时间轴 */}
           <WbStage
             player={currentVideoId ? (
-              <div className="relative w-full h-full bg-black overflow-hidden">
+              <div className="relative w-full h-full bg-black overflow-hidden rounded-lg">
                 <VideoPlayer
                   videoId={vid!}
                   video={currentVideo}
@@ -562,7 +566,7 @@ export function Workbench() {
               </div>
             ) : emptyStage}
             timeline={currentVideoId ? (
-              <div className="w-full h-full bg-[#0b0f16] p-3 flex flex-col gap-2 min-h-0">
+              <div className="w-full h-full bg-[#0b0f16] p-3 flex flex-col gap-2 min-h-0 rounded-lg overflow-hidden">
                 <div className="flex items-center justify-between mb-1 shrink-0">
                   <span className="text-[12px] font-semibold text-white/80">时间轴</span>
                   <span className="text-[11px] text-white/40 font-mono">
@@ -589,7 +593,8 @@ export function Workbench() {
             <SplitPane direction="col" initial={22} min={12} max={45} className="h-full w-full">
               <WbSummary currentVideo={currentVideo} />
               <WbAnalysis
-                detection={currentVideoId ? (
+                detection={
+                  /* 恒渲染 DetectionPanel：其内部已按 无视频/未开启/处理中/无数据 分态渲染「物体检测」标题（与摘要/搜索卡一致） */
                   <DetectionPanel
                     video={currentVideo}
                     data={detectionData}
@@ -609,9 +614,7 @@ export function Workbench() {
                     detectionVideoId={detectionVideoId}
                     onDetectionVideoChange={setDetectionVideoId}
                   />
-                ) : (
-                  <div className="flex items-center justify-center h-full text-gray-400 text-[12.5px]">选择视频后查看</div>
-                )}
+                }
                 search={
                   /* 恒为同一实例：空态↔有视频 切换不重建，搜索结果/范围跨切换保留 */
                   <VideoSearchCard
@@ -634,7 +637,7 @@ export function Workbench() {
       {/* ── 参数面板 Modal ── */}
       {paramsOpen && (
         <div className="g-modal-overlay">
-          <div className="g-modal" style={{ height: "min(680px, 86vh)" }}>
+          <div className="g-modal" style={{ height: "min(620px, 82vh)" }}>
             <ParameterPanel
               videoId={vid!}
               reparse={reparseMode}

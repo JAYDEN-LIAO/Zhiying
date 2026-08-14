@@ -12,7 +12,7 @@ import { api } from "../services/api";
 import { useApp } from "../AppContext";
 import type { FileItem, VideoGroup, CaseAssetItem, PipelineParams } from "../types";
 import { fmtDuration, fmtDate, fmtBytes } from "../utils/helpers";
-import { IconFolder, IconPlus, IconPlay2, IconTrash, IconPencil, IconBolt, IconEye } from "./icons";
+import { IconFolder, IconPlus, IconPlay2, IconTrash, IconPencil, IconBolt, IconBoltSolid, IconEye } from "./icons";
 import { ParameterPanel } from "./ParameterPanel";
 
 type TreeKey = "all" | "ungrouped" | `g:${string}`;
@@ -136,7 +136,7 @@ function CaseContent({
   onToggleSelect: (id: string) => void;
   onToggleSelectAll: () => void;
   onAnalyze: () => void;
-  onOpenFile: (f: FileItem, openParams: boolean) => void;
+  onOpenFile: (f: FileItem, openParams: boolean, reparse?: boolean) => void;
   onEditCase: (g: VideoGroup) => void;
   onRenameFile: (id: string, name: string) => Promise<void>;
   onRenameAsset: (id: string, name: string) => Promise<void>;
@@ -267,10 +267,6 @@ function CaseContent({
                         <span className="flex items-center gap-1 w-full">
                           <span className="truncate flex-1">{base}</span>
                           {ext && <span className="shrink-0 text-gray-300 text-[12px] select-none">{ext}</span>}
-                          <button className="shrink-0 p-0.5 rounded text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors" title="重命名文件"
-                            onClick={() => startEdit("file", f.id, base)}>
-                            <IconPencil />
-                          </button>
                         </span>
                       )
                     ); })()}
@@ -289,12 +285,17 @@ function CaseContent({
                   </td>
                   <td className="text-right pr-4 whitespace-nowrap">
                     <div className="inline-flex items-center gap-1.5">
-                      {f.current_status !== "completed" && (
-                        <button className="p-1.5 rounded-md text-[#4f7cff] hover:bg-blue-50 transition-colors" title="配置参数并解析"
-                          onClick={() => onOpenFile(f, true)}>
-                          <IconBolt />
-                        </button>
-                      )}
+                      {/* 四个操作：编辑(重命名) → 解析(闪电) → 预览/结果 → 删除 */}
+                      <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors" title="重命名文件"
+                        onClick={() => startEdit("file", f.id, splitName(f.name, f.file_ext).base)}>
+                        <IconPencil />
+                      </button>
+                      {/* 闪电对所有状态显示：已完成 = 实心 + 重新配置参数解析（走 reanalyze 建新版本）；未完成 = 描边 + 配置参数启动 */}
+                      <button className="p-1.5 rounded-md text-[#4f7cff] hover:bg-blue-50 transition-colors"
+                        title={f.current_status === "completed" ? "重新配置参数解析" : "配置参数并解析"}
+                        onClick={() => onOpenFile(f, true, f.current_status === "completed")}>
+                        {f.current_status === "completed" ? <IconBoltSolid /> : <IconBolt />}
+                      </button>
                       {/* 预览/查看结果合并为一个眼睛按钮：未处理=预览，已完成=查看结果 */}
                       <button className="p-1.5 rounded-md text-gray-500 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors"
                         title={f.current_status === "completed" ? "查看结果" : "预览视频"}
@@ -621,7 +622,7 @@ export function FileLibrary() {
           selected={selected} allPendingIds={displayPendingIds} analyzing={analyzing}
           onSearch={setSearch} onStatusFilter={setStatusFilter} onUpload={handleUploadFiles}
           onToggleSelect={toggleSelect} onToggleSelectAll={toggleSelectAll} onAnalyze={handleAnalyze}
-          onOpenFile={(f, openParams) => openWorkbench(f.id, { openParams })}
+          onOpenFile={(f, openParams, reparse) => openWorkbench(f.id, { openParams, reparse })}
           onEditCase={openEditCase}
           onRenameFile={handleRenameFile}
           onRenameAsset={handleRenameAsset}
@@ -696,7 +697,7 @@ export function FileLibrary() {
       {/* 批量解析参数面板：整批应用同一套参数 */}
       {batchTargets && (
         <div className="g-modal-overlay">
-          <div className="g-modal" style={{ height: "min(680px, 86vh)" }}>
+          <div className="g-modal" style={{ height: "min(620px, 82vh)" }}>
             <ParameterPanel
               batchCount={batchTargets.length}
               onBatchSubmit={handleBatchSubmit}

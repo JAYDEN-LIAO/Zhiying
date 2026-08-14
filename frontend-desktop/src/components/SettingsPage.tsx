@@ -251,7 +251,7 @@ function EncoderSection({
   onSave: () => void;
 }) {
   return (
-    <div className={cardCls}>
+    <div className={cardCls + " xl:col-span-2"}>
       <h3 className={cardTitleCls}>编码（Embedder）</h3>
       <p className={cardDescCls}>三档编码模板可各调分辨率与批大小（placeholder 为推荐值）；参数面板选档 = 用该档值。分辨率 224-960，批大小 8-1024（8 倍数）</p>
       <div className="space-y-4">
@@ -677,7 +677,7 @@ export function SettingsPage({
     <div className="h-full overflow-y-auto">
       {/* 内容（子页切换由左侧导航控制，见 AppContext settingsTab） */}
       <div className="p-2">
-        <div className="space-y-4 max-w-[900px]">
+        <div className="w-full">
           {loading ? (
             <div className="space-y-4">
               <div className={`${cardCls} h-44 animate-pulse`} />
@@ -685,7 +685,7 @@ export function SettingsPage({
             </div>
           ) : section === "model" ? (
             /* ════════ 模型参数：编码 + 物体检测 + API 密钥与服务 ════════ */
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
               <EncoderSection
                 pipelineEdit={pipelineEdit}
                 setPipelineEdit={setPipelineEdit}
@@ -712,7 +712,7 @@ export function SettingsPage({
             </div>
           ) : (
             /* ════════ 系统设置：参数预设 + 存储路径 + 管道设置 ════════ */
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
               <PresetSection
                 presets={presets}
                 newPresetName={newPresetName}

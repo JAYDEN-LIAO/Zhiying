@@ -10,6 +10,7 @@
 > 桌面 EXE + 双部署路径（未发版）: build_exe.ps1 -Deploy 一条命令打纯壳 exe + setup_linux.sh/setup_windows.ps1 补全 + bump 全机接入
 > v0.34 候选（案例库批量解析/交互 + 搜索卡重构 + 桌面壳，未发版）: POST /videos/analyze-batch 精确勾选批量解析（不走组同步、可选整批参数）；PUT /files/{id} + PUT /groups/{id}/assets/{id} 文件/素材重命名（无后缀自动补真实扩展名）；FileItem/CaseAssetItem.file_ext 后缀展示字段；案例编辑/编号自动填充 A-YYYY-MMDD-NN；搜索卡案例-文件范围（当前视频/案例/文件多选，未处理隐藏）+ 无视频可交互 + 跨视频结果切主视频 + pendingSeek 可靠定位 + 搜索卡单实例跨空态保留；TitleBar 手动拖拽（最大化先还原再跟随）；g-btn 全局 nowrap 防挤压
 > v0.34 候选（桌面端稳定性修复，未发版，桌面前端/壳）: build_exe.ps1 部署加固（杀运行中壳+遗留后端 / $src\* 内容拷贝杜绝 _internal\_internal 嵌套 / 部署后自检 python313.dll）；backend_child 看门狗改持有父进程句柄信号检测（免疫 PID 复用）+ 启动前 sweep_orphan_backends 沿父链清孤儿；窗口控制 is_maximized 读真实 WindowState + toggle 修标志 + resize 同步图标；关闭确认改主题化弹窗（去 pywebview 原生 MessageBox）；.gitignore 补构建产物
+> v0.34 候选（桌面交互 + 暗色主题 + 布局，未发版，桌面前端/壳）: 标题栏「最近更新」（i 下拉 → SplashApi get_recent_commits 项目根 git log）+ 太阳/月亮主题切换（暗色=中性炭灰环境+靛蓝强调色，html.dark 类 + CSS 变量调色板重映射 + index.html 内联防闪烁）；案例库闪电全状态显示（完成=实心 IconBoltSolid + 「重新配置参数解析」→ reparse 建新版本）+ 编辑按钮移入操作格 4 按钮 + 铅笔 edit-3；TaskCenter 导出报告/日志图标；参数面板 4:3 顶向下三段网格 + 物体检测/文字识别调换；工作台恒渲染 DetectionPanel 空态标题 + 播放器/时间轴小圆角；设置页响应式两列卡片网格（去 max-w-900 死区，编码卡独占整行）
 
 ## System Data Flow
 
@@ -554,34 +555,38 @@ React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @them
   │                             共享视频列表轮询(4s) + 上传/删除/拖拽编排
   ├── components/
   │   ├── TitleBar           ← 自定义窗口标题栏（frameless 拖拽区 + 版本徽章 +
-  │   │                         最小化/最大化/关闭，经 pywebview js_api 桥接）
+  │   │                         最小化/最大化/关闭，经 pywebview js_api 桥接；
+  │   │                         最近更新(i 下拉 → git log) + 太阳/月亮主题切换）
   │   ├── Sidebar            ← w-56 浅蓝渐变侧栏：业务(文件库/视频解析/任务中心) +
   │   │                         系统设置 2 子页(系统设置/模型参数) + SystemMonitor
   │   ├── SystemMonitor      ← 底部真机监控（等 pywebviewready 后轮询 get_system_stats，
   │   │                         psutil CPU/内存/网络 + nvidia-smi GPU，迷你柱状图）
   │   ├── FileLibrary        ← 文件库：左分组树 + 右表格(类型/文件名/时长/时间/状态/操作)；
   │   │                         批量解析（勾选列+一键/批量解析+参数面板）、案例编辑/编号自动填充
-  │   │                         A-YYYY-MMDD-NN、文件与图片内联重命名、后缀展示字段（file_ext 灰色固定）
+  │   │                         A-YYYY-MMDD-NN、文件与图片内联重命名、后缀展示字段（file_ext 灰色固定）；
+  │   │                         操作列 4 图标按钮（编辑/解析闪电[已完成=实心+重新配置参数解析]/预览/删除）
   │   ├── Workbench          ← 视频解析（照智影 v2 demo 骨架：外层 SplitPane 60%
   │   │                         左舞台播放器/时间轴 + 右栏 摘要⇄信息 toggle | 检测|搜索 42%
   │   │                         分栏；ParameterPanel 以 Modal 打开；搜索卡案例-文件范围下拉[当前视频/
   │   │                         案例/文件多选，未处理隐藏] + 无视频可交互 + 跨视频结果切主视频 + 单实例保留结果）
   │   ├── TaskCenter         ← 任务中心：裂解 TaskHeader(顶部卡) + TaskBody(正文卡：
   │   │                         筛选 Tab + 表格 任务文件/版本/所属/状态/提交时间/耗时 + 操作
-  │   │                         导出报告/日志/重试[失败])；4s 轮询；无删除按钮
+  │   │                         导出报告/日志（图标按钮）/重试[失败])；4s 轮询；无删除按钮
   │   ├── SplitPane          ← 可拖拽分栏（自 demo SplitPane.jsx 移植）
   │   ├── SettingsPage       ← 系统设置：4 子页收敛 2（系统设置=系统+参数预设 / 模型参数=
   │   │                         模型参数+API密钥），各页裂解子组件（PresetSection/StorageSection/
-  │   │                         PipelineSection · EncoderSection/DetectionSection/ApiKeysSection）
+  │   │                         PipelineSection · EncoderSection/DetectionSection/ApiKeysSection）；
+  │   │                         内容区响应式两列卡片网格（xl:grid-cols-2，窄窗回落单列，编码卡独占整行）
   │   └── …现有组件（VideoPlayer/DetectionTimeline/DetectionPanel/VideoSearchCard 等换肤复用）
   4 页模型：文件库 / 视频解析 / 任务中心 / 系统设置（无 Router，AppContext state 切换）
   页面卡片空隙：外层 app-main-flat 透明背景 + 页面根容器透明（不透明白底挡死渐变）+ space/gap 卡片间距 → 渐变透出（TaskCenter/FileLibrary/SettingsPage 一致）
+  暗色主题：标题栏太阳/月亮切换 → `<html class="dark">` → Tailwind v4 工具类走 `var(--color-*)` 重映射调色板（中性炭灰灰阶 50→900 反转为暗、靛蓝强调色 `teal-500/600/700→#7a88f5/#8f9bf7/#a3adf9`）+ index.css 硬编码结构类显式覆盖；`index.html` 内联防闪烁；亮色蓝按钮不变
 ```
 
 **桌面端窗口壳（`desktop/`，v0.34 + v0.34候选）**：
 - 主窗 `create_window(..., frameless=True, shadow=True)` 去系统标题栏（Windows EdgeChromium 保留圆角阴影）
 - 前端标题栏**手动拖拽**（替代原生 drag-region）：`SplashApi.move(x,y)` 移动窗口；**最大化态先 toggle_maximize 还原再跟随光标**（桌面惯例「拖动缩小跟随」）；双击标题栏切换最大化/还原；窗口按钮置于拖拽区外（sibling）防误触
-- `webview_panel.py` SplashApi 扩展：`minimize/toggle_maximize/is_maximized/move/quit`（窗口控制）+ `get_system_stats`（psutil + nvidia-smi，GPU 缓存 5s）；load_url 到真实前端后 js_api 仍有效；**`is_maximized` 读真实窗体状态（`window.native`=BrowserView 实例的 `WindowState`，非 `window.gui` 模块）+ toggle 直接写标志**，根治「最大化后图标不更新 / 再点无反应」；**关闭确认走前端主题化弹窗**（TitleBar Modal，不用 pywebview `confirm_close` 原生 MessageBox）
+- `webview_panel.py` SplashApi 扩展：`minimize/toggle_maximize/is_maximized/move/quit`（窗口控制）+ `get_system_stats`（psutil + nvidia-smi，GPU 缓存 5s）+ `get_recent_commits`（项目根 `git log`，TitleBar「最近更新」下拉，`CREATE_NO_WINDOW` 防闪框）；load_url 到真实前端后 js_api 仍有效；**`is_maximized` 读真实窗体状态（`window.native`=BrowserView 实例的 `WindowState`，非 `window.gui` 模块）+ toggle 直接写标志**，根治「最大化后图标不更新 / 再点无反应」；**关闭确认走前端主题化弹窗**（TitleBar Modal，不用 pywebview `confirm_close` 原生 MessageBox）
 - 后端生命周期：`backend_child.py` **父进程句柄看门狗**（`OpenProcess(SYNCHRONIZE)` 持父句柄 + `WaitForSingleObject` 信号检测，免疫 PID 复用，父死 ~3s 内 `os._exit(3)`）；启动前 `checks.sweep_orphan_backends` 沿父链（兼容 `.venv\Scripts\python.exe` 重定向器三层）清遗留孤儿，防占端口/锁 `_internal` DLL
 - `desktop/requirements.txt` 含 `psutil`；前端 `window.pywebview` 存在才渲染窗口按钮（浏览器 dev 隐藏）
 - `build_exe.ps1 -Deploy` 加固：部署前杀运行中壳 + 遗留 backend_child、旧目录删除重试、`$src\*` 内容拷贝杜绝 `_internal\_internal` 嵌套、部署后自检 python313.dll 落地（区分「嵌套」与「真缺失」，不再一律误报杀软）

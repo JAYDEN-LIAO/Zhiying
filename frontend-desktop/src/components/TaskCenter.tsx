@@ -10,7 +10,7 @@ import { api } from "../services/api";
 import { useApp } from "../AppContext";
 import type { TaskItem, TaskLogLine } from "../types";
 import { fmtDate, fmtDuration, fmtTime, versionName } from "../utils/helpers";
-import { IconDownload } from "./icons";
+import { IconDownload, IconReport, IconLog } from "./icons";
 
 const FILTERS = [
   { key: "all", label: "全部任务" },
@@ -115,8 +115,12 @@ function TaskBody({
                         {busyId === t.id ? "重试中…" : "重试"}
                       </button>
                     )}
-                    <button className="g-btn !px-2 !py-1 mr-1" onClick={() => onExportReport(t)}>导出报告</button>
-                    <button className="g-btn !px-2 !py-1" onClick={() => onOpenLog(t)}>日志</button>
+                    <button className="g-btn !px-2 !py-1 mr-1" title="导出报告" onClick={() => onExportReport(t)}>
+                      <IconReport />
+                    </button>
+                    <button className="g-btn !px-2 !py-1" title="任务日志" onClick={() => onOpenLog(t)}>
+                      <IconLog />
+                    </button>
                   </td>
                 </tr>
               );

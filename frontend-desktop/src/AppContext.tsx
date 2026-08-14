@@ -23,9 +23,11 @@ interface AppCtx {
   /* 跨页选视频：跳工作台并（可选）自动打开参数面板 */
   selectedVideoId: string | null;
   initialVersionId: string | null;
-  openWorkbench: (videoId: string, opts?: { openParams?: boolean; versionId?: string }) => void;
+  openWorkbench: (videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean }) => void;
   paramsTick: number;
   consumeParamsTick: () => void; // 参数面板自动打开意图一次性消费（预览/切页不再重复弹）
+  reparseIntent: boolean;        // 自动打开的参数面板是否走「重新解析」模式（已完成文件重配置参数 → reanalyze 建新版本）
+  consumeReparseIntent: () => void;
   /* 共享视频列表（4s 轮询 + 组重建） */
   videos: VideoListItem[];
   videoGroups: VideoGroup[];
@@ -59,6 +61,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
   const [initialVersionId, setInitialVersionId] = useState<string | null>(null); // 跳转精确定位版本行（任务中心）
   const [paramsTick, setParamsTick] = useState(0);
+  const [reparseIntent, setReparseIntent] = useState(false);
   const [videos, setVideos] = useState<VideoListItem[]>([]);
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
   const [caseGroups, setCaseGroups] = useState<VideoGroup[]>([]);
@@ -77,15 +80,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPage("settings");
   }, []);
 
-  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean; versionId?: string }) => {
+  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean }) => {
     setSelectedVideoId(videoId);
     setInitialVersionId(opts?.versionId ?? null); // 精确定位版本行（任务中心跳转）
     setPage("workbench");
+    setReparseIntent(opts?.reparse ?? false);      // 参数面板自动打开时是否走「重新解析」（已完成文件重配参数）
     if (opts?.openParams) setParamsTick((t) => t + 1);
   }, []);
 
   /* 参数面板自动打开意图一次性消费：弹过一次后归零，避免预览/切页回来重复弹 */
   const consumeParamsTick = useCallback(() => setParamsTick(0), []);
+  const consumeReparseIntent = useCallback(() => setReparseIntent(false), []);
 
   /* ── 视频列表 + 组重建（原 Dashboard 逻辑） ── */
   useEffect(() => {
@@ -229,6 +234,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value: AppCtx = {
     page, navigate, settingsTab, navigateSettings,
     selectedVideoId, openWorkbench, initialVersionId, paramsTick, consumeParamsTick,
+    reparseIntent, consumeReparseIntent,
     videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups, activeTaskCount, refreshList,
     isUploading, uploadFiles, registerExternalFiles, handleUploadClick,
     removeVideoState, deleteVideo,

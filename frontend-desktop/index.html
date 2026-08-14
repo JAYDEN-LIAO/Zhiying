@@ -5,6 +5,10 @@
   <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
   <title>智影-视频智能分析与检索</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <script>
+    // 主题防闪烁：React 挂载前先按 localStorage 落 dark 类（亮/暗一致，避免暗色启动闪一下亮）
+    try { if (localStorage.getItem("zhiying-theme") === "dark") document.documentElement.classList.add("dark"); } catch (e) {}
+  </script>
 </head>
 <body>
   <div id="root"></div>

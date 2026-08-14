@@ -266,8 +266,8 @@ export function VideoSearchCard({
           {resultCount > 0 && <span className="major-card-badge mr-1 whitespace-nowrap shrink-0">{resultCount} 条</span>}
           <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${semanticReady ? "bg-blue-50 text-blue-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title="语义搜索（文本/场景/物体）">语义</span>
           <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${semanticReady ? "bg-teal-50 text-teal-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title="通用图搜（以图搜图）">图搜</span>
-          <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${!plateDisabled ? "bg-amber-50 text-amber-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title="车牌识别">车牌</span>
-          <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${!faceDisabled ? "bg-purple-50 text-purple-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title="人脸识别">人脸</span>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${!plateDisabled ? "bg-amber-50 text-amber-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title={plateDisabled ? "范围内无已开启车牌识别的视频，车牌搜索不可用" : "车牌识别"}>车牌</span>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${!faceDisabled ? "bg-purple-50 text-purple-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title={faceDisabled ? "范围内无已开启人脸识别的视频，人脸搜索不可用" : "人脸识别"}>人脸</span>
         </div>
       </div>
 

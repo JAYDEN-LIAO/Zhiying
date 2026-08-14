@@ -377,7 +377,7 @@ export function ParameterPanel({
   const presetLabel = sceneType === "custom" ? "自定义" : (SCENE_PRESETS[sceneType]?.label ?? "自定义");
 
   return (
-    <div className="w-[460px] h-full flex flex-col">
+    <div className="w-[min(840px,92vw)] h-full flex flex-col">
       {/* Header — light（v0.34 桌面重构改浅色 Modal） */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 shrink-0">
         <h2 className="font-bold text-slate-800 text-base">
@@ -388,8 +388,9 @@ export function ParameterPanel({
         </button>
       </div>
 
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+      {/* Scrollable content — 顶向下三段，段内网格铺满宽度（840×620 4:3，无空列） */}
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        <div className="space-y-5">
         {/* L1: 场景类型 */}
         <section>
           <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">场景类型</h3>
@@ -423,12 +424,12 @@ export function ParameterPanel({
         {/* L2: 感知模块 */}
         <section>
           <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">感知模块</h3>
-          <div className="space-y-1.5">
+          <div className="grid grid-cols-2 gap-2">
             {([
               { key: "vision" as ModuleKey, label: "视觉分析", hint: "帧处理总开关" },
               { key: "audio" as ModuleKey, label: "音频转录", hint: grayed.audio ? "插件未启用" : "语音转文字" },
-              { key: "ocr" as ModuleKey, label: "文字识别", hint: grayed.ocr ? (moduleAvailable.ocr ? "依赖视觉分析" : "插件未启用") : "提取画面文字" },
               { key: "detection" as ModuleKey, label: "物体检测", hint: grayed.detection ? (moduleAvailable.detection ? "依赖视觉分析" : "插件未启用") : "YOLO11 逐帧检测与 ByteTrack 追踪" },
+              { key: "ocr" as ModuleKey, label: "文字识别", hint: grayed.ocr ? (moduleAvailable.ocr ? "依赖视觉分析" : "插件未启用") : "提取画面文字" },
             ] as const).map((mod) => {
               const isOn = modules[mod.key];
               const isGrayed = grayed[mod.key];
@@ -560,8 +561,10 @@ export function ParameterPanel({
               )}
             </div>
 
+          {/* 物体检测子项：人脸 + 车牌 两列并排（网格内对齐） */}
+          <div className="mt-2 grid grid-cols-2 gap-2">
           {/* 人脸识别子开关 — 检测关闭时置灰不隐藏 */}
-          <div className={`mt-2 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
+          <div className={`ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
               !moduleAvailable.face || !modules.detection ? "border-gray-150 bg-gray-50/30 opacity-40 pointer-events-none" : "border-purple-300 bg-purple-50/30"
             }`}>
               <div className="flex items-center justify-between">
@@ -577,7 +580,7 @@ export function ParameterPanel({
           </div>
 
           {/* 车牌识别子开关 — 检测关闭时置灰不隐藏 */}
-          <div className={`mt-1.5 ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
+          <div className={`ml-2 pl-3 border-l-2 rounded-r-lg py-2 pr-2 transition-all ${
               !moduleAvailable.plate || !modules.detection ? "border-gray-150 bg-gray-50/30 opacity-40 pointer-events-none" : "border-green-300 bg-green-50/30"
             }`}>
               <div className="flex items-center justify-between">
@@ -591,12 +594,13 @@ export function ParameterPanel({
                 />
               </div>
           </div>
+          </div>
         </section>
 
         {/* L3: 功能开关 */}
         <section>
           <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">功能开关</h3>
-          <div className="space-y-1.5">
+          <div className="grid grid-cols-2 gap-2">
             {([
               { key: "searchIndex", label: "搜索索引", hint: "建立向量索引，支持语义搜索" },
               { key: "summary", label: "智能摘要", hint: grayed.summary ? "依赖视觉分析" : "生成全局结构化摘要（含逐场景画面描述）" },
@@ -669,7 +673,7 @@ export function ParameterPanel({
               </div>
           </div>
         </section>
-
+        </div>
       </div>
 
       {/* Error */}
