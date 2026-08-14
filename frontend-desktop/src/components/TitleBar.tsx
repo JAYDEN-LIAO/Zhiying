@@ -28,6 +28,7 @@ declare global {
 export function TitleBar() {
   const [version, setVersion] = useState<string | null>(null);
   const [isMax, setIsMax] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   // pywebview 桥是异步注入的（React 挂载时可能未就绪）→ 用 state + pywebviewready 事件监听
   const [inPywebview, setInPywebview] = useState(false);
 
@@ -36,6 +37,18 @@ export function TitleBar() {
     check();
     window.addEventListener("pywebviewready", check);
     return () => window.removeEventListener("pywebviewready", check);
+  }, []);
+
+  // 窗口被系统级方式最大化/还原（Win+方向键 / 拖到屏顶）时，本地 isMax 会与后端失步 →
+  // 监听 resize（WebView 随窗体缩放会触发）同步真实最大化状态，保证图标/双击行为正确
+  useEffect(() => {
+    const onResize = () => {
+      const api = window.pywebview?.api;
+      if (!api?.is_maximized) return;
+      api.is_maximized().then((m) => setIsMax(!!m)).catch(() => {});
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
   useEffect(() => {
@@ -51,7 +64,12 @@ export function TitleBar() {
       setIsMax(await pv.toggle_maximize());
     }
   };
-  const onClose = () => pv?.quit?.();
+  // 关闭：先弹主题化确认框（替代 pywebview 原生 MessageBox），确认后经 js_api quit() 退出
+  const onClose = () => setShowCloseConfirm(true);
+  const doQuit = () => {
+    setShowCloseConfirm(false);
+    pv?.quit?.();
+  };
 
   /* ── 手动拖拽窗口（替代原生 drag-region，支持最大化态「先还原再跟随光标」）── */
   const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
@@ -91,6 +109,7 @@ export function TitleBar() {
   };
 
   return (
+    <>
     <header className="titlebar">
       {/* 拖拽区 —— 手动拖拽窗口（最大化态先还原再跟随光标）；双击切换最大化/还原 */}
       <div
@@ -136,5 +155,30 @@ export function TitleBar() {
         </div>
       )}
     </header>
+
+    {/* 关闭确认弹窗（替代 pywebview 原生 MessageBox，主题化） */}
+    {showCloseConfirm && (
+      <div className="g-modal-overlay" onClick={() => setShowCloseConfirm(false)}>
+        <div className="g-modal" style={{ width: 400 }} onClick={(e) => e.stopPropagation()}>
+          <div className="g-card-hd">
+            <span className="g-card-tt">退出确认</span>
+            <button className="g-btn g-btn-sm" onClick={() => setShowCloseConfirm(false)} aria-label="取消">×</button>
+          </div>
+          <div className="p-5">
+            <div style={{ fontSize: 14, color: "#475569", lineHeight: 1.7 }}>
+              确定要退出<strong style={{ color: "#1e293b" }}>视频智能快速检索平台</strong>吗？
+              <div style={{ marginTop: 6, fontSize: 12, color: "#94a3b8" }}>
+                退出将停止本地后端服务，正在处理的任务会中断。
+              </div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+              <button className="g-btn" onClick={() => setShowCloseConfirm(false)}>取消</button>
+              <button className="g-btn g-btn-danger" onClick={doQuit}>确认退出</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

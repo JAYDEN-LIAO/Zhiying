@@ -201,8 +201,10 @@ def run_gui(args) -> int:
     main_api = SplashApi(ctx)
     main_window = webview.create_window(
         "智影视频分析", html=SPLASH_HTML, width=1280, height=800, min_size=(1024, 700),
-        confirm_close=True, js_api=main_api,
+        js_api=main_api,
         frameless=True, shadow=True,
+        # 不用 confirm_close：那是 pywebview 原生 MessageBox（"Do you really want to quit?"），
+        # 无法定制样式。关闭确认改由前端 TitleBar 主题化弹窗处理（确认后经 js_api quit() 退出）。
     )
     main_api.set_window(main_window)  # 注入窗口引用，供 minimize/toggle_maximize 等使用
     control = webview.create_window(

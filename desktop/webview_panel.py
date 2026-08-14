@@ -238,23 +238,28 @@ class SplashApi:
             return self._maximized
         if self.is_maximized():
             w.restore()
+            self._maximized = False
         else:
             w.maximize()
-        self._maximized = self.is_maximized()
+            self._maximized = True
         return self._maximized
 
     def is_maximized(self) -> bool:
-        """查询主窗是否最大化。
+        """查询主窗是否最大化：优先读真实窗体状态（winforms BrowserView 的 WindowState），
+        读不到再退回本地 _maximized 标志。
 
-        pywebview 无 is_maximized 接口，本地 _maximized 标志只在「仅通过本窗按钮改窗口状态」
-        时可靠；用户用系统快捷键（Win+方向键 / 拖到屏顶）最大化/还原后标志会失步，导致拖拽
-        toggle 方向反了（见 TitleBar 手动拖拽）。优先读真实窗体状态，读不到再退回本地标志。
+        pywebview 无 is_maximized 公开接口；真实状态能覆盖系统快捷键（Win+方向键 / 拖到屏顶）
+        最大化/还原导致的标志失步。注意：真实窗体挂载在 `window.native`（winforms.py 里
+        `pywebview_window.native = self` 注入的 BrowserView 实例），不是 `window.gui`
+        （那是整个 winforms 模块，没有 WindowState 属性）——此前读 .gui 恒拿不到 →
+        一直退回陈旧标志 → 最大化后图标不更新、再点无反应（用户反馈的 bug）。
         """
         try:
             from System.Windows.Forms import FormWindowState  # type: ignore[import-not-found]
-            bv = getattr(self._window, "gui", None)  # winforms 后端 = BrowserForm (WinForms.Form)
-            if bv is not None and getattr(bv, "WindowState", None) is not None:
-                return bool(bv.WindowState == FormWindowState.Maximized)
+            for attr in ("native", "gui"):  # native=BrowserView 实例；gui 兜底兼容其它后端
+                bv = getattr(self._window, attr, None)
+                if bv is not None and getattr(bv, "WindowState", None) is not None:
+                    return bool(bv.WindowState == FormWindowState.Maximized)
         except Exception:
             pass
         return self._maximized
