@@ -6,10 +6,11 @@ Pydantic v2 校验模型 — JSONB 结构校验 / 请求 DTO / 响应 DTO
 所有 JSONB 字段在入库前经过此层校验，确保结构完整、边界合法。
 """
 
+import os
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, computed_field
 from typing import Optional
 
 from core.models import VideoStatus, ContentType
@@ -416,6 +417,7 @@ class FileItem(BaseModel):
 
     id: uuid.UUID                    # 文件 ID = file_id（独立文件 = 自身 id）
     name: str                        # 文件名（根行 file_name）
+    file_ext: str | None = None      # 真实文件扩展名（.mp4 等，取自磁盘路径；后缀展示用，重命名不影响）
     group_id: uuid.UUID | None = None
     duration: float | None = None
     file_size: int | None = None
@@ -498,3 +500,9 @@ class CaseAssetItem(BaseModel):
     path: str
     file_size: int = 0
     created_at: datetime | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def file_ext(self) -> str:
+        """真实扩展名（磁盘路径）；后缀展示用，重命名不影响。"""
+        return os.path.splitext(self.path or "")[1]

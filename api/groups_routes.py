@@ -16,7 +16,7 @@ from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db
-from api.schemas import APIResponse
+from api.schemas import APIResponse, RenameAssetRequest
 from core.models import Video, VideoGroup
 from core.schemas import GroupCreate, VideoGroupResponse
 
@@ -174,6 +174,7 @@ async def list_group_assets(
     videos = [FileItem(
         id=r["id"],
         name=r["file_name"],
+        file_ext=os.path.splitext(r.get("file_path") or "")[1],
         group_id=r.get("group_id"),
         duration=r.get("duration"),
         file_size=r.get("file_size"),
@@ -265,3 +266,25 @@ async def delete_asset(
     await db.delete(asset)
     await db.commit()
     return APIResponse(data={"ok": True})
+
+
+@router.put("/groups/{group_id}/assets/{asset_id}", response_model=APIResponse[dict])
+async def rename_asset(
+    group_id: uuid.UUID,
+    asset_id: uuid.UUID,
+    payload: RenameAssetRequest,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """重命名案例素材（图片）：仅改显示名（磁盘文件按 uid 存储，不动路径）。
+
+    新名字未带扩展名时自动补回磁盘真实后缀（与文件重命名同规则）。
+    """
+    from core.models import CaseAsset
+    asset = await db.get(CaseAsset, asset_id)
+    if asset is None or asset.group_id != group_id:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    ext = os.path.splitext(asset.path or "")[1] or ""
+    new_name = payload.name if (not ext or "." in payload.name) else f"{payload.name}{ext}"
+    asset.name = new_name
+    await db.commit()
+    return APIResponse(data={"ok": True, "renamed": True})

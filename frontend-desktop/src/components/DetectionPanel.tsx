@@ -367,7 +367,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     );
   }
 
-  /* ── Processing ── */
+  /* ── Processing（统一空态：居中灰字，与摘要/搜索卡一致） ── */
   if (video.status === "processing" || video.status === "pending") {
     return (
       <div className="major-card">
@@ -379,12 +379,8 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
             物体检测
           </div>
         </div>
-        <div className="major-card-bd">
-          <div className="animate-pulse space-y-2.5 w-full">
-            <div className="h-3 bg-gray-200 rounded w-2/3" />
-            <div className="flex gap-2"><div className="h-10 w-10 bg-gray-200 rounded-md" /><div className="flex-1 space-y-1.5"><div className="h-3 bg-gray-200 rounded w-3/4" /><div className="h-2.5 bg-gray-200 rounded w-1/2" /></div></div>
-            <div className="flex gap-2"><div className="h-10 w-10 bg-gray-200 rounded-md" /><div className="flex-1 space-y-1.5"><div className="h-3 bg-gray-200 rounded w-3/4" /><div className="h-2.5 bg-gray-200 rounded w-1/2" /></div></div>
-          </div>
+        <div className="major-card-bd flex items-center justify-center">
+          <span className="text-gray-400 text-sm">视频处理完成后自动生成检测数据</span>
         </div>
       </div>
     );

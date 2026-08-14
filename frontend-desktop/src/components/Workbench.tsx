@@ -44,7 +44,7 @@ function WbHeader({
   onReanalyze: () => void; onOpenHistory: () => void; onOpenExport: () => void;
 }) {
   return (
-    <div className="case-card flex items-center justify-between px-5 h-[60px] shrink-0">
+    <div className="case-card flex items-center justify-between flex-wrap gap-y-1.5 px-5 py-2 min-h-[60px] shrink-0">
       <div className="flex items-center gap-3 min-w-0">
         <div className="shrink-0">
           <h1 className="text-[16px] font-semibold text-gray-900 leading-tight">视频解析</h1>
@@ -121,7 +121,7 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
           <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">{detection}</div>
         </div>
         <div className="w-full h-full flex flex-col bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="flex-1 min-h-0 min-w-0 overflow-hidden">{search}</div>
+          <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">{search}</div>
         </div>
       </SplitPane>
     </div>
@@ -129,7 +129,7 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
 }
 
 export function Workbench() {
-  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, videos, videoGroups, caseGroups, navigate, handleUploadClick, isUploading } = useApp();
+  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
   const currentVideoId = selectedVideoId;
 
   /* ── 版本切换（v0.34）：打开文件 → 拉取版本链 → 默认当前版本 ── */
@@ -168,12 +168,18 @@ export function Workbench() {
   const [currentVideo, setCurrentVideo] = useState<VideoResponse | null>(null);
   const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
   const [seekTarget, setSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
+  // 跨视频 pending seek：等主视频切到目标版本且元素就绪后再定位（避免首击 seek 到旧元素被重置）
+  const [pendingSeek, setPendingSeek] = useState<{ videoId: string; start: number; end: number | null } | null>(null);
   const [topPanel, setTopPanel] = useState<"history" | "export" | null>(null);
   const [paramsOpen, setParamsOpen] = useState(false);
   const [reparseMode, setReparseMode] = useState(false); // 重新解析：参数窗提交时建新版本
   const [deleting, setDeleting] = useState(false);
   const [showStageInfo, setShowStageInfo] = useState(false); // 播放器信息浮层
   const videoRef = useRef<HTMLVideoElement>(null);
+  // 搜索结果发起的跨视频切换 → 重置 effect 跳过（保留结果/定位，由 handler 精确控制状态）
+  const suppressWorkbenchResetRef = useRef(false);
+  // 跨视频切换刚发生时标记目标视频，供 seek 类 handler 决定走 pendingSeek 而非立即 seek
+  const justSwitchedToRef = useRef<string | null>(null);
 
   /* ── 组感知状态（v0.19） ── */
   const [currentGroupVideos, setCurrentGroupVideos] = useState<string[]>([]);
@@ -186,8 +192,12 @@ export function Workbench() {
   const [faceViewOpen, setFaceViewOpen] = useState(false);
   const [expandedFaceId, setExpandedFaceId] = useState<number | null>(null);
 
-  /* ── 视频切换时重置工作台状态 ── */
+  /* ── 视频切换时重置工作台状态（搜索结果跨视频切换在 suppress 窗口内跳过，保留结果/定位） ── */
   useEffect(() => {
+    if (suppressWorkbenchResetRef.current) {
+      setCurrentVideo(null);  // 清旧数据防闪烁；其余状态由搜索结果 handler 保留
+      return;
+    }
     setCurrentVideo(null);
     setSelectedTrackId(null);
     setClassFilter(null);
@@ -311,37 +321,84 @@ export function Workbench() {
     return () => clearInterval(iv);
   }, [seekTarget]);
 
-  /* ── 组内视频切换（搜索跨视频结果用） ── */
+  /* ── 跨视频 pending seek：等主视频切到目标版本（vid/currentVideo 落到目标）且元素就绪后再定位，
+     避免首击 seek 作用到旧 <video> 元素、随后 src 切换被重置 ── */
+  useEffect(() => {
+    if (!pendingSeek) return;
+    const targetReady = vid === pendingSeek.videoId || currentVideo?.id === pendingSeek.videoId;
+    if (!targetReady) return;  // 等 vid/currentVideo 变化重新触发
+    const applySeek = () => {
+      const video = videoRef.current;
+      if (!video || video.readyState < 1) return false;
+      video.currentTime = pendingSeek.start;
+      if (pendingSeek.end != null) video.play().catch(() => {});
+      return true;
+    };
+    if (applySeek()) { setPendingSeek(null); return; }
+    let attempts = 0;
+    const iv = setInterval(() => {
+      if (applySeek()) { clearInterval(iv); setPendingSeek(null); return; }
+      if (++attempts >= 40) clearInterval(iv);
+    }, 150);
+    return () => clearInterval(iv);
+  }, [pendingSeek, vid, currentVideo]);
+
+  /* 搜索结果跨视频切换 → 短暂抑制重置：覆盖「切主视频 → activeVersionId 置空 → 解析新版本」的
+     vid 级联，等数据落定后恢复，保住 seek/选中态（搜索结果自己的 suppress 保留结果列表） */
+  const suppressWorkbenchReset = useCallback(() => {
+    suppressWorkbenchResetRef.current = true;
+    window.setTimeout(() => { suppressWorkbenchResetRef.current = false; }, 800);
+  }, []);
+
+  /* ── 跨视频切换（搜索跨视频结果用）：切主视频（播放器/时间轴/检测/摘要同步）+ 组状态 ── */
   const handleGroupVideoSwitch = useCallback((videoId: string) => {
     if (videoId === currentVideoId) return;
     const group = videoGroups.find((g) => g.videoIds.includes(videoId));
     setCurrentGroupVideos(group ? group.videoIds : [videoId]);
-    setSelectedTrackId(null);
-    setClassFilter(null);
-    setSeekTarget(null);
-    if (!detectionVideoId || group?.videoIds.includes(detectionVideoId)) setDetectionVideoId(null);
-  }, [currentVideoId, videoGroups, detectionVideoId]);
+    justSwitchedToRef.current = videoId;      // 标记：本次 seek 目标是该视频（走 pendingSeek）
+    suppressWorkbenchReset();
+    openWorkbench(videoId, { versionId: videoId });  // 精确定位点击的版本行，vid 落定后即目标
+    setDetectionVideoId(null);
+  }, [currentVideoId, videoGroups, openWorkbench, suppressWorkbenchReset]);
 
   /* ── 搜索 track 结果点击 ── */
   const handleSearchTrackResult = useCallback((videoId: string, trackId: number, className: string, start: number) => {
     if (videoId && videoId !== currentVideoId) handleGroupVideoSwitch(videoId);
+    const target = justSwitchedToRef.current;
+    if (target) {
+      justSwitchedToRef.current = null;
+      setPendingSeek({ videoId: target, start, end: null });  // 跨视频：等新视频就绪再定位
+    } else {
+      setSeekTarget({ start, end: null });
+    }
     setDetectionVideoId(null);
     setSelectedTrackId(trackId);
-    setSeekTarget({ start, end: null });
   }, [currentVideoId, handleGroupVideoSwitch]);
 
   /* ── 搜索人脸结果点击 ── */
   const handleFaceResult = useCallback((videoId: string, identityId: number, ts: number) => {
     if (videoId && videoId !== currentVideoId) handleGroupVideoSwitch(videoId);
+    const target = justSwitchedToRef.current;
+    if (target) {
+      justSwitchedToRef.current = null;
+      setPendingSeek({ videoId: target, start: ts, end: null });
+    } else {
+      setSeekTarget({ start: ts, end: null });
+    }
     setDetectionVideoId(null);
     setFaceViewOpen(true);
     setExpandedFaceId(identityId);
-    setSeekTarget({ start: ts, end: null });
   }, [currentVideoId, handleGroupVideoSwitch]);
 
   const handleSeekTo = useCallback((start: number, end: number | null) => {
-    setSeekTarget({ start, end });
-    if (videoRef.current) videoRef.current.currentTime = start;
+    const target = justSwitchedToRef.current;
+    if (target) {
+      justSwitchedToRef.current = null;
+      setPendingSeek({ videoId: target, start, end });  // 跨视频：等新视频就绪再定位
+    } else {
+      setSeekTarget({ start, end });
+      if (videoRef.current) videoRef.current.currentTime = start;
+    }
   }, []);
 
   const handleDelete = useCallback(async () => {
@@ -390,51 +447,22 @@ export function Workbench() {
     }
   }, [vid, currentVideo, currentVideoId]);
 
-  /* ── 无视频空状态 ── */
-  if (!currentVideoId) {
-    /* ══ 空状态：4 卡片结构（顶卡 + 左舞台 CTA + 右摘要/分析空提示），SplitPane 拖拽保留 ══ */
-    return (
-      <div className="h-full flex flex-col gap-2 p-2">
-        <WbHeader
-          videoName="" groupName={null} curVersionName="" hasVideo={false} isPending={false} isProcessing={false}
-          onReanalyze={() => {}} onOpenHistory={() => {}} onOpenExport={() => {}}
-        />
-        <div className="flex-1 min-h-0">
-          <SplitPane direction="row" initial={60} min={32} max={72} className="h-full w-full">
-            {/* 左舞台卡：空态 CTA（只留虚线按钮） */}
-            <WbStage
-              player={
-                <div className="w-full h-full flex items-center justify-center bg-[#0b0f16]">
-                  <button
-                    className="w-[300px] h-[110px] rounded-lg border-2 border-dashed border-gray-700 flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer hover:border-[#4f7cff]/60"
-                    onClick={() => navigate("files")}
-                  >
-                    <svg className="w-7 h-7 text-gray-500" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>
-                    <span className="text-[12.5px] text-gray-400">前往案例库选择视频</span>
-                  </button>
-                </div>
-              }
-              timeline={<div className="w-full h-full bg-[#0b0f16]" />}
-            />
-            {/* 右侧：摘要卡 + 分析卡（col 拖拽） */}
-            <div className="h-full min-w-0">
-              <SplitPane direction="col" initial={22} min={12} max={45} className="h-full w-full">
-                <WbSummary currentVideo={null} />
-                <WbAnalysis
-                  detection={<div className="flex items-center justify-center h-full text-gray-400 text-[12.5px]">选择视频后查看</div>}
-                  search={<div className="flex items-center justify-center h-full text-gray-400 text-[12.5px]">输入条件后点击查询</div>}
-                />
-              </SplitPane>
-            </div>
-          </SplitPane>
-        </div>
-      </div>
-    );
-  }
-
   const groupName = currentVideo?.group_id
     ? (caseGroups.find((g) => g.groupId === currentVideo.group_id)?.name ?? null)
     : null;
+
+  /* 无视频空态：舞台区 CTA 占位（合并渲染树后搜索卡恒为同一实例，结果跨切换保留） */
+  const emptyStage = (
+    <div className="w-full h-full flex items-center justify-center bg-[#0b0f16]">
+      <button
+        className="w-[300px] h-[110px] rounded-lg border-2 border-dashed border-gray-700 flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer hover:border-[#4f7cff]/60"
+        onClick={() => navigate("files")}
+      >
+        <svg className="w-7 h-7 text-gray-500" fill="none" stroke="currentColor" strokeWidth="1.6" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>
+        <span className="text-[12.5px] text-gray-400">前往案例库选择视频</span>
+      </button>
+    </div>
+  );
 
   return (
     <div className="h-full flex flex-col gap-2 p-2 relative">
@@ -490,7 +518,7 @@ export function Workbench() {
         <SplitPane direction="row" initial={60} min={32} max={72} className="h-full w-full">
           {/* 左舞台卡：播放器 + 时间轴 */}
           <WbStage
-            player={
+            player={currentVideoId ? (
               <div className="relative w-full h-full bg-black overflow-hidden">
                 <VideoPlayer
                   videoId={vid!}
@@ -532,8 +560,8 @@ export function Workbench() {
                   </div>
                 )}
               </div>
-            }
-            timeline={
+            ) : emptyStage}
+            timeline={currentVideoId ? (
               <div className="w-full h-full bg-[#0b0f16] p-3 flex flex-col gap-2 min-h-0">
                 <div className="flex items-center justify-between mb-1 shrink-0">
                   <span className="text-[12px] font-semibold text-white/80">时间轴</span>
@@ -553,7 +581,7 @@ export function Workbench() {
                   streamReady={streamReady}
                 />
               </div>
-            }
+            ) : <div className="w-full h-full bg-[#0b0f16]" />}
           />
 
           {/* 右侧：摘要卡 + 分析卡（col 拖拽） */}
@@ -561,7 +589,7 @@ export function Workbench() {
             <SplitPane direction="col" initial={22} min={12} max={45} className="h-full w-full">
               <WbSummary currentVideo={currentVideo} />
               <WbAnalysis
-                detection={
+                detection={currentVideoId ? (
                   <DetectionPanel
                     video={currentVideo}
                     data={detectionData}
@@ -581,16 +609,19 @@ export function Workbench() {
                     detectionVideoId={detectionVideoId}
                     onDetectionVideoChange={setDetectionVideoId}
                   />
-                }
+                ) : (
+                  <div className="flex items-center justify-center h-full text-gray-400 text-[12.5px]">选择视频后查看</div>
+                )}
                 search={
+                  /* 恒为同一实例：空态↔有视频 切换不重建，搜索结果/范围跨切换保留 */
                   <VideoSearchCard
                     video={currentVideo}
-                    videoId={vid!}
+                    videoId={vid}
                     onSeekTo={handleSeekTo}
                     onTrackResult={handleSearchTrackResult}
                     onFaceResult={handleFaceResult}
-                    groupVideos={currentGroupVideos}
                     allVideos={videos}
+                    caseGroups={caseGroups}
                     onGroupVideoSwitch={handleGroupVideoSwitch}
                   />
                 }

@@ -7,12 +7,12 @@
    数据源 = /files + /groups + /groups/{id}/assets
    ════════════════════════════════════════════════════════════ */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
 import { useApp } from "../AppContext";
 import type { FileItem, VideoGroup, CaseAssetItem, PipelineParams } from "../types";
 import { fmtDuration, fmtDate, fmtBytes } from "../utils/helpers";
-import { IconFolder, IconPlus, IconPlay2 } from "./icons";
+import { IconFolder, IconPlus, IconPlay2, IconTrash, IconPencil, IconBolt, IconEye } from "./icons";
 import { ParameterPanel } from "./ParameterPanel";
 
 type TreeKey = "all" | "ungrouped" | `g:${string}`;
@@ -23,6 +23,21 @@ const STATUS_META: Record<string, { label: string; cls: string; pulse?: boolean 
   completed: { label: "已完成", cls: "ok" },
   failed: { label: "失败", cls: "err" },
 };
+
+/* 生成案例编号：A-YYYY-MMDD-NN，同一天自动递增（02/03…），用户可手动改 */
+function genCaseNumber(groups: VideoGroup[]): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const prefix = `A-${y}-${mm}${dd}-`;
+  let max = 0;
+  for (const g of groups) {
+    const m = g.number?.match(new RegExp(`^${prefix}(\\d{2})$`));
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `${prefix}${String(max + 1).padStart(2, "0")}`;
+}
 
 function VideoIcon() {
   return (
@@ -35,7 +50,7 @@ function VideoIcon() {
 /* ═══════════════════════ ① 顶部卡 ═══════════════════════ */
 function CaseHeader({ onNewCase }: { onNewCase: () => void }) {
   return (
-    <div className="case-card flex items-center justify-between px-5 h-[56px] shrink-0">
+    <div className="case-card flex items-center justify-between flex-wrap gap-y-1.5 px-5 py-2 min-h-[56px] shrink-0">
       <div>
         <h1 className="text-[16px] font-semibold text-gray-900 leading-tight">案例库</h1>
         <p className="text-[12px] text-gray-500 leading-tight">案例素材归档</p>
@@ -78,12 +93,9 @@ function CaseList({
                 <span className={active ? "text-[#4f7cff]" : "text-gray-400"}><IconFolder /></span>
                 <span className={"text-[13px] truncate flex-1 " + (active ? "text-[#4f7cff] font-semibold" : "text-gray-800")}>{g.name || "未命名案例"}</span>
                 <span className="text-[11px] text-gray-600 bg-gray-100 rounded-full px-1.5 py-0.5">{cnt}</span>
-                <button
-                  className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
-                  title="删除案例"
-                  onClick={(e) => { e.stopPropagation(); onDeleteCase(g); }}
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /></svg>
+                <button className="p-1 rounded-md text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors flex-shrink-0" title="删除案例"
+                  onClick={(e) => { e.stopPropagation(); onDeleteCase(g); }}>
+                  <IconTrash />
                 </button>
               </div>
               <div className="text-[11px] text-gray-600 mt-1 pl-6 flex items-center gap-1.5 whitespace-nowrap min-w-0">
@@ -106,7 +118,7 @@ function CaseContent({
   group, displayFiles, images, search, statusFilter, tree, isUploading,
   selected, allPendingIds, analyzing,
   onSearch, onStatusFilter, onUpload, onToggleSelect, onToggleSelectAll, onAnalyze,
-  onOpenFile, onDeleteFile, onDeleteImage,
+  onOpenFile, onEditCase, onRenameFile, onRenameAsset, onDeleteFile, onDeleteImage,
 }: {
   group: VideoGroup | undefined;
   displayFiles: FileItem[];
@@ -125,21 +137,75 @@ function CaseContent({
   onToggleSelectAll: () => void;
   onAnalyze: () => void;
   onOpenFile: (f: FileItem, openParams: boolean) => void;
+  onEditCase: (g: VideoGroup) => void;
+  onRenameFile: (id: string, name: string) => Promise<void>;
+  onRenameAsset: (id: string, name: string) => Promise<void>;
   onDeleteFile: (f: FileItem) => void;
   onDeleteImage: (img: CaseAssetItem) => void;
 }) {
   const [previewImg, setPreviewImg] = useState<CaseAssetItem | null>(null);
+
+  /* ── 文件名/图片名 内联编辑（点铅笔直接在单元格编辑） ── */
+  const [editing, setEditing] = useState<{ kind: "file" | "image"; id: string } | null>(null);
+  const [editName, setEditName] = useState("");
+  const committingRef = useRef(false);
+
+  const startEdit = (kind: "file" | "image", id: string, name: string) => {
+    setEditing({ kind, id });
+    setEditName(name);
+  };
+  const cancelEdit = () => setEditing(null);
+  const commitEdit = async () => {
+    if (committingRef.current || !editing) return;
+    committingRef.current = true;
+    const { kind, id } = editing;
+    const name = editName.trim();
+    try {
+      if (name) {
+        if (kind === "file") await onRenameFile(id, name);
+        else await onRenameAsset(id, name);
+      }
+    } catch { /* 父级已 alert */ }
+    setEditing(null);
+    committingRef.current = false;
+  };
+  /* 编辑态：输入框 + 固定后缀（后缀展示，不随重命名变化） */
+  const editField = (ext: string) => (
+    <span className="flex items-center gap-1 w-full">
+      <input
+        autoFocus
+        value={editName}
+        onChange={(e) => setEditName(e.target.value)}
+        onBlur={() => void commitEdit()}
+        onKeyDown={(e) => { if (e.key === "Enter") void commitEdit(); if (e.key === "Escape") cancelEdit(); }}
+        className="flex-1 min-w-0 px-1.5 py-0.5 text-[13px] border border-[#4f7cff] rounded focus:outline-none"
+      />
+      {ext && <span className="shrink-0 text-gray-300 text-[12px] select-none">{ext}</span>}
+    </span>
+  );
+  /* 文件名 → 主名(base) + 后缀(ext，取真实扩展名，展示用) */
+  const splitName = (name: string, fileExt?: string | null) => {
+    const ext = fileExt?.length ? fileExt : "";
+    const base = ext && name.endsWith(ext) ? name.slice(0, -ext.length) : name;
+    return { base, ext };
+  };
   return (
     <div className="flex-1 min-w-0 case-card flex flex-col min-h-0">
       {/* 工具栏：案例名称(大加粗) + 编号/负责人 + 文件数 + 检索 | 状态筛选 + 上传 */}
-      <div className="px-4 py-2.5 border-b-2 border-[#e4e9f2] flex items-center justify-between shrink-0">
+      <div className="px-4 py-2.5 border-b-2 border-[#e4e9f2] flex items-center flex-wrap gap-x-3 gap-y-2 shrink-0">
         <div className="flex items-center gap-2.5 whitespace-nowrap min-w-0">
           <span className="text-[15px] font-bold text-gray-900 max-w-[220px] truncate" title={group?.name ?? ""}>{group?.name || "案例库"}</span>
           <span className="text-[12px] text-gray-600 font-medium w-[90px] truncate" title={group?.number ?? ""}>{group?.number || "—"}</span>
           <span className="text-[12px] text-gray-600 font-medium w-[70px] truncate" title={group?.owner ?? ""}>{group?.owner || "—"}</span>
           <span className="text-[11.5px] text-gray-500 shrink-0">{displayFiles.length} 个文件</span>
+          {group && (
+            <button className="p-1 rounded text-[#4f7cff] hover:bg-blue-50 transition-colors shrink-0" title="编辑案例"
+              onClick={() => onEditCase(group)}>
+              <IconPencil />
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap ml-auto">
           <input
             className="g-input !w-[130px] !h-[30px] !text-[12px]" placeholder="检索文件"
             value={search} onChange={(e) => onSearch(e.target.value)}
@@ -175,7 +241,7 @@ function CaseContent({
                   disabled={allPendingIds.length === 0} onChange={onToggleSelectAll} />
               </th>
               <th className="w-10">类型</th>
-              <th>文件名</th>
+              <th className="w-[240px]">文件名</th>
               <th className="w-24">大小</th>
               <th className="w-24">时长</th>
               <th className="w-36">上传时间</th>
@@ -195,7 +261,20 @@ function CaseContent({
                       onChange={() => onToggleSelect(f.id)} />
                   </td>
                   <td><span className="inline-flex items-center justify-center w-6 h-6 rounded bg-gray-50 text-gray-500"><VideoIcon /></span></td>
-                  <td className="text-gray-900 max-w-[320px] truncate font-medium" title={f.name}>{f.name}</td>
+                  <td className="text-gray-900 font-medium" title={f.name}>
+                    {(() => { const { base, ext } = splitName(f.name, f.file_ext); return (
+                      editing?.kind === "file" && editing.id === f.id ? editField(ext) : (
+                        <span className="flex items-center gap-1 w-full">
+                          <span className="truncate flex-1">{base}</span>
+                          {ext && <span className="shrink-0 text-gray-300 text-[12px] select-none">{ext}</span>}
+                          <button className="shrink-0 p-0.5 rounded text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors" title="重命名文件"
+                            onClick={() => startEdit("file", f.id, base)}>
+                            <IconPencil />
+                          </button>
+                        </span>
+                      )
+                    ); })()}
+                  </td>
                   <td className="text-gray-500">{fmtBytes(f.file_size)}</td>
                   <td className="text-gray-500">{f.duration != null ? fmtDuration(f.duration) : "-"}</td>
                   <td className="text-gray-500">{f.created_at ? fmtDate(f.created_at) : "-"}</td>
@@ -209,15 +288,24 @@ function CaseContent({
                     </span>
                   </td>
                   <td className="text-right pr-4 whitespace-nowrap">
-                    <button className="g-btn g-btn-primary !px-2 !py-1 mr-1"
-                      title={f.current_status === "completed" ? "打开工作台查看结果" : "配置参数并解析"}
-                      onClick={() => onOpenFile(f, f.current_status !== "completed")}>
-                      {f.current_status === "completed" ? "查看结果" : "智能解析"}
-                    </button>
-                    <button className="g-btn !px-2 !py-1 mr-1" title="预览视频" onClick={() => onOpenFile(f, false)}>
-                      预览
-                    </button>
-                    <button className="g-btn g-btn-danger !px-2 !py-1" onClick={() => onDeleteFile(f)}>删除</button>
+                    <div className="inline-flex items-center gap-1.5">
+                      {f.current_status !== "completed" && (
+                        <button className="p-1.5 rounded-md text-[#4f7cff] hover:bg-blue-50 transition-colors" title="配置参数并解析"
+                          onClick={() => onOpenFile(f, true)}>
+                          <IconBolt />
+                        </button>
+                      )}
+                      {/* 预览/查看结果合并为一个眼睛按钮：未处理=预览，已完成=查看结果 */}
+                      <button className="p-1.5 rounded-md text-gray-500 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors"
+                        title={f.current_status === "completed" ? "查看结果" : "预览视频"}
+                        onClick={() => onOpenFile(f, false)}>
+                        <IconEye />
+                      </button>
+                      <button className="p-1.5 rounded-md text-red-500 hover:text-red-600 hover:bg-red-50 transition-colors" title="删除文件"
+                        onClick={() => onDeleteFile(f)}>
+                        <IconTrash />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -229,16 +317,37 @@ function CaseContent({
                 <td><span className="inline-flex items-center justify-center w-6 h-6 rounded bg-gray-50 text-gray-500">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path strokeLinecap="round" strokeLinejoin="round" d="M21 15l-5-5L5 21" /></svg>
                 </span></td>
-                <td className="text-gray-800 max-w-[320px] truncate" title={img.name}>{img.name}</td>
+                <td className="text-gray-800 font-medium" title={img.name}>
+                  {(() => { const { base, ext } = splitName(img.name, img.file_ext); return (
+                    editing?.kind === "image" && editing.id === img.id ? editField(ext) : (
+                      <span className="flex items-center gap-1 w-full">
+                        <span className="truncate flex-1">{base}</span>
+                        {ext && <span className="shrink-0 text-gray-300 text-[12px] select-none">{ext}</span>}
+                        <button className="shrink-0 p-0.5 rounded text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors" title="重命名图片"
+                          onClick={() => startEdit("image", img.id, base)}>
+                          <IconPencil />
+                        </button>
+                      </span>
+                    )
+                  ); })()}
+                </td>
                 <td className="text-gray-500">{fmtBytes(img.file_size)}</td>
                 <td className="text-gray-400">—</td>
                 <td className="text-gray-500">{img.created_at ? fmtDate(img.created_at) : "-"}</td>
                 <td><span className="g-badge wait">图片</span></td>
                 <td className="text-right pr-4 whitespace-nowrap">
-                  {tree.startsWith("g:") && (
-                    <button className="g-btn !px-2 !py-1 mr-1" onClick={() => setPreviewImg(img)}>预览</button>
-                  )}
-                  <button className="g-btn g-btn-danger !px-2 !py-1" onClick={() => onDeleteImage(img)}>删除</button>
+                  <div className="inline-flex items-center gap-1.5">
+                    {tree.startsWith("g:") && (
+                      <button className="p-1.5 rounded-md text-gray-500 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors" title="预览图片"
+                        onClick={() => setPreviewImg(img)}>
+                        <IconEye />
+                      </button>
+                    )}
+                    <button className="p-1.5 rounded-md text-red-500 hover:text-red-600 hover:bg-red-50 transition-colors" title="删除图片"
+                      onClick={() => onDeleteImage(img)}>
+                      <IconTrash />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -286,6 +395,10 @@ export function FileLibrary() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [analyzing, setAnalyzing] = useState(false);
   const [batchTargets, setBatchTargets] = useState<string[] | null>(null);
+  /* 案例编辑 */
+  const [editCase, setEditCase] = useState<VideoGroup | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", number: "", owner: "" });
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const load = () => {
     api.listFiles().then((data) => setFiles(data ?? [])).catch(() => {});
@@ -337,8 +450,14 @@ export function FileLibrary() {
     input.click();
   };
 
+  /* 新建案例：自动填充当日递增编号（可手动改） */
+  const openNewCase = () => {
+    setForm((prev) => ({ ...prev, number: genCaseNumber(groups) }));
+    setShowNewGroup(true);
+  };
+
   const createGroup = async () => {
-    if (!form.name.trim()) { alert("请填写文件名称"); return; }
+    if (!form.name.trim()) { alert("请填写案例名称"); return; }
     setCreatingGroup(true);
     try {
       const g = await api.createGroup({ name: form.name.trim(), number: form.number.trim() || undefined, owner: form.owner.trim() || undefined });
@@ -349,6 +468,42 @@ export function FileLibrary() {
       refreshCaseGroups();
     } catch (err) { alert(err instanceof Error ? err.message : "创建失败"); }
     setCreatingGroup(false);
+  };
+
+  /* 编辑案例：弹窗改 名称/编号/负责人 */
+  const openEditCase = (g: VideoGroup) => {
+    setEditForm({ name: g.name ?? "", number: g.number ?? "", owner: g.owner ?? "" });
+    setEditCase(g);
+  };
+
+  const saveEditCase = async () => {
+    if (!editCase) return;
+    if (!editForm.name.trim()) { alert("请填写案例名称"); return; }
+    setSavingEdit(true);
+    try {
+      await api.updateGroup(editCase.groupId, {
+        name: editForm.name.trim(),
+        number: editForm.number.trim() || undefined,
+        owner: editForm.owner.trim() || undefined,
+      });
+      setEditCase(null);
+      load();
+      refreshCaseGroups();
+    } catch (err) { alert(err instanceof Error ? err.message : "保存失败"); }
+    setSavingEdit(false);
+  };
+
+  /* 重命名文件 / 素材：单元格内联编辑提交 */
+  const handleRenameFile = async (id: string, name: string) => {
+    try { await api.renameFile(id, name); load(); }
+    catch (err) { alert(err instanceof Error ? err.message : "重命名失败"); }
+  };
+
+  const handleRenameAsset = async (id: string, name: string) => {
+    const gid = tree.startsWith("g:") ? tree.slice(2) : null;
+    if (!gid) return;
+    try { await api.renameGroupAsset(gid, id, name); load(); }
+    catch (err) { alert(err instanceof Error ? err.message : "重命名失败"); }
   };
 
   const deleteCase = async (g: VideoGroup) => {
@@ -451,7 +606,7 @@ export function FileLibrary() {
   return (
     <div className="h-full flex flex-col gap-2 p-2">
       {/* ① 顶部卡 */}
-      <CaseHeader onNewCase={() => setShowNewGroup(true)} />
+      <CaseHeader onNewCase={openNewCase} />
 
       {/* ② 左卡 + ③ 右卡 */}
       <div className="flex flex-1 gap-2 min-h-0">
@@ -467,6 +622,9 @@ export function FileLibrary() {
           onSearch={setSearch} onStatusFilter={setStatusFilter} onUpload={handleUploadFiles}
           onToggleSelect={toggleSelect} onToggleSelectAll={toggleSelectAll} onAnalyze={handleAnalyze}
           onOpenFile={(f, openParams) => openWorkbench(f.id, { openParams })}
+          onEditCase={openEditCase}
+          onRenameFile={handleRenameFile}
+          onRenameAsset={handleRenameAsset}
           onDeleteFile={deleteFile} onDeleteImage={deleteImage}
         />
       </div>
@@ -481,12 +639,12 @@ export function FileLibrary() {
             </div>
             <div className="p-5 space-y-4">
               <div>
-                <label className="g-label">文件名称 <span style={{ color: "#ef4444" }}>*</span></label>
+                <label className="g-label">案例名称 <span style={{ color: "#ef4444" }}>*</span></label>
                 <input className="g-input w-full" placeholder="如：2024-甲区抢劫案" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </div>
               <div>
-                <label className="g-label">文件编号</label>
-                <input className="g-input w-full" placeholder="如：A-2024-0117" value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} />
+                <label className="g-label">案例编号</label>
+                <input className="g-input w-full" placeholder="如：A-2026-0814-01" value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} />
               </div>
               <div>
                 <label className="g-label">负责人</label>
@@ -496,6 +654,38 @@ export function FileLibrary() {
                 <button className="g-btn" onClick={() => setShowNewGroup(false)}>取消</button>
                 <button className="g-btn g-btn-primary" onClick={createGroup} disabled={creatingGroup}>
                   {creatingGroup ? "创建中…" : "创建案例"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 编辑案例弹窗：改 名称/编号/负责人 */}
+      {editCase && (
+        <div className="g-modal-overlay">
+          <div className="g-modal" style={{ width: 440 }}>
+            <div className="g-card-hd">
+              <span className="g-card-tt">编辑案例</span>
+              <button className="g-btn g-btn-sm" onClick={() => setEditCase(null)}>×</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="g-label">案例名称 <span style={{ color: "#ef4444" }}>*</span></label>
+                <input className="g-input w-full" placeholder="如：2024-甲区抢劫案" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+              </div>
+              <div>
+                <label className="g-label">案例编号</label>
+                <input className="g-input w-full" placeholder="如：A-2026-0814-01" value={editForm.number} onChange={(e) => setEditForm({ ...editForm, number: e.target.value })} />
+              </div>
+              <div>
+                <label className="g-label">负责人</label>
+                <input className="g-input w-full" placeholder="如：张建国" value={editForm.owner} onChange={(e) => setEditForm({ ...editForm, owner: e.target.value })} />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button className="g-btn" onClick={() => setEditCase(null)}>取消</button>
+                <button className="g-btn g-btn-primary" onClick={saveEditCase} disabled={savingEdit}>
+                  {savingEdit ? "保存中…" : "保存"}
                 </button>
               </div>
             </div>

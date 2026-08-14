@@ -406,6 +406,13 @@ export const api = {
   deleteFile(fileId: string) {
     return request<{ ok: boolean; freed_bytes?: number }>(`${BASE}/files/${fileId}`, { method: "DELETE" });
   },
+  renameFile(fileId: string, name: string) {
+    return request<{ ok: boolean; renamed?: number }>(`${BASE}/files/${fileId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+  },
   listVersions(videoId: string) {
     return request<VersionInfo[]>(`${BASE}/videos/${videoId}/versions`);
   },
@@ -454,6 +461,13 @@ export const api = {
   },
   deleteGroupAsset(groupId: string, assetId: string) {
     return request<{ ok: boolean }>(`${BASE}/groups/${groupId}/assets/${assetId}`, { method: "DELETE" });
+  },
+  renameGroupAsset(groupId: string, assetId: string, name: string) {
+    return request<{ ok: boolean }>(`${BASE}/groups/${groupId}/assets/${assetId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
   },
 };
 

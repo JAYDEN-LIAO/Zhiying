@@ -112,13 +112,13 @@ function PresetSection({
                   )}
                   {!isRenaming && (
                     <button onClick={() => onApply(p)} disabled={saving === `apply-${p.id}`}
-                      className="px-2.5 py-1 text-[11px] font-medium bg-[#0d9488] text-white rounded-md hover:bg-[#14b8a6] disabled:opacity-40 transition-colors cursor-pointer flex-shrink-0">
+                      className="px-2.5 py-1 text-[11px] font-medium bg-[#4f7cff] text-white rounded-md hover:bg-[#4369f5] disabled:opacity-40 transition-colors cursor-pointer flex-shrink-0">
                       {saving === `apply-${p.id}` ? "套用中..." : "套用"}
                     </button>
                   )}
                   {isRenaming ? (
                     <button onClick={() => onRename(p)} disabled={saving === `rename-${p.id}`}
-                      className="px-2.5 py-1 text-[11px] font-medium bg-[var(--color-accent-green)] text-white rounded-md hover:opacity-80 disabled:opacity-40 transition-colors cursor-pointer flex-shrink-0">
+                      className="px-2.5 py-1 text-[11px] font-medium bg-[#4f7cff] text-white rounded-md hover:bg-[#4369f5] disabled:opacity-40 transition-colors cursor-pointer flex-shrink-0">
                       确定
                     </button>
                   ) : (

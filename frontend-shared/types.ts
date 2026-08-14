@@ -253,6 +253,7 @@ export interface VideoGroup {
 export interface FileItem {
   id: string;                       // 文件 ID = file_id（独立文件 = 自身 id）
   name: string;
+  file_ext?: string | null;         // 真实扩展名（后缀展示用，重命名不影响）
   group_id: string | null;
   duration: number | null;
   file_size: number | null;
@@ -611,6 +612,7 @@ export interface CaseAssetItem {
   kind: string;
   name: string;
   path: string;
+  file_ext?: string | null;         // 真实扩展名（后缀展示用）
   file_size: number;
   created_at: string | null;
 }

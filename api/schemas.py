@@ -123,6 +123,16 @@ class AnalyzeBatchRequest(BaseModel):
     params: PipelineParams | None = Field(default=None, description="整批应用的处理参数")
 
 
+class RenameFileRequest(BaseModel):
+    """文件重命名：更新该文件全部版本行的文件名。"""
+    name: str = Field(..., min_length=1, max_length=255, description="新文件名")
+
+
+class RenameAssetRequest(BaseModel):
+    """案例素材（图片）重命名：更新显示名（磁盘文件按 uid 存储，无需移动）。"""
+    name: str = Field(..., min_length=1, max_length=255, description="新素材名")
+
+
 # ═══════════════════════════════════════════════════════════
 # 设置 DTO
 # ═══════════════════════════════════════════════════════════

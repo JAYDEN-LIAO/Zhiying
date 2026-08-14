@@ -1,6 +1,6 @@
 # Zhiying Architecture
 
-> Version: 0.33 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> Version: 0.34 候选 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4（双前端: frontend/ 服务器 + frontend-desktop/ 桌面, 共享 frontend-shared/ 对接层）
 > 历史: v0.22 部署系统+设置/参数+Detection重构+删除处理中 / v0.24 云智接入+生产部署 / v0.26 平台文件id跳转 / v0.27 搜索修正+车牌模糊搜索 / v0.28 云智嵌入UI / v0.29 人脸链路重构+搜索隔离 / v0.31 人脸交互+搜索范围+跨视频穿透+置信度
 > v0.32: 全局任务队列（PipelineQueue FIFO + worker 池 + pipeline_tasks 表持久化，批量上传排队防 OOM；重启恢复 + 排队中回调 + 幂等）
@@ -8,6 +8,7 @@
 > v0.34 候选（桌面端重构 + 文件库/多版本/任务中心，未发版，桌面前端/部署侧）: 浅蓝管理后台主题 + frameless 自定义窗口外框（TitleBar 拖拽/窗口按钮/版本徽章, js_api 桥接）+ 4 页模型（文件库/视频解析/任务中心/系统设置）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane）+ 系统监控（psutil）+ `update.bat` 一键更新
 > v0.34 候选（文件库/多版本/任务中心/页面裂解，未发版）: 后端 videos.file_id/version_no 版本链 + video_groups.number/owner + task_logs 表 + /groups /files /versions /reanalyze /tasks 端点 + 任务日志生命周期 + 耗时（processing_started_at）+ 导出报告（/tasks/{id}/report md + /tasks/export-batch zip）；前端 TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2 + 卡片空隙透渐变
 > 桌面 EXE + 双部署路径（未发版）: build_exe.ps1 -Deploy 一条命令打纯壳 exe + setup_linux.sh/setup_windows.ps1 补全 + bump 全机接入
+> v0.34 候选（案例库批量解析/交互 + 搜索卡重构 + 桌面壳，未发版）: POST /videos/analyze-batch 精确勾选批量解析（不走组同步、可选整批参数）；PUT /files/{id} + PUT /groups/{id}/assets/{id} 文件/素材重命名（无后缀自动补真实扩展名）；FileItem/CaseAssetItem.file_ext 后缀展示字段；案例编辑/编号自动填充 A-YYYY-MMDD-NN；搜索卡案例-文件范围（当前视频/案例/文件多选，未处理隐藏）+ 无视频可交互 + 跨视频结果切主视频 + pendingSeek 可靠定位 + 搜索卡单实例跨空态保留；TitleBar 手动拖拽（最大化先还原再跟随）；g-btn 全局 nowrap 防挤压
 
 ## System Data Flow
 
@@ -224,7 +225,9 @@ Persist: bulk_insert_scenes + insert transcript + update videos (duration/summar
   ├─ 文件库：GET /files 每 file_id 一行；GET /videos/{id}/versions 版本链；POST /videos/{id}/reanalyze 建新版本行（复用 reuse 复制机制）；video_groups.number/owner 案例编号/负责人；/groups/{id}/assets 案例素材
   ├─ 任务中心：GET /tasks scope 过滤（all/active/history）；「耗时」= updated_at − videos.processing_started_at（_set_processing 写入，排队不计入，retry 置空重新计时）
   ├─ 日志生命周期：统一 append_task_log（core/repository，task_logs 表 seq 递增）— create_video / PUT params / reanalyze / engine（开始/完成/失败）/ retry
-  └─ 导出报告：GET /tasks/{id}/report 生成 Markdown（report_service.build_report_md，产物表单表异常降级）；POST /tasks/export-batch zip 打包；中文文件名 URL 编码（HTTP header 仅 latin-1）
+  ├─ 导出报告：GET /tasks/{id}/report 生成 Markdown（report_service.build_report_md，产物表单表异常降级）；POST /tasks/export-batch zip 打包；中文文件名 URL 编码（HTTP header 仅 latin-1）
+  ├─ 批量解析（v0.34候选）：POST /videos/analyze-batch 精确勾选启动（仅 pending、不走组同步、可选 params 整批应用）— 前端勾选列 + 一键/批量解析（弹参数面板）
+  └─ 重命名 / 后缀展示（v0.34候选）：PUT /files/{id}（更新全部版本行 file_name，无后缀自动补真实扩展名）+ PUT /groups/{id}/assets/{id}（仅改显示名）；FileItem/CaseAssetItem.file_ext 真实扩展名作展示字段（编辑框只含主名，重命名不影响后缀）
 ```
 
 ## Module Dependency
@@ -313,6 +316,9 @@ Semantic Search: POST /api/v1/search/semantic — query → embedder.encode_text
     （曾误声明为 query → form-data 提交取不到 → None → 全库泄漏）；单视频搜索严格隔离
   → v0.31 搜索范围: 前端范围模型 current/group/all/custom（all=不传 video_ids 全库 / custom=自定义跨视频多选）；
      无视频默认工作台直接全库搜索；跨视频结果点击保留结果与范围（suppress-flag + videoId prop 根治重置）+ seekTarget 可靠 seek
+     → v0.34候选 桌面端范围改案例-文件结构：下拉 = 当前视频 / 案例全选 / 文件多选（未处理直接隐藏、未索引置灰），
+       无视频也可交互（空选=全库）；跨视频结果点击**切主视频**（播放器/时间轴/检测/摘要同步）+ pendingSeek 等新视频就绪再定位；
+       搜索卡合并单实例（空态↔有视频结果/范围保留）
   返回: {precision_level, precise_start/end, match_paths, thumbnail_url, track_id?, bbox?, confidence?}
 
 core/search.py 6 种检索函数:
@@ -482,6 +488,9 @@ task_logs (v0.34 任务生命周期日志)
 | GET/POST | /api/v1/groups/{id}/assets | 案例素材列表 / 上传（图片等非视频，v0.34） |
 | GET | /api/v1/videos/{id}/versions | 版本链列表（同 file_id 全部版本行，v0.34） |
 | POST | /api/v1/videos/{id}/reanalyze | 重新解析：复制文件信息建新版本行 + 版本号递增 + 入队（v0.34） |
+| POST | /api/v1/videos/analyze-batch | 批量解析：精确启动指定待处理视频（仅 pending、**不走组同步**、可选整批 params 整批应用，v0.34候选） |
+| PUT | /api/v1/files/{file_id} | 文件重命名（更新全部版本行 file_name，含遗留 NULL file_id；无后缀自动补磁盘真实扩展名，v0.34候选） |
+| PUT | /api/v1/groups/{id}/assets/{asset_id} | 案例素材重命名（仅改显示名，磁盘文件按 uid 存储不动路径，v0.34候选） |
 | GET | /api/v1/tasks | 任务中心列表（scope: all/active/history，v0.34） |
 | GET | /api/v1/tasks/{id}/log | 任务日志（task_logs 表，v0.34） |
 | POST | /api/v1/tasks/{id}/retry | 重试：清空产物 + 重置 pending + processing_started_at 置空 + 重新入队（v0.34） |
@@ -549,10 +558,13 @@ React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @them
   │   │                         系统设置 2 子页(系统设置/模型参数) + SystemMonitor
   │   ├── SystemMonitor      ← 底部真机监控（等 pywebviewready 后轮询 get_system_stats，
   │   │                         psutil CPU/内存/网络 + nvidia-smi GPU，迷你柱状图）
-  │   ├── FileLibrary        ← 文件库：左分组树 + 右表格(类型/文件名/时长/时间/状态/操作)
+  │   ├── FileLibrary        ← 文件库：左分组树 + 右表格(类型/文件名/时长/时间/状态/操作)；
+  │   │                         批量解析（勾选列+一键/批量解析+参数面板）、案例编辑/编号自动填充
+  │   │                         A-YYYY-MMDD-NN、文件与图片内联重命名、后缀展示字段（file_ext 灰色固定）
   │   ├── Workbench          ← 视频解析（照智影 v2 demo 骨架：外层 SplitPane 60%
   │   │                         左舞台播放器/时间轴 + 右栏 摘要⇄信息 toggle | 检测|搜索 42%
-  │   │                         分栏；ParameterPanel 以 Modal 打开）
+  │   │                         分栏；ParameterPanel 以 Modal 打开；搜索卡案例-文件范围下拉[当前视频/
+  │   │                         案例/文件多选，未处理隐藏] + 无视频可交互 + 跨视频结果切主视频 + 单实例保留结果）
   │   ├── TaskCenter         ← 任务中心：裂解 TaskHeader(顶部卡) + TaskBody(正文卡：
   │   │                         筛选 Tab + 表格 任务文件/版本/所属/状态/提交时间/耗时 + 操作
   │   │                         导出报告/日志/重试[失败])；4s 轮询；无删除按钮
@@ -565,10 +577,10 @@ React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @them
   页面卡片空隙：外层 app-main-flat 透明背景 + 页面根容器透明（不透明白底挡死渐变）+ space/gap 卡片间距 → 渐变透出（TaskCenter/FileLibrary/SettingsPage 一致）
 ```
 
-**桌面端窗口壳（`desktop/`，v0.34）**：
+**桌面端窗口壳（`desktop/`，v0.34 + v0.34候选）**：
 - 主窗 `create_window(..., frameless=True, shadow=True)` 去系统标题栏（Windows EdgeChromium 保留圆角阴影）
-- 前端标题栏 div 加 `.pywebview-drag-region`（对应 pywebview `settings['DRAG_REGION_SELECTOR']` 默认值）自动拖拽；窗口按钮置于拖拽区外（sibling）防误触
-- `webview_panel.py` SplashApi 扩展：`minimize/toggle_maximize/is_maximized/quit`（窗口控制）+ `get_system_stats`（psutil + nvidia-smi，GPU 缓存 5s）；load_url 到真实前端后 js_api 仍有效
+- 前端标题栏**手动拖拽**（替代原生 drag-region）：`SplashApi.move(x,y)` 移动窗口；**最大化态先 toggle_maximize 还原再跟随光标**（桌面惯例「拖动缩小跟随」）；双击标题栏切换最大化/还原；窗口按钮置于拖拽区外（sibling）防误触
+- `webview_panel.py` SplashApi 扩展：`minimize/toggle_maximize/is_maximized/move/quit`（窗口控制）+ `get_system_stats`（psutil + nvidia-smi，GPU 缓存 5s）；load_url 到真实前端后 js_api 仍有效
 - `desktop/requirements.txt` 含 `psutil`；前端 `window.pywebview` 存在才渲染窗口按钮（浏览器 dev 隐藏）
 
 **更新发布**：根目录 `update.bat` 一键自动更新（Windows）：git pull（走 7897 代理）→ pip 装 desktop 依赖 → npm install/build（dist gitignored 必须本地建）→ `build_exe.ps1 -Deploy` 重打 exe。
@@ -619,7 +631,7 @@ React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @them
 | **搜索数据隔离 (v0.29)** | search/face + search/image 的 video_ids 等改 Form(...) 声明修复全库泄漏；单视频搜索严格隔离 |
 
 ## Current Status
-**核心链路全部 ✅**：Pipeline DAG(15 ops) / 4-path 编码 / 双层 ReID / 7-path 搜索+图搜 / 人脸+车牌识别 / 双模式摘要(vlm_llm 默认) / 多格式(remux+proxy) / 存储卫生 / 4级参数+增量 / 系统设置+参数预设 / 全局 GPU 锁+共享实例 / 任务队列(v0.32) / 文件库+多版本解析+任务中心(v0.34) / 云智嵌入 UI / 桌面端 v0.34 重构+组件裂解 / 生产部署 / Health。详见 README「Development Status」。
+**核心链路全部 ✅**：Pipeline DAG(15 ops) / 4-path 编码 / 双层 ReID / 7-path 搜索+图搜 / 人脸+车牌识别 / 双模式摘要(vlm_llm 默认) / 多格式(remux+proxy) / 存储卫生 / 4级参数+增量 / 系统设置+参数预设 / 全局 GPU 锁+共享实例 / 任务队列(v0.32) / 文件库+多版本解析+任务中心(v0.34) / **批量解析+文件/素材重命名+后缀展示(v0.34候选)** / **搜索卡案例-文件范围+跨视频切主视频(v0.34候选)** / 云智嵌入 UI / 桌面端 v0.34 重构+组件裂解 / 生产部署 / Health。详见 README「Development Status」。
 
 **非完全状态**：
 | Module | Status | Note |

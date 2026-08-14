@@ -6,7 +6,7 @@
    避免点击触发拖拽。浏览器 dev（无 pywebview）时隐藏窗口按钮。
    ════════════════════════════════════════════════════════════ */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../services/api";
 
 declare global {
@@ -17,6 +17,7 @@ declare global {
         toggle_maximize?: () => Promise<boolean>;
         is_maximized?: () => boolean;
         quit?: () => void;
+        move?: (x: number, y: number) => void;
       };
     };
   }
@@ -50,16 +51,54 @@ export function TitleBar() {
   };
   const onClose = () => pv?.quit?.();
 
+  /* ── 手动拖拽窗口（替代原生 drag-region，支持最大化态「先还原再跟随光标」）── */
+  const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
+
+  const onDragStart = async (e: React.MouseEvent) => {
+    if (e.button !== 0 || !pv?.move) return;  // 非左键或无桥（浏览器 dev）不处理
+    e.preventDefault();
+    let baseX = window.screenX;
+    let baseY = window.screenY;
+    if (pv.is_maximized?.()) {
+      // 最大化：先还原，再把窗口移到光标下方（光标落在标题栏约 1/3 宽处），随后跟随拖动
+      await pv.toggle_maximize?.();
+      setIsMax(false);
+      const targetX = Math.round(e.screenX - window.innerWidth * 0.33);
+      const targetY = Math.round(e.screenY - 24);
+      pv.move(targetX, targetY);
+      baseX = targetX;
+      baseY = targetY;
+    }
+    dragRef.current = { startX: e.screenX, startY: e.screenY, baseX, baseY };
+
+    const onMove = (ev: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      pv.move?.(d.baseX + (ev.screenX - d.startX), d.baseY + (ev.screenY - d.startY));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   return (
     <header className="titlebar">
-      {/* 拖拽区（pywebview-drag-region）—— Logo/标题/徽章区域可拖动窗口 */}
-      <div className="pywebview-drag-region tb-drag">
+      {/* 拖拽区 —— 手动拖拽窗口（最大化态先还原再跟随光标）；双击切换最大化/还原 */}
+      <div
+        className="tb-drag"
+        onMouseDown={onDragStart}
+        onDoubleClick={() => { void onMax(); }}
+      >
         <div className="tb-logo">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
             <polygon points="6 3 20 12 6 21 6 3" />
           </svg>
         </div>
-        <span className="tb-title">智影视频分析系统</span>
+        <span className="tb-title">视频智能快速检索平台</span>
         {version && <span className="tb-badge">v{version}</span>}
       </div>
 

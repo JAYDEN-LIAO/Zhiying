@@ -97,6 +97,10 @@ curl -X POST -H "Content-Type: application/json" \
 | 文件库 + 多版本解析 (v0.34) | `videos.file_id/version_no` 版本链（一次解析=一个版本行）+ `video_groups.number/owner` 案例编号/负责人 + `/groups /files /videos/{id}/versions /videos/{id}/reanalyze` 端点 + 案例素材 `/groups/{id}/assets` | ✅ |
 | 任务中心 (v0.34) | `GET /tasks` scope 过滤 + `/tasks/{id}/log` + `/tasks/{id}/retry`；**耗时** `processing_started_at`（排队不计入）；**日志生命周期** 上传/参数/重解析/管道/重试全链写入 `task_logs`；**导出报告** `GET /tasks/{id}/report`（Markdown）+ `POST /tasks/export-batch`（zip） | ✅ |
 | 桌面端页面组件裂解 (v0.34) | TaskCenter 裂解 TaskHeader/TaskBody；SettingsPage 4 子页收敛 2（系统设置=系统+参数预设，模型参数=模型参数+API密钥）+ 各页裂解子组件；卡片空隙靠透明根容器 + `app-main-flat` 透出渐变 | ✅ |
+| 案例库批量解析（精确勾选） | `POST /api/v1/videos/analyze-batch`（仅 pending 精确启动、**不走组同步**、可选整批参数）+ 文件列表勾选列（仅待处理可勾）+ 一键/批量解析（参数面板整批应用）；后端 `upload_videos_batch` 复用已有分组修复 | ✅ |
+| 文件/素材重命名 + 后缀展示字段 | `PUT /api/v1/files/{file_id}`（更新全部版本行）+ `PUT /api/v1/groups/{id}/assets/{asset_id}`；`file_ext` 真实扩展名作**展示字段**（编辑框只含主名，重命名不影响后缀） | ✅ |
+| 案例编辑 + 编号自动填充 | 案例列表删除红色可见 + 编辑按钮（名称/编号/负责人，`PUT /groups/{id}`）+ 新建编号自动填充 `A-YYYY-MMDD-NN`（同天递增，可手动改） | ✅ |
+| 搜索卡案例-文件范围 + 跨视频切主视频 | 下拉改案例-文件结构（当前视频/案例/文件多选，未处理隐藏）；无视频可交互；跨视频结果点击**切主视频**（播放器/时间轴/检测/摘要同步）+ seek 可靠定位 + 搜索卡单实例跨空态保留结果 | ✅ |
 
 ## Architecture Overview
 
@@ -281,6 +285,11 @@ zhiying/
 
 ## Development Status
 
+- **v0.34 候选（未发版，本次大批改动）— 案例库批量解析 + 案例库交互 + 搜索卡重构 + 桌面壳**:
+  - **批量解析**：`POST /videos/analyze-batch` 精确勾选启动（不走组同步，可选整批参数）；文件列表勾选列（仅待处理可勾）+ 一键/批量解析按钮（弹参数面板整批应用）；`upload_videos_batch` 复用已有分组 bug 修复
+  - **案例库**：案例编辑（名称/编号/负责人）+ 删除红色可见 + 编号自动填充 `A-YYYY-MMDD-NN`；文件与图片重命名（内联编辑，后端 `PUT /files/{id}` + `PUT /groups/{id}/assets/{id}`）；文件操作改图标按钮（智能解析/预览合并/删除）+ 文件名铅笔右对齐；**后缀作展示字段**（`file_ext` 真实扩展名，编辑框只含主名、重命名不影响后缀）
+  - **搜索卡**：下拉重构为**案例-文件**结构（当前视频/案例/文件多选，未处理直接隐藏、未索引置灰）；无视频也可交互（全部=空选）；跨视频结果点击**切主视频**（播放器/时间轴/检测/摘要同步）+ `pendingSeek` 可靠定位；搜索卡合并为**单实例**（空态↔有视频结果/范围保留）
+  - **工作台/桌面壳**：三卡片待处理态统一（居中灰字）；搜索卡纵向滚动修复 + 横滚动条删除；`.g-btn` 全局 nowrap + 工具栏 flex-wrap 防窄窗口挤压；TitleBar 改**手动拖拽**（最大化先还原再跟随光标）+ `SplashApi.move`；标题改「视频智能快速检索平台」；人脸按钮图标修正
 - **桌面端重构（未发版，桌面前端/部署侧）**: 浅蓝管理后台主题 + frameless 自定义窗口外框 + 4 页模型（文件库/视频解析/任务中心/系统设置，设置 4 子页拆入导航）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane 分栏）+ 系统监控（psutil）+ 根目录 `update.bat` 一键更新。
 - **文件库 + 多版本解析 + 任务中心（未发版）**: 后端 `videos.file_id/version_no` 版本链 + `video_groups.number/owner` + `task_logs` 表 + `/groups /files /versions /reanalyze /tasks` 端点；前端案例库/视频解析/任务中心界面重构；任务中心日志生命周期（上传→完成全链）+ 耗时（`processing_started_at`）+ 导出报告（Markdown/zip）。
 - **桌面端页面组件裂解（未发版）**: TaskCenter 裂解 TaskHeader/TaskBody（删删除按钮、失败任务导出报告左侧加重试、字段顺序 任务文件/版本/所属 + 耗时列）；SettingsPage 4 子页收敛 2（系统设置=系统+参数预设，模型参数=模型参数+API密钥）+ 每页裂解子组件；设置页根容器去白底 + `app-main-flat` 透渐变实现卡片空隙；设置保存按钮统一 `g-btn g-btn-primary`。

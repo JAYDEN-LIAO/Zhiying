@@ -16,7 +16,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db
-from api.schemas import APIResponse, VideoStatusResponse, ReuseRequest, AnalyzeBatchRequest
+from api.schemas import APIResponse, VideoStatusResponse, ReuseRequest, AnalyzeBatchRequest, RenameFileRequest
 from core.schemas import (
     VideoCreate, VideoResponse, VideoListItem, VideoGroupResponse,
     PipelineParams, ExternalVideoRegister, ContentType,
@@ -979,6 +979,39 @@ async def _cache_source_analysis(
 # v0.34 文件库 / 多版本解析
 # ═══════════════════════════════════════════════════════════
 
+@router.put("/files/{file_id}", response_model=APIResponse[dict])
+async def rename_file(
+    file_id: uuid.UUID,
+    payload: RenameFileRequest,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """重命名文件：更新该文件全部版本行的 file_name（含遗留 NULL file_id 独立文件）。
+
+    新名字未带扩展名时自动补回磁盘真实后缀（下载导出用 file_name 作文件名，缺后缀会打不开）。
+    """
+    from sqlalchemy import and_, or_
+    root = (await db.execute(
+        select(Video).where(or_(
+            Video.file_id == file_id,
+            and_(Video.file_id.is_(None), Video.id == file_id),
+        )).order_by(Video.created_at).limit(1)
+    )).scalar_one_or_none()
+    if root is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    ext = os.path.splitext(root.file_path or "")[1] or ""
+    new_name = payload.name if (not ext or "." in payload.name) else f"{payload.name}{ext}"
+    result = await db.execute(
+        update(Video).where(or_(
+            Video.file_id == file_id,
+            and_(Video.file_id.is_(None), Video.id == file_id),
+        )).values(file_name=new_name)
+    )
+    await db.commit()
+    renamed = result.rowcount or 0
+    logger.info("[RenameFile] file=%s name=%s rows=%d", file_id, new_name, renamed)
+    return APIResponse(data={"ok": True, "renamed": renamed})
+
+
 @router.get("/files", response_model=APIResponse[list[FileItem]])
 async def list_files(db: AsyncSession = Depends(get_db)) -> APIResponse[list[FileItem]]:
     """文件库列表 — 每个文件一行（根行信息 + 当前版本状态/进度/摘要）。"""
@@ -986,6 +1019,7 @@ async def list_files(db: AsyncSession = Depends(get_db)) -> APIResponse[list[Fil
     items = [FileItem(
         id=r["id"],                          # 根 videos 行 id（前端打开用，Workbench 再解析当前版本）
         name=r["file_name"],
+        file_ext=os.path.splitext(r.get("file_path") or "")[1],
         group_id=r.get("group_id"),
         duration=r.get("duration"),
         file_size=r.get("file_size"),

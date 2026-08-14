@@ -57,21 +57,12 @@ export function VideoSummaryCard({ video }: { video: VideoResponse | null }) {
     );
   }
 
-  /* ── Processing skeleton ── */
+  /* ── Processing（统一空态：居中灰字，与检测/搜索卡一致） ── */
   if (video.status === "processing" || video.status === "pending") {
     return (
       <div className="minor-card">
-
-        <div className="minor-card-bd">
-          <div className="animate-pulse space-y-3 w-full">
-            <div className="h-4 bg-gray-100 rounded w-3/4" />
-            <div className="h-3 bg-gray-100 rounded w-full" />
-            <div className="h-3 bg-gray-100 rounded w-5/6" />
-            <div className="flex gap-2">
-              <div className="h-5 bg-gray-100 rounded-full w-14" />
-              <div className="h-5 bg-gray-100 rounded-full w-16" />
-            </div>
-          </div>
+        <div className="minor-card-bd flex items-center justify-center">
+          <span className="text-gray-400 text-sm">视频处理完成后自动生成摘要</span>
         </div>
       </div>
     );

@@ -10,7 +10,7 @@ Zhiying 是 **视频分析引擎**（v0.33.0）：上传视频（单个/批量�
 run.py                     — 本地开发启动入口（按 config.yaml server 段绑端口，reload 模式）
 deploy.sh                  — 服务器一键部署（仓库根；`bash deploy.sh v<tag>`：fetch→config 迁移→checkout→build→restart→健康检查）
 main.py                    — FastAPI app, lifespan, exception handlers, shared embedder + shared detector (app.state, detector 模型懒加载); 静态托管前端（默认 frontend/dist 服务器前端, `ZHIYING_FRONTEND=desktop` 时挂 frontend-desktop/dist 桌面前端）
-api/video_routes.py        — Video CRUD + upload (probe同步+异步remux/proxy) + stream (hevc_ok智能路由) + proxy-status + thumbnail + external-id lookup (v0.26)
+api/video_routes.py        — Video CRUD + upload (probe同步+异步remux/proxy) + stream (hevc_ok智能路由) + proxy-status + thumbnail + external-id lookup (v0.26) + 批量解析 analyze-batch (v0.34候选) + 文件重命名 PUT /files/{id} (v0.34候选)
 api/search_routes.py       — Semantic search + pipeline/operations endpoints
 api/settings_routes.py     — 系统设置端点：GET/PUT /settings（密钥/服务商/存储/管道性能）+ /settings/pipeline + 参数预设 CRUD
 api/router.py              — Assembles sub-routers under /api/v1 prefix
@@ -23,9 +23,9 @@ api/face_routes.py          — Face data API (GET face/data + face/thumbnail; v
 api/plate_routes.py         — Plate data API (GET plate/data + plate/thumbnail)
 api/maintenance_routes.py  — 存储清扫端点 (POST /maintenance/sweep dry-run/执行, GET /maintenance/storage)
 api/tasks_routes.py        — 任务中心 API: GET /tasks (scope 过滤) + /tasks/{id}/log + /tasks/{id}/retry + 导出报告 (GET /tasks/{id}/report md + POST /tasks/export-batch zip, v0.34)
-api/groups_routes.py       — 案例/文件库 API: /groups CRUD + /files + /groups/{id}/assets 案例素材 (v0.34)
+api/groups_routes.py       — 案例/文件库 API: /groups CRUD + /files + /groups/{id}/assets 案例素材 + 素材重命名 PUT /groups/{id}/assets/{asset_id} (v0.34)
 core/models.py             — ORM: Video (+8 format fields + group_id/file_id/version_no + processing_started_at), VideoGroup (+number/owner), Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection, PipelineTask, TaskLog, CaseAsset (15 tables)
-core/schemas.py            — Pydantic v2 DTOs + JSONB validation models + FormatInfo/ProxyStatus
+core/schemas.py            — Pydantic v2 DTOs + JSONB validation models + FormatInfo/ProxyStatus + FileItem/CaseAssetItem.file_ext 真实扩展名（后缀展示字段）
 core/interfaces.py         — 10 abstract base classes (ABCs) + Scene/VideoContext dataclasses
 core/search.py             — 6 search functions: frame/chunk/text/track/plate/face (async def)
 core/repository.py         — Data access layer + bulk_insert_frames/chunks
@@ -90,7 +90,7 @@ frontend/src/utils/helpers.ts — 再导出指针 → frontend-shared/helpers (f
 frontend/src/services/api.ts — 再导出指针 → frontend-shared/api（API wrapper + 轮询辅助; 后端接口变更只改 frontend-shared）
 frontend/src/platform/        — 云智 Bridge SDK: yunzhi-bridge.ts/client.ts/YunzhiProvider/mock (VITE_YUNZHI_MOCK 切换真实/模拟; 仅服务器前端)
 frontend/src/types/index.ts — 再导出指针 → frontend-shared/types (mirrors backend schemas + ProxyStatus)
-frontend-desktop/             — 桌面独立前端（v0.34 重构：浅蓝管理后台主题 + frameless 自定义窗口标题栏 + 4 页模型 文件库/视频解析/任务中心/系统设置 + AppContext 导航 + 工作台 SplitPane 分栏 + 系统监控; TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2; 与服务器 frontend/ UI 完全隔离; 构建 cd frontend-desktop && npm run build; 加载经 ZHIYING_FRONTEND=desktop）
+frontend-desktop/             — 桌面独立前端（v0.34 重构 + v0.34候选：浅蓝管理后台主题 + frameless 自定义窗口标题栏[手动拖拽: 最大化先还原再跟随] + 4 页模型 文件库/视频解析/任务中心/系统设置 + AppContext 导航 + 工作台 SplitPane 分栏 + 系统监控; 案例库批量解析[勾选+一键/批量解析] + 案例编辑/编号自动填充 + 文件与图片重命名[内联编辑] + 后缀展示字段; 搜索卡案例-文件范围 + 跨视频切主视频 + 单实例保留结果; TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2; 与服务器 frontend/ UI 完全隔离; 构建 cd frontend-desktop && npm run build; 加载经 ZHIYING_FRONTEND=desktop）
 scripts/sweep_storage.py   — 存储卫生清扫 CLI (默认 dry-run 只报告, --apply 执行, --json 机器可读)
 frontend-shared/           — 双前端共享后端对接层（api/types/labels/helpers 一份实现; frontend/ 与 frontend-desktop/ 各留 1 行再导出指针; 后端接口/字段变更只改这里）
 scripts/mock_yunzhi_platform.py — 本地 mock 云智平台回调服务器 (监听 /progress /complete /fail, 联调验证用)
@@ -123,6 +123,8 @@ desktop/                   — 桌面端启动器（pywebview 壳, Windows 桌�
   PUT /params / reanalyze / retry → append_task_log 写 task_logs ("任务已创建/参数已提交/重新解析新版本/任务重试")
   PipelineEngine._set_processing → videos.processing_started_at=now; mark_completed/failed → updated_at → 任务中心「耗时」= updated_at − processing_started_at
   GET /tasks (scope) → 版本行列表; GET /tasks/{id}/log → task_logs; GET /tasks/{id}/report → Markdown; POST /tasks/export-batch → zip
+  POST /videos/analyze-batch (v0.34候选) → 批量解析：精确启动指定 pending 视频（仅 pending、不走组同步、可选整批参数整批应用），前端文件列表勾选列 + 一键/批量解析（弹参数面板）
+  PUT /files/{file_id} / PUT /groups/{id}/assets/{asset_id} (v0.34候选) → 文件/素材重命名（无后缀自动补磁盘真实扩展名）；FileItem/CaseAssetItem.file_ext 真实扩展名作展示字段（前端编辑框只含主名，重命名不影响后缀）
 
 云智平台接入 (v0.24):
   POST /api/v1/videos/register-external → 平台共享文件就地引用 (source_owned=false, 删视频绝不 unlink 源文件; probe + 异步 remux 与上传同流程; 可选带 external_file_id)
@@ -160,6 +162,7 @@ PipelineEngine.run() — 声明式 DAG (EventDrivenScheduler, 15 ops):
 - **共享单实例**: embedder 与 detector 都在启动时预载到 `app.state`（detector 模型懒加载，首次 detect 才载 ~2GB，避免每视频重载），业务逻辑经 `shared_detector` 注入 PipelineEngine，禁用 `load_plugin("detector"/"embedder")` 重复实例化；captioner 按需加载。
 - **全局任务队列（v0.32）**: `core/pipeline_queue.py` PipelineQueue — FIFO + N worker（N=max_concurrent_videos，0/未设=1 串行）+ `pipeline_tasks` 表 DB 持久化。所有管道触发点（yunzhi jobs / 上传 params / 组同步 / 增量）统一入队，接口保持异步（jobs 202）。重启恢复：queued 重入队 / running yunzhi 续跑（防重复建视频）/ running pipeline 标失败；yunzhi payload_json 存回调 URL+token，恢复后照常发 complete/fail；入队即发"排队中"低进度回调。worker 数随设置运行时调整（configure）。
 - **任务中心（v0.34）**: `api/tasks_routes.py` + `services/report_service.py`。一次解析 = 一个版本行（videos 行），任务中心列表按 scope 过滤（all/active/history）；「耗时」= `updated_at − processing_started_at`（管道开跑才计时，排队不计入，重试重置）；**日志生命周期**：所有写入统一走 `core/repository.append_task_log`（task_logs 表，seq 递增）——覆盖 create_video（"任务已创建"）、PUT params（"参数已提交，任务入队"）、reanalyze（"重新解析新版本"）、engine（管道开始/完成/失败）、retry（"任务重试"）；导出报告 = `GET /tasks/{id}/report`（Markdown 下载，中文文件名 URL 编码）+ `POST /tasks/export-batch`（zip 打包，Python 3.13 zipfile 自动 UTF-8 中文名），产物表统计单表异常降级不阻塞整份报告。
+- **批量解析 / 重命名 / 后缀展示（v0.34候选）**: `POST /videos/analyze-batch` 批量解析 = 精确勾选启动（仅 pending、**不走组同步**、可选整批 `params` 整批应用）；前端文件列表勾选列（仅待处理可勾）+ 一键/批量解析（弹参数面板）；文件/素材重命名 = `PUT /files/{file_id}`（更新该文件全部版本行 file_name，含遗留 NULL file_id）+ `PUT /groups/{id}/assets/{asset_id}`（仅改显示名），**新名无后缀自动补磁盘真实扩展名**；`FileItem/CaseAssetItem.file_ext` 真实扩展名作**展示字段**——前端名称单元格主名+灰后缀展示、编辑框只含主名、重命名不影响后缀。
 - **配置模板化 + 自动降级**: `config/config.yaml` **机器相关、gitignored、不入库**（v0.25.1 起；模板 `config/config.yaml.example`，新机复制后自改路径/密钥）——embedder 相对模型路径自动解析到项目根；captioner 配 `qwen3_vl` 但本地 8B 模型缺失 → `load_config()` 自动降级 `qwen_api`（DashScope，打 WARNING），摘要模式由 `runners/base.py effective_summary_mode()` 兜底 `native_video→vlm_llm`。**摘要默认 vlm_llm**（native_video 已置灰退役，前端不再可选；模板 captioner 默认 `qwen_api`，本地 captioner 8B 不再下载）。无需 `config.windows.yaml` / `ZHIYING_CONFIG`（后者仅保留为自定义配置覆盖入口）。
 - **向量维度**: 4096（人脸 512）; 无 pgvector HNSW（超 2000 上限，demo 规模全扫描 <1ms）。
 - **DB 连接读 config（v0.27 起）**: `core/db.py` 连接地址解析顺序 = **环境变量 `POSTGRES_URI` → config.yaml 的 `database.uri` → 兜底 5432**（不再有"忽略 config 的硬编码"陷阱）。服务器 2026-08-08 因系统 postgres 抢 5432 迁到 **5433**（config.yaml `database.uri=5433`；start.sh 的 POSTGRES_URI=5433 冗余但无害）。新部署机在 config.yaml 配好 `database.uri` 即可。

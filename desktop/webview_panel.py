@@ -247,6 +247,14 @@ class SplashApi:
     def is_maximized(self) -> bool:
         return self._maximized
 
+    def move(self, x: int, y: int) -> None:
+        """移动主窗到屏幕坐标（frameless 手动拖拽：普通态直接跟随，最大化态先还原再跟随）。"""
+        if self._window:
+            try:
+                self._window.move(x, y)
+            except Exception:
+                pass
+
     def quit(self) -> None:
         # 从 GUI 线程触发退出：停后端 + 关窗（同 LogApi.shutdown）
         threading.Thread(target=self._ctx.request_shutdown, daemon=True).start()

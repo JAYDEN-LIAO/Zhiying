@@ -29,7 +29,7 @@ const STATUS_META: Record<string, { label: string; cls: string; pulse?: boolean 
 /* ═══════════════════════ ① 顶部卡 ═══════════════════════ */
 function TaskHeader({ onExportAll }: { onExportAll: () => void }) {
   return (
-    <div className="case-card flex items-center justify-between px-5 h-[56px] shrink-0">
+    <div className="case-card flex items-center justify-between flex-wrap gap-y-1.5 px-5 py-2 min-h-[56px] shrink-0">
       <div>
         <h1 className="text-[16px] font-semibold text-gray-900 leading-tight">任务中心</h1>
         <p className="text-[12px] text-gray-500 leading-tight">后台进程监控与历史记录追溯</p>
@@ -58,7 +58,7 @@ function TaskBody({
   return (
     <div className="case-card flex-1 min-h-0 flex flex-col overflow-hidden">
       {/* 筛选 Tab */}
-      <div className="px-4 border-b border-gray-100 flex items-center gap-2 shrink-0">
+      <div className="px-4 border-b border-gray-100 flex items-center gap-2 flex-wrap shrink-0">
         {FILTERS.map((f) => (
           <button key={f.key} className={"g-tab " + (filter === f.key ? "active" : "")} onClick={() => onFilter(f.key)}>
             {f.label}
