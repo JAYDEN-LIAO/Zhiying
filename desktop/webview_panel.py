@@ -277,24 +277,32 @@ class SplashApi:
         threading.Thread(target=self._ctx.request_shutdown, daemon=True).start()
 
     def get_recent_commits(self, n: int = 8) -> list[dict]:
-        """TitleBar「最近更新」下拉：项目根 git log 最近 n 条提交。
+        """TitleBar「最近更新」下拉：项目根 git log 最近 n 条提交（纯本地，git log 不联网）。
 
         桌面壳跑在项目根（exe 部署处），git 随 update.bat 安装必然可用。
         返回 [{hash, date, subject}, ...]；任何异常返回空列表（浏览器 dev 无 pywebview 时前端不调用）。
+
+        ⚠️ 编码坑（已修）：git log 输出 commit message 恒为 UTF-8（git 不做 locale 转换），
+        而 Windows 中文系统 locale 是 GBK——若依赖 text=True 的默认编码（=系统 locale），
+        GBK 严格解码 UTF-8 中文 → UnicodeDecodeError → except 吞掉返回空 → 下拉显示
+        「无提交记录」。必须显式 encoding="utf-8"（errors="replace" 兜底防极端字节）。
+        分隔符用 %x1f（0x1F 单位分隔符，commit message 中不可能出现），避免 subject
+        含 `|` 时被 split("|", 2) 截断显示。
         """
         try:
             from checks import project_root
             proc = subprocess.run(
                 ["git", "-C", str(project_root()), "log", f"-{int(n)}", "--date=short",
-                 "--pretty=format:%h|%ad|%s"],
+                 "--pretty=format:%h%x1f%ad%x1f%s"],
                 capture_output=True, text=True, timeout=5,
+                encoding="utf-8", errors="replace",
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             if proc.returncode != 0 or not proc.stdout.strip():
                 return []
             out = []
             for line in proc.stdout.strip().splitlines():
-                h, d, s = line.split("|", 2)
+                h, d, s = line.split("\x1f", 2)
                 out.append({"hash": h, "date": d, "subject": s})
             return out
         except Exception:

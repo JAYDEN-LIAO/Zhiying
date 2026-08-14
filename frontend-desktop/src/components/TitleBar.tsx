@@ -171,9 +171,6 @@ export function TitleBar() {
                 </div>
                 <div className="max-h-[280px] overflow-y-auto">
                   {commitsLoading && <div className="px-4 py-3 text-[12px] text-gray-400">加载中…</div>}
-                  {!commitsLoading && commits.length === 0 && (
-                    <div className="px-4 py-3 text-[12px] text-gray-400">无提交记录（仅桌面端可用）</div>
-                  )}
                   {commits.map((c) => (
                     <div key={c.hash} className="px-4 py-2 hover:bg-gray-50 border-b border-gray-50 last:border-0">
                       <div className="flex items-center gap-2">
