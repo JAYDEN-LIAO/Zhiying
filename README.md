@@ -277,7 +277,7 @@ zhiying/
 ├── data/                 # Video storage & artifacts + settings.json/presets.json (gitignored)
 ├── config/               # YAML config, prompts, schema
 ├── deploy/               # 部署套件: setup_windows.ps1 (Windows 裸机一键安装) + setup_linux.sh (Linux 开发机一键安装) + download_models.py / deploy.md / deploy_feedback.md
-├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开窗→日志面板→优雅关闭; desktop.bat 入口; build_exe.ps1 -Deploy 一键构建部署 exe)
+├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开毛玻璃启动窗→就绪进前端→优雅关闭; desktop.bat 入口; build_exe.ps1 -Deploy 一键构建部署 exe)
 ├── frontend-desktop/     # 桌面独立前端（v0.34 重构：浅蓝管理后台主题 + frameless 自定义窗口标题栏 + 4 页模型 文件库/视频解析/任务中心/系统设置 + AppContext 导航 + 工作台 SplitPane 分栏 + 系统监控；TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2；标题栏「最近更新」+ 太阳/月亮暗色主题、案例库闪电全状态、设置页两列网格；与服务器 frontend/ 完全隔离; desktop.bat 加载其 dist）
 ├── frontend-shared/      # 双前端共享后端对接层 (api/types/labels/helpers 一份实现, 两端 services/api.ts 等是再导出指针; 后端接口/字段变更只改这里)
 ├── scripts/              # 运维工具: sweep_storage.py 存储清扫 CLI (默认 dry-run, --apply 执行) + bump_version.py 一键版本提升 + mock_yunzhi_platform.py (mock 平台回调服务器)
@@ -286,6 +286,7 @@ zhiying/
 
 ## Development Status
 
+- **v0.34 候选（未发版，桌面壳/前端）— 启动加载页改造**: 移除独立「启动日志」控制窗（`LogApi`/`LOG_HTML` 删除，`get_logs` 迁入主窗 `SplashApi`，日志仍落盘 `data/logs`）；`SPLASH_HTML` 重写为**毛玻璃启动页**（前端同款渐变背景 + 毛玻璃卡片 + 标题「视频智能快速检索平台」，**模型加载段按后端日志 tqdm `Loading weights: X%` 实时推进 10%→90%**，亮暗主题自适应，就绪显示版本后进主界面）；前端 `index.html` 加 `#boot` 毛玻璃过渡遮罩（无进度条，React 挂载后淡出，防白屏/避免「进度回退」误解）。
 - **v0.34 候选（未发版，桌面前端/壳）— 桌面交互 + 暗色主题 + 布局**:
   - **标题栏**：新增「最近更新」（i 按钮下拉 → SplashApi `get_recent_commits` 项目根 `git log` 最近 8 条）+ **太阳/月亮主题切换**（暗色 = 中性炭灰环境 + 靛蓝强调色；`html.dark` 类驱动 CSS 变量调色板重映射，`index.html` 内联防闪烁）
   - **案例库/任务中心**：闪电按钮全状态显示（已完成 = 实心 `IconBoltSolid` + hover「重新配置参数解析」→ 打开工作台 **reparse 模式**建新版本）；编辑按钮移入操作格（编辑/解析/预览/删除 4 按钮整齐）+ 铅笔换 edit-3 风格；任务中心导出报告/日志换图标（`IconReport`/`IconLog`）

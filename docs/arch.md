@@ -587,6 +587,7 @@ React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @them
 - 主窗 `create_window(..., frameless=True, shadow=True)` 去系统标题栏（Windows EdgeChromium 保留圆角阴影）
 - 前端标题栏**手动拖拽**（替代原生 drag-region）：`SplashApi.move(x,y)` 移动窗口；**最大化态先 toggle_maximize 还原再跟随光标**（桌面惯例「拖动缩小跟随」）；双击标题栏切换最大化/还原；窗口按钮置于拖拽区外（sibling）防误触
 - `webview_panel.py` SplashApi 扩展：`minimize/toggle_maximize/is_maximized/move/quit`（窗口控制）+ `get_system_stats`（psutil + nvidia-smi，GPU 缓存 5s）+ `get_recent_commits`（项目根 `git log`，TitleBar「最近更新」下拉，`CREATE_NO_WINDOW` 防闪框）；load_url 到真实前端后 js_api 仍有效；**`is_maximized` 读真实窗体状态（`window.native`=BrowserView 实例的 `WindowState`，非 `window.gui` 模块）+ toggle 直接写标志**，根治「最大化后图标不更新 / 再点无反应」；**关闭确认走前端主题化弹窗**（TitleBar Modal，不用 pywebview `confirm_close` 原生 MessageBox）
+- 启动页（`SPLASH_HTML`）：**毛玻璃启动页**（前端同款渐变背景 + 毛玻璃卡片 + 标题「视频智能快速检索平台」+ 阶段进度条，**模型加载段按后端日志 tqdm `Loading weights: X%` 实时推进 10%→90%**，亮暗自适应，就绪显示版本）；独立「启动日志」控制窗已移除（`LogApi`/`LOG_HTML` 删除，`get_logs` 迁入 `SplashApi`，日志仍落盘 `data/logs`）；前端 `index.html` 加 `#boot` 毛玻璃过渡遮罩（无进度条，React 挂载后淡出，防白屏/避免「进度回退」误解）
 - 后端生命周期：`backend_child.py` **父进程句柄看门狗**（`OpenProcess(SYNCHRONIZE)` 持父句柄 + `WaitForSingleObject` 信号检测，免疫 PID 复用，父死 ~3s 内 `os._exit(3)`）；启动前 `checks.sweep_orphan_backends` 沿父链（兼容 `.venv\Scripts\python.exe` 重定向器三层）清遗留孤儿，防占端口/锁 `_internal` DLL
 - `desktop/requirements.txt` 含 `psutil`；前端 `window.pywebview` 存在才渲染窗口按钮（浏览器 dev 隐藏）
 - `build_exe.ps1 -Deploy` 加固：部署前杀运行中壳 + 遗留 backend_child、旧目录删除重试、`$src\*` 内容拷贝杜绝 `_internal\_internal` 嵌套、部署后自检 python313.dll 落地（区分「嵌套」与「真缺失」，不再一律误报杀软）

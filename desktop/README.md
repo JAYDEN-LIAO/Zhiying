@@ -1,6 +1,6 @@
 # 智影桌面端（desktop/）
 
-Windows 桌面机（有 NVIDIA GPU）的本地启动器：管理本地后端生命周期——**检查模型齐全 → 起 Docker db → 起 uvicorn → 开 WebView2 窗口加载前端 dist → 日志面板 → 优雅关闭**。壳技术 pywebview（Windows 系统自带 WebView2），纯 Python、纯新增，**不改动任何现有前后端/部署代码**。
+Windows 桌面机（有 NVIDIA GPU）的本地启动器：管理本地后端生命周期——**检查模型齐全 → 起 Docker db → 起 uvicorn → 开 WebView2 毛玻璃启动页（阶段/模型加载进度）→ 就绪进前端 dist → 优雅关闭**。壳技术 pywebview（Windows 系统自带 WebView2），纯 Python、纯新增，**不改动任何现有前后端/部署代码**。
 
 ## 前置（一次性）
 
@@ -22,9 +22,9 @@ desktop.bat --check    # 先自检：config/模型/端口/Docker，输出报告�
 或手动：`python desktop/app.py [--check] [--no-window] [--debug] [--gui qt]`
 
 启动后：
-- **主窗**：启动页（阶段进度）→ 后端就绪后自动跳转本地前端界面（`http://127.0.0.1:<port>`）。
-- **控制窗**：实时日志 + 状态徽标 + 按钮（打开浏览器 / 打开日志目录 / 退出）。
-- 关主窗 = 整体退出（优雅停后端；数据库容器保持运行，下次秒启）。
+- **主窗**：毛玻璃启动页（标题「视频智能快速检索平台」+ 阶段进度条，**模型加载段按后端日志 tqdm `Loading weights: X%` 实时推进 10%→90%**）→ 后端就绪后自动跳转本地前端界面（`http://127.0.0.1:<port>`）。
+- 前端 `index.html` 有同款毛玻璃过渡遮罩（`#boot`，无进度条，React 挂载后淡出），承接跳转防白屏。
+- 关主窗 = 整体退出（优雅停后端；数据库容器保持运行，下次秒启）。启动日志仍落盘 `data/logs`（无独立日志窗，出错时启动页红字提示）。
 
 > 端口取自 `config/config.yaml` 的 `server.port`（默认 8011）。桌面端后端**强制绑定 127.0.0.1**（config 里配 0.0.0.0 也不会暴露到局域网）。
 
@@ -33,7 +33,7 @@ desktop.bat --check    # 先自检：config/模型/端口/Docker，输出报告�
 **Windows**：
 1. 双击 `desktop/create_desktop_shortcut.vbs` → 桌面生成「智影视频分析.lnk」（走 `pythonw` 无 cmd 黑框，带图标）。
 2. Docker Desktop → Settings → General → **Start Docker Desktop when you sign in**（开机自启）。
-3. 开机 → 双击图标 → 启动页「检查→数据库→后端→就绪」→ 自动开界面。等待 ≈ 模型加载（embedder 30–60s，8bit 更快）+ Docker 冷启动 ~10s。
+3. 开机 → 双击图标 → 毛玻璃启动页「检查→数据库→后端→就绪」（模型加载段进度条按日志 tqdm 实时推进）→ 自动开界面。等待 ≈ 模型加载（embedder 30–60s，8bit 更快）+ Docker 冷启动 ~10s。
 
 **Linux 开发机**：`bash desktop/install_linux_shortcut.sh` → 应用菜单/桌面搜索「智影」；或命令行 `.venv/bin/python desktop/app.py --gui qt`。
 
@@ -69,7 +69,7 @@ desktop/
 ├── db.py               # docker compose db 服务管理（up / 健康等待）
 ├── backend.py          # uvicorn 子进程（启动 / 日志管道 / /health 轮询 / 优雅关停 / 崩溃监测）
 ├── logs.py             # 线程安全日志汇聚（环形缓冲 + 落盘 + 增量拉取）
-├── webview_panel.py    # 主窗启动页 + 控制窗日志面板（内嵌 HTML，无构建步骤）+ js_api
+├── webview_panel.py    # 主窗毛玻璃启动页（内嵌 HTML，无构建步骤）+ SplashApi js_api（含启动日志 get_logs）
 ├── requirements.txt    # 额外依赖（pywebview>=6,<7）
 ├── desktop.bat         # Windows 入口（带控制台，排错用）
 ├── create_desktop_shortcut.vbs # 生成桌面快捷方式（无黑框 + 图标，日常用）
