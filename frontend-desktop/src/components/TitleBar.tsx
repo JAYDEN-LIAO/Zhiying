@@ -165,15 +165,10 @@ export function TitleBar() {
             <button className="g-btn g-btn-sm" onClick={() => setShowCloseConfirm(false)} aria-label="取消">×</button>
           </div>
           <div className="p-5">
-            <div style={{ fontSize: 14, color: "#475569", lineHeight: 1.7 }}>
-              确定要退出<strong style={{ color: "#1e293b" }}>视频智能快速检索平台</strong>吗？
-              <div style={{ marginTop: 6, fontSize: 12, color: "#94a3b8" }}>
-                退出将停止本地后端服务，正在处理的任务会中断。
-              </div>
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+            <div style={{ fontSize: 14, color: "#334155" }}>确定退出？</div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
               <button className="g-btn" onClick={() => setShowCloseConfirm(false)}>取消</button>
-              <button className="g-btn g-btn-danger" onClick={doQuit}>确认退出</button>
+              <button className="g-btn g-btn-danger" onClick={doQuit}>退出</button>
             </div>
           </div>
         </div>

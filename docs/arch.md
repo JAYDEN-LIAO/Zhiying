@@ -9,6 +9,7 @@
 > v0.34 候选（文件库/多版本/任务中心/页面裂解，未发版）: 后端 videos.file_id/version_no 版本链 + video_groups.number/owner + task_logs 表 + /groups /files /versions /reanalyze /tasks 端点 + 任务日志生命周期 + 耗时（processing_started_at）+ 导出报告（/tasks/{id}/report md + /tasks/export-batch zip）；前端 TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2 + 卡片空隙透渐变
 > 桌面 EXE + 双部署路径（未发版）: build_exe.ps1 -Deploy 一条命令打纯壳 exe + setup_linux.sh/setup_windows.ps1 补全 + bump 全机接入
 > v0.34 候选（案例库批量解析/交互 + 搜索卡重构 + 桌面壳，未发版）: POST /videos/analyze-batch 精确勾选批量解析（不走组同步、可选整批参数）；PUT /files/{id} + PUT /groups/{id}/assets/{id} 文件/素材重命名（无后缀自动补真实扩展名）；FileItem/CaseAssetItem.file_ext 后缀展示字段；案例编辑/编号自动填充 A-YYYY-MMDD-NN；搜索卡案例-文件范围（当前视频/案例/文件多选，未处理隐藏）+ 无视频可交互 + 跨视频结果切主视频 + pendingSeek 可靠定位 + 搜索卡单实例跨空态保留；TitleBar 手动拖拽（最大化先还原再跟随）；g-btn 全局 nowrap 防挤压
+> v0.34 候选（桌面端稳定性修复，未发版，桌面前端/壳）: build_exe.ps1 部署加固（杀运行中壳+遗留后端 / $src\* 内容拷贝杜绝 _internal\_internal 嵌套 / 部署后自检 python313.dll）；backend_child 看门狗改持有父进程句柄信号检测（免疫 PID 复用）+ 启动前 sweep_orphan_backends 沿父链清孤儿；窗口控制 is_maximized 读真实 WindowState + toggle 修标志 + resize 同步图标；关闭确认改主题化弹窗（去 pywebview 原生 MessageBox）；.gitignore 补构建产物
 
 ## System Data Flow
 
@@ -580,8 +581,10 @@ React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @them
 **桌面端窗口壳（`desktop/`，v0.34 + v0.34候选）**：
 - 主窗 `create_window(..., frameless=True, shadow=True)` 去系统标题栏（Windows EdgeChromium 保留圆角阴影）
 - 前端标题栏**手动拖拽**（替代原生 drag-region）：`SplashApi.move(x,y)` 移动窗口；**最大化态先 toggle_maximize 还原再跟随光标**（桌面惯例「拖动缩小跟随」）；双击标题栏切换最大化/还原；窗口按钮置于拖拽区外（sibling）防误触
-- `webview_panel.py` SplashApi 扩展：`minimize/toggle_maximize/is_maximized/move/quit`（窗口控制）+ `get_system_stats`（psutil + nvidia-smi，GPU 缓存 5s）；load_url 到真实前端后 js_api 仍有效
+- `webview_panel.py` SplashApi 扩展：`minimize/toggle_maximize/is_maximized/move/quit`（窗口控制）+ `get_system_stats`（psutil + nvidia-smi，GPU 缓存 5s）；load_url 到真实前端后 js_api 仍有效；**`is_maximized` 读真实窗体状态（`window.native`=BrowserView 实例的 `WindowState`，非 `window.gui` 模块）+ toggle 直接写标志**，根治「最大化后图标不更新 / 再点无反应」；**关闭确认走前端主题化弹窗**（TitleBar Modal，不用 pywebview `confirm_close` 原生 MessageBox）
+- 后端生命周期：`backend_child.py` **父进程句柄看门狗**（`OpenProcess(SYNCHRONIZE)` 持父句柄 + `WaitForSingleObject` 信号检测，免疫 PID 复用，父死 ~3s 内 `os._exit(3)`）；启动前 `checks.sweep_orphan_backends` 沿父链（兼容 `.venv\Scripts\python.exe` 重定向器三层）清遗留孤儿，防占端口/锁 `_internal` DLL
 - `desktop/requirements.txt` 含 `psutil`；前端 `window.pywebview` 存在才渲染窗口按钮（浏览器 dev 隐藏）
+- `build_exe.ps1 -Deploy` 加固：部署前杀运行中壳 + 遗留 backend_child、旧目录删除重试、`$src\*` 内容拷贝杜绝 `_internal\_internal` 嵌套、部署后自检 python313.dll 落地（区分「嵌套」与「真缺失」，不再一律误报杀软）
 
 **更新发布**：根目录 `update.bat` 一键自动更新（Windows）：git pull（走 7897 代理）→ pip 装 desktop 依赖 → npm install/build（dist gitignored 必须本地建）→ `build_exe.ps1 -Deploy` 重打 exe。
 
