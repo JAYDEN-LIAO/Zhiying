@@ -144,7 +144,7 @@ def run_headless(args) -> int:
 # ────────────────────────────────────────────────────────────
 def run_gui(args) -> int:
     import webview  # lazy：--check / --no-window 不依赖它
-    from webview_panel import Ctx, SplashApi, LogApi, SPLASH_HTML, LOG_HTML
+    from webview_panel import Ctx, SplashApi, SPLASH_HTML
 
     # Linux 下 QtWebEngine 兼容性修复（QT_X11_NO_MITSHM + 禁 GPU 合成/沙箱）。
     # 实测部分 X/无 GPU 合成环境会段错误；setdefault 保证用户可自行覆盖。
@@ -175,7 +175,6 @@ def run_gui(args) -> int:
         stop_backend()
         runtime["done"].set()
         try:
-            control.destroy()
             main_window.destroy()
         except Exception:
             pass
@@ -185,7 +184,7 @@ def run_gui(args) -> int:
             return  # 正常关停，忽略
         log.write(f"后端进程异常退出 (code {rc})")
         app_state.set(State.ERROR, "后端进程异常退出",
-                      detail=f"后端进程异常退出 (code {rc})，请在控制窗重启启动器")
+                      detail=f"后端进程异常退出 (code {rc})，请关闭启动器后重新打开")
 
     ctx = Ctx(
         log=log, port=port, url=url,
@@ -207,9 +206,6 @@ def run_gui(args) -> int:
         # 无法定制样式。关闭确认改由前端 TitleBar 主题化弹窗处理（确认后经 js_api quit() 退出）。
     )
     main_api.set_window(main_window)  # 注入窗口引用，供 minimize/toggle_maximize 等使用
-    control = webview.create_window(
-        "智影 · 启动日志", html=LOG_HTML, width=680, height=460, js_api=LogApi(ctx),
-    )
 
     def _on_main_closed() -> None:
         log.write("主窗口已关闭，正在退出…")

@@ -1,7 +1,9 @@
 """pywebview 窗口的内嵌 HTML 页面 + js_api 桥。
 
-主窗（SplashApi）起步展示启动状态，后端就绪后由 app.py load_url 跳到前端；
-控制窗（LogApi）做日志面板 + 状态行 + 操作按钮。
+主窗（SplashApi）起步展示毛玻璃启动页（标题/阶段进度条/实时日志），后端就绪后由
+app.py load_url 跳到前端（load_url 后 js_api 仍指向本实例，前端可继续调
+get_status/get_logs/get_system_stats 等）。启动日志经 `get_logs` 暴露给主窗，
+不再有独立「启动日志」控制窗（v0.34 移除）。
 
 这些页面是自包含的（无构建步骤），与 frontend/dist 完全解耦，满足"只加不改"。
 """
@@ -34,147 +36,143 @@ SPLASH_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8" />
 <style>
-  body { margin:0; font-family:"Microsoft YaHei", system-ui, sans-serif;
-         background:linear-gradient(160deg,#0f2027,#203a43,#2c5364); color:#e2e8f0;
-         display:flex; align-items:center; justify-content:center; height:100vh; }
-  .box { text-align:center; max-width:560px; padding:0 24px; }
-  .spinner { width:44px; height:44px; margin:0 auto 18px; border:4px solid rgba(255,255,255,.15);
-             border-top-color:#38bdf8; border-radius:50%; animation:spin 1s linear infinite; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    font-family:"Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    background: linear-gradient(160deg, #e2edff 0%, #d5e4ff 30%, #c2d8ff 62%, #adc8ff 100%);
+    color:#1e293b; display:flex; align-items:center; justify-content:center;
+    overflow:hidden; position:relative;
+  }
+  /* 暗色：由 JS 读 localStorage 加 .dark（与前端 index.html 防闪烁同逻辑） */
+  body.dark {
+    background: linear-gradient(160deg, #1b212c 0%, #151921 45%, #10131a 100%);
+    color:#e1e5ec;
+  }
+  /* 背景光斑：柔和层次，模拟前端渐变 */
+  .deco { position:absolute; border-radius:50%; filter:blur(60px); opacity:.5; pointer-events:none; }
+  .deco.a { width:420px; height:420px; background:#7a88f5; top:-120px; left:-80px; }
+  .deco.b { width:360px; height:360px; background:#38bdf8; bottom:-140px; right:-60px; }
+  body.dark .deco { opacity:.22; }
+  /* 毛玻璃卡片 */
+  .card {
+    position:relative; z-index:2; width:560px; max-width:86vw;
+    background:rgba(255,255,255,0.72);
+    -webkit-backdrop-filter:blur(20px) saturate(1.4); backdrop-filter:blur(20px) saturate(1.4);
+    border:1px solid rgba(255,255,255,0.6); border-radius:18px;
+    box-shadow:0 24px 60px rgba(30,41,82,0.18);
+    padding:34px 38px 30px; text-align:center;
+  }
+  body.dark .card {
+    background:rgba(23,27,38,0.72);
+    border:1px solid rgba(255,255,255,0.08);
+    box-shadow:0 24px 60px rgba(0,0,0,0.5);
+  }
+  .logo { width:52px; height:52px; margin:0 auto 14px; border-radius:14px;
+          background:linear-gradient(135deg,#4f7cff,#7a88f5); display:flex; align-items:center; justify-content:center;
+          box-shadow:0 10px 24px rgba(79,124,255,.35); }
+  .logo svg { width:28px; height:28px; }
+  h1 { font-size:20px; font-weight:600; letter-spacing:.5px; }
+  .sub { font-size:12px; color:#64748b; margin-top:4px; }
+  body.dark .sub { color:#98a0af; }
+  .stage { margin-top:22px; font-size:13px; font-weight:500; color:#4f7cff; min-height:18px; }
+  body.dark .stage { color:#a5b0fb; }
+  .bar { height:7px; border-radius:999px; background:rgba(100,116,139,.18); margin-top:10px; overflow:hidden; }
+  body.dark .bar { background:rgba(255,255,255,.12); }
+  .fill { height:100%; width:0; border-radius:999px; background:linear-gradient(90deg,#4f7cff,#7a88f5,#10b981);
+          transition:width .45s ease; }
+  .pct { font-size:11px; color:#94a3b8; margin-top:6px; font-family:Consolas,monospace; }
+  body.dark .pct { color:#6b7280; }
+  /* 日志区 */
+  .logs { margin-top:18px; text-align:left; background:rgba(15,23,42,.06); border:1px solid rgba(15,23,42,.08);
+          border-radius:10px; height:150px; overflow-y:auto; padding:10px 12px;
+          font-family:Consolas,"Microsoft YaHei",monospace; font-size:11px; line-height:1.65; color:#334155; }
+  body.dark .logs { background:rgba(0,0,0,.28); border-color:rgba(255,255,255,.07); color:#b4bbc9; }
+  .logs::-webkit-scrollbar { width:5px; }
+  .logs::-webkit-scrollbar-thumb { background:rgba(100,116,139,.3); border-radius:3px; }
+  .logs .ts { color:#94a3b8; }
+  .err { color:#ef4444; font-size:12px; line-height:1.7; margin-top:12px; white-space:pre-wrap; text-align:left; display:none; }
+  .foot { margin-top:18px; font-size:11px; color:#94a3b8; }
+  .spin { animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
-  h1 { font-size:20px; margin:0 0 6px; letter-spacing:.5px; }
-  .stage { font-size:13px; color:#7dd3fc; margin-bottom:14px; }
-  .msg { font-size:12px; color:#94a3b8; line-height:1.7; white-space:pre-wrap; }
-  .err { color:#fca5a5; font-size:12px; line-height:1.7; white-space:pre-wrap; }
-  .foot { margin-top:22px; font-size:11px; color:#475569; }
 </style>
 </head>
 <body>
-  <div class="box">
-    <div class="spinner"></div>
-    <h1>智影视频分析</h1>
+  <div class="deco a"></div>
+  <div class="deco b"></div>
+  <div class="card">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+    </div>
+    <h1>视频智能快速检索平台</h1>
+    <div class="sub">智影 · 桌面端</div>
     <div class="stage" id="stage">初始化…</div>
-    <div class="msg" id="msg"></div>
-    <div class="err" id="err" style="display:none"></div>
+    <div class="bar"><div class="fill" id="fill"></div></div>
+    <div class="pct" id="pct">0%</div>
+    <div class="logs" id="logs"><div id="logempty">正在启动本地服务…</div></div>
+    <div class="err" id="err"></div>
     <div class="foot">桌面启动器正在启动本地服务，首次启动约需 30s–60s</div>
   </div>
 <script>
-  var last = null;
+  /* 暗色：与前端 index.html 防闪烁同逻辑 */
+  try { if (localStorage.getItem('zhiying-theme') === 'dark') document.body.classList.add('dark'); } catch (e) {}
+
+  var NAMES = {"init":"初始化","checking":"环境检查","db_start":"启动数据库容器","backend_start":"启动后端服务",
+               "ready":"就绪","stopping":"正在停止","stopped":"已停止","error":"出错了"};
+  var PROGRESS = {"init":5, "checking":20, "db_start":50, "backend_start":75, "ready":100};
+  var since = 0;
+
+  function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function setProgress(p) {
+    document.getElementById('fill').style.width = p + '%';
+    document.getElementById('pct').textContent = Math.round(p) + '%';
+  }
+  function appendLogs(lines) {
+    if (!lines || !lines.length) return;
+    var box = document.getElementById('logs');
+    var empty = document.getElementById('logempty');
+    if (empty) empty.remove();
+    for (var i = 0; i < lines.length; i++) {
+      var div = document.createElement('div');
+      var m = lines[i].match(/^(\\[[^\\]]*\\]) (.*)$/);
+      if (m) div.innerHTML = '<span class="ts">' + esc(m[1]) + '</span> ' + esc(m[2]);
+      else div.textContent = lines[i];
+      box.appendChild(div);
+    }
+    // 自动滚到底（接近底部才滚，不打断用户上翻）
+    var nearBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 60;
+    if (nearBottom) box.scrollTop = box.scrollHeight;
+    // 日志超量裁剪，避免 DOM 膨胀
+    while (box.children.length > 200) box.removeChild(box.firstChild);
+  }
+
   function tick() {
     pywebview.api.get_status().then(function (s) {
       var stage = document.getElementById('stage');
-      var msg = document.getElementById('msg');
       var err = document.getElementById('err');
-      var names = {"init":"初始化","checking":"环境检查","db_start":"启动数据库",
-                   "backend_start":"启动后端","ready":"就绪","stopping":"正在停止",
-                   "stopped":"已停止","error":"出错了"};
-      stage.textContent = "状态：" + (names[s.state] || s.state);
       if (s.state === 'ready') {
-        stage.textContent = "状态：就绪 → 即将打开界面";
-        setTimeout(function () { stage.textContent = "状态：就绪"; }, 2000);
+        stage.textContent = '✓ 就绪 · 版本 ' + (s.version || '') + '，正在进入…';
+        setProgress(100);
+      } else {
+        stage.textContent = (NAMES[s.state] || s.state) + (s.message ? ' · ' + s.message : '');
+        if (PROGRESS[s.state] != null) setProgress(PROGRESS[s.state]);
       }
       if (s.state === 'error') {
         err.style.display = 'block';
-        err.textContent = s.detail || s.message || '';
-        msg.style.display = 'none';
+        err.textContent = s.detail || s.message || '启动失败，请查看 data/logs 后重启';
       } else {
-        msg.textContent = s.message || '';
+        err.style.display = 'none';
       }
-      if (s.state === 'ready' && s.version) {
-        msg.textContent = "后端已就绪 · 版本 " + s.version;
-      }
+    }).catch(function () {});
+    pywebview.api.get_logs(since).then(function (r) {
+      if (r && r.next > since) { since = r.next; appendLogs(r.lines); }
     }).catch(function () {});
     setTimeout(tick, 300);  // 链式轮询：上次返回后再发下次，避免 pywebview 回调覆盖竞态
   }
   function run() {
     // pywebview 对象是页面加载完成后才注入的；在此之前的调用会同步抛 TypeError，
-    // 且该异常发生在 setTimeout(tick) 之前 → 轮询整条死掉（日志窗口空白即此因）。
+    // 且该异常发生在 setTimeout(tick) 之前 → 轮询整条死掉（启动页空白即此因）。
     // 等 pywebviewready 事件启动；兜底 setTimeout 防事件已错过。
-    if (!window.pywebview || !pywebview.api) { setTimeout(run, 200); return; }
-    tick();
-  }
-  window.addEventListener('pywebviewready', run);
-  setTimeout(run, 500);
-</script>
-</body>
-</html>
-"""
-
-LOG_HTML = """<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8" />
-<style>
-  body { margin:0; font-family:Consolas, "Microsoft YaHei", monospace; background:#0b1220; color:#cbd5e1; font-size:12px; }
-  #status { padding:8px 12px; background:#111a2e; border-bottom:1px solid #1e293b;
-            display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
-  #status b { color:#7dd3fc; }
-  #status .badge { padding:2px 8px; border-radius:10px; font-size:11px; background:#1e293b; }
-  #status .badge.ok { background:#14532d; color:#86efac; }
-  #status .badge.err { background:#7f1d1d; color:#fca5a5; }
-  #status .badge.run { background:#1e3a5f; color:#7dd3fc; }
-  #buttons { margin-left:auto; display:flex; gap:6px; }
-  #buttons button { background:#1e293b; color:#e2e8f0; border:1px solid #334155;
-                    border-radius:6px; padding:3px 10px; font-size:11px; cursor:pointer; }
-  #buttons button:hover { background:#334155; }
-  #log { padding:8px 12px; height:calc(100vh - 42px); overflow-y:auto; white-space:pre-wrap;
-         word-break:break-all; line-height:1.5; }
-  .ts { color:#64748b; }
-</style>
-</head>
-<body>
-  <div id="status">
-    <span class="badge" id="badge">初始化</span>
-    <span>状态：<b id="st">init</b></span>
-    <span>版本：<b id="ver">–</b></span>
-    <div id="buttons">
-      <button onclick="openBrowser()">打开浏览器</button>
-      <button onclick="openLogs()">日志目录</button>
-      <button onclick="quit()">退出</button>
-    </div>
-  </div>
-  <div id="log"></div>
-<script>
-  var since = 0;
-  function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
-  function badge(kind, text) {
-    var el = document.getElementById('badge');
-    el.className = 'badge ' + kind;
-    el.textContent = text;
-  }
-  function tick() {
-    pywebview.api.get_status().then(function (s) {
-      var names = {"init":"初始化","checking":"环境检查","db_start":"数据库","backend_start":"后端",
-                   "ready":"运行中","stopping":"停止中","stopped":"已停止","error":"出错"};
-      document.getElementById('st').textContent = names[s.state] || s.state;
-      if (s.version) document.getElementById('ver').textContent = s.version;
-      if (s.state === 'ready') badge('ok','运行中');
-      else if (s.state === 'error') badge('err','出错');
-      else if (s.state === 'checking' || s.state === 'db_start' || s.state === 'backend_start') badge('run','启动中');
-      else badge('', names[s.state] || s.state);
-      if (s.state === 'error' && s.detail) { append(s.detail, 'err'); }
-    });
-    pywebview.api.get_logs(since).then(function (r) {
-      since = r.next;
-      var box = document.getElementById('log');
-      var nearBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 60;
-      (r.lines || []).forEach(function (ln) { append(ln); });
-      if (nearBottom) box.scrollTop = box.scrollHeight;
-    }).catch(function () {});
-    setTimeout(tick, 500);  // 链式轮询：避免 pywebview 回调覆盖竞态
-  }
-  function append(line, cls) {
-    var box = document.getElementById('log');
-    var div = document.createElement('div');
-    var m = line.match(/^(\\[[^\\]]*\\]) (.*)$/);
-    div.innerHTML = (m ? '<span class="ts">'+esc(m[1])+'</span> '+esc(m[2]) : esc(line));
-    if (cls === 'err') div.style.color = '#fca5a5';
-    box.appendChild(div);
-  }
-  function openBrowser() { pywebview.api.open_browser(); }
-  function openLogs() { pywebview.api.open_logs_dir(); }
-  function quit() { if (confirm('确定退出智影桌面端？')) pywebview.api.shutdown(); }
-  function run() {
-    // 同 splash：pywebview 注入前调用会同步 TypeError 杀死 tick 链，窗口永远空白。
     if (!window.pywebview || !pywebview.api) { setTimeout(run, 200); return; }
     tick();
   }
@@ -200,11 +198,14 @@ class Ctx:
 
 
 class SplashApi:
-    """主窗 js_api：起步 splash + 真实前端共用（load_url 后桥接仍指向本实例）。
+    """主窗 js_api：起步毛玻璃启动页 + 真实前端共用（load_url 后桥接仍指向本实例）。
 
     扩展能力（v0.34 桌面重构）：
+    - 启动状态：get_status（阶段/文案/版本/错误 detail）+ get_logs（启动实时日志增量，
+      原控制窗 LogApi 迁入，随日志窗移除）
     - 窗口控制：minimize / toggle_maximize / is_maximized / quit —— frameless 标题栏按钮
     - 系统监控：get_system_stats —— 侧栏 CPU/内存/GPU/网络（psutil + nvidia-smi，纯桌面壳，不动后端）
+    - 最近更新：get_recent_commits —— TitleBar「最近更新」下拉（项目根 git log）
     """
 
     _GPU_REFRESH_SEC = 5.0  # nvidia-smi 子进程有成本，缓存 5s
@@ -226,6 +227,11 @@ class SplashApi:
     def get_status(self) -> dict:
         s = app_state.get()
         return s
+
+    def get_logs(self, since: int) -> dict:
+        """启动实时日志增量拉取（原控制窗 LogApi 迁入）：返回 {next, lines}。"""
+        idx, lines = self._ctx.log.get_since(int(since or 0))
+        return {"next": idx, "lines": lines}
 
     # ── 窗口控制（frameless 标题栏按钮）──────────────────────────
     def minimize(self) -> None:
@@ -273,7 +279,7 @@ class SplashApi:
                 pass
 
     def quit(self) -> None:
-        # 从 GUI 线程触发退出：停后端 + 关窗（同 LogApi.shutdown）
+        # 从 GUI 线程触发退出：停后端 + 关窗
         threading.Thread(target=self._ctx.request_shutdown, daemon=True).start()
 
     def get_recent_commits(self, n: int = 5) -> list[dict]:
@@ -390,37 +396,3 @@ class SplashApi:
             }
         except Exception:
             return None
-
-
-class LogApi:
-    """控制窗（日志面板）的 js_api。"""
-
-    def __init__(self, ctx: Ctx) -> None:
-        self._ctx = ctx
-
-    def get_status(self) -> dict:
-        return app_state.get()
-
-    def get_logs(self, since: int) -> dict:
-        idx, lines = self._ctx.log.get_since(int(since or 0))
-        return {"next": idx, "lines": lines}
-
-    def open_browser(self) -> None:
-        webbrowser.open(self._ctx.url)
-
-    def open_logs_dir(self) -> None:
-        d = self._ctx.log_dir
-        if not d:
-            return
-        try:
-            if os.name == "nt":
-                os.startfile(d)  # type: ignore[attr-defined]
-            else:
-                import subprocess
-                subprocess.Popen(["xdg-open", d])
-        except Exception:
-            pass
-
-    def shutdown(self) -> None:
-        # 从 GUI 线程触发退出：停后端 + 关窗
-        threading.Thread(target=self._ctx.request_shutdown, daemon=True).start()
