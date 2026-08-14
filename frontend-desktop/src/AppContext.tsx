@@ -34,6 +34,7 @@ interface AppCtx {
   caseGroups: VideoGroup[];
   refreshCaseGroups: () => void;
   activeTaskCount: number;
+  runningTaskCount: number;  // 仅「真正处理中」(status=processing) 数 —— 退出确认用（active 含待参数未开跑，不算运行中）
   refreshList: () => void;
   /* 上传：统一入口，上传后跳工作台 + 打开参数 */
   isUploading: boolean;
@@ -66,6 +67,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
   const [caseGroups, setCaseGroups] = useState<VideoGroup[]>([]);
   const [activeTaskCount, setActiveTaskCount] = useState(0); // 任务中心 active 数（含多版本处理中，侧栏徽章用）
+  const [runningTaskCount, setRunningTaskCount] = useState(0); // 仅 processing 数（退出确认用）
   const [listKey, setListKey] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -101,7 +103,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const iv = setInterval(() => {
       api.listVideos().then((data) => { if (data) setVideos(data); }).catch(() => {});
       // 任务徽章：按任务中心 active 列表（含多版本文件的处理中版本），而非根行状态
-      api.listTasks("active").then((data) => setActiveTaskCount(data?.length ?? 0)).catch(() => {});
+      api.listTasks("active").then((data) => {
+        setActiveTaskCount(data?.length ?? 0);
+        // 退出确认只用「真正处理中」：active 含 PENDING（待参数/排队，未开跑），不算运行中
+        setRunningTaskCount((data ?? []).filter((t) => t.status === "processing").length);
+      }).catch(() => {});
     }, 4000);
     return () => clearInterval(iv);
   }, []);
@@ -235,7 +241,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     page, navigate, settingsTab, navigateSettings,
     selectedVideoId, openWorkbench, initialVersionId, paramsTick, consumeParamsTick,
     reparseIntent, consumeReparseIntent,
-    videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups, activeTaskCount, refreshList,
+    videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups, activeTaskCount, runningTaskCount, refreshList,
     isUploading, uploadFiles, registerExternalFiles, handleUploadClick,
     removeVideoState, deleteVideo,
     dragActive,

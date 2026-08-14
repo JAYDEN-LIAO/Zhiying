@@ -29,7 +29,7 @@ declare global {
 }
 
 export function TitleBar() {
-  const { activeTaskCount } = useApp();
+  const { runningTaskCount } = useApp();
   const [version, setVersion] = useState<string | null>(null);
   const [isMax, setIsMax] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
@@ -94,8 +94,11 @@ export function TitleBar() {
       setIsMax(await pv.toggle_maximize());
     }
   };
-  // 关闭：先弹主题化确认框（替代 pywebview 原生 MessageBox），确认后经 js_api quit() 退出
-  const onClose = () => setShowCloseConfirm(true);
+  // 关闭：有处理中任务 → 弹主题化确认框（替代 pywebview 原生 MessageBox）；无 → 直接退出不提示
+  const onClose = () => {
+    if (runningTaskCount > 0) setShowCloseConfirm(true);
+    else doQuit();
+  };
   const doQuit = () => {
     setShowCloseConfirm(false);
     pv?.quit?.();
@@ -231,7 +234,7 @@ export function TitleBar() {
           </div>
           <div className="p-5">
             <div className="text-gray-600" style={{ fontSize: 14 }}>
-              {activeTaskCount > 0 ? "当前有任务正在运行，退出即中断" : "确定退出？"}
+              当前有任务正在运行，退出即中断
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
               <button className="q-btn" onClick={() => setShowCloseConfirm(false)}>取消</button>
