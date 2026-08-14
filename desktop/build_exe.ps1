@@ -44,14 +44,54 @@ Write-Host "✅ 构建完成: $distExe"
 if ($Deploy) {
     Write-Host "部署到项目根 …"
     $dst = Join-Path $Root "智影桌面端.exe"
+    $srcInternal = Join-Path $Root "dist\智影桌面端\_internal"
     $dstInternal = Join-Path $Root "_internal"
-    Remove-Item -Recurse -Force $dst, $dstInternal -ErrorAction SilentlyContinue
-    Copy-Item -Force $distExe $dst
-    Copy-Item -Recurse -Force (Join-Path $Root "dist\智影桌面端\_internal") $dstInternal
 
-    # ── 部署后二次自检：拷完立刻验证 python313.dll 落地（杀软常在拷贝瞬间再删一次）──
+    # ── 0) 先关掉正在运行的桌面壳 + 遗留的后端子进程 —— 否则 exe / _internal 里已加载的
+    #    DLL（python313.dll / MSVCP140.dll）被进程锁住，Remove-Item 删不掉 → 旧目录残留 →
+    #    Copy-Item 把新 _internal 整层嵌进旧目录（_internal\_internal\），自检就找不到顶层
+    #    python313.dll —— 这正是过去被误判成「杀毒软件删除了」的真实原因。 ──
+    $runningShell = Get-Process -Name "智影桌面端" -ErrorAction SilentlyContinue
+    if ($runningShell) {
+        Write-Host ("  关闭运行中的桌面壳（PID {0}）…" -f (($runningShell | ForEach-Object Id) -join ", "))
+        $runningShell | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
+    # 壳被强杀后，其后端子进程（.venv python -m desktop.backend_child）可能残留并占住
+    # _internal 里 DLL 的句柄（实测 backend_child 会加载 _internal\MSVCP140.dll）——一并关掉。
+    $leakedBackend = Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match "desktop\.backend_child" }
+    if ($leakedBackend) {
+        Write-Host ("  关闭遗留后端子进程（PID {0}）…" -f (($leakedBackend | ForEach-Object ProcessId) -join ", "))
+        $leakedBackend | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    }
+    if ($runningShell -or $leakedBackend) { Start-Sleep -Milliseconds 1000 }
+
+    # ── 1) 清旧 exe + _internal：删除重试 3 次（锁往往极短暂），仍删不掉就明确报错，
+    #    绝不带着残留继续拷贝（残留正是嵌套的来源）。 ──
+    Remove-Item -Recurse -Force $dst -ErrorAction SilentlyContinue
+    if (Test-Path $dstInternal) {
+        for ($i = 0; $i -lt 3; $i++) {
+            Remove-Item -Recurse -Force $dstInternal -ErrorAction SilentlyContinue
+            if (-not (Test-Path $dstInternal)) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        if (Test-Path $dstInternal) {
+            throw "旧 _internal 目录删不掉（目录内文件仍被某进程占用）。请关闭智影桌面端及残留 backend_child 进程后重跑。残留: $dstInternal"
+        }
+    }
+
+    # ── 2) 拷贝 exe + _internal：用 $src\* 拷「内容」而非把整个文件夹塞进目标 ——
+    #    目标即便残留也绝不嵌套（已用临时目录实测：两种写法结果相反）。 ──
+    Copy-Item -Force $distExe $dst
+    New-Item -ItemType Directory -Force -Path $dstInternal | Out-Null
+    Copy-Item -Path (Join-Path $srcInternal '*') -Destination $dstInternal -Recurse -Force
+
+    # ── 3) 部署后自检：python313.dll 必须落在顶层 _internal\ ──
     if (-not (Test-Path (Join-Path $dstInternal "python313.dll"))) {
-        throw "部署后 _internal\python313.dll 仍缺失 —— 被杀毒软件实时防护删除了。请先把 '$Root' 加入「排除项」（Windows 安全中心 → 病毒和威胁防护 → 排除项 → 添加文件夹），再重新 -Deploy。"
+        if (Test-Path (Join-Path $dstInternal "_internal\python313.dll")) {
+            throw "python313.dll 被拷进了嵌套目录 _internal\_internal\ —— 旧 _internal 未清空 + Copy-Item 整层嵌套所致，属脚本问题而非杀软。新版已修复拷贝逻辑，请直接重跑本脚本。"
+        }
+        throw "部署后 _internal\python313.dll 缺失（dist 自检通过，可排除构建产物问题）。多为旧 _internal 清理失败或文件被占用——请关闭智影桌面端 / backend_child 进程后重跑；仍复现再检查 '$Root' 是否被杀软实时防护盯上。"
     }
     Write-Host "✅ 已部署: $dst（双击即用，自检通过）"
 } else {
