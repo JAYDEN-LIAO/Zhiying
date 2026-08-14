@@ -16,6 +16,8 @@ from pathlib import Path
 
 import yaml
 
+import psutil  # 桌面壳依赖；轻量，非 torch 类重依赖
+
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8011
 MODEL_ROOT = "models"
@@ -108,6 +110,72 @@ def check_port(port: int, host: str = DEFAULT_HOST) -> dict:
     if body and body.get("service") == "zhiying":
         return {"state": "already_running", "health": body}
     return {"state": "conflict"}
+
+
+def _is_launcher(proc) -> bool:
+    """判断进程是否为智影桌面启动器：冻结壳 exe，或开发态 `python <...>/app.py`。
+
+    后端（backend_child）的父进程在合法情形下必然是两者之一；其它进程 → 判定父已死/PID 被复用。
+    """
+    try:
+        name = proc.name()
+        if name in ("智影桌面端", "智影桌面端.exe"):
+            return True
+        if name in ("python", "python.exe", "python3"):
+            return any(c.replace("\\", "/").endswith("app.py") for c in proc.cmdline())
+        return False
+    except Exception:
+        return False
+
+
+def _has_live_launcher_ancestor(ppid, max_hops=5) -> bool:
+    """从后端父进程起，沿父链向上找「仍存活的智影桌面启动器」。
+
+    实测 `.venv\\Scripts\\python.exe` 是重定向器：壳 → 重定向器 → 真解释器 三层，
+    后端（真解释器）的父进程可能是重定向器而非壳本身，故必须沿链向上找。
+    找到存活启动器 → 受管（不清扫）；链断裂（父已死 / PID 被复用成无关进程）
+    或走完 max_hops 仍无启动器 → 判孤儿，应清扫。
+    """
+    cur = ppid
+    for _ in range(max_hops):
+        if not cur:
+            return False
+        try:
+            proc = psutil.Process(cur)
+            if not proc.is_running():
+                return False
+        except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied):
+            return False
+        if _is_launcher(proc):
+            return True
+        cur = proc.ppid()
+    return False
+
+
+def sweep_orphan_backends(port: int, log=None) -> int:
+    """启动前清理「父进程已死/非启动器」的遗留孤儿后端子进程，返回清理数量。
+
+    backend_child 看门狗（持有父进程句柄信号检测）正常不产生孤儿；此处兜底清理
+    旧版本代码遗留的孤儿，防止其占住端口被误复用，或锁住 _internal 里 DLL
+    （曾引发部署拷贝嵌套 + 误报杀软）。仅杀 command line 含 desktop.backend_child
+    且端口匹配的进程，绝不误伤其它 python。
+    """
+    killed = 0
+    for proc in psutil.process_iter(["pid", "ppid", "cmdline"]):
+        try:
+            cl = proc.info.get("cmdline") or []
+            if not any("desktop.backend_child" in c for c in cl):
+                continue
+            if str(port) not in cl:
+                continue
+            if not _has_live_launcher_ancestor(proc.info.get("ppid")):
+                if log:
+                    log.write(f"  清理遗留孤儿后端 PID {proc.info.get('pid')}（父进程链无存活启动器）")
+                proc.kill()
+                killed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    return killed
 
 
 def check_docker() -> dict:

@@ -23,7 +23,8 @@ from pathlib import Path
 from state import State, app_state
 from logs import LogSink
 from checks import (project_root, install_script_name, read_server_config, check_config_file,
-                    check_models, check_port, probe_health, environment_status, ready_summary, runtime_python)
+                    check_models, check_port, probe_health, environment_status, ready_summary, runtime_python,
+                    sweep_orphan_backends)
 import db as db_mod
 import backend as backend_mod
 
@@ -119,6 +120,8 @@ def run_headless(args) -> int:
         if not db_mod.wait_db_healthy(ROOT, log):
             log.write("[FAIL] 数据库容器未 healthy")
             return 1
+        if sweep_orphan_backends(cfg["port"], log):
+            time.sleep(0.8)  # 等端口/句柄完全释放再启动
         log.write("启动后端…")
         proc = backend_mod.start_backend(ROOT, runtime_python(ROOT), "127.0.0.1", cfg["port"], log)
         health = backend_mod.wait_health("127.0.0.1", cfg["port"], log)
@@ -235,6 +238,8 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
             raise RuntimeError("未找到 config/config.yaml",
                                f"请先运行部署脚本完成安装：deploy/{install_script_name()}（会生成并配置 config）")
 
+        if sweep_orphan_backends(cfg["port"], log):
+            time.sleep(0.8)  # 等端口/句柄完全释放再探测
         port_state = check_port(cfg["port"])
         if port_state["state"] == "conflict":
             raise RuntimeError(f"端口 {cfg['port']} 被其它程序占用",
