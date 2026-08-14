@@ -118,7 +118,7 @@ SPLASH_HTML = """<!DOCTYPE html>
     document.getElementById('fill').style.width = p + '%';
     document.getElementById('pct').textContent = Math.round(p) + '%';
   }
-  // tqdm 进度行解析（兼容 \r 累积在同一行：取最后一段再匹配）
+  // tqdm 进度行解析（兼容回车刷新累积在同一行：取最后一段再匹配）
   function parseModelProgress(line) {
     var seg = line.split('\\r');
     var m = seg[seg.length - 1].match(/Loading weights:\\s*(\\d+)%/);
@@ -127,7 +127,12 @@ SPLASH_HTML = """<!DOCTYPE html>
   }
   function updateProgress() {
     if (!lastState) return;
-    if (lastState.state === 'ready') { setProgress(100); return; }
+    if (lastState.state === 'ready') {
+      // 就绪后不直接跳 100%：从当前值每轮平滑 +6，配合后端 load_url 延迟展示「正在进入」过渡
+      var cur = parseFloat(document.getElementById('fill').style.width) || 0;
+      if (cur < 100) setProgress(Math.min(100, cur + 6));
+      return;
+    }
     if (lastState.state === 'error') { setProgress(BASE[lastState.state] != null ? BASE[lastState.state] : 50); return; }
     // 模型加载段 = 10% → 90%（tqdm 进度 0-100 映射）；其余阶段占前 10%
     if (lastState.state === 'backend_start') setProgress(10 + Math.round(modelPct * 0.8));

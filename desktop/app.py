@@ -260,6 +260,7 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
             app_state.set(State.READY, "检测到已有后端，直接复用", port=cfg["port"],
                           version=body.get("version"))
             log.write(f"已有 Zhiying 在运行，直接打开 {ctx.url}")
+            time.sleep(1.5)  # 让启动页把进度平滑推满 100% 并展示「正在进入」过渡后再切前端
             main_window.load_url(ctx.url)
             runtime["done"].wait()
             return
@@ -280,6 +281,7 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
         health = backend_mod.wait_health("127.0.0.1", cfg["port"], log)
         app_state.set(State.READY, "后端就绪", port=cfg["port"], version=health.get("version"))
         log.write(f"后端就绪 {ctx.url} (version {health.get('version')})")
+        time.sleep(1.5)  # 让启动页把进度平滑推满 100% 并展示「正在进入」过渡后再切前端
         main_window.load_url(ctx.url)
 
     except RuntimeError as e:

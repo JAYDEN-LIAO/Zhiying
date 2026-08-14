@@ -10,36 +10,19 @@
     try { if (localStorage.getItem("zhiying-theme") === "dark") document.documentElement.classList.add("dark"); } catch (e) {}
   </script>
   <style>
-    /* 启动毛玻璃占位（防白屏）：与桌面壳 SPLASH_HTML 视觉同款，React 挂载后由 main.tsx 淡出移除 */
-    #boot { position: fixed; inset: 0; z-index: 999; display: flex; align-items: center; justify-content: center;
-            background: linear-gradient(160deg, #e2edff 0%, #d5e4ff 30%, #c2d8ff 62%, #adc8ff 100%);
-            transition: opacity .3s ease; }
-    html.dark #boot { background: linear-gradient(160deg, #1b212c 0%, #151921 45%, #10131a 100%); }
-    #boot .boot-card { width: 460px; max-width: 86vw; background: rgba(255,255,255,0.72);
-            -webkit-backdrop-filter: blur(20px) saturate(1.4); backdrop-filter: blur(20px) saturate(1.4);
-            border: 1px solid rgba(255,255,255,0.6); border-radius: 18px;
-            box-shadow: 0 24px 60px rgba(30,41,82,0.18); padding: 34px 38px 30px; text-align: center; }
-    html.dark #boot .boot-card { background: rgba(23,27,38,0.72); border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 24px 60px rgba(0,0,0,0.5); }
-    #boot .boot-logo { width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 14px;
-            background: linear-gradient(135deg,#4f7cff,#7a88f5); display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 10px 24px rgba(79,124,255,.35); }
-    #boot .boot-logo svg { width: 28px; height: 28px; }
-    #boot h1 { font-size: 20px; font-weight: 600; color: #1e293b; margin: 0; letter-spacing: .5px; }
-    html.dark #boot h1 { color: #e1e5ec; }
-    #boot .boot-sub { font-size: 12px; color: #64748b; margin-top: 4px; }
-    html.dark #boot .boot-sub { color: #98a0af; }
-    /* 无进度条：加载进度已在桌面壳启动页展示过，此处只做平滑过渡，避免"进度回退"的误解 */
+    /* 启动背景防白屏：与桌面壳 SPLASH_HTML 毛玻璃渐变同款，React 挂载后由 .app-shell 覆盖。
+       不再单独渲染 #boot 卡片 —— 进度展示已由桌面壳启动页完成，load_url 后直接进应用，
+       避免「换一张卡片」的跳变。 */
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: linear-gradient(160deg, #e2edff 0%, #d5e4ff 30%, #c2d8ff 62%, #adc8ff 100%);
+    }
+    html.dark body {
+      background: linear-gradient(160deg, #1b212c 0%, #151921 45%, #10131a 100%);
+    }
   </style>
 </head>
 <body>
-  <!-- 启动毛玻璃占位（防白屏）：React 挂载后由 main.tsx 淡出移除 -->
-  <div id="boot">
-    <div class="boot-card">
-      <div class="boot-logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg></div>
-      <h1>视频智能快速检索平台</h1>
-      <div class="boot-sub">正在进入工作台…</div>
-    </div>
-  </div>
   <div id="root"></div>
   <script type="module" src="/src/main.tsx"></script>
 </body>
