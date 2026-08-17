@@ -151,9 +151,7 @@ export function TitleBar() {
         onDoubleClick={() => { void onMax(); }}
       >
         <div className="tb-logo">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-            <polygon points="6 3 20 12 6 21 6 3" />
-          </svg>
+          <img src="/zhiying_logo.png" alt="智影" width="15" height="15" />
         </div>
         <span className="tb-title">视频智能快速检索平台</span>
         {version && <span className="tb-badge">v{version}</span>}
