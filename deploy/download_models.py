@@ -1,7 +1,7 @@
 """Download and verify the models required for a Zhiying Windows deployment.
 
 Components (each skips when already complete, retries on failure):
-  embedding    Qwen3-VL-Embedding-8B  (ModelScope → models/Qwen/...)
+  embedding    Qwen3-VL-Embedding-8B/2B  (ModelScope → models/Qwen/...；--embedding-profile 8b/2b 选档)
   yolo         yolo26s.pt              (Ultralytics assets → models/)
   face         InsightFace buffalo_l    (auto-download → ~/.insightface/models/buffalo_l)
   plate        HyperLPR3 ONNX pack      (auto-download → ~/.hyperlpr3/<version>/onnx)
@@ -33,6 +33,12 @@ from urllib.request import Request, urlopen
 
 
 EMBEDDING_MODEL_ID = "Qwen/Qwen3-VL-Embedding-8B"
+
+# embedding 档位 → (ModelScope 模型 id, 目标目录名) —— 与 config embedding_profile 对齐
+EMBEDDING_PROFILES: dict[str, dict] = {
+    "8b": {"model_id": "Qwen/Qwen3-VL-Embedding-8B", "dir": "Qwen3-VL-Embedding-8B"},
+    "2b": {"model_id": "Qwen/Qwen3-VL-Embedding-2B", "dir": "Qwen3-VL-Embedding-2B"},
+}
 YOLO_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt"
 # BoT-SORT with_reid 外观模型（ultralytics 8.4.115 的 "auto" 仍会运行时下载，改为本地预置）
 REID_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-cls.pt"
@@ -259,9 +265,9 @@ def _resolve_components(choices: list[str]) -> set[str]:
     return result
 
 
-def _verify_all(root: Path, components: set[str]) -> bool:
+def _verify_all(root: Path, components: set[str], embedding_dir: Path) -> bool:
     checks = {
-        "embedding": lambda: embedding_complete(root / "Qwen" / "Qwen3-VL-Embedding-8B"),
+        "embedding": lambda: embedding_complete(embedding_dir),
         "yolo": lambda: yolo_complete(root / "yolo26s.pt"),
         "reid": lambda: reid_complete(root / "yolo26n-cls.pt"),
         "face": face_complete,
@@ -269,7 +275,7 @@ def _verify_all(root: Path, components: set[str]) -> bool:
         "segmenter": segmenter_complete,
     }
     labels = {
-        "embedding": "embedding (Qwen3-VL-Embedding-8B)",
+        "embedding": f"embedding ({embedding_dir.name})",
         "yolo": "yolo (yolo26s.pt)",
         "reid": "reid (yolo26n-cls.pt)",
         "face": "face (InsightFace buffalo_l)",
@@ -294,7 +300,9 @@ def main() -> int:
         help="要准备/校验的组件；可多次传，'all' 表示全部",
     )
     parser.add_argument("--model-root", type=Path, default=Path("models"))
-    parser.add_argument("--embedding-id", default=EMBEDDING_MODEL_ID)
+    parser.add_argument("--embedding-profile", choices=["8b", "2b"], default="8b",
+                        help="embedding 模型档位：8b=Qwen3-VL-Embedding-8B(4096维) / 2b=Qwen3-VL-Embedding-2B(2048维)")
+    parser.add_argument("--embedding-id", default=None, help="自定义 ModelScope 模型 id（覆盖档位默认）")
     parser.add_argument("--yolo-url", default=YOLO_URL)
     parser.add_argument("--reid-url", default=REID_URL)
     parser.add_argument("--retries", type=int, default=3)
@@ -307,11 +315,16 @@ def main() -> int:
     components = _resolve_components(args.component or ["all"])
     root = args.model_root.resolve()
 
+    # embedding 档位 → 模型 id + 目标目录（与 config embedding_profile 对齐）
+    ep = EMBEDDING_PROFILES[args.embedding_profile]
+    embedding_model_id = args.embedding_id or ep["model_id"]
+    embedding_dir = root / "Qwen" / ep["dir"]
+
     if args.verify_only:
-        return 0 if _verify_all(root, components) else 2
+        return 0 if _verify_all(root, components, embedding_dir) else 2
 
     if "embedding" in components:
-        download_embedding(root / "Qwen" / "Qwen3-VL-Embedding-8B", args.embedding_id, args.retries)
+        download_embedding(embedding_dir, embedding_model_id, args.retries)
     if "yolo" in components:
         download_yolo(args.yolo_url, root / "yolo26s.pt", args.retries)
     if "reid" in components:

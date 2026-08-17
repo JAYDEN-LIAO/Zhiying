@@ -91,10 +91,10 @@ def run_check(args) -> int:
         log.write(f"[FAIL] 端口 {cfg['port']} 被其它程序占用 —— 修改 config.yaml server.port 后重试")
         exit_code = max(exit_code, 1)
 
-    if db_mod.docker_available():
-        log.write("  Docker: 可用")
+    if db_mod.db_available(ROOT):
+        log.write(f"  数据库后端: {db_mod.db_backend(ROOT)} 可用")
     else:
-        log.write("[FAIL] Docker 不可用 —— 请先启动 Docker Desktop")
+        log.write("[FAIL] 数据库后端不可用 —— 需 vendor/pg（内嵌）或 Docker Desktop（回退）")
         exit_code = max(exit_code, 1)
 
     log.write(f"自检完成，退出码 {exit_code}（0=全通过 1=环境问题 2=模型缺失）")
@@ -110,8 +110,8 @@ def run_headless(args) -> int:
     log.write("无窗口冒烟模式：起 db + 后端，Ctrl+C 退出")
     proc = None
     try:
-        if not db_mod.docker_available():
-            log.write("[FAIL] Docker 不可用 —— 请先启动 Docker Desktop")
+        if not db_mod.db_available(ROOT):
+            log.write("[FAIL] 数据库后端不可用 —— 需 vendor/pg（内嵌）或 Docker Desktop（回退）")
             return 1
         log.write("启动数据库容器…")
         if not db_mod.start_db(ROOT, log):
@@ -265,9 +265,9 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
             runtime["done"].wait()
             return
 
-        if not db_mod.docker_available():
-            raise RuntimeError("Docker 不可用",
-                               f"请先运行部署脚本完成安装（含 Docker Desktop）：deploy/{install_script_name()}，然后重启启动器")
+        if not db_mod.db_available(ROOT):
+            raise RuntimeError("数据库后端不可用",
+                               f"请先运行部署脚本完成安装（内嵌 PostgreSQL / Docker）：deploy/{install_script_name()}，然后重启启动器")
         app_state.set(State.DB_START, "启动数据库容器…")
         if not db_mod.start_db(ROOT, log):
             raise RuntimeError("启动数据库失败", "docker compose up -d db 失败，见控制窗日志")
