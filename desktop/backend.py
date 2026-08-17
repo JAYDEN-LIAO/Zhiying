@@ -1,13 +1,17 @@
 """uvicorn 后端子进程管理：启动 / 日志管道 / 健康轮询 / 优雅关停 / 崩溃监测。
 
-注意：不用 run.py（它带 reload=True）。启动器自读 config 端口，
-以 `python -m uvicorn main:app --host 127.0.0.1 --port <port>` 拉起，无 --reload。
+统一以 `python backend_launcher.py` 拉起（含父进程存活看门狗）：
+  - 封装模式（exe 内，sys._MEIPASS 存在）：launcher 在 _internal，经
+    ZHIYING_BACKEND_ROOT 指到字节码包 backend_pyc（客户端无明文源码）
+  - 源码模式：launcher 在项目根，无 ZHIYING_BACKEND_ROOT → 从源码 import
+不用 run.py（它带 reload=True）。端口经 ZHIYING_BACKEND_PORT 传入。
 """
 from __future__ import annotations
 
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -19,19 +23,37 @@ from pathlib import Path
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-def start_backend(root: Path, python: str, host: str, port: int, log) -> subprocess.Popen:
-    """启动后端子进程（uvicorn + 父进程存活看门狗），stdout 由 reader 线程逐行喂给 log。
+def _backend_launcher(root: Path) -> tuple[Path, dict]:
+    """后端子进程入口：封装模式用 _internal 的 launcher + 字节码包，源码模式用项目根 launcher。"""
+    meipass = getattr(sys, "_MEIPASS", None)
+    extra: dict = {}
+    if meipass:
+        meipass = Path(meipass)
+        launcher = meipass / "backend_launcher.py"
+        extra["ZHIYING_BACKEND_ROOT"] = str(meipass / "backend_pyc")  # 字节码包（藏源码）
+    else:
+        launcher = root / "backend_launcher.py"
+    extra["ZHIYING_PROJECT_ROOT"] = str(root)
+    return launcher, extra
 
-    经 desktop/backend_child.py 运行：启动器被强制结束时，后端在 ~3s 内自检父进程
-    死亡并 os._exit(3)，避免遗留占用端口/显存的孤儿进程。
+
+def start_backend(root: Path, python: str, host: str, port: int, log) -> subprocess.Popen:
+    """启动后端子进程（backend_launcher.py：uvicorn + 父进程存活看门狗）。
+
+    启动器被强制结束时，后端在 ~3s 内自检父进程死亡并 os._exit(3)，避免遗留
+    占用端口/显存的孤儿进程。
     """
-    cmd = [python, "-m", "desktop.backend_child", str(port)]
+    launcher, extra_env = _backend_launcher(root)
+    cmd = [python, str(launcher)]
     env = {
         **os.environ,
         "PYTHONUNBUFFERED": "1",
         "ZHIYING_PARENT_PID": str(os.getpid()),
         # 桌面端：让后端挂载桌面前端（frontend-desktop/dist），而非服务器前端
         "ZHIYING_FRONTEND": "desktop",
+        "ZHIYING_BACKEND_HOST": host,
+        "ZHIYING_BACKEND_PORT": str(port),
+        **extra_env,
     }
     log.write("$ " + " ".join(cmd))
     proc = subprocess.Popen(

@@ -27,6 +27,10 @@ a = Analysis(
     datas=[
         ('assets/zhiying.ico', 'assets'),
         ('assets/zhiying.png', 'assets'),
+        # 后端字节码包（build_backend_pyc.py 生成）：客户端盘上只有 .pyc，无明文源码
+        (str(SPEC_DIR.parent / 'build' / 'backend_pyc'), 'backend_pyc'),
+        # 后端子进程启动器（封装模式 shell 用它拉起后端）
+        (str(SPEC_DIR.parent / 'backend_launcher.py'), '.'),
     ],
     hiddenimports=['webview'] + collect_submodules('webview.platforms'),
     # ↑ 把全部平台后端都打进（win32/edgechromium/winforms/mshtml…），运行时 pywebview 自选。

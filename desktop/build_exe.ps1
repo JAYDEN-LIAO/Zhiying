@@ -29,6 +29,10 @@ if ($PyInstallerPin) {
 }
 
 Write-Host "构建 智影桌面端.exe …"
+# 先编译后端字节码包（build/backend_pyc，封装模式客户端无明文源码），再由 spec 打进 _internal
+& $Py deploy\build_backend_pyc.py
+if ($LASTEXITCODE -ne 0) { throw "后端字节码打包失败 (exit=$LASTEXITCODE)" }
+
 & $Py -m PyInstaller desktop\build_exe.spec --noconfirm --clean
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller 构建失败 (exit=$LASTEXITCODE)，看上方输出" }
 
