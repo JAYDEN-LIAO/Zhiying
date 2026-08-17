@@ -31,6 +31,9 @@ weights/
 # ModelScope cache lock
 .lock
 
+# ── 机器本地下载/组装产物（内嵌 PG vendor/pg、FFmpeg vendor/ffmpeg 等，不入库）──
+/vendor/
+
 # ── IDE / Editor ──
 .vscode/
 .idea/

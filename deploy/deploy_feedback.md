@@ -263,6 +263,29 @@
 - **桌面端形态 B**：新增 `desktop/` 包 —— Windows 桌面机（有 NVIDIA GPU）的 **pywebview 启动器**，管理本地后端生命周期（检查模型齐全 → 起 uvicorn → 开 WebView2 窗口加载前端 dist → 日志面板 → 优雅关闭），入口 `desktop/desktop.bat`。桌面构建用默认 env（`VITE_YUNZHI_MOCK` 缺省即 mock 本地上传，无云智 Bridge）；数据库用根目录 `docker-compose.yaml` 的 `db` 服务（pgvector:pg17）。
 - **只加不改**共享组件：桌面端复用同一前端 dist，避免动到对接人正在验证的部分。
 
+## 15. 安装器实战加固（2026-08-17）— 从零安装全流程问题清单
+
+本轮在全新 Windows + RTX 5070（8GB 显存，2B 档）机器上实战 `install.bat`，暴露并修复了一批问题——多数是安装器重写 `de681c8` 时的**回归**（该重写从没在全新机器上端到端验证过，本次是第一次）：
+
+| # | 问题 | 根因 / 修复 |
+|---|---|---|
+| 1 | **BOM 回归**：启动解析崩溃 + 中文乱码 | 重写丢了 UTF-8 BOM（PS5.1 按 GBK 读无 BOM .ps1）。**修复**：补 BOM。⚠️ 编辑 .ps1 后务必保留 BOM |
+| 2 | **EAP 回归**：原生命令写 stderr → `NativeCommandError` 中止 | `$ErrorActionPreference=Stop` 下 pip 进度/torch import 警告即中止。**修复**：`Invoke-Native` 临时切 `Continue` + `2>&1` 合并 stderr |
+| 3 | **`Test-Path $x -and ...` 解析坑**：报"找不到参数 and" | PowerShell 把 `-and` 当作 `Test-Path` 的命名参数。**修复**：写成 `(Test-Path $x) -and ...`（全脚本共 5 处） |
+| 4 | **UAC 提权 cwd 重置到 System32**：`.venv` 建错地方 | 提权进程默认 cwd=System32，相对路径 `.venv` 建到 System32（实测 `C:\Windows\System32\.venv` 存在）。**修复**：脚本开头 `Set-Location $ProjectRoot` + venv 用绝对路径 |
+| 5 | **nvidia-smi 解析**：报"对 Null 调用方法" | 新驱动输出只有 `CUDA UMD Version: X`（旧 `CUDA Version` 匹配不到 → null）。**修复**：正则兼容 `CUDA (UMD )?Version:` + null 兜底 |
+| 6 | **pip 大文件下载无进度** | pip 进度走 stderr，被当错误流 + 非终端自动隐藏。**修复**：pip 加 `--progress-bar raw` + `Invoke-Native` `2>&1` |
+| 7 | **torchvision 可能 CPU 版** | requirements 阶段从 PyPI 拉 torchvision（§13 复发）。**修复**：torch+torchvision 同装 `--index-url cuXXX` |
+| 8 | **onnxruntime CPU/GPU 双装冲突** | hyperlpr3/insightface 的 `Requires-Dist: onnxruntime` 拉 CPU 版，与 gpu 版共享 `onnxruntime/` 目录互相踩（实测 `onnxruntime-1.28.0` + `onnxruntime_gpu-1.28.0` 并存）。**修复**：requirements 前清 CPU dist-info + 建虚拟桩 `onnxruntime-99.0.0.dist-info` + 装后 `get_device()=="GPU"` 校验自愈 |
+| 9 | **modelscope 大文件断线丢进度** | 4.26GB 连接重置（10054）后 modelscope 内部重试**从头下**，白丢几百 MB。**修复**：`download_models.py` 改为"小文件 snapshot_download（跳过 `*.safetensors`）+ 大文件 requests 断点续传（Range/206 + `.incomplete` 原子改名）" |
+| 10 | **modelscope 走代理反而慢/更易断** | 国内 CDN 绕国际代理。**修复**：`_NoProxy` 上下文强制直连（`NO_PROXY=*`），并删掉脚本里对 modelscope 的代理回退 |
+| 11 | **winget 直调 EAP 隐患** | `& winget` 无 `2>&1`。**修复**：加 `2>&1` |
+| 12 | **lap 未显式声明** | BoT-SORT 匹配依赖（§13 建议过）。**修复**：`requirements.txt` 加 `lap>=0.5.12` |
+
+**已验证**：PS5.1 解析 0 错 / `download_models.py` `py_compile` + `--verify-only` / onnxruntime 桩在 throwaway venv 实测（**注意**：Python 3.13 venv 的 `site.getsitepackages()[0]` 返回根目录，必须用 `sysconfig.get_paths()["purelib"]`）/ modelscope 文件直链支持 Range(206) 可续传。
+
+**遗留**：建议在真正全新机上完整跑一遍 `install.bat` 做端到端回归（本次已走到 4/6 模型下载）。
+
 ---
 
-*最后更新：2026-08-08（桌面启动器 + native_video 退役）*
+*最后更新：2026-08-17（安装器实战加固：BOM/提权cwd/onnxruntime桩/modelscope续传直连 等 12 项）*

@@ -42,6 +42,8 @@ EMBEDDING_PROFILES: dict[str, dict] = {
 YOLO_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt"
 # BoT-SORT with_reid 外观模型（ultralytics 8.4.115 的 "auto" 仍会运行时下载，改为本地预置）
 REID_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-cls.pt"
+# ModelScope 单文件直链（断点续传用，API 形式；实测支持 Range→206）
+MODELSCOPE_FILE_URL = "https://www.modelscope.cn/api/v1/models/{model_id}/repo?Revision={rev}&FilePath={file}"
 
 # HyperLPR3 模型版本目录（与 hyperlpr3.config.settings._MODEL_VERSION_ 对齐）
 HYPERLPR_VERSION = "20230229"
@@ -116,6 +118,25 @@ def segmenter_complete() -> bool:
 # 下载实现
 # ════════════════════════════════════════════════════════════════
 
+class _NoProxy:
+    """临时强制直连：国内源（modelscope）绝不走代理——绕国际反而更慢更易断。"""
+
+    def __enter__(self):
+        self._old = (os.environ.get("NO_PROXY"), os.environ.get("no_proxy"))
+        os.environ["NO_PROXY"] = "*"
+        os.environ["no_proxy"] = "*"
+
+    def __exit__(self, *exc):
+        if self._old[0] is None:
+            os.environ.pop("NO_PROXY", None)
+        else:
+            os.environ["NO_PROXY"] = self._old[0]
+        if self._old[1] is None:
+            os.environ.pop("no_proxy", None)
+        else:
+            os.environ["no_proxy"] = self._old[1]
+
+
 def _retry(msg: str, retries: int, fn, *args, **kwargs):
     """带指数退避的重试包装。已保留部分文件供续传。"""
     last_error: Exception | None = None
@@ -138,13 +159,37 @@ def download_embedding(target: Path, model_id: str, retries: int) -> None:
         return
     target.mkdir(parents=True, exist_ok=True)
 
-    def _do():
+    # 1) 小文件（config/tokenizer 等）用 snapshot_download，跳过 safetensors（避免它内部断线重下丢进度）
+    def _do_small():
         from modelscope import snapshot_download
-        snapshot_download(model_id, repo_type="model", local_dir=str(target))
-        if not embedding_complete(target):
-            raise RuntimeError("download finished but model files are incomplete")
+        with _NoProxy():
+            snapshot_download(model_id, repo_type="model", local_dir=str(target),
+                              ignore_file_pattern=["*.safetensors"])
+    _retry(f"{model_id} 小文件", retries, _do_small)
 
-    _retry(f"{model_id}", retries, _do)
+    # 2) 大文件（model.safetensors / 分片）用断点续传直下，网络波动不白丢进度
+    needed: set[str] = set()
+    index = target / "model.safetensors.index.json"
+    if index.is_file():
+        try:
+            wm = json.loads(index.read_text(encoding="utf-8")).get("weight_map", {})
+            needed = {Path(p).name for p in wm.values() if p.endswith(".safetensors")}
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    if not needed:
+        needed = {p.name for p in target.glob("*.safetensors")}
+    if not needed:
+        needed = {"model.safetensors"}
+
+    for name in sorted(needed):
+        big = target / name
+        if big.is_file():
+            continue
+        url = MODELSCOPE_FILE_URL.format(model_id=model_id, rev="master", file=name)
+        _retry(f"{model_id} {name}", retries, _download_modelscope_file, url, big)
+
+    if not embedding_complete(target):
+        raise RuntimeError("download finished but model files are incomplete")
     print(f"[ok] Embedding model verified: {target}")
 
 
@@ -211,6 +256,43 @@ def _download_file_resumable(url: str, target: Path) -> None:
 
     if not yolo_complete(partial):
         raise RuntimeError("download finished but YOLO file is incomplete")
+    os.replace(partial, target)
+
+
+def _download_modelscope_file(url: str, target: Path) -> None:
+    """ModelScope 单文件断点续传：requests 跟随 CDN 重定向并保留 Range；.incomplete → 原子改名。"""
+    import requests
+
+    partial = target.with_name(target.name + ".incomplete")
+    start = partial.stat().st_size if partial.exists() else 0
+    headers = {"User-Agent": "zhiying-windows-installer/1.0"}
+    if start:
+        headers["Range"] = f"bytes={start}-"
+
+    with _NoProxy(), requests.get(url, headers=headers, stream=True, timeout=(30, 120), allow_redirects=True) as resp:
+        resp.raise_for_status()
+        if start and resp.status_code != 206:
+            # 服务器不支持续传 → 从头下，避免写坏文件
+            start = 0
+            partial.unlink(missing_ok=True)
+        content_length = resp.headers.get("Content-Length")
+        total = (int(content_length) + start) if content_length else None
+        downloaded = start
+        last_pct = -1
+        with partial.open("ab" if start else "wb") as out:
+            for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+                out.write(chunk)
+                downloaded += len(chunk)
+                if total:
+                    pct = int(downloaded * 100 / total)
+                    if pct != last_pct:
+                        print(f"\r[progress] {target.name} {pct:3d}% ({downloaded/1048576:.0f}/{total/1048576:.0f} MiB)", end="", flush=True)
+                        last_pct = pct
+    print()
+    if downloaded <= 0:
+        raise RuntimeError(f"{target.name}: download produced no data")
     os.replace(partial, target)
 
 

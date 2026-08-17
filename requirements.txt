@@ -46,6 +46,7 @@ openai>=1.12.0
 #  Object detection + tracking
 # ══════════════════════════════════════════════
 ultralytics>=8.3.0
+lap>=0.5.12  # BoT-SORT 匹配依赖（显式声明，避免运行时缺失/自动拉取，§13）
 
 #  Scene segmentation (默认分段器, config.yaml segmenter.backend: transnetv2)
 # ══════════════════════════════════════════════

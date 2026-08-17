@@ -51,12 +51,17 @@
 2. 输代理地址（GitHub / PyTorch / 模型下载用；能直连可留空）
 
 **自动托管（6 步）**：
-1. **Python**（缺失时 winget 装 3.13）+ **FFmpeg**（Gyan 完整版，含 CUDA 编解码 h264_nvenc/h264_cuvid，缺失自动装）
-2. **`.venv`** + **CUDA 版 PyTorch**（按驱动 CUDA 版本选 cu124/cu126/cu130，不走 pip 默认 CPU 版）+ requirements 依赖 + **GPU 验证**
+1. **Python**（缺失时 winget 装 3.13）+ **FFmpeg**（Gyan 完整版，含 CUDA 编解码 h264_nvenc/h264_cuvid；**curl 走代理 + 断点续传下载**并加入 PATH，不再依赖 winget/github 直连）
+2. **`.venv`** + **CUDA 版 PyTorch + torchvision**（同一 cuXXX 源，避免 torchvision 从 PyPI 拉到 CPU 版）+ requirements 依赖（**预置 onnxruntime 虚拟桩**，防 hyperlpr3/insightface 传递依赖拉回 CPU 版互相踩）+ **GPU 验证**
 3. **内嵌 PostgreSQL**：下载 EDB PG17 便携 zip + andreiramani 预编译 pgvector（PG17）→ 组装 `vendor/pg`（**无 Docker / 无 WSL2 / 无重启**；本地 `vendor/pg-zips/` 有 zip 则优先使用，不联网）
-4. **模型**（按档位下 embedding + yolo/reid/face/plate/segmenter）
+4. **模型**（按档位下 embedding + yolo/reid/face/plate/segmenter；**embedding 走 modelscope 直连 + 断点续传**，github 组件走代理）
 5. **生成 `config/config.yaml`**（`embedding_profile` 由选择写死 + `database.uri` 指向内嵌 pg 端口 5432）
 6. **起 `vendor/pg` + `init_db` 建表** → 校验 → 完成
+
+**下载健壮性（v0.34候选部署）**：
+- 所有下载（FFmpeg / PG zip / 模型）均有**超时兜底 + 断点续传 + 实时进度**；pip 用 `--progress-bar raw` 显示大文件进度，不再静默。
+- **代理策略**：`github.com` / `download.pytorch.org` / `enterprisedb.com` **走代理**（直连不通或极慢）；**`modelscope.cn` 强制直连**（国内 CDN，绕国际代理反而更慢更易断）。
+- 网络波动时模型下载**断线自动续传**（`.incomplete` 保留），不白丢进度；任何错误落盘 `vendor/install.log` 并红字显示，不会无声闪退。
 
 **装完即用**：双击根目录 `update.bat`（git pull + 依赖 + 前端 npm build + 重打 exe）做日常更新/构建，或 `python desktop\app.py` 直接跑桌面端。
 
