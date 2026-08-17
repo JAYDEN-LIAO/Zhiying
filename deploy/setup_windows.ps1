@@ -1,745 +1,266 @@
-﻿<#
-Zhiying Windows 一键安装器（裸机 → 环境就绪）
-═══════════════════════════════════════════════════════════
-目标：在全新 Windows + NVIDIA GPU 机器上，自动安装 Zhiying 运行所需的
-一切基础设施：
-  系统级  Python / FFmpeg(CUDA) / WSL2 / Docker Desktop
-  依赖级  CUDA torch(按 GPU 选源) + 匹配 torchvision + requirements 全部包
-  模型级  embedding / yolo / reid / face / plate / segmenter
-
-特性：
-  - 智能探测：已有且兼容的组件直接复用；缺失/不兼容的自动安装对的版本
-  - 网络智能：代理必填；需要代理的走代理、国内源直连、超时回退代理
-  - 交互：开始时醒目提示注意事项 + 输入代理地址并测试
-  - 健壮：错误如实反映到终端，绝不闪退（所有探测性命令 try/catch 包裹）
-  - WSL2 缺失 → 自动放最后安装并提示重启（幂等续跑；重启后按打印清单操作）
-  - 安装 + 自校验完成后，打印 db / 后端 / 前端 启动指令（由用户自行启动）
-
-用法：
-  Set-ExecutionPolicy -Scope Process Bypass
-  .\deploy\setup_windows.ps1                                          # 交互式
-  .\deploy\setup_windows.ps1 -Proxy http://127.0.0.1:7897 -NonInteractive  # 全自动
-#>
-
+# ============================================================================
+#  Zhiying 新机一键部署安装器（交互式）
+#
+#  用途：全新 Windows（可能只有 git、连 python 都没有）→ 双击本脚本 →
+#        命令行窗口交互（选 2B/8B 模型 + 输代理）→ 自动托管：
+#          Python → .venv+依赖 → 内嵌 PostgreSQL(vendor/pg) → 模型(按档位)
+#          → config.yaml 生成 → 建表 → 校验
+#        完成后无缝交给根目录 update.bat（前端构建 / 打 exe 的日常更新走它）。
+#
+#  用法： 双击本文件，或
+#         powershell -ExecutionPolicy Bypass -File deploy\setup_windows.ps1
+#  调试：  -SkipModels 跳过模型下载；-SkipPg 跳过内嵌 postgres 组装
+# ============================================================================
 param(
-    [string]$Proxy = "",          # 代理地址（必填）；为空则交互输入
-    [switch]$NonInteractive,      # 全自动（需同时传 -Proxy）
-    [switch]$SkipDeps,            # 跳过依赖安装（torch/requirements，仅排障用）
-    [switch]$SkipModels,          # 跳过模型下载（仅排障用）
-    [switch]$SkipDocker,          # 跳过 Docker/WSL2/建库相关（仅排障用）
-    [switch]$NoElevate,           # 不请求管理员（测试/排障用）
-    [switch]$SkipProxyTest,       # 跳过代理可用性测试（排障用；正常安装必须真实代理）
-    [int]$DownloadRetries = 3,
-    [string]$PythonVersion = ""   # 空 = 自动探测 3.13→3.12→3.11
+    [switch]$SkipModels,
+    [switch]$SkipPg,
+    [switch]$NoElevate
 )
-
-# ═══════════════════════════════════════════════════════════
-# 0. 引导：目录 / 编码 / 提权
-# ═══════════════════════════════════════════════════════════
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-$PipIni = Join-Path $env:APPDATA "pip\pip.ini"
+$DownloadRetries = 5
 
-# 终端编码 → UTF-8（中文日志不乱码）
-try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+# ── 内嵌 postgres 下载源（本地 vendor/pg-zips 有则优先，避免依赖第三方在线） ──
+$PgZipUrl      = "https://get.enterprisedb.com/postgresql/postgresql-17.5-1-windows-x64-binaries.zip"
+$PgvectorUrl   = "https://github.com/andreiramani/pgvector_pgsql_windows/releases/download/0.8.6_17/vector.v0.8.6-pg17.zip"
+$PgZipLocal    = Join-Path $ProjectRoot "vendor\pg-zips\postgresql-17.5-1-windows-x64-binaries.zip"
+$PgvectorLocal = Join-Path $ProjectRoot "vendor\pg-zips\vector.v0.8.6-pg17.zip"
 
-# 检测是否管理员；不是则提权重启（UAC）
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-    [Security.Principal.WindowsBuiltInRole]::Administrator
-)
-if (-not $isAdmin -and -not $NoElevate) {
-    Write-Host "需要管理员权限，正在请求 UAC 提权..." -ForegroundColor Yellow
-    $argsFlat = ($PSBoundParameters.GetEnumerator() | ForEach-Object {
-        if ($_.Value -is [bool]) { if ($_.Value) { "-$($_.Key)" } }
-        else { "-$($_.Key) `"$($_.Value)`"" }
-    }) -join " "
-    Start-Process -FilePath "powershell.exe" -ArgumentList @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", "`"$PSCommandPath`"", $argsFlat
-    ) -Verb RunAs
-    exit
+# 管理员权限（装 python / 写 Program Files 等需要）
+if (-not $NoElevate) {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) {
+        Write-Host "需要管理员权限，正在请求 UAC 提权..." -ForegroundColor Yellow
+        $extra = @()
+        if ($SkipModels) { $extra += "-SkipModels" }
+        if ($SkipPg)     { $extra += "-SkipPg" }
+        Start-Process -FilePath "powershell.exe" -ArgumentList (@(
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`""
+        ) + $extra) -Verb RunAs
+        exit
+    }
 }
 
+# ───────────────────────────── 输出 helpers ─────────────────────────────
 function Write-Step([string]$Index, [string]$Title) {
     Write-Host ""
-    Write-Host "────────────────────────────────────────────" -ForegroundColor DarkGray
-    Write-Host "[$Index] $Title" -ForegroundColor Cyan
-    Write-Host "────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "─── [$Index] $Title ───" -ForegroundColor Cyan
 }
-function Write-Info([string]$Message) { Write-Host "  $Message" -ForegroundColor Gray }
-function Write-Ok([string]$Message)   { Write-Host "  [ok] $Message" -ForegroundColor Green }
-function Write-Warn([string]$Message) { Write-Host "  [warn] $Message" -ForegroundColor Yellow }
-function Write-Fail([string]$Message) { Write-Host "  [error] $Message" -ForegroundColor Red }
+function Write-Ok([string]$Msg)   { Write-Host "  ✔ $Msg" -ForegroundColor Green }
+function Write-Warn([string]$Msg) { Write-Host "  ⚠ $Msg" -ForegroundColor Yellow }
+function Write-Info([string]$Msg) { Write-Host "  · $Msg" -ForegroundColor Gray }
 
-# ═══════════════════════════════════════════════════════════
-# 工具函数
-# ═══════════════════════════════════════════════════════════
-
-function Test-Cmd([string]$Name) {
-    return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
-}
-
-# 运行原生命令并返回真实退出码。
-# PS5.1 + $ErrorActionPreference=Stop 会在"命令写 stderr（如 torch import 警告）"时、进程尚未退出
-# 就抛 NativeCommandError，导致 $LASTEXITCODE 还是上一条命令的残留值。
-# 正确做法：执行期间临时切 Continue，杜绝该错误，命令跑完后 $LASTEXITCODE 即为真实退出码。
+# 执行命令；$UseProxy 决定是否注入代理环境。返回 exit code。
 function Invoke-Native {
-    param([string]$FilePath, [string[]]$ArgumentList)
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        # 捕获输出后经 Out-Host 显示，避免 stdout 泄漏成函数返回值（污染退出码判断）
-        $output = & $FilePath @ArgumentList 2>&1
-        if ($null -ne $output) { $output | Out-Host }
-    } finally {
-        $ErrorActionPreference = $prev
+    param([string[]]$Cmd, [bool]$UseProxy = $false, [string]$Cwd = $ProjectRoot)
+    $envOld = $null
+    if ($UseProxy -and $script:Proxy) {
+        $envOld = @($env:HTTP_PROXY, $env:HTTPS_PROXY)
+        $env:HTTP_PROXY  = $script:Proxy
+        $env:HTTPS_PROXY = $script:Proxy
     }
-    return $LASTEXITCODE
+    Write-Info ("$ " + ($Cmd -join " "))
+    & $Cmd[0] @($Cmd[1..($Cmd.Length-1)]) | ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray }
+    $code = $LASTEXITCODE
+    if ($envOld -ne $null) { $env:HTTP_PROXY, $env:HTTPS_PROXY = $envOld }
+    return $code
 }
 
-# 捕获原生命令首行非空输出（探针用）。同样临时切 Continue 防 NativeCommandError。
-function Get-CaptureLine {
-    param([string]$FilePath, [string[]]$ArgumentList)
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        return (& $FilePath @ArgumentList 2>$null | Select-Object -First 1)
-    } catch {
-        return $null
-    } finally {
-        $ErrorActionPreference = $prev
-    }
-}
-
-# 创建虚拟 onnxruntime dist-info 桩：
-# hyperlpr3/insightface 声明依赖 onnxruntime 发行版，但部署用 onnxruntime-gpu（两者无法共存——共用模块目录）。
-# Provides-Dist 不被 pip check 识别；建一个"无文件"的 dist-info 桩让 pip 认为 onnxruntime 已装，
-# 避免后续安装/重跑时把 CPU 版 onnxruntime 拉回来抢占 GPU 模块（导致人脸/车牌静默跑 CPU）。
-function New-OnnxruntimeStub {
-    param([string]$PythonExe)
-    $code = @'
-import sys
-from pathlib import Path
-import importlib.metadata as m
-site = Path(sys.prefix) / "Lib" / "site-packages"
-ver = m.version("onnxruntime-gpu")
-distinfo = site / f"onnxruntime-{ver}.dist-info"
-distinfo.mkdir(exist_ok=True)
-(distinfo / "METADATA").write_text(
-    f"Metadata-Version: 2.1\nName: onnxruntime\nVersion: {ver}\n"
-    "Summary: Virtual package provided by onnxruntime-gpu\n", encoding="utf-8")
-(distinfo / "top_level.txt").write_text("", encoding="utf-8")
-(distinfo / "RECORD").write_text("METADATA,,\ntop_level.txt,,\nRECORD,,\n", encoding="utf-8")
-print(f"onnxruntime virtual stub OK ({ver})")
-'@
-    $exit = Invoke-Native $PythonExe @("-c", $code)
-    if ($exit -ne 0) { Write-Warn "onnxruntime 虚拟桩创建失败（pip check 会警告 onnxruntime 缺失，不影响运行）" }
-}
-
-# 该 host 需要走代理（GitHub / PyTorch 官方源）；其余（国内镜像）直连更快
-function Test-HostNeedsProxy([string]$Url) {
-    return $Url -match "github\.com|download\.pytorch\.org|pypi\.org|files\.pythonhosted"
-}
-
-function Invoke-Checked([string]$FilePath, [string[]]$ArgumentList, [string]$FailureMessage) {
-    $exit = Invoke-Native $FilePath $ArgumentList
-    if ($exit -ne 0) { throw $FailureMessage }
-}
-
-function Get-BestPythonVersion {
-    if ($PythonVersion -ne "") {
-        & py "-$PythonVersion" --version 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "指定的 Python $PythonVersion 不可用" }
-        return $PythonVersion
-    }
-    $installed = @()
-    (& py -0p 2>$null) | ForEach-Object { if ($_ -match '-V:([0-9]+\.[0-9]+)') { $installed += $Matches[1] } }
-    foreach ($pref in "3.13", "3.12", "3.11") { if ($installed -contains $pref) { return $pref } }
-    if ($installed.Count -gt 0) {
-        return ($installed | Sort-Object { [version]$_ } -Descending)[0]
-    }
-    throw "未检测到 Python 3.11/3.12/3.13。请先安装 python.org 的 3.12/3.13（勾选 py launcher）。"
-}
-
-# 探测已安装 Python 的可执行路径（winget 装完 PATH 不刷新，需按已知位置找）
-function Find-PythonExe {
-    $cands = @(
-        "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe",
-        "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
-        "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
-        "$env:ProgramFiles\Python313\python.exe"
-    )
-    foreach ($c in $cands) { if (Test-Path $c) { return $c } }
-    # 回退：从 PATH 找 python.exe
-    $fromPath = (Get-Command python.exe -ErrorAction SilentlyContinue)
-    if ($fromPath) { return $fromPath.Source }
-    return $null
-}
-
-# 探测已安装 FFmpeg 的 bin 目录（winget Gyan.FFmpeg → WinGet Packages 下）
-function Find-FfmpegBin {
-    $links = "$env:LOCALAPPDATA\Microsoft\WinGet\Links"
-    if (Test-Path (Join-Path $links "ffmpeg.exe")) { return $links }
-    $pkg = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like "Gyan.FFmpeg*" } | Select-Object -First 1
-    if ($pkg) {
-        $bin = Get-ChildItem $pkg.FullName -Recurse -Filter "ffmpeg.exe" -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-        if ($bin) { return $bin.DirectoryName }
-    }
-    return $null
-}
-
-# 探测已安装 npm.cmd（winget 装完 PATH 不刷新，需按已知位置找）
-function Find-Npm {
-    $cands = @(
-        "$env:ProgramFiles\nodejs\npm.cmd",
-        "$env:LOCALAPPDATA\Programs\nodejs\npm.cmd"
-    )
-    foreach ($c in $cands) { if (Test-Path $c) { return $c } }
-    $fromPath = (Get-Command npm.cmd -ErrorAction SilentlyContinue)
-    if ($fromPath) { return $fromPath.Source }
-    return $null
-}
-
-# 生成 config/config.yaml：example 缺失时复制（use_nvdec 默认 true，无 NVDEC 时管道自动 fallback cv2）。
-# config.yaml 已 gitignore 不入库，git clone 后必须由部署脚本生成，桌面启动器/后端才找得到。
-function New-ConfigFile {
-    param([string]$ProjectRoot)
-    $cfg = Join-Path $ProjectRoot "config\config.yaml"
-    $example = Join-Path $ProjectRoot "config\config.yaml.example"
-    if (Test-Path $cfg) {
-        Write-Ok "config/config.yaml 已存在，跳过生成"
-    } elseif (Test-Path $example) {
-        New-Item -ItemType Directory -Force -Path (Split-Path $cfg) | Out-Null
-        Copy-Item $example $cfg
-        Write-Ok "已生成 config/config.yaml（复制 example；路径/密钥按机器改，见文件内注释）"
-    } else {
-        Write-Warn "config/config.yaml.example 不存在（仓库文件缺失？），后端启动前需手动配置 config"
-    }
-}
-
-# 需要代理的下载：curl -x；否则直连。timeout 秒后失败自动切代理重试一次。
-function Invoke-CurlDownload {
-    param(
-        [string]$Url,
-        [string]$OutPath,
-        [switch]$ForceProxy,
-        [switch]$ForceDirect,
-        [int]$TimeoutSec = 90,
-        [int]$Retries = 2
-    )
-    $dir = Split-Path -Parent $OutPath
-    if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    $useProxy = $ForceProxy -or (-not $ForceDirect -and (Test-HostNeedsProxy $Url))
-    for ($i = 0; $i -lt $Retries; $i++) {
-        $argList = @("-L", "-o", $OutPath, "--max-time", "$TimeoutSec", $Url)
-        if ($useProxy) { $argList = @("-x", $Script:ProxyUrl) + $argList }
-        $proc = Start-Process -FilePath "curl.exe" -ArgumentList $argList -NoNewWindow -Wait -PassThru
-        if ($proc.ExitCode -eq 0) { return $true }
-        # 失败 → 若还没试代理，则强制切代理重试
-        if (-not $useProxy) {
-            Write-Warn "直连超时 ($Url)，改用代理重试..."
-            $useProxy = $true
-        } else {
-            Start-Sleep -Seconds 3
+# 下载文件（本地已存在则跳过；走代理）。
+function Invoke-Download {
+    param([string]$Url, [string]$Dest, [bool]$UseProxy)
+    $DestDir = Split-Path -Parent $Dest
+    New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
+    if (Test-Path $Dest) { Write-Ok "已存在，跳过: $(Split-Path -Leaf $Dest)"; return $true }
+    Write-Info "下载 $(Split-Path -Leaf $Dest) ..."
+    $proxyArgs = @()
+    if ($UseProxy -and $script:Proxy) { $proxyArgs = @("-x", $script:Proxy) }
+    for ($i = 0; $i -lt $DownloadRetries; $i++) {
+        $rc = & curl.exe @proxyArgs -L -s -S -o $Dest --retry 3 $Url 2>$null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $Dest) -and (Get-Item $Dest).Length -gt 0) {
+            Write-Ok "下载完成 ($([math]::Round((Get-Item $Dest).Length/1MB,1)) MB)"
+            return $true
         }
+        Write-Warn "下载失败，重试 $($i+1)/$DownloadRetries ..."
+        Start-Sleep -Seconds 2
     }
     return $false
 }
 
-# 在指定代理模式下运行 python/pip（设/清 HTTP(S)_PROXY）。
-# 注意：形参名不能叫 $Args（内置自动变量，会失效导致无参调用进 REPL）。
-function Invoke-PythonWithProxy {
-    param([string]$PythonExe, [string[]]$ArgumentList, [bool]$UseProxy)
-    if ($UseProxy) {
-        $env:HTTP_PROXY = $Script:ProxyUrl; $env:HTTPS_PROXY = $Script:ProxyUrl
-    } else {
-        Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
-        Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
-    }
-    try {
-        return (Invoke-Native $PythonExe $ArgumentList)
-    } finally {
-        Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
-        Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
-    }
-}
-
-# 流式版本：长操作（pip 安装 / 模型下载）逐行实时输出到终端，安装者不"摸黑"。
-function Invoke-PythonWithProxyStream {
-    param([string]$PythonExe, [string[]]$ArgumentList, [bool]$UseProxy)
-    if ($UseProxy) {
-        $env:HTTP_PROXY = $Script:ProxyUrl; $env:HTTPS_PROXY = $Script:ProxyUrl
-    } else {
-        Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
-        Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
-    }
-    try {
-        & $PythonExe @ArgumentList 2>&1 | ForEach-Object { Write-Host "  $_" }
-        return $LASTEXITCODE
-    } finally {
-        Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
-        Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
-    }
-}
-
-# 从 pytorch 索引页解析最新 wheel 文件名（torch/torchvision）
-function Get-PytorchWheelName {
-    param([string]$IndexUrl, [string]$Package, [string]$Pattern)
-    $page = Invoke-CurlDownload $IndexUrl (Join-Path $env:TEMP "pt_index_$Package.html") -ForceProxy
-    if (-not $page) { throw "无法获取 $Package 索引页" }
-    $html = Get-Content (Join-Path $env:TEMP "pt_index_$Package.html") -Raw -ErrorAction SilentlyContinue
-    $m = [regex]::Match($html, $Pattern)
-    if (-not $m.Success) { throw "在索引页找不到匹配 $Package 的 wheel ($Pattern)" }
-    return $m.Value
-}
-
-function Get-TorchIndex([string]$GpuName, [string]$DriverCuda) {
-    # Blackwell (sm_120, RTX 50xx)：cu126 缺内核，需 cu130+
-    if ($GpuName -match "RTX\s*5|Blackwell") { return "https://download.pytorch.org/whl/cu130" }
-    if (-not $DriverCuda) { return "https://download.pytorch.org/whl/cu126" }
-    $v = [version]$DriverCuda
-    if ($v -ge [version]"13.0") { return "https://download.pytorch.org/whl/cu130" }
-    if ($v -ge [version]"12.8") { return "https://download.pytorch.org/whl/cu128" }
-    if ($v -ge [version]"12.6") { return "https://download.pytorch.org/whl/cu126" }
-    if ($v -ge [version]"12.4") { return "https://download.pytorch.org/whl/cu124" }
-    if ($v -ge [version]"12.1") { return "https://download.pytorch.org/whl/cu121" }
-    throw "驱动过旧（CUDA $DriverCuda < 12.1），请升级 NVIDIA 驱动到 550+"
-}
-
-# ═══════════════════════════════════════════════════════════
-# 1. 交互：注意事项 + 代理输入
-# ═══════════════════════════════════════════════════════════
-
-Write-Host "Zhiying Windows 一键安装器（裸机 → 环境就绪）" -ForegroundColor Cyan
-Write-Host "目标：自动安装 Python / FFmpeg / WSL2 / Docker / CUDA torch / 全部依赖 / 全部模型"
+# ───────────────────────────── 交互：选模型 + 代理 ─────────────────────────────
 Write-Host ""
+Write-Host "═══ Zhiying 新机一键部署（命令行交互安装）═══" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "请选择 embedding 模型档位（决定向量维度 + 装哪个模型）："
+Write-Host "  [1] 8B  Qwen3-VL-Embedding-8B  → 4096 维（默认；需 ~16GB 显存）"
+Write-Host "  [2] 2B  Qwen3-VL-Embedding-2B  → 2048 维（低显存机器平替）"
+$choice = Read-Host "输入 1 或 2"
+$script:EmbeddingProfile = if ($choice -eq "2") { "2b" } else { "8b" }
+Write-Ok "已选档位: $script:EmbeddingProfile"
 
-Write-Host "━━━━ 注意事项（请先阅读）━━━━" -ForegroundColor Yellow
-Write-Host "  1. 需要管理员权限（脚本会自动请求 UAC）"
-Write-Host "  2. 需要 NVIDIA GPU + 驱动（脚本会检测 CUDA 版本）"
-Write-Host "  3. 需要可用的代理（脚本强制要求，用于 GitHub / PyTorch 下载）"
-Write-Host "  4. 总下载量约 25GB+（torch ~2.6GB + embedding 16GB + 其余模型），请保证磁盘空间"
-Write-Host "  5. 若 WSL2 未安装：脚本会把 WSL2+Docker 放最后安装，装完需要重启一次"
-Write-Host "  6. 装完仅打印启动指令；数据库/后端/前端由你自己手动启动"
-Write-Host "  7. 摘要 API key（DashScope/DeepSeek）请在启动后于前端「设置页」填写"
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
+$proxyInput = Read-Host "输入代理地址（如 http://127.0.0.1:7897；能直连可留空）"
+$script:Proxy = ($proxyInput.Trim() -replace '/$', '')
+if ($script:Proxy) { Write-Ok "代理: $script:Proxy" } else { Write-Warn "未使用代理（国内源直连，GitHub 组件可能失败）" }
 
-# ── 代理（必填）──
-if ([string]::IsNullOrWhiteSpace($Proxy)) {
-    if ($NonInteractive) { throw "-NonInteractive 模式必须同时传 -Proxy" }
-    Write-Host ""
-    $Proxy = Read-Host "请输入代理地址（必填，如 http://127.0.0.1:7897）"
-}
-$Proxy = $Proxy.Trim().TrimEnd("/")
-if ([string]::IsNullOrWhiteSpace($Proxy)) { throw "代理地址不能为空" }
-$Script:ProxyUrl = $Proxy
-
-# 测试代理
-if ($SkipProxyTest) {
-    Write-Warn "已跳过代理测试（-SkipProxyTest，仅排障用）"
+# ───────────────────────────── 1/6 Python ─────────────────────────────
+Write-Step "1/6" "Python 环境"
+$py = Get-Command python -ErrorAction SilentlyContinue
+if ($py) {
+    $ver = (& python --version 2>&1) -replace "Python ", ""
+    Write-Ok "检测到 Python $ver"
 } else {
-    Write-Info "测试代理 $Proxy ..."
-    $code = & curl.exe -x "$Proxy" -s -o NUL -w "%{http_code}" --max-time 15 https://github.com
-    if ($code -notmatch "^[23]\d\d$") {
-        throw "代理测试失败（github.com 返回 $code）。请确认代理软件已启动且地址正确。"
-    }
-    Write-Ok "代理可用（github.com → $code）"
+    Write-Info "未检测到 Python，用 winget 安装 Python 3.13 ..."
+    $rc = & winget install --id Python.Python.3.13 --accept-source-agreements --accept-package-agreements --disable-interactivity
+    if ($LASTEXITCODE -ne 0) { throw "Python 安装失败" }
+    Write-Ok "Python 3.13 已安装（请关闭本窗口，用新的管理员窗口重跑本脚本以刷新 PATH）"
 }
 
-$mode = "full"   # 全装模式
-Write-Ok "安装模式：full（全量：embedding + yolo + reid + face + plate + segmenter + 全部依赖）"
-
-# ═══════════════════════════════════════════════════════════
-# 2. 环境探测
-# ═══════════════════════════════════════════════════════════
-
-Write-Step "1/11" "探测现有环境"
-$hasPy   = Test-Cmd "py"
-$hasFF   = Test-Cmd "ffmpeg"
-$hasNv   = Test-Cmd "nvidia-smi"
-$hasDocker = Test-Cmd "docker"
-$gpuName = ""; $driverCuda = ""
-
-if ($hasNv) {
-    $gpuName = (& nvidia-smi --query-gpu=name --format=csv,noheader 2>$null | Select-Object -First 1)
-    $cudaVer = (& nvidia-smi 2>$null | Select-String "CUDA Version" | Select-Object -First 1).ToString()
-    if ($cudaVer -match "CUDA Version:\s*([0-9.]+)") { $driverCuda = $Matches[1] }
-    Write-Ok "GPU: $gpuName | 驱动 CUDA: $driverCuda"
+# ───────────────────────────── 2/6 .venv + 依赖 ─────────────────────────────
+Write-Step "2/6" "虚拟环境 + 依赖"
+if (-not (Test-Path $VenvPython)) {
+    Write-Info "创建 .venv ..."
+    $rc = Invoke-Native @("python", "-m", "venv", ".venv")
+    if ($rc -ne 0) { throw ".venv 创建失败" }
 } else {
-    Write-Fail "未检测到 nvidia-smi（NVIDIA 驱动）。Zhiying 依赖 GPU 推理，请先安装 NVIDIA 驱动。"
-    throw "缺少 NVIDIA GPU / 驱动"
+    Write-Ok ".venv 已存在"
 }
+Write-Info "升级 pip + 安装依赖（走代理，较大，耐心等待）..."
+$pipArgs = @("-m", "pip", "install", "--upgrade", "pip")
+if ($script:Proxy) { $pipArgs += @("--proxy", $script:Proxy) }
+$rc = Invoke-Native (@($VenvPython) + $pipArgs)
+$pipArgs2 = @("-m", "pip", "install", "-r", (Join-Path $ProjectRoot "requirements.txt"))
+if ($script:Proxy) { $pipArgs2 += @("--proxy", $script:Proxy) }
+$rc = Invoke-Native (@($VenvPython) + $pipArgs2)
+if ($rc -ne 0) { throw "依赖安装失败" }
 
-Write-Ok "Python: $(if($hasPy){'已装'}else{'缺失'}) | FFmpeg: $(if($hasFF){'已装'}else{'缺失'}) | Docker: $(if($hasDocker){'已装'}else{'缺失'})"
-
-# WSL2 状态（决定是否走"两段式+重启"）
-$wslOut = (& wsl --status 2>$null | Out-String)
-$wslMissing = $wslOut -notmatch "WSL2|已安装|安装"
-Write-Ok "WSL2: $(if($wslMissing){'缺失（将放最后安装，需重启）'}else{'已就绪'})"
-
-# ═══════════════════════════════════════════════════════════
-# 3. 安装 Python（缺失时）
-# ═══════════════════════════════════════════════════════════
-
-Write-Step "2/11" "Python 环境"
-if (-not $hasPy) {
-    Write-Info "Python 未安装，正在安装 Python 3.13 ..."
-    $exit = Invoke-Native "winget" @("install", "--id", "Python.Python.3.13", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity")
-    if ($exit -ne 0) { throw "Python 安装失败" }
-    # PATH 未刷新，按已知位置定位
-    $pyExe = Find-PythonExe
-    if (-not $pyExe) { throw "Python 装完但找不到 python.exe" }
-    Write-Ok "Python 已安装: $pyExe"
-} else {
-    $pyExe = Find-PythonExe
-    Write-Ok "Python 已存在: $(if($pyExe){$pyExe}else{'py launcher'})"
-}
-$pyVersion = Get-BestPythonVersion
-
-# ── venv ──
-if (Test-Path $VenvPython) {
-    Write-Ok "venv 已存在，跳过创建"
-} else {
-    $exit = Invoke-Native "py" @("-$pyVersion", "-m", "venv", (Join-Path $ProjectRoot ".venv"))
-    if ($exit -ne 0) { throw "venv 创建失败" }
-    Write-Ok "已创建 .venv (Python $pyVersion)"
-}
-
-# ── config.yaml（缺失时从 example 生成；桌面启动器/后端的必需品）──
-New-ConfigFile $ProjectRoot
-
-# ── bump.cmd 垫片（新开终端即可 `bump minor/patch`；调 python scripts\bump_version.py）──
-$shimDir = Join-Path $env:USERPROFILE "bin"
-New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
-Set-Content -Path (Join-Path $shimDir "bump.cmd") -Encoding ASCII -Value "@echo off`r`npython `"$ProjectRoot\scripts\bump_version.py`" %*"
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($userPath -notlike "*$shimDir*") {
-    [Environment]::SetEnvironmentVariable("Path", "$userPath;$shimDir", "User")
-}
-Write-Ok "bump.cmd 已接入用户 PATH（新开终端生效：bump minor / bump patch）"
-
-# ═══════════════════════════════════════════════════════════
-# 4. 安装 FFmpeg（缺失或无 CUDA 编解码时）
-# ═══════════════════════════════════════════════════════════
-
-Write-Step "3/11" "FFmpeg（CUDA 版）"
-$ffBin = Find-FfmpegBin
-$ffCudaOk = $false
-if ($ffBin) {
-    $enc = (& "$ffBin\ffmpeg.exe" -hide_banner -encoders 2>&1 | Out-String)
-    $dec = (& "$ffBin\ffmpeg.exe" -hide_banner -decoders 2>&1 | Out-String)
-    if ($enc -match "h264_nvenc" -and $dec -match "h264_cuvid") { $ffCudaOk = $true }
-}
-if ($ffCudaOk) {
-    Write-Ok "FFmpeg CUDA 能力正常: $ffBin"
-} else {
-    Write-Info "安装/修复 FFmpeg（Gyan 完整版，含 CUDA 编解码）..."
-    $exit = Invoke-Native "winget" @("install", "--id", "Gyan.FFmpeg", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity")
-    if ($exit -ne 0) { throw "FFmpeg 安装失败" }
-    $ffBin = Find-FfmpegBin
-    if (-not $ffBin) { throw "FFmpeg 装完但找不到二进制" }
-    Write-Ok "FFmpeg 已安装: $ffBin"
-}
-# 全程用绝对路径调 ffmpeg/ffprobe（避免 PATH 依赖）
-$Script:FfBin = $ffBin
-$env:PATH = "$ffBin;$env:PATH"
-
-# ═══════════════════════════════════════════════════════════
-# 5. CUDA torch + torchvision
-# ═══════════════════════════════════════════════════════════
-
-Write-Step "4/11" "CUDA PyTorch + torchvision"
-if ($SkipDeps) { Write-Info "已跳过（-SkipDeps）" }
+# ───────────────────────────── 3/6 内嵌 PostgreSQL ─────────────────────────────
+Write-Step "3/6" "内嵌 PostgreSQL（vendor/pg）"
+if ($SkipPg) { Write-Info "已跳过（-SkipPg）" }
 else {
-    # pip 国内镜像（requirements 非 torch 部分走 Aliyun 直连，免代理）
-    & $VenvPython -m pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ 2>$null
-
-    # ── torch：已可用则复用，否则 curl 下载 wheel + 本地安装 ──
-    $torchOk = Get-CaptureLine $VenvPython @("-c", "import torch; print(torch.cuda.is_available())")
-    if ("$torchOk" -eq "True") {
-        Write-Ok "PyTorch 已可用（CUDA），跳过安装"
+    $pgDir = Join-Path $ProjectRoot "vendor\pg"
+    if (Test-Path (Join-Path $pgDir "bin\pg_ctl.exe")) {
+        Write-Ok "vendor/pg 已存在"
     } else {
-        $torchIndex = Get-TorchIndex $gpuName $driverCuda
-        Write-Info "安装 CUDA 版 PyTorch（$torchIndex）..."
-        $wheel = Get-PytorchWheelName $torchIndex "torch" "torch-2\.[0-9.]+%2Bcu[0-9]+-cp313-cp313-win_amd64\.whl"
-        $wheelUrl = "$torchIndex/$wheel"
-        Write-Info "下载 torch wheel: $wheelUrl"
-        if (-not (Invoke-CurlDownload $wheelUrl (Join-Path $ProjectRoot "models\.torch_dl\$wheel") -ForceProxy -TimeoutSec 600)) {
-            throw "torch wheel 下载失败"
+        # 本地 vendor/pg-zips 优先，否则在线下载
+        $pgZip = if (Test-Path $PgZipLocal) { $PgZipLocal } else { $null }
+        $vecZip = if (Test-Path $PgvectorLocal) { $PgvectorLocal } else { $null }
+        if ($pgZip) { Write-Ok "本地已有 postgres zip" } else {
+            if (-not (Invoke-Download $PgZipUrl (Join-Path $ProjectRoot "vendor\pg-zips\postgresql.zip") $true)) { throw "postgres zip 下载失败" }
+            $pgZip = Join-Path $ProjectRoot "vendor\pg-zips\postgresql.zip"
         }
-        Invoke-Checked $VenvPython @("-m", "pip", "install", (Join-Path $ProjectRoot "models\.torch_dl\$wheel")) "torch 安装失败"
-        Write-Ok "torch 已安装"
-    }
-
-    # ── torchvision：必须与 torch 同 CUDA 源（否则 torchvision::nms 无 CUDA 内核）──
-    # 判定：直接尝试 nms on CUDA
-    $tvCudaOk = Get-CaptureLine $VenvPython @("-c", "import torch, torchvision; boxes=torch.tensor([[0,0,10,10],[1,1,11,11]],dtype=torch.float32,device='cuda'); scores=torch.tensor([0.9,0.8],device='cuda'); torch.ops.torchvision.nms(boxes,scores,0.5); print('OK')")
-    if ("$tvCudaOk" -eq "OK") {
-        Write-Ok "torchvision CUDA 就绪，跳过安装"
-    } else {
-        Write-Info "torchvision CUDA 不可用，安装匹配版本（同 $torchIndex 源）..."
-        $tvWheel = Get-PytorchWheelName $torchIndex "torchvision" "torchvision-0\.[0-9.]+%2Bcu[0-9]+-cp313-cp313-win_amd64\.whl"
-        $tvUrl = "$torchIndex/$tvWheel"
-        if (-not (Invoke-CurlDownload $tvUrl (Join-Path $ProjectRoot "models\.torch_dl\$tvWheel") -ForceProxy -TimeoutSec 300)) {
-            throw "torchvision wheel 下载失败"
+        if ($vecZip) { Write-Ok "本地已有 pgvector zip" } else {
+            if (-not (Invoke-Download $PgvectorUrl (Join-Path $ProjectRoot "vendor\pg-zips\pgvector.zip") $true)) { throw "pgvector zip 下载失败" }
+            $vecZip = Join-Path $ProjectRoot "vendor\pg-zips\pgvector.zip"
         }
-        & $VenvPython -m pip uninstall -y torchvision 2>$null
-        Invoke-Checked $VenvPython @("-m", "pip", "install", (Join-Path $ProjectRoot "models\.torch_dl\$tvWheel")) "torchvision 安装失败"
-        Write-Ok "torchvision 已重装（CUDA 版）"
+        # 解压 postgres → vendor/pg（zip 内层是 pgsql/，取其内容）
+        Write-Info "解压 PostgreSQL ..."
+        $tmpPg = Join-Path $ProjectRoot "vendor\.tmp-pg"
+        Remove-Item $tmpPg -Recurse -Force -ErrorAction SilentlyContinue
+        Expand-Archive -Path $pgZip -DestinationPath $tmpPg -Force
+        $inner = Get-ChildItem $tmpPg -Directory | Select-Object -First 1
+        if ($inner) { Move-Item $inner.FullName $pgDir }
+        else { Move-Item $tmpPg $pgDir }
+        Remove-Item $tmpPg -Recurse -Force -ErrorAction SilentlyContinue
+        # 解压 pgvector → vendor/pg（zip 内是 lib/ 与 share/extension/）
+        Write-Info "安装 pgvector 扩展 ..."
+        Expand-Archive -Path $vecZip -DestinationPath (Join-Path $ProjectRoot "vendor\.tmp-vec") -Force
+        Copy-Item -Path (Join-Path $ProjectRoot "vendor\.tmp-vec\*") -Destination $pgDir -Recurse -Force
+        Remove-Item (Join-Path $ProjectRoot "vendor\.tmp-vec") -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path (Join-Path $pgDir "bin\pg_ctl.exe")) { Write-Ok "vendor/pg 就绪（含 pgvector）" }
+        else { throw "vendor/pg 组装失败：bin\pg_ctl.exe 缺失" }
     }
-
-    # ── 真实 CUDA kernel 验证（is_available 会假通过，kernel 缺失才炸）──
-    Write-Info "验证真实 CUDA kernel ..."
-    $exit = Invoke-Native $VenvPython @("-c", "import torch; x=torch.randn(1024,1024,device='cuda'); y=(x@x).sum().item(); print('cuda-ok')")
-    if ($exit -ne 0) {
-        throw "CUDA kernel 验证失败——torch 版本与该 GPU 不兼容，请升级驱动后重跑"
-    }
-    Write-Ok "PyTorch GPU 就绪"
 }
 
-# ═══════════════════════════════════════════════════════════
-# 6. requirements + 关键依赖（onnxruntime-gpu / accelerate / lap）
-# ═══════════════════════════════════════════════════════════
-
-Write-Step "5/11" "Python 依赖"
-if ($SkipDeps) { Write-Info "已跳过（-SkipDeps）" }
-else {
-    Write-Info "安装 requirements（Aliyun 国内镜像直连，排除 onnxruntime——由 onnxruntime-gpu 单独处理）..."
-    # onnxruntime(CPU) 与 onnxruntime-gpu 是不同发行版，同时装会让 CPU 版抢占 import 导致人脸/车牌跑 CPU；
-    # 生成剔除 onnxruntime 行的临时 requirements，gpu 版由下面的 swap 逻辑统一处理（幂等）。
-    $tmpReq = Join-Path $env:TEMP "requirements-no-onnx.txt"
-    Get-Content (Join-Path $ProjectRoot "requirements.txt") -ErrorAction Stop |
-        Where-Object { $_ -notmatch "^\s*onnxruntime" } |
-        Set-Content $tmpReq -Encoding UTF8
-    $rc = Invoke-PythonWithProxyStream $VenvPython @("-m", "pip", "install", "-r", $tmpReq) $false
-    if ($rc -ne 0) { throw "requirements 安装失败（见上方实时输出）" }
-
-    # ── onnxruntime-gpu（人脸/车牌需要 CUDA provider）──
-    $ortOk = Get-CaptureLine $VenvPython @("-c", "import onnxruntime as ort; print('CUDAExecutionProvider' in ort.get_available_providers())")
-    if ("$ortOk" -eq "True") {
-        Write-Ok "onnxruntime-gpu 已就绪"
-    } else {
-        Write-Info "替换 onnxruntime → onnxruntime-gpu（pip 大文件会卡死，走 curl 下载）..."
-        # 从 Aliyun 索引解析 onnxruntime-gpu wheel 真实链接
-        $null = Invoke-CurlDownload "https://mirrors.aliyun.com/pypi/simple/onnxruntime-gpu/" (Join-Path $env:TEMP "ort_index.html") -ForceDirect
-        $ortHtml = Get-Content (Join-Path $env:TEMP "ort_index.html") -Raw -ErrorAction SilentlyContinue
-        # href 形如 ../../packages/<hash>/onnxruntime_gpu-1.28.0-...whl#sha256=...
-        $href = [regex]::Match($ortHtml, 'href="([^"]*onnxruntime_gpu-1\.[0-9.]+-cp313-cp313-win_amd64\.whl[^"]*)"').Groups[1].Value
-        if (-not $href) { throw "找不到 onnxruntime-gpu wheel" }
-        $ortClean = $href.Split('#')[0]
-        if ($ortClean -like "http*") { $ortUrl = $ortClean }
-        else { $ortUrl = $ortClean -replace "^\.\./\.\./", "https://mirrors.aliyun.com/pypi/" }
-        $ortName = [IO.Path]::GetFileName($ortClean)
-        if (-not (Invoke-CurlDownload $ortUrl (Join-Path $ProjectRoot "models\.torch_dl\$ortName") -ForceDirect -TimeoutSec 600)) {
-            # 直连超时 → 代理重试
-            if (-not (Invoke-CurlDownload $ortUrl (Join-Path $ProjectRoot "models\.torch_dl\$ortName") -ForceProxy -TimeoutSec 600)) {
-                throw "onnxruntime-gpu 下载失败"
-            }
-        }
-        $null = Invoke-Native $VenvPython @("-m", "pip", "uninstall", "-y", "onnxruntime")
-        Invoke-Checked $VenvPython @("-m", "pip", "install", (Join-Path $ProjectRoot "models\.torch_dl\$ortName")) "onnxruntime-gpu 安装失败"
-        Write-Ok "onnxruntime-gpu 已安装"
-    }
-    # 无论上面是"跳过"还是"重装"，都确保虚拟 onnxruntime 桩存在（hyperlpr3/insightface 依赖其发行版名）
-    New-OnnxruntimeStub $VenvPython
-
-    # ── accelerate（embedder device_map 必需）+ lap（BoT-SORT）──
-    Invoke-Checked $VenvPython @("-m", "pip", "install", "accelerate", "lap") "accelerate/lap 安装失败"
-    Write-Ok "accelerate + lap 已安装"
-
-    # ── 桌面端启动器依赖（pywebview，Windows WebView2 系统自带）──
-    Invoke-Checked $VenvPython @("-m", "pip", "install", "-r", (Join-Path $ProjectRoot "desktop\requirements.txt")) "桌面端 pywebview 安装失败"
-    Write-Ok "桌面端 pywebview 已安装（desktop/requirements.txt）"
-}
-
-# ═══════════════════════════════════════════════════════════
-# 7. 模型下载（embedding / yolo / reid / face / plate / segmenter）
-# ═══════════════════════════════════════════════════════════
-
-Write-Step "6/11" "模型准备"
+# ───────────────────────────── 4/6 模型（按档位） ─────────────────────────────
+Write-Step "4/6" "模型下载（$script:EmbeddingProfile 档位）"
 if ($SkipModels) { Write-Info "已跳过（-SkipModels）" }
 else {
     $dlPy = Join-Path $PSScriptRoot "download_models.py"
-    # 直连组件（国内源）：embedding + plate + segmenter
-    Write-Info "下载国内源模型（embedding / plate / segmenter）..."
-    $rc = Invoke-PythonWithProxyStream $VenvPython @(($dlPy), "--component", "embedding", "--component", "plate", "--component", "segmenter", "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $false
+    # 国内源组件（embedding 按档位 + plate + segmenter）
+    $rc = Invoke-Native @($VenvPython, $dlPy, "--embedding-profile", $script:EmbeddingProfile,
+        "--component", "embedding", "--component", "plate", "--component", "segmenter",
+        "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $false
     if ($rc -ne 0) {
-        # 超时 → 整组带代理重试（幂等，已完成组件自动跳过）
         Write-Warn "国内源下载失败，带代理重试..."
-        $rc = Invoke-PythonWithProxyStream $VenvPython @(($dlPy), "--component", "embedding", "--component", "plate", "--component", "segmenter", "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $true
+        $rc = Invoke-Native @($VenvPython, $dlPy, "--embedding-profile", $script:EmbeddingProfile,
+            "--component", "embedding", "--component", "plate", "--component", "segmenter",
+            "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $true
     }
-    if ($rc -ne 0) { throw "国内源模型下载失败（见上方实时输出）" }
-
-    # 代理组件（GitHub 源）：yolo + reid + face
-    Write-Info "下载 GitHub 源模型（yolo / reid / face，走代理）..."
-    $rc = Invoke-PythonWithProxyStream $VenvPython @(($dlPy), "--component", "yolo", "--component", "reid", "--component", "face", "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $true
-    if ($rc -ne 0) { throw "GitHub 源模型下载失败（检查代理，见上方实时输出）" }
-
+    if ($rc -ne 0) { throw "国内源模型下载失败" }
+    # GitHub 源组件（yolo/reid/face，需代理）
+    $rc = Invoke-Native @($VenvPython, $dlPy,
+        "--component", "yolo", "--component", "reid", "--component", "face",
+        "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $true
+    if ($rc -ne 0) { throw "GitHub 源模型下载失败（检查代理）" }
     Write-Ok "全部模型就绪"
 }
 
-# ═══════════════════════════════════════════════════════════
-# 8. 数据库 + Docker（自适应：WSL2 缺失 → 放最后装并提示重启）
-# ═══════════════════════════════════════════════════════════
+# ───────────────────────────── 5/6 config.yaml 生成 ─────────────────────────────
+Write-Step "5/6" "生成 config.yaml"
+$cfgPath = Join-Path $ProjectRoot "config\config.yaml"
+$cfgGen = @"
+import yaml, pathlib
+root = pathlib.Path(r"$ProjectRoot")
+cfg_path = root / "config" / "config.yaml"
+example = root / "config" / "config.yaml.example"
+if cfg_path.exists():
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+else:
+    cfg = yaml.safe_load(example.read_text(encoding="utf-8")) or {}
+cfg["embedding_profile"] = "$script:EmbeddingProfile"
+cfg.setdefault("database", {})["uri"] = "postgresql+asyncpg://zhiying:zhiying@localhost:5432/zhiying"
+cfg_path.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+print("config.yaml: embedding_profile =", cfg["embedding_profile"])
+"@
+$cfgTmp = Join-Path $ProjectRoot "vendor\.gen-config.py"
+Set-Content -Path $cfgTmp -Value $cfgGen -Encoding UTF8
+$rc = Invoke-Native @($VenvPython, $cfgTmp)
+Remove-Item $cfgTmp -Force -ErrorAction SilentlyContinue
+if ($rc -ne 0) { throw "config.yaml 生成失败" }
+Write-Ok "config.yaml 已生成（embedding_profile=$script:EmbeddingProfile）"
 
-Write-Step "7/11" "数据库（PostgreSQL + pgvector）"
-if ($SkipDocker) { Write-Info "已跳过（-SkipDocker）" }
-else {
-    if ($wslMissing) {
-        Write-Warn "WSL2 未安装 → Docker 相关放到最后一步安装，装完需重启一次电脑"
-    } else {
-        # WSL2 已就绪：确保 Docker 引擎运行
-        $dockerReady = $false
-        try { & docker info *> $null; if ($LASTEXITCODE -eq 0) { $dockerReady = $true } } catch { $dockerReady = $false }
-        if (-not $dockerReady) {
-            Write-Info "启动 Docker Desktop ..."
-            Start-Process -FilePath "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-            for ($i = 0; $i -lt 30; $i++) {
-                try { & docker info *> $null; if ($LASTEXITCODE -eq 0) { $dockerReady = $true; break } } catch { }
-                Start-Sleep -Seconds 5
-            }
-        }
-        if (-not $dockerReady) { throw "Docker 引擎未就绪" }
-        Write-Ok "Docker 引擎就绪"
+# ───────────────────────────── 6/6 起库 + 建表 ─────────────────────────────
+Write-Step "6/6" "启动内嵌 PostgreSQL + 建表"
+$initScript = @"
+import sys
+from pathlib import Path
+root = Path(r"$ProjectRoot")
+sys.path.insert(0, str(root))
+import importlib.util
+spec = importlib.util.spec_from_file_location("desktop_db", root / "desktop" / "db.py")
+db = importlib.util.module_from_spec(spec); spec.loader.exec_module(db)
+class Log:
+    def write(self, s):
+        if s.strip(): print("   [pg]", s)
+log = Log()
+if not db.start_db(root, log, timeout=180):
+    print("FAIL start_db"); sys.exit(1)
+if not db.wait_db_healthy(root, log, timeout=120):
+    print("FAIL wait_db_healthy"); sys.exit(1)
+print("DB ready")
+"@
+$initTmp = Join-Path $ProjectRoot "vendor\.start-pg.py"
+Set-Content -Path $initTmp -Value $initScript -Encoding UTF8
+$rc = Invoke-Native @($VenvPython, $initTmp)
+Remove-Item $initTmp -Force -ErrorAction SilentlyContinue
+if ($rc -ne 0) { throw "内嵌 PostgreSQL 启动失败" }
 
-        # 配置 Docker 代理 + 国内镜像（保证拉镜像顺利）
-        Write-Info "配置 Docker 代理 / 国内镜像 ..."
-        $dockerSettings = Join-Path $env:APPDATA "Docker\settings-store.json"
-        if (Test-Path $dockerSettings) {
-            try {
-                $ds = Get-Content $dockerSettings -Raw | ConvertFrom-Json
-                $ds | Add-Member -NotePropertyName ProxyHttpMode -NotePropertyValue "manual" -Force
-                $ds | Add-Member -NotePropertyName OverrideProxyHTTP -NotePropertyValue $Proxy -Force
-                $ds | Add-Member -NotePropertyName OverrideProxyHTTPS -NotePropertyValue $Proxy -Force
-                $ds | ConvertTo-Json -Depth 10 | Set-Content $dockerSettings -Encoding UTF8
-            } catch { Write-Warn "Docker 代理配置写入失败（可手动在 Docker Desktop 设置）" }
-        }
-        $daemonJson = Join-Path $env:USERPROFILE ".docker\daemon.json"
-        try {
-            $dj = if (Test-Path $daemonJson) { Get-Content $daemonJson -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
-            $dj | Add-Member -NotePropertyName registry-mirrors -NotePropertyValue @("https://docker.m.daocloud.io") -Force
-            $dj | ConvertTo-Json -Depth 10 | Set-Content $daemonJson -Encoding UTF8
-        } catch { Write-Warn "Docker daemon.json 写入失败" }
+Write-Info "建表（init_db）..."
+$rc = Invoke-Native @($VenvPython, "-c",
+    "import asyncio; from core.db import init_db; asyncio.run(init_db()); print('tables ok')")
+if ($rc -ne 0) { throw "init_db 建表失败" }
+Write-Ok "数据库已就绪、表已创建"
 
-        # 拉取 pgvector 镜像
-        Write-Info "拉取 pgvector 镜像（约 630MB）..."
-        $exit = Invoke-Native "docker" @("pull", "pgvector/pgvector:pg17")
-        if ($exit -ne 0) {
-            Write-Warn "pgvector 拉取失败，稍后由 docker compose 自动重试（见启动清单）"
-        } else {
-            Write-Ok "pgvector 镜像已就绪"
-        }
-    }
-}
-
-# ═══════════════════════════════════════════════════════════
-# 9. 前端构建（Node + 前端 dist）：桌面 exe 开产品窗 + 后端静态托管都需要。
-#    config.yaml 已生成；这里把 frontend-desktop 和 frontend 都构建出来。
-# ═══════════════════════════════════════════════════════════
-
-Write-Step "8/11" "前端构建（Node + 前端 dist）"
-$npmCmd = Find-Npm
-if (-not $npmCmd) {
-    Write-Info "Node.js 未安装，正在安装 Node.js LTS ..."
-    $exit = Invoke-Native "winget" @("install", "--id", "OpenJS.NodeJS.LTS", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity")
-    if ($exit -ne 0) { throw "Node.js 安装失败（前端构建需要）" }
-    $npmCmd = Find-Npm
-    if (-not $npmCmd) { throw "Node.js 装完但找不到 npm（PATH 未刷新？请新开终端重跑本脚本）" }
-    Write-Ok "Node.js 已安装"
-}
-Write-Ok "npm: $npmCmd"
-foreach ($fe in @("frontend-desktop", "frontend")) {
-    $feDir = Join-Path $ProjectRoot $fe
-    if (-not (Test-Path (Join-Path $feDir "package.json"))) { Write-Warn "$fe 无 package.json，跳过构建"; continue }
-    Write-Info "构建 $fe ..."
-    Push-Location $feDir
-    try {
-        $exit = Invoke-Native $npmCmd @("install", "--registry=https://registry.npmmirror.com", "--no-audit", "--no-fund")
-        if ($exit -ne 0) { throw "$fe npm install 失败" }
-        $exit = Invoke-Native $npmCmd @("run", "build")
-        if ($exit -ne 0) { throw "$fe npm run build 失败" }
-    } finally {
-        Pop-Location
-    }
-    if (Test-Path (Join-Path $feDir "dist\index.html")) { Write-Ok "$fe/dist 构建完成" }
-    else { throw "$fe build 结束但未生成 dist\index.html" }
-}
-
-# ═══════════════════════════════════════════════════════════
-# 10. 校验
-# ═══════════════════════════════════════════════════════════
-
-Write-Step "9/11" "校验"
-Write-Info "校验模型 ..."
-$exit = Invoke-Native $VenvPython @((Join-Path $PSScriptRoot "download_models.py"), "--component", "embedding", "--component", "yolo", "--component", "reid", "--component", "face", "--component", "plate", "--component", "segmenter", "--model-root", (Join-Path $ProjectRoot "models"), "--verify-only")
-if ($exit -ne 0) { Write-Fail "存在缺失模型"; throw "模型校验失败" }
-Write-Ok "模型校验通过"
-
-# ═══════════════════════════════════════════════════════════
-# 11. WSL2 + Docker Desktop（缺失时最后装，需重启）
-# ═══════════════════════════════════════════════════════════
-
-Write-Step "10/11" "WSL2 + Docker Desktop（最后安装）"
-if ($SkipDocker) { Write-Info "已跳过（-SkipDocker）" }
-elseif ($wslMissing) {
-    Write-Info "安装 WSL2 ..."
-    $wslLog = Join-Path $env:TEMP "wsl_install.log"
-    $inner = "cmd.exe /c `"wsl --install > `"$wslLog`" 2>&1`""
-    Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "`"$inner`"" -Verb RunAs -Wait
-    Write-Info "安装 Docker Desktop ..."
-    $exit = Invoke-Native "winget" @("install", "--id", "Docker.DockerDesktop", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity")
-    if ($exit -ne 0) { Write-Warn "Docker Desktop 安装失败，请重启后手动 winget install Docker.DockerDesktop" }
-
-    Write-Host ""
-    Write-Host "════════════════════════════════════════════" -ForegroundColor Magenta
-    Write-Host "  所有其他组件已安装并校验通过。" -ForegroundColor Magenta
-    Write-Host "  WSL2 / Docker 需要重启一次电脑才能生效。" -ForegroundColor Magenta
-    Write-Host "  请重启电脑，然后按下方清单启动服务。" -ForegroundColor Magenta
-    Write-Host "  （可选）重启后再双击本脚本，可补拉 pgvector 镜像。" -ForegroundColor Magenta
-    Write-Host "════════════════════════════════════════════" -ForegroundColor Magenta
-} else {
-    Write-Ok "WSL2 已就绪，跳过"
-}
-
-# ═══════════════════════════════════════════════════════════
-# 12. 完成：启动指令
-# ═══════════════════════════════════════════════════════════
-
-Write-Step "11/11" "完成"
+# ───────────────────────────── 完成 ─────────────────────────────
 Write-Host ""
-Write-Host "  ✅ 环境安装完成。以下服务由你自己启动：" -ForegroundColor Green
+Write-Host "══════════ 安装完成 ══════════" -ForegroundColor Green
+Write-Host "  档位: $script:EmbeddingProfile  |  代理: $($script:Proxy)"
+Write-Host "  内嵌 PostgreSQL: vendor/pg（端口 5432，数据在 data/pgdata）"
+Write-Host "  模型: models\ 就绪  |  config.yaml: 已生成"
 Write-Host ""
-Write-Host "  【0】桌面端（装完即用，推荐）" -ForegroundColor White
-Write-Host "      前端 dist 已构建；运行桌面启动器：" -ForegroundColor Gray
-Write-Host "        python desktop\app.py" -ForegroundColor Yellow
-Write-Host "      （或构建 exe：powershell -ExecutionPolicy Bypass -File desktop\build_exe.ps1，" -ForegroundColor Gray
-Write-Host "        产物 dist\智影桌面端\，把 exe + _internal 拷到项目根后双击即用）" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  【1】数据库（PostgreSQL + pgvector）" -ForegroundColor White
-Write-Host "      启动 Docker Desktop 后，在项目根执行：" -ForegroundColor Gray
-Write-Host "        docker compose up -d db" -ForegroundColor Yellow
-Write-Host "      等待 healthy：docker ps | findstr zhiying_postgres" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  【2】后端" -ForegroundColor White
-Write-Host "      在项目根执行：" -ForegroundColor Gray
-Write-Host "        .\.venv\Scripts\python -m uvicorn main:app --host 127.0.0.1 --port 8000" -ForegroundColor Yellow
-Write-Host "      健康检查：http://127.0.0.1:8000/health" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  【3】前端（开发态，可选）" -ForegroundColor White
-Write-Host "      cd frontend && npm install --registry=https://registry.npmmirror.com" -ForegroundColor Gray
-Write-Host "      npm run dev" -ForegroundColor Yellow
-Write-Host "      访问：http://localhost:5173" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  【4】API key（可选但推荐）" -ForegroundColor White
-Write-Host "      前端 → 设置页 → 系统设置，填 DashScope + DeepSeek key（保存即生效）" -ForegroundColor Gray
-Write-Host ""
-
-# 清理下载的 wheel（释放 ~5GB）
-if (Test-Path (Join-Path $ProjectRoot "models\.torch_dl")) {
-    Remove-Item (Join-Path $ProjectRoot "models\.torch_dl") -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Ok "已清理临时 wheel 缓存"
-}
+Write-Host "  后续日常更新/启动：双击根目录 update.bat（git pull + 依赖 + 前端 + 打 exe）"
+Write-Host "  或直接启动桌面端：python desktop\app.py"
+Write-Host "══════════════════════════════" -ForegroundColor Green
