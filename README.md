@@ -34,15 +34,15 @@ curl -X POST -H "Content-Type: application/json" \
 > **Note on API Keys**: Place keys in a `.env` file at project root (gitignored)，或在前端设置页填写。  
 > **摘要默认 `vlm_llm`（API 模式）**，需要 DashScope（画面描述）+ DeepSeek（摘要）key。`native_video`（本地视频原生理解）已置灰退役。
 
-**Windows 桌面端**：环境就绪（`deploy/setup_windows.ps1` 装机——自动装模型/Docker/依赖/生成 config.yaml/构建桌面前端 dist）后，双击 `智影桌面端.exe`（构建方法见 `desktop/README.md`）或 `python desktop/app.py`——启动器自动检查就绪 → 起 Docker 库 → 起本地后端 → 打开 pywebview 桌面窗口加载桌面前端（`ZHIYING_FRONTEND=desktop` 挂载 frontend-desktop/dist，与服务器前端 `frontend/` 完全隔离）。**日常更新用根目录 `update.bat` 一键自动更新**（git pull 走 7897 代理 → pip 装 desktop 依赖 → npm install/build → 重打 exe，全流程跑一遍）。
+**Windows 桌面端**：全新机双击 `install.bat`（交互式：选 **2B/8B** embedding 档位 + 输代理 → 自动装 Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**(vendor/pg，免 Docker/WSL2)/模型/config/建表）装机后，双击 `智影桌面端.exe`（构建方法见 `desktop/README.md`）或 `python desktop/app.py`——启动器自动检查就绪 → 起内嵌 PostgreSQL → 起本地后端 → 打开 pywebview 桌面窗口加载桌面前端（`ZHIYING_FRONTEND=desktop` 挂载 frontend-desktop/dist，与服务器前端 `frontend/` 完全隔离）。**日常更新用根目录 `update.bat` 一键自动更新**（git pull 走 7897 代理 → pip 依赖 → npm install/build → 重打 exe）。
 
 ## Windows 部署
 
-**从零部署**：全新 Windows + NVIDIA GPU 机器上，双击 `deploy/setup_windows.ps1` 自动安装一切（Python / FFmpeg / CUDA torch / WSL2 / Docker / 依赖 / 全部模型 / config.yaml / 前端 dist），装完自校验并打印启动指令；环境就绪后双击 `智影桌面端.exe` 即可拉起桌面进程（构建方法见 `desktop/README.md`）。
+**从零部署**：全新 Windows + NVIDIA GPU 机器（U盘/git clone 放好源码）上，双击根目录 **`install.bat`** 交互式一键安装——选 **2B/8B** embedding 档位 + 输代理 → 自动装 Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**(vendor/pg，免 Docker/WSL2/重启)/模型(按档位)/config.yaml/建表；装完双击 `智影桌面端.exe` 拉起桌面进程（构建方法见 `desktop/README.md`），日常更新走 `update.bat`。
 
 **Linux 开发机部署**：换新开发机时 `git clone` 后跑 `bash deploy/setup_linux.sh`（交互输代理 / `--proxy ... --non-interactive` 全自动），一键装齐环境/依赖/模型/前端，形态与本机一致，用于开发改代码测试。
 
-- 一键安装器、环境要求、模型清单（embedding/yolo/**reid**/face/plate/segmenter）、代理必填与国内镜像、Linux/Windows 差异，详见 **[`deploy/deploy.md`](deploy/deploy.md)**。
+- 一键安装器、环境要求、模型清单（embedding 按 2B/8B 档位 / yolo/**reid**/face/plate/segmenter）、代理与国内镜像、Linux/Windows 差异，详见 **[`deploy/deploy.md`](deploy/deploy.md)**。
 - 部署实测踩坑记录（BOM 编码 / Blackwell cu130 / pip 大文件 curl 兜底 / 代理策略等）见 **[`deploy/deploy_feedback.md`](deploy/deploy_feedback.md)**。
 - **配置模板化（v0.25.1 起）**：`config/config.yaml` **机器相关、gitignored、不入库**，新机复制 `config/config.yaml.example` 自改（embedder 相对路径解析 + captioner 本地模型缺失自动降级 `qwen_api`），无需 `config.windows.yaml` / `ZHIYING_CONFIG`。
 - **多架构支持**：`requirements.txt` 用环境标记区分平台——Windows/Linux x86 装 `onnxruntime-gpu`（人脸/车牌 GPU），**ARM64 Linux**（DGX Spark/GB10 等，无 `onnxruntime-gpu` wheel）自动装 `onnxruntime` CPU 版，人脸/车牌走 CPU。
@@ -79,7 +79,7 @@ curl -X POST -H "Content-Type: application/json" \
 | Scene Thumbnails Export (zip) | `GET/POST /api/v1/videos/{id}/export/thumbnails` | ✅ |
 | System Settings (API 服务 + 存储路径 + 管道性能) | `GET/PUT /api/v1/settings`（API 密钥/服务商端点/存储路径 + 管道性能：编码三档模板/检测参数/量化/并发上限，保存即运行时生效，量化需重启）+ `GET /api/v1/settings/pipeline` | ✅ |
 | Pipeline Presets (参数预设) | `GET/POST/PUT/DELETE /api/v1/settings/presets` + `POST /{id}/apply`（data/presets.json 多套命名参数快照，一键套用） | ✅ |
-| Windows 从零部署 | `deploy/setup_windows.ps1` 裸机一键安装器（Python/FFmpeg/CUDA torch/WSL2/Docker/依赖/模型）+ 自校验 | ✅ |
+| Windows 从零部署 | `install.bat` 交互式一键安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**/模型按档位/config/建表；免 Docker/WSL2）→ `update.bat` 日常更新 | ✅ |
 | 全局 GPU 锁 + 任务队列 | `core/gpu_lock.py` 串行化 embedder/YOLO 前向（防驱动故障）；`core/pipeline_queue.py` PipelineQueue worker 池限流并发管道（批量上传排队防 OOM，v0.32） | ✅ |
 | Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 (unified objects view + face toggle) | ✅ |
 | Track Crop Embedding (track search) | `POST /api/v1/search/semantic` (track path) | ✅ |
@@ -181,8 +181,10 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 ```
 zhiying/
 ├── bump                 # 版本号一键提升启动器 (→ scripts/bump_version.py)
+├── install.bat          # 新机一键部署入口（全新 Windows 双击：选 2B/8B + 代理 → 自动装环境/模型/内嵌pg/config/建表）
 ├── update.bat           # 桌面端一键自动更新（Windows：git pull 走 7897 代理 + pip 依赖 + npm install/build + 重打 exe）
 ├── run.py                # 本地开发启动入口（按 config.yaml server 段绑端口，reload）
+├── backend_launcher.py   # 后端子进程统一启动器（封装/源码双模式，含父进程看门狗）
 ├── main.py               # FastAPI entry point (+ 静态托管 frontend/dist, 部署免 nginx)
 ├── api/                  # Route definitions
 │   ├── router.py         # Route assembly (sub-routers under /api/v1)
@@ -204,7 +206,9 @@ zhiying/
 │   ├── repository.py     # Data access layer + bulk_insert_frames/chunks
 │   ├── search.py         # 6 async search functions: frame/chunk/text/track/plate/face
 │   ├── interfaces.py     # 10 abstract plugin base classes
-│   ├── config_loader.py  # YAML + .env + settings.json 覆盖; 参数钳制 + captioner 自动降级
+│   ├── config_loader.py  # YAML + .env + settings.json 覆盖; 参数钳制 + captioner 自动降级 + embedding_profile
+│   ├── embedding_profile.py # 向量维度档位（8B=4096/2B=2048）+ EmbedVector 懒读维度建表
+│   ├── paths.py          # 项目根统一解析（封装模式 ZHIYING_PROJECT_ROOT / 源码模式 __file__）
 │   ├── prompt_loader.py  # Prompt template loader
 │   ├── status_tracker.py # Pipeline progress persistence
 │   ├── settings_service.py # 设置管理: API密钥/服务商端点与模型/存储路径/管道性能 (settings.json backed)
@@ -276,7 +280,7 @@ zhiying/
 ├── models/               # Local model weights (gitignored; yolo26s.pt, yolo26n-cls.pt 等在仓库内)
 ├── data/                 # Video storage & artifacts + settings.json/presets.json (gitignored)
 ├── config/               # YAML config, prompts, schema
-├── deploy/               # 部署套件: setup_windows.ps1 (Windows 裸机一键安装) + setup_linux.sh (Linux 开发机一键安装) + download_models.py / deploy.md / deploy_feedback.md
+├── deploy/               # 部署套件: setup_windows.ps1 (Windows 交互式一键安装, 入口 install.bat) + setup_linux.sh (Linux 开发机) + build_backend_pyc.py (封装字节码包) + download_models.py (支持 --embedding-profile) / deploy.md / deploy_feedback.md
 ├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开毛玻璃启动窗→就绪进前端→优雅关闭; desktop.bat 入口; build_exe.ps1 -Deploy 一键构建部署 exe)
 ├── frontend-desktop/     # 桌面独立前端（v0.34 重构：浅蓝管理后台主题 + frameless 自定义窗口标题栏 + 4 页模型 文件库/视频解析/任务中心/系统设置 + AppContext 导航 + 工作台 SplitPane 分栏 + 系统监控；TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2；标题栏「最近更新」+ 太阳/月亮暗色主题、案例库闪电全状态、设置页两列网格；与服务器 frontend/ 完全隔离; desktop.bat 加载其 dist）
 ├── frontend-shared/      # 双前端共享后端对接层 (api/types/labels/helpers 一份实现, 两端 services/api.ts 等是再导出指针; 后端接口/字段变更只改这里)
@@ -286,6 +290,7 @@ zhiying/
 
 ## Development Status
 
+- **v0.34 候选（未发版，部署 + 封装）— 一键安装器 + 内嵌 PostgreSQL + 后端封装（藏代码）**: `install.bat` 交互式安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/模型/config/建表，免 Docker/WSL2，前端交给 update.bat）；内嵌 PostgreSQL（EDB PG17 便携 zip + 预编译 pgvector → `vendor/pg`，`desktop/db.py` 双模式自动托管）；后端封装 = `deploy/build_backend_pyc.py` 编译 `.pyc` 字节码包 + `backend_launcher.py` 统一启动器 + `core/paths.py` frozen 路径解析（ZHIYING_PROJECT_ROOT），`build_exe.ps1` 打进 `_internal/backend_pyc`——**客户端盘上无明文源码**。
 - **v0.34 候选（未发版，后端）— 模型适配 embedding_profile**: 向量编码模型档位化——`8b`=Qwen3-VL-Embedding-8B/4096 维（默认）、`2b`=Qwen3-VL-Embedding-2B/2048 维（低显存平替）；新增 `core/embedding_profile.py`（`EmbedVector()` 懒读全局维度建表）+ `config_loader._apply_embedding_profile` 联动「模型路径 + 向量维度」；`core/db.py` 迁移参数化；改 config `embedding_profile` + 重启后端即换档，⚠️ 维度不同需重建向量库；人脸 512（ArcFace）与档位无关不受影响。
 - **v0.34 候选（未发版，桌面端 + 后端）— 侧栏徽章系统 + 任务中心交互 + 后端排队检测修复**:
   - **侧栏徽章**：案例库🩶灰=仅上传未提交（pending 且未入队 且 未版本化）；视频解析🔵蓝「1」=有视频处理中（未选中视频时点进视频解析**自动定位处理中视频**）；任务中心 🟡黄=排队中 / 🟢绿=新完成（进任务中心清零 + 首次进入整行淡绿高亮）/ 🔴红=处理失败（实时计数）

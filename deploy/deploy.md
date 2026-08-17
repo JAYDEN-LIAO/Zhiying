@@ -16,9 +16,10 @@
 
 | 文件 | 作用 |
 |---|---|
-| `setup_windows.ps1` | **Windows 裸机一键安装器**：探测环境 → 复用兼容项、补装缺失项 → 装系统/依赖/模型 → **生成 config.yaml + 构建前端 dist** → 自校验 → 打印启动指令 |
-| `setup_linux.sh` | **Linux 开发机一键安装器**（规格同 Windows）：apt 系统依赖 / venv / CUDA torch / requirements+onnxruntime / 模型 / Docker db / config.yaml / Node+前端 dist，同款代理交互+复用+幂等 |
-| `download_models.py` | 模型下载/校验（embedding/yolo/reid/face/plate/segmenter，断点续传、`--verify-only`） |
+| `setup_windows.ps1` | **Windows 交互式一键安装器**（入口 = 根目录 `install.bat` 双击）：选 **2B/8B** + 输代理 → Python/FFmpeg → .venv + CUDA torch + 依赖 → **内嵌 PostgreSQL**(`vendor/pg`，免 Docker/WSL2) → 模型(按档位) → 生成 config.yaml → init_db 建表 → 校验完成（前端构建交给 `update.bat`） |
+| `setup_linux.sh` | **Linux 开发机一键安装器**（开发态，规格同 Windows）：apt / venv / CUDA torch / requirements+onnxruntime / 模型 / Docker db / config.yaml / Node+前端 dist |
+| `build_backend_pyc.py` | 后端源码编译为 `.pyc` 字节码包 → `build/backend_pyc/`（封装模式：客户端盘上无明文源码；`build_exe.ps1` 打 exe 前调用） |
+| `download_models.py` | 模型下载/校验（embedding 按 `--embedding-profile 8b/2b` 选档，yolo/reid/face/plate/segmenter，断点续传、`--verify-only`） |
 | `deploy_feedback.md` | 部署实测问题与修复历史（踩坑记录，含本次所有修复的说明） |
 
 > 旧 `write_windows_config.py`（生成 config/config.windows.yaml）与 `start_windows.ps1`（后端启动脚本）已删除——
@@ -30,40 +31,36 @@
 
 | 依赖 | 说明 |
 |---|---|
-| **Windows 10/11** | Home 版需 WSL2（脚本自动装，装完需重启一次） |
-| **NVIDIA GPU + 驱动** | 脚本检测 `nvidia-smi` + CUDA 版本；缺失则报错中止（不自动装驱动） |
-| **代理（必填）** | 脚本启动时强制输入代理地址并测试。GitHub/PyTorch 官方源被墙，必须走代理；国内源直连 |
+| **Windows 10/11** | **无需 Docker / WSL2**——数据库用内嵌便携 PostgreSQL（`vendor/pg`，安装器自动组装） |
+| **NVIDIA GPU + 驱动** | 脚本检测 `nvidia-smi` + CUDA 版本，按驱动选 cu124/cu126/cu130 装 PyTorch；缺失则报错中止（不自动装驱动） |
+| **FFmpeg** | 缺失自动 winget 装 Gyan.FFmpeg（需含 h264_nvenc/h264_cuvid CUDA 编解码） |
+| **embedding 档位** | 安装时交互选 **2B / 8B**——决定装哪个模型 + 向量维度（2B=2048 / 8B=4096）+ config `embedding_profile`；一台机器一个模型 |
+| **磁盘 25GB+** | torch ~2.6GB + 模型（embedding 8B 16GB / 2B ~4GB）+ 其余 |
+| **代理（可选）** | 安装时交互输入；GitHub / PyTorch / 模型源被墙需走代理，国内源直连 |
 
 ---
 
 ## 3. 快速开始
 
-### 3.1 Windows 桌面机（desktop 路径，裸机）
+### 3.1 Windows 桌面机（desktop 路径，全新机）
 
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\deploy\setup_windows.ps1                    # 交互式（输入代理，看注意事项）
-# 或全自动（需先开代理）：
-.\deploy\setup_windows.ps1 -Proxy http://127.0.0.1:7897 -NonInteractive
-```
+全新 Windows（可能只有 git、连 python 都没有）：**U盘 / git clone 把源码放好** → **双击根目录 `install.bat`**（或 `deploy\setup_windows.ps1`）。
 
-脚本会（11 步）：
-1. 请求管理员权限（UAC）
-2. 打印注意事项 + 强制输入代理地址并测试
-3. 探测 Python / FFmpeg / Docker / WSL2 / GPU，**复用兼容项、补装缺失项**
-4. 装 Python（缺失时 winget）→ venv → **生成 `config/config.yaml`（cp example）+ bump 命令接入 PATH** → CUDA torch（按 GPU/驱动选源，Blackwell 自动 cu130）→ 匹配 torchvision → requirements → onnxruntime-gpu → accelerate/lap
-5. 下载全部模型（embedding / yolo / reid / face / plate / segmenter）
-6. 数据库：WSL2 已装则直接配置 Docker + 拉 pgvector；WSL2 缺失则**放最后装 WSL2 + Docker Desktop** 并提示**重启**
-7. **装 Node + 构建前端 dist**（frontend-desktop + frontend）
-8. 自校验（模型齐全 + CUDA kernel 实测）→ 打印启动指令
+**交互安装（命令行窗口）**：
+1. 选 embedding 档位：**1 = 8B（Qwen3-VL-Embedding-8B，4096 维，需 ~16GB 显存）/ 2 = 2B（Qwen3-VL-Embedding-2B，2048 维，低显存平替）** —— 一台机器一个模型，向量维度随选择定死（`embedding_profile`）
+2. 输代理地址（GitHub / PyTorch / 模型下载用；能直连可留空）
 
-**WSL2 缺失时的两段式**（Home 裸机常见）：
-- 第一段：装完除 WSL2/Docker 外的一切 + 校验通过 → 脚本提示重启
-- 重启后再双击一次脚本 → 检测到 WSL2 就绪 → 补拉 pgvector 镜像 → 完成（可选，不重跑也行，见 §4 启动指令）
+**自动托管（6 步）**：
+1. **Python**（缺失时 winget 装 3.13）+ **FFmpeg**（Gyan 完整版，含 CUDA 编解码 h264_nvenc/h264_cuvid，缺失自动装）
+2. **`.venv`** + **CUDA 版 PyTorch**（按驱动 CUDA 版本选 cu124/cu126/cu130，不走 pip 默认 CPU 版）+ requirements 依赖 + **GPU 验证**
+3. **内嵌 PostgreSQL**：下载 EDB PG17 便携 zip + andreiramani 预编译 pgvector（PG17）→ 组装 `vendor/pg`（**无 Docker / 无 WSL2 / 无重启**；本地 `vendor/pg-zips/` 有 zip 则优先使用，不联网）
+4. **模型**（按档位下 embedding + yolo/reid/face/plate/segmenter）
+5. **生成 `config/config.yaml`**（`embedding_profile` 由选择写死 + `database.uri` 指向内嵌 pg 端口 5432）
+6. **起 `vendor/pg` + `init_db` 建表** → 校验 → 完成
 
-**装完即用（桌面路径）**：环境就绪后，双击 `智影桌面端.exe`（构建方法见 `desktop/README.md`）或 `python desktop\app.py`，即可拉起桌面进程运行项目。exe = 纯产品启动器（pywebview 窗口壳），管理 db/后端/窗口生命周期。
+**装完即用**：双击根目录 `update.bat`（git pull + 依赖 + 前端 npm build + 重打 exe）做日常更新/构建，或 `python desktop\app.py` 直接跑桌面端。
 
-**总下载量约 25GB+**（torch ~2.6GB + embedding 16GB + 其余模型），请预留磁盘空间。
+> **总下载量约 25GB+**（torch ~2.6GB + embedding 8B 16GB / 2B ~4GB + 其余模型），请预留磁盘空间。
 
 ### 3.2 Linux 开发机（deploy 路径，git clone 后裸机）
 
@@ -94,14 +91,15 @@ bash deploy/setup_linux.sh --proxy http://127.0.0.1:7897 --non-interactive
 ## 4. 安装完成后启动服务（由你手动执行）
 
 ```powershell
-# 【0】桌面端（Windows 桌面机，装完即用，推荐）——前端 dist 已由安装器构建好
+# 【0】桌面端（Windows 桌面机，装完即用，推荐）
 # 双击 智影桌面端.exe（构建方法见 desktop/README.md；exe + _internal 放项目根）
 # 或开发态等价：python desktop\app.py
-# 启动器自动：检查就绪 → docker compose up -d db → 起后端（ZHIYING_FRONTEND=desktop）→ 打开 WebView2 产品窗
+# 启动器自动：检查就绪 → 起内嵌 PostgreSQL（vendor/pg，首次自动 initdb+建库）→
+#             起后端（ZHIYING_FRONTEND=desktop）→ 打开 WebView2 产品窗
 
-# 【1】数据库（PostgreSQL + pgvector）—— 先启动 Docker Desktop
-docker compose up -d db
-docker ps | findstr zhiying_postgres        # 等到 healthy
+# 【1】数据库（内嵌 PostgreSQL，装完即由启动器自动托管，无需手动）
+#     vendor/pg（便携 PG17 + pgvector）+ data/pgdata（数据目录）+ 端口 5432
+#     开发机也可用 docker compose up -d db（db.py 自动回退检测）
 
 # 【2】后端 —— 在项目根执行（开发用 run.py 带 reload；生产用 uvicorn）
 .\.venv\Scripts\python run.py
@@ -123,7 +121,8 @@ npm run dev
 ## 5. 配置统一（无需 config.windows.yaml / ZHIYING_CONFIG）
 
 一份 `config/config.yaml` 通用所有机器。**config.yaml 已 gitignore 不入库**，两个安装脚本都会在缺失时**自动从 `config/config.yaml.example` 复制生成**（桌面启动器/后端的第一道检查就是它）。
-- **路径**：模型/存储相对路径自动解析到项目根（embedder 已对齐 detector，摆脱 cwd 依赖）
+- **embedding 档位**：顶层 `embedding_profile: 8b|2b` 决定「加载哪个 embedder 模型 + 向量表维度（4096/2048）」（`core/embedding_profile.py` `EmbedVector()` 建表时读档位维度）。安装器按交互选择写死；改档需重建向量库（维度不同）
+- **路径**：模型/存储相对路径自动解析到项目根（封装模式由 `ZHIYING_PROJECT_ROOT` 注入 exe 所在目录）
 - **captioner 自动降级**：配置 `qwen3_vl` 但本地 8B 模型缺失 → 自动切 `qwen_api`（DashScope），启动打醒目 WARNING
 - **摘要模式自动转换**：captioner 为 `qwen_api` 时，`native_video` 自动视为 `vlm_llm`（`effective_summary_mode`）。**摘要默认 vlm_llm，native_video 已置灰退役**（前端不再可选；后端保留兼容历史记录，旧视频仍正常处理）；本地 captioner 8B **不再下载**（`download_models.py` 本就不含该项）
 - 开发机有本地 8B 模型 → 保持本地推理；部署机无 → 走 API。**同一份配置，无需环境变量**
@@ -168,7 +167,7 @@ npm run dev
 |---|---|---|---|
 | torch 安装 | `pip install torch`=CUDA 版 | 默认 CPU 版 | 安装器按 GPU 选源 + 实测 kernel |
 | onnxruntime | x86 默认 CPU；**ARM64 无 GPU wheel** | 默认 CPU → 安装器换 onnxruntime-gpu | requirements 环境标记按平台选（win32/x86_64→GPU, aarch64/arm64→CPU） |
-| Docker | Linux 原生 | Docker Desktop (WSL2) | 仅用 `db` 服务 + named volume |
+| 数据库 | Docker db（`docker compose up -d db`） | **内嵌便携 PostgreSQL**（`vendor/pg` + `data/pgdata`，桌面启动器自动 initdb/起停） | `desktop/db.py` 双模式：vendor/pg 存在走内嵌（封装交付），否则回退 docker（开发机） |
 | 路径/编码/事件循环 | — | 反斜杠/GBK/Proactor | 代码用 pathlib；安装器处理 BOM/编码 |
 | 文件删除 | 允许删打开中的文件 | **打开中的不可删** | 处理中视频可删（v0.22 `core.cancellation` 登记，管道优雅中止）；Windows 打开中文件删除失败 → 清盘逐项 try/except 非致命，残留由孤儿清扫兜底 |
 

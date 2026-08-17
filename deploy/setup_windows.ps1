@@ -106,7 +106,10 @@ $script:Proxy = ($proxyInput.Trim() -replace '/$', '')
 if ($script:Proxy) { Write-Ok "代理: $script:Proxy" } else { Write-Warn "未使用代理（国内源直连，GitHub 组件可能失败）" }
 
 # ───────────────────────────── 1/6 Python ─────────────────────────────
-Write-Step "1/6" "Python 环境"
+Write-Step "1/6" "Python + FFmpeg 环境"
+# winget 装的新命令要刷新 PATH 才在本会话可用（读注册表机器/用户 PATH）
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+
 $py = Get-Command python -ErrorAction SilentlyContinue
 if ($py) {
     $ver = (& python --version 2>&1) -replace "Python ", ""
@@ -115,7 +118,24 @@ if ($py) {
     Write-Info "未检测到 Python，用 winget 安装 Python 3.13 ..."
     $rc = & winget install --id Python.Python.3.13 --accept-source-agreements --accept-package-agreements --disable-interactivity
     if ($LASTEXITCODE -ne 0) { throw "Python 安装失败" }
-    Write-Ok "Python 3.13 已安装（请关闭本窗口，用新的管理员窗口重跑本脚本以刷新 PATH）"
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    Write-Ok "Python 3.13 已安装"
+}
+
+# FFmpeg（视频处理必装：转码/抽帧/导出/流媒体都依赖它；需带 CUDA 编解码）
+Write-Info "检查 FFmpeg ..."
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    Write-Info "未检测到 FFmpeg，安装 Gyan.FFmpeg（含 CUDA 编解码）..."
+    & winget install --id Gyan.FFmpeg --accept-source-agreements --accept-package-agreements --disable-interactivity
+    if ($LASTEXITCODE -ne 0) { throw "FFmpeg 安装失败" }
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+}
+$ffEnc = (& ffmpeg -hide_banner -encoders 2>&1 | Out-String)
+$ffDec = (& ffmpeg -hide_banner -decoders 2>&1 | Out-String)
+if ($ffEnc -notmatch "h264_nvenc" -or $ffDec -notmatch "h264_cuvid") {
+    Write-Warn "FFmpeg 缺少 CUDA 编解码（h264_nvenc/h264_cuvid）——会静默回退 CPU，性能骤降；建议 winget install Gyan.FFmpeg 后重跑"
+} else {
+    Write-Ok "FFmpeg CUDA 能力正常（h264_nvenc + h264_cuvid）"
 }
 
 # ───────────────────────────── 2/6 .venv + 依赖 ─────────────────────────────
@@ -127,14 +147,32 @@ if (-not (Test-Path $VenvPython)) {
 } else {
     Write-Ok ".venv 已存在"
 }
-Write-Info "升级 pip + 安装依赖（走代理，较大，耐心等待）..."
+Write-Info "升级 pip ..."
 $pipArgs = @("-m", "pip", "install", "--upgrade", "pip")
 if ($script:Proxy) { $pipArgs += @("--proxy", $script:Proxy) }
 $rc = Invoke-Native (@($VenvPython) + $pipArgs)
+
+# CUDA 版 PyTorch：pip 默认装 CPU 版，必须用 PyTorch 官方源；按驱动 CUDA 版本选 cu124/cu126/cu130
+$cudaVer = (& nvidia-smi 2>$null | Select-String "CUDA Version" | Select-Object -First 1).ToString().Trim()
+$driverCuda = ([regex]::Match($cudaVer, "CUDA Version:\s*([0-9.]+)")).Groups[1].Value
+$torchIdx = "https://download.pytorch.org/whl/cu124"
+if ($driverCuda -and [version]$driverCuda -ge [version]"13.0") { $torchIdx = "https://download.pytorch.org/whl/cu130" }
+elseif ($driverCuda -and [version]$driverCuda -ge [version]"12.6") { $torchIdx = "https://download.pytorch.org/whl/cu126" }
+Write-Info "安装 CUDA 版 PyTorch（$torchIdx，驱动 CUDA $driverCuda）..."
+$rc = Invoke-Native @($VenvPython, "-m", "pip", "install", "torch", "--index-url", $torchIdx) $true
+if ($rc -ne 0) { throw "CUDA PyTorch 安装失败" }
+
+Write-Info "安装其余依赖（torch 已满足会自动跳过；首次需数分钟，耐心等待）..."
 $pipArgs2 = @("-m", "pip", "install", "-r", (Join-Path $ProjectRoot "requirements.txt"))
 if ($script:Proxy) { $pipArgs2 += @("--proxy", $script:Proxy) }
 $rc = Invoke-Native (@($VenvPython) + $pipArgs2)
 if ($rc -ne 0) { throw "依赖安装失败" }
+
+# 验证 PyTorch GPU 可用
+$rc = Invoke-Native @($VenvPython, "-c",
+    "import torch; assert torch.cuda.is_available(), 'cuda-unavailable'; print('torch', torch.__version__, '| cuda', torch.version.cuda, '|', torch.cuda.get_device_name(0))")
+if ($rc -ne 0) { throw "PyTorch 检测不到 GPU（检查驱动 / 是否残留 CPU 版 torch）" }
+Write-Ok "PyTorch GPU 就绪"
 
 # ───────────────────────────── 3/6 内嵌 PostgreSQL ─────────────────────────────
 Write-Step "3/6" "内嵌 PostgreSQL（vendor/pg）"
