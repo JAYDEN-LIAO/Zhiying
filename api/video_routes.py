@@ -987,23 +987,26 @@ async def rename_file(
 ) -> APIResponse[dict]:
     """重命名文件：更新该文件全部版本行的 file_name（含遗留 NULL file_id 独立文件）。
 
+    传入任一版本行 id 或逻辑 file_id 均可（与 delete_file 一致）：
+      行 id → 解析 file_id → 更新链上全部版本行；遗留独立文件（file_id NULL）只更新自身。
     新名字未带扩展名时自动补回磁盘真实后缀（下载导出用 file_name 作文件名，缺后缀会打不开）。
     """
     from sqlalchemy import and_, or_
-    root = (await db.execute(
-        select(Video).where(or_(
-            Video.file_id == file_id,
-            and_(Video.file_id.is_(None), Video.id == file_id),
-        )).order_by(Video.created_at).limit(1)
-    )).scalar_one_or_none()
-    if root is None:
+    video = await db.get(Video, file_id)
+    if video is None:
+        # 兼容直接传逻辑 file_id（链上某行的 file_id 列）
+        video = (await db.execute(
+            select(Video).where(Video.file_id == file_id).order_by(Video.created_at).limit(1)
+        )).scalar_one_or_none()
+    if video is None:
         raise HTTPException(status_code=404, detail="文件不存在")
-    ext = os.path.splitext(root.file_path or "")[1] or ""
+    fid = video.file_id or video.id
+    ext = os.path.splitext(video.file_path or "")[1] or ""
     new_name = payload.name if (not ext or "." in payload.name) else f"{payload.name}{ext}"
     result = await db.execute(
         update(Video).where(or_(
-            Video.file_id == file_id,
-            and_(Video.file_id.is_(None), Video.id == file_id),
+            Video.file_id == fid,
+            and_(Video.file_id.is_(None), Video.id == fid),
         )).values(file_name=new_name)
     )
     await db.commit()
