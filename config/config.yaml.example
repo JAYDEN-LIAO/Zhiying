@@ -14,6 +14,17 @@ storage:
   video_dir: "data/videos"
   artifact_dir: "data/artifacts"
 
+# ── 模型适配（v0.34候选）：向量编码模型档位 ──
+#   决定「embedder 加载哪个模型」+「向量表用多少维」。
+#   8b: Qwen3-VL-Embedding-8B → 4096 维（默认，显存 ~16GB）
+#   2b: Qwen3-VL-Embedding-2B → 2048 维（低显存机器平替）
+#   换档 = 改 embedding_profile + 重启后端；⚠️ 维度不同，换档后需重建向量库
+#   （每个库的 pgvector 列维度在建表时定死，4096/2048 不能混存）。
+embedding_profile: 8b
+embedding_profiles:
+  8b: { model: "models/Qwen/Qwen3-VL-Embedding-8B", dimension: 4096 }
+  2b: { model: "models/Qwen/Qwen3-VL-Embedding-2B", dimension: 2048 }
+
 plugins:
   # ── 语音转录（Demo 跳过）──
   transcriber:
@@ -68,6 +79,7 @@ plugins:
   embedder:
     backend: "qwen3_vl_embedding_8b"
     params:
+      # ⚠️ 实际加载模型由顶层 embedding_profile 驱动（8b=8B / 2b=2B），此处仅为文档默认值
       model_name: "models/Qwen/Qwen3-VL-Embedding-8B"
       # 编码分辨率 [宽, 高] — 影响速度与语义精度
       # 336×224: ~70 vision tokens/帧, 速度快, 语义级搜索足够

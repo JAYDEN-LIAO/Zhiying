@@ -58,6 +58,7 @@ _MODULE_OVERRIDES: dict[tuple[str, str], str] = {
     ("captioner", "qwen3_vl"): "qwen3_vl_captioner",
     ("embedder", "qwen3_vl_embedding"): "qwen_vl_embedder",
     ("embedder", "qwen3_vl_embedding_8b"): "qwen_vl_embedder",
+    ("embedder", "qwen3_vl_embedding_2b"): "qwen_vl_embedder",
     ("summarizer", "vllm"): "vllm_summarizer",
     ("detector", "yolo"): "yolo",
     ("face", "insightface"): "insightface_face",

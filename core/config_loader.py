@@ -263,6 +263,39 @@ def _apply_settings_overrides(cfg: dict) -> None:
             cfg.setdefault("plugins", {}).setdefault("embedder", {}).setdefault("params", {})["quantization"] = v
 
 
+# ── embedding_profile 内置默认档位（config.yaml 未声明 embedding_profiles 时兜底）──
+_DEFAULT_EMBEDDING_PROFILES: dict[str, dict] = {
+    "8b": {"model": "models/Qwen/Qwen3-VL-Embedding-8B", "dimension": 4096},
+    "2b": {"model": "models/Qwen/Qwen3-VL-Embedding-2B", "dimension": 2048},
+}
+
+
+def _apply_embedding_profile(cfg: dict) -> None:
+    """按 config 的 `embedding_profile` 档位联动「模型路径 + 向量维度」（模型适配）。
+
+    - 档位 key：cfg["embedding_profile"]（默认 "8b"，老配置零改动）
+    - 档位表：cfg["embedding_profiles"] 覆盖内置默认（8b=4096 / 2b=2048）
+    - 效果：
+        ① `set_embed_dim` → ORM 建表 / db.py 迁移用该维度（表维度跟模型走）
+        ② 覆盖 plugins.embedder.params.model_name → embedder 加载对应模型
+    - 未知档位抛 ConfigurationError（防拼错后静默按 4096 跑、管道才爆）
+    """
+    from core.embedding_profile import set_embed_dim
+
+    key = str(cfg.get("embedding_profile", "8b")).strip().lower()
+    profiles = {**_DEFAULT_EMBEDDING_PROFILES, **{k.lower(): v for k, v in (cfg.get("embedding_profiles") or {}).items()}}
+    profile = profiles.get(key)
+    if profile is None:
+        raise ConfigurationError(
+            f"未知 embedding_profile: {key!r}（可用: {', '.join(sorted(profiles))}）"
+        )
+    dim = int(profile.get("dimension", 4096))
+    model = str(profile.get("model") or "")
+    set_embed_dim(dim)
+    if model:
+        cfg.setdefault("plugins", {}).setdefault("embedder", {}).setdefault("params", {})["model_name"] = model
+
+
 @lru_cache(maxsize=1)
 def load_config(config_path: str | Path = _DEFAULT_CONFIG_PATH) -> dict:
     """加载 YAML 配置并返回原始 Python dict。
@@ -316,5 +349,8 @@ def load_config(config_path: str | Path = _DEFAULT_CONFIG_PATH) -> dict:
         for key in keys[:-1]:
             target = target.setdefault(key, {})
         target[keys[-1]] = value
+
+    # ── 模型适配：按 embedding_profile 联动 模型路径 + 向量维度（最后执行，确保最终生效） ──
+    _apply_embedding_profile(cfg)
 
     return cfg

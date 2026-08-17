@@ -11,6 +11,7 @@ from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import MetaData, text
 
 from core.config_loader import load_config
+from core.embedding_profile import get_embed_dim
 
 # 数据库连接地址：
 #   ① 环境变量 POSTGRES_URI 优先（部署覆盖入口，如服务器 start.sh 指向 5433）
@@ -59,9 +60,9 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
 
         # ── 增量迁移：为已有表补充新列（create_all 对已有表无效） ──
-        await conn.execute(text("""
+        await conn.execute(text(f"""
             ALTER TABLE scenes
-            ADD COLUMN IF NOT EXISTS text_embedding vector(4096)
+            ADD COLUMN IF NOT EXISTS text_embedding vector({get_embed_dim()})
         """))
 
         # ── 增量迁移：videos 表新增 status_detail 列 ──
@@ -134,13 +135,13 @@ async def init_db():
         await conn.execute(text("ALTER TABLE track_embeddings ADD COLUMN IF NOT EXISTS display_seq int"))
 
         # ── 增量迁移 v0.10: track 嵌入表 ──
-        await conn.execute(text("""
+        await conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS track_embeddings (
                 id SERIAL PRIMARY KEY,
                 video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
                 track_id INTEGER NOT NULL,
                 class_name VARCHAR(64) NOT NULL,
-                embedding vector(4096),
+                embedding vector({get_embed_dim()}),
                 timestamp_sec DOUBLE PRECISION NOT NULL,
                 bbox JSONB NOT NULL,
                 created_at TIMESTAMPTZ DEFAULT now()

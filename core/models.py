@@ -22,6 +22,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from pgvector.sqlalchemy import Vector
+from core.embedding_profile import EmbedVector
 
 from core.db import Base
 
@@ -387,12 +388,12 @@ class Scene(Base):
     # ── 向量 (pgvector) ──
     # DEPRECATED (v0.8): 不再由 Pipeline 写入，仅兼容旧数据读取。搜索请用 text_embedding。
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(4096),
+        EmbedVector(),
         nullable=True,
         comment="关键帧图像编码向量(Qwen3-VL-Embedding-8B输出4096维) — DEPRECATED",
     )
     text_embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(4096),
+        EmbedVector(),
         nullable=True,
         comment="caption 文本语义向量, encode_text(caption) 输出, 用于文本语义搜索",
     )
@@ -517,7 +518,7 @@ class FrameEmbedding(Base):
         Float, nullable=False, comment="精确时间戳(秒)",
     )
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(4096), nullable=True,
+        EmbedVector(), nullable=True,
         comment="encode_image(单帧) 编码, 4096 维",
     )
     thumbnail_path: Mapped[str | None] = mapped_column(
@@ -569,7 +570,7 @@ class Chunk(Base):
         Float, nullable=False, comment="窗口结束时间(秒)",
     )
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(4096), nullable=True,
+        EmbedVector(), nullable=True,
         comment="encode_video(窗口内全部帧) 原生编码, 4096 维",
     )
     thumbnail_path: Mapped[str | None] = mapped_column(
@@ -730,7 +731,7 @@ class TrackEmbedding(Base):
         comment="类内展示序号（每视频每类别 1..N，persist 赋值；track_id 保持全局唯一）",
     )
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(4096), nullable=True,
+        EmbedVector(), nullable=True,
         comment="crop 跨模态嵌入, encode_image(best_frame_crop) 输出",
     )
     timestamp_sec: Mapped[float] = mapped_column(

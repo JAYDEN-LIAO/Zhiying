@@ -202,7 +202,7 @@ async def search_image(
     min_similarity: float = Form(0.3),
     request: Request = None,
 ) -> APIResponse[SearchResults]:
-    """上传任意图片 → Qwen3-VL-Embedding 4096-dim → 与 frame_embeddings 表向量匹配。
+    """上传任意图片 → Qwen3-VL-Embedding（维度随 embedding_profile）→ 与 frame_embeddings 表向量匹配。
 
     和人脸搜索不同：整图直接编码，不检测/不切割图片内容。
 

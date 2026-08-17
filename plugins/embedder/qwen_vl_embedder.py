@@ -3,7 +3,7 @@ plugins/embedder/qwen_vl_embedder.py
 ═══════════════════════════════════════════════════════════
 Qwen3-VL-Embedding 向量编码插件。
 
-图像 / 文本 / 视频 → 4096 维归一化嵌入向量。
+图像 / 文本 / 视频 → embedding 维（维度随 embedding_profile，8B=4096 / 2B=2048）归一化嵌入向量。
 模型推理通过 asyncio.to_thread 投递线程池，不阻塞事件循环。
 
 编码方式：
@@ -119,7 +119,7 @@ class QwenVLEmbedder(BaseEmbedder):
     # ═════════════════════════════════════════════════════════
 
     async def encode_image(self, image: np.ndarray) -> list[float]:
-        """将图像编码为 4096 维单位向量。"""
+        """将图像编码为 embedding 维（维度随 embedding_profile，8B=4096 / 2B=2048）单位向量。"""
         if image.ndim == 2:
             image = np.stack([image] * 3, axis=-1)
         elif image.shape[2] == 4:
@@ -137,7 +137,7 @@ class QwenVLEmbedder(BaseEmbedder):
             raise
 
     async def encode_text(self, text: str) -> list[float]:
-        """将文本编码为 4096 维单位向量。"""
+        """将文本编码为 embedding 维（维度随 embedding_profile，8B=4096 / 2B=2048）单位向量。"""
         try:
             async with gpu_lock:
                 vector = await asyncio.to_thread(
@@ -155,7 +155,7 @@ class QwenVLEmbedder(BaseEmbedder):
             texts: 文本列表（如每个场景拼接后的 caption+ocr+transcript）。
 
         Returns:
-            list[list[float]] — 每段 4096 维归一化向量，顺序与输入一致。
+            list[list[float]] — 每段 embedding 维（维度随 embedding_profile，8B=4096 / 2B=2048）归一化向量，顺序与输入一致。
         """
         if not texts:
             return []
@@ -194,7 +194,7 @@ class QwenVLEmbedder(BaseEmbedder):
             target_size: 可选 (w, h) 覆盖默认编码分辨率，用于速度预设。
 
         Returns:
-            list[list[float]] — 每帧 4096 维归一化向量，顺序与输入一致。
+            list[list[float]] — 每帧 embedding 维（维度随 embedding_profile，8B=4096 / 2B=2048）归一化向量，顺序与输入一致。
         """
         # 统一通道数
         processed = []

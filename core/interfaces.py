@@ -289,7 +289,7 @@ class BaseCaptioner(ABC):
 
 
 class BaseEmbedder(ABC):
-    """向量编码 — 图像 / 文本 → 4096 维嵌入向量。"""
+    """向量编码 — 图像 / 文本 → embedding 维向量（随 embedding_profile，8B=4096 / 2B=2048）。"""
 
     @abstractmethod
     async def encode_image(self, image: np.ndarray) -> list[float]:
@@ -300,7 +300,7 @@ class BaseEmbedder(ABC):
             image: 输入图像 (H, W, C) uint8。
 
         Returns:
-            4096 维 float 向量（Qwen3-VL-Embedding-2B 输出维度）。
+            当前 embedding_profile 维度的 float 向量（8B→4096 / 2B→2048）。
         """
         ...
 
@@ -313,7 +313,7 @@ class BaseEmbedder(ABC):
             text: 输入文本。
 
         Returns:
-            4096 维 float 向量（Qwen3-VL-Embedding-2B 输出维度）。
+            当前 embedding_profile 维度的 float 向量（8B→4096 / 2B→2048）。
         """
         ...
 
@@ -332,7 +332,7 @@ class BaseEmbedder(ABC):
             max_frames: 最大帧数。
 
         Returns:
-            4096 维归一化 float 向量。
+            embedding_profile 维度归一化 float 向量（8B→4096 / 2B→2048）。
         """
         ...
 
