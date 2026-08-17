@@ -33,11 +33,9 @@ from core.config_loader import (
 
 logger = logging.getLogger(__name__)
 
-SETTINGS_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data",
-    "settings.json",
-)
+from core.paths import project_root
+
+SETTINGS_FILE = str(project_root() / "data" / "settings.json")
 
 # 已知的 API key 定义（env 变量注入插件）
 API_KEY_DEFS = [

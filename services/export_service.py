@@ -45,7 +45,8 @@ class ExportService:
 
     def __init__(self, config: dict):
         self.config = config
-        project_root = Path(__file__).resolve().parent.parent
+        from core.paths import project_root
+        project_root = project_root()
         artifact_dir = config.get("storage", {}).get("artifact_dir", "data/artifacts")
         self.export_dir = project_root / artifact_dir / "exports"
         self.export_dir.mkdir(parents=True, exist_ok=True)

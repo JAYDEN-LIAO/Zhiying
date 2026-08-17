@@ -24,6 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from core.db import engine, AsyncSessionLocal, init_db
 from core.config_loader import load_config
+from core.paths import project_root
 from core.version import __version__
 from api.router import router
 
@@ -325,7 +326,7 @@ app.include_router(yunzhi_router)
 #   - 前端无客户端路由（单页，页面切换走 state）→ html=True 即可，无需 SPA fallback
 #   - 挂载在 API / health / jobs 路由之后 → 这些路径优先匹配，其余走静态
 _frontend_dir = "frontend-desktop" if os.environ.get("ZHIYING_FRONTEND") == "desktop" else "frontend"
-_frontend_dist = Path(__file__).resolve().parent / _frontend_dir / "dist"
+_frontend_dist = project_root() / _frontend_dir / "dist"
 if _frontend_dist.is_dir():
     app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
     logger.info("Frontend dist mounted at / (%s, %s)", _frontend_dir, _frontend_dist)

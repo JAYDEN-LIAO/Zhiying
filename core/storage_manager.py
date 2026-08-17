@@ -30,6 +30,7 @@ from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.models import Video, VideoGroup
+from core.paths import project_root
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class StorageManager:
 
     def __init__(self, config: dict):
         self.config = config
-        self._project_root = Path(__file__).resolve().parent.parent
+        self._project_root = project_root()
 
     # ──────────────────────────────────────────────
     # 路径解析

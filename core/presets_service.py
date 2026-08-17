@@ -19,14 +19,11 @@ import logging
 from datetime import datetime, timezone
 
 from core.settings_service import get_current_settings, update_settings
+from core.paths import project_root
 
 logger = logging.getLogger(__name__)
 
-PRESETS_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data",
-    "presets.json",
-)
+PRESETS_FILE = str(project_root() / "data" / "presets.json")
 
 # 预设快照的管道参数（与 settings.json pipeline 段一致；encode_profiles 为嵌套三档模板）
 PIPELINE_KEYS = [

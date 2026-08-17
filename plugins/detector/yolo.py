@@ -132,8 +132,9 @@ class YoloDetector(BaseDetector):
         """加载 YOLO11 模型（首次调用时触发）。"""
         from pathlib import Path
         from ultralytics import YOLO
+        from core.paths import project_root as get_project_root
 
-        project_root = Path(__file__).resolve().parent.parent.parent
+        project_root = get_project_root()
         model_path = self._model_name
         if not Path(model_path).is_absolute():
             model_path = str(project_root / model_path)

@@ -12,7 +12,10 @@ from functools import lru_cache
 
 import yaml
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+from core.paths import project_root
+
+# 项目根：封装模式（字节码包）由启动器注入 ZHIYING_PROJECT_ROOT，源码模式回退推断。
+_PROJECT_ROOT = project_root()
 _DEFAULT_PROMPT_FILE = _PROJECT_ROOT / "config" / "prompts.yaml"
 
 

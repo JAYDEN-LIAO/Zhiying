@@ -27,7 +27,9 @@ from core.gpu_lock import gpu_lock
 
 logger = logging.getLogger(__name__)
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+from core.paths import project_root
+
+_PROJECT_ROOT = project_root()
 
 
 class QwenVLEmbedder(BaseEmbedder):

@@ -15,10 +15,12 @@ from functools import lru_cache
 import yaml
 
 from core.exceptions import ConfigurationError
+from core.paths import project_root
 
 logger = logging.getLogger(__name__)
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# 项目根：封装模式（字节码包，__file__ 指向 _internal）由启动器注入 ZHIYING_PROJECT_ROOT。
+_PROJECT_ROOT = project_root()
 # 部署时可用 ZHIYING_CONFIG 环境变量指定备选配置文件（如 config/config.windows.yaml）
 _DEFAULT_CONFIG_PATH = Path(
     os.environ.get("ZHIYING_CONFIG", str(_PROJECT_ROOT / "config" / "config.yaml"))
