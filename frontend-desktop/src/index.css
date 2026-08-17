@@ -17,6 +17,10 @@
   /* 文本 */
   --color-text-main: #1e293b;
   --color-text-sub: #64748b;
+  --color-text-primary: #1e293b;
+  --color-text-secondary: #475569;
+  --color-text-muted: #64748b;
+  --color-text-dim: #94a3b8;
 
   /* 状态色 */
   --color-ok: #10b981;
@@ -39,6 +43,11 @@
   /* 边框 */
   --color-border: #e2e8f0;
   --color-border-light: #eef1f6;
+
+  /* 表面 / 强调 */
+  --color-surface: #f8fafc;
+  --color-accent-blue: #4f7cff;
+  --color-accent-green: #10b981;
 
   /* 阴影 */
   --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.04);
@@ -174,6 +183,18 @@ input, textarea, [contenteditable="true"] { user-select: text; }
   margin-left: auto; font-size: 10px; font-weight: 600; color: var(--color-primary);
   background: #eaf1ff; border-radius: 999px; padding: 0 7px; line-height: 16px;
 }
+/* 任务中心多徽章容器（右对齐并排；视觉右→左 = 蓝(待处理) 黄(排队中) 绿(新完成)） */
+.sb-badges { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; flex-shrink: 0; }
+.sb-badges .sb-count { margin-left: 0; }
+/* ⚠️ 变体选择器必须 ≥ .sb-nav-item .sb-count(0,2,0) 优先级，否则背景/文字色被基类压成蓝色 */
+.sb-nav-item .sb-count.sb-count-gray { background: #e2e8f0; color: #475569; }
+.sb-badges .sb-count.sb-count-yellow { background: #fef3c7; color: #d97706; }
+.sb-badges .sb-count.sb-count-green { background: #d1fae5; color: #059669; }
+.sb-badges .sb-count.sb-count-red { background: #fee2e2; color: #dc2626; }
+.dark .sb-nav-item .sb-count.sb-count-gray { background: #37404f; color: #98a0af; }
+.dark .sb-badges .sb-count.sb-count-yellow { background: #332b1a; color: #fbbf24; }
+.dark .sb-badges .sb-count.sb-count-green { background: #0f2b22; color: #34d399; }
+.dark .sb-badges .sb-count.sb-count-red { background: #361d21; color: #f87171; }
 
 /* ── 系统监控 SystemMonitor（demo 风格：迷你柱状图，非进度条） ── */
 .sysmon {
@@ -255,12 +276,6 @@ input, textarea, [contenteditable="true"] { user-select: text; }
 .g-tab.active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
 
 .g-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; }
-.g-badge.ok { background: #d1fae5; color: #059669; }
-.g-badge.run { background: #dbeafe; color: #2563eb; }
-.g-badge.run .pulse { width: 6px; height: 6px; border-radius: 50%; background: #2563eb; animation: pulse-soft 1.2s ease-in-out infinite; }
-.g-badge.warn { background: #fef3c7; color: #d97706; }
-.g-badge.err { background: #fee2e2; color: #dc2626; }
-.g-badge.wait { background: #f1f5f9; color: #64748b; }
 
 .g-progress { height: 6px; border-radius: 3px; background: #e2e8f0; overflow: hidden; }
 .g-progress-fill { height: 100%; border-radius: 3px; background: var(--color-primary); transition: width 0.4s ease; }
@@ -275,7 +290,12 @@ input, textarea, [contenteditable="true"] { user-select: text; }
 }
 .g-table td { padding: 11px 16px; border-bottom: 1px solid #e9edf3; color: #1e293b; }
 .g-table tbody tr { transition: background 0.12s; }
-.g-table tbody tr:hover { background: #f5f8ff; }
+/* 行悬浮：明显浅灰（比 #e9edf3 深、与行边框色拉开差，肉眼可辨） */
+.g-table tbody tr:hover { background: #dbe2ea; }
+/* 任务中心「新完成」行高亮：首次进入任务中心，绿徽章对应记录整条淡绿底 + 左侧绿边 */
+.g-table tbody tr.task-row-new { background: #d8f5e2; }
+.g-table tbody tr.task-row-new:hover { background: #bfebcf; }
+.g-table tbody tr.task-row-new td:first-child { box-shadow: inset 3px 0 0 #10b981; }
 
 .g-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 48px 20px; color: #94a3b8; }
 .g-empty svg { width: 40px; height: 40px; opacity: 0.4; }
@@ -543,6 +563,8 @@ input, textarea, [contenteditable="true"] { user-select: text; }
 /* 状态徽标（demo 语义色） */
 .g-badge.ok { background: #ecfdf5; color: #059669; }
 .g-badge.run { background: #eff6ff; color: #2563eb; }
+.g-badge.run .pulse { width: 6px; height: 6px; border-radius: 50%; background: #2563eb; animation: pulse-soft 1.2s ease-in-out infinite; }
+.g-badge.warn { background: #fef3c7; color: #d97706; }
 .g-badge.err { background: #fef2f2; color: #dc2626; }
 .g-badge.wait { background: #f1f5f9; color: #64748b; }
 
@@ -647,8 +669,15 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
   --color-card-bg: #2c3542;
   --color-text-main: #e1e5ec;
   --color-text-sub: #98a0af;
+  --color-text-primary: #e1e5ec;
+  --color-text-secondary: #d5dbe6;
+  --color-text-muted: #98a0af;
+  --color-text-dim: #6b7280;
   --color-border: #424c5d;
   --color-border-light: #37404f;
+  --color-surface: #202733;
+  --color-accent-blue: #a5b0fb;
+  --color-accent-green: #34d399;
 }
 
 .dark body { background: #0f1218; color: #e1e5ec; }
@@ -703,6 +732,9 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
 .dark .g-table th { background: #252e3b; color: #b4bbc9; border-bottom-color: #424c5d; }
 .dark .g-table td { color: #e1e5ec; border-bottom-color: #37404f; }
 .dark .g-table tbody tr:hover { background: #37404f; }
+.dark .g-table tbody tr.task-row-new { background: rgba(15, 43, 34, 0.7); }
+.dark .g-table tbody tr.task-row-new:hover { background: rgba(15, 43, 34, 0.92); }
+.dark .g-table tbody tr.task-row-new td:first-child { box-shadow: inset 3px 0 0 #34d399; }
 .dark .g-empty { color: #6b7280; }
 .dark .stat-num { color: #eef1f6; }
 .dark .stat-ic.blue { background: #232a3c; }

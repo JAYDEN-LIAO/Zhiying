@@ -38,14 +38,16 @@ export function Sidebar({
   settingsTab: SettingsTab;
   onNavigate: (p: Page) => void;
   onNavigateSettings: (tab: SettingsTab) => void;
-  counts?: { files?: number; tasks?: number };
+  /* 案例库灰=仅上传未提交 / 视频解析蓝=处理中(恒1) / 任务中心 黄=排队中 绿=新完成 红=失败 */
+  counts?: { files?: number; workbench?: number; queued?: number; newCompleted?: number; failed?: number };
 }) {
   return (
     <aside className="sidebar">
       <nav className="sb-nav">
         <div className="sb-group-label">业务</div>
         {BUSINESS.map((item) => {
-          const count = item.key === "files" ? counts?.files : item.key === "tasks" ? counts?.tasks : undefined;
+          const isFiles = item.key === "files";
+          const isWorkbench = item.key === "workbench";
           return (
             <button
               key={item.key}
@@ -55,7 +57,30 @@ export function Sidebar({
             >
               {item.icon}
               <span>{item.label}</span>
-              {count !== undefined && count > 0 && <span className="sb-count">{count}</span>}
+              {isFiles ? (
+                /* 案例库：灰 = 仅上传未提交任务的文件数 */
+                counts?.files != null && counts.files > 0 && (
+                  <span className="sb-count sb-count-gray" title="仅上传未提交">{counts.files}</span>
+                )
+              ) : isWorkbench ? (
+                /* 视频解析：蓝 = 有视频处理中 → 恒显示 1 */
+                counts?.workbench != null && counts.workbench > 0 && (
+                  <span className="sb-count" title="处理中">{counts.workbench}</span>
+                )
+              ) : (
+                /* 任务中心三徽章，右对齐，视觉右→左 = 红(失败) 绿(新完成) 黄(排队中) */
+                <span className="sb-badges">
+                  {counts?.failed != null && counts.failed > 0 && (
+                    <span className="sb-count sb-count-red" title="处理失败">{counts.failed}</span>
+                  )}
+                  {counts?.newCompleted != null && counts.newCompleted > 0 && (
+                    <span className="sb-count sb-count-green" title="新完成">{counts.newCompleted}</span>
+                  )}
+                  {counts?.queued != null && counts.queued > 0 && (
+                    <span className="sb-count sb-count-yellow" title="排队中">{counts.queued}</span>
+                  )}
+                </span>
+              )}
             </button>
           );
         })}

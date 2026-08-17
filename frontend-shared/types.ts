@@ -296,6 +296,7 @@ export interface TaskItem {
   created_at: string;
   updated_at: string | null;
   duration_sec: number | null;          // 真实处理时长（秒）
+  queued?: boolean;                     // 在全局管道队列等待 worker（侧栏黄徽章）
   detection_enabled?: boolean;
   face_enabled?: boolean;
   plate_enabled?: boolean;

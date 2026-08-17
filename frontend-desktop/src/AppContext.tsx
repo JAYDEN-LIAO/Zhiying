@@ -33,8 +33,13 @@ interface AppCtx {
   videoGroups: VideoGroup[];
   caseGroups: VideoGroup[];
   refreshCaseGroups: () => void;
-  activeTaskCount: number;
-  runningTaskCount: number;  // 仅「真正处理中」(status=processing) 数 —— 退出确认用（active 含待参数未开跑，不算运行中）
+  /* 侧栏徽章：案例库灰=仅上传未提交 / 视频解析蓝=处理中 / 任务中心 黄=排队中 绿=新完成 红=失败 */
+  pendingFileCount: number;    // 案例库灰：仅上传未提交（pending 且未入队 且 未版本化）
+  queuedTaskCount: number;     // 任务中心黄：排队中（pipeline_tasks queued 等 worker）
+  newCompletedCount: number;   // 任务中心绿：新完成，进入任务中心页即清零
+  failedTaskCount: number;     // 任务中心红：处理失败（实时计数）
+  taskHighlightIds: string[];  // 进入任务中心时待高亮的「新完成」行 id（表格淡绿高亮）
+  runningTaskCount: number;  // 处理中数：视频解析蓝色「1」徽章 + 退出确认（仅 status=processing）
   refreshList: () => void;
   /* 上传：统一入口，上传后跳工作台 + 打开参数 */
   isUploading: boolean;
@@ -66,8 +71,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [videos, setVideos] = useState<VideoListItem[]>([]);
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
   const [caseGroups, setCaseGroups] = useState<VideoGroup[]>([]);
-  const [activeTaskCount, setActiveTaskCount] = useState(0); // 任务中心 active 数（含多版本处理中，侧栏徽章用）
-  const [runningTaskCount, setRunningTaskCount] = useState(0); // 仅 processing 数（退出确认用）
+  const [pendingFileCount, setPendingFileCount] = useState(0);   // 案例库灰：仅上传未提交
+  const [queuedTaskCount, setQueuedTaskCount] = useState(0);     // 任务中心黄：排队中
+  const [newCompletedCount, setNewCompletedCount] = useState(0); // 任务中心绿：新完成
+  const [failedTaskCount, setFailedTaskCount] = useState(0);     // 任务中心红：失败（实时）
+  const [taskHighlightIds, setTaskHighlightIds] = useState<string[]>([]); // 进任务中心时待高亮的行 id
+  const [runningTaskCount, setRunningTaskCount] = useState(0); // 处理中数（视频解析蓝「1」+ 退出确认）
+  const pageRef = useRef<Page>(page);          // 轮询闭包内读当前页（防 stale）
+  const baselineRef = useRef<Set<string>>(new Set());   // 已「看过」的已完成任务 id（绿数基线）
+  const initializedRef = useRef(false);        // 首轮轮询基线初始化（防首启误报绿数）
+  const freshCompletedRef = useRef<string[]>([]); // 本轮计为新完成的 id（进任务中心时高亮用）
+  const selectedVideoIdRef = useRef<string | null>(selectedVideoId);
+  const processingVideoIdRef = useRef<string | null>(null); // 最近一个处理中视频 id（点视频解析自动定位）
+  pageRef.current = page;
+  selectedVideoIdRef.current = selectedVideoId;
   const [listKey, setListKey] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -75,7 +92,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const { mock: yunzhiMock, selectFiles: yunzhiSelectFiles } = useYunzhi();
 
-  const navigate = useCallback((p: Page) => setPage(p), []);
+  const navigate = useCallback((p: Page) => {
+    if (p === "tasks") {
+      // 进入任务中心：捕获本次待高亮的「新完成」行 + 推进基线（绿数即时清零）
+      setTaskHighlightIds(freshCompletedRef.current);
+      setNewCompletedCount(0);
+      baselineRef.current = new Set([...baselineRef.current, ...freshCompletedRef.current]);
+    } else if (pageRef.current === "tasks") {
+      setTaskHighlightIds([]); // 离开任务中心清高亮（防快速折返误高亮旧行）
+    }
+    if (p === "workbench" && !selectedVideoIdRef.current && processingVideoIdRef.current) {
+      // 未选中任何视频 + 有视频处理中 → 自动定位到处理中的视频
+      setSelectedVideoId(processingVideoIdRef.current);
+      setInitialVersionId(null);
+    }
+    setPage(p);
+  }, []);
 
   const navigateSettings = useCallback((tab: SettingsTab) => {
     setSettingsTab(tab);
@@ -102,13 +134,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const iv = setInterval(() => {
       api.listVideos().then((data) => { if (data) setVideos(data); }).catch(() => {});
-      // 任务徽章：按任务中心 active 列表（含多版本文件的处理中版本），而非根行状态
-      api.listTasks("active").then((data) => {
-        setActiveTaskCount(data?.length ?? 0);
-        // 退出确认只用「真正处理中」：active 含 PENDING（待参数/排队，未开跑），不算运行中
-        setRunningTaskCount((data ?? []).filter((t) => t.status === "processing").length);
+      // 侧栏徽章：一次拉全量任务，派生 待处理(蓝)/排队中(黄)/新完成(绿)/运行中
+      api.listTasks("all").then((data) => {
+        const tasks = data ?? [];
+        const proc = tasks.filter((t) => t.status === "processing");
+        setRunningTaskCount(proc.length);
+        processingVideoIdRef.current = proc.length > 0 ? proc[0].id : null; // 视频解析自动定位用
+        // 案例库灰 = 仅上传未提交：pending 且未入队 且 未版本化（版本化孤儿行不算）
+        setPendingFileCount(tasks.filter((t) => t.status === "pending" && !t.queued && t.version_no == null).length);
+        // 任务中心黄 = 排队中；红 = 处理失败（实时计数）
+        setQueuedTaskCount(tasks.filter((t) => !!t.queued).length);
+        setFailedTaskCount(tasks.filter((t) => t.status === "failed").length);
+        const completed = tasks.filter((t) => t.status === "completed");
+        if (!initializedRef.current) {
+          // 首轮：当前已完成全视为已看过基线，避免首启误报绿数
+          baselineRef.current = new Set(completed.map((t) => t.id));
+          initializedRef.current = true;
+          setNewCompletedCount(0);
+        } else if (pageRef.current === "tasks") {
+          // 正在任务中心浏览：新完成即时吸收，绿数恒 0
+          baselineRef.current = new Set(completed.map((t) => t.id));
+          setNewCompletedCount(0);
+        } else {
+          const fresh = completed.filter((t) => !baselineRef.current.has(t.id));
+          freshCompletedRef.current = fresh.map((t) => t.id);
+          setNewCompletedCount(fresh.length);
+        }
       }).catch(() => {});
-    }, 4000);
+    }, 1500);
     return () => clearInterval(iv);
   }, []);
 
@@ -241,7 +294,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     page, navigate, settingsTab, navigateSettings,
     selectedVideoId, openWorkbench, initialVersionId, paramsTick, consumeParamsTick,
     reparseIntent, consumeReparseIntent,
-    videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups, activeTaskCount, runningTaskCount, refreshList,
+    videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups,
+  pendingFileCount, queuedTaskCount, newCompletedCount, failedTaskCount, taskHighlightIds, runningTaskCount, refreshList,
     isUploading, uploadFiles, registerExternalFiles, handleUploadClick,
     removeVideoState, deleteVideo,
     dragActive,

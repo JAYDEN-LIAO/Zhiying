@@ -401,7 +401,7 @@ export function ParameterPanel({
                 onClick={() => handleSceneTypeChange(ct.value as ContentType)}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
                   sceneType === ct.value
-                    ? "bg-teal-600 text-teal-950 shadow-sm"
+                    ? "bg-[#4f7cff] text-white shadow-sm"
                     : "bg-gray-100/60 text-gray-600 hover:bg-gray-100"
                 }`}
               >
@@ -471,7 +471,7 @@ export function ParameterPanel({
                     disabled={grayed.detectionClasses}
                     className={`px-2 py-0.5 text-[10px] font-medium rounded-md transition-all ${
                       grayed.detectionClasses ? "text-gray-300 cursor-not-allowed" :
-                      detectionClasses === null ? "bg-teal-600 text-teal-950" : "bg-gray-100/80 text-gray-600 hover:bg-gray-200/80"
+                      detectionClasses === null ? "bg-[#4f7cff] text-white" : "bg-gray-100/80 text-gray-600 hover:bg-gray-200/80"
                     }`}
                   >
                     全部
@@ -499,7 +499,7 @@ export function ParameterPanel({
                         <span
                           key={cls}
                           onClick={() => setDetectionClasses((prev) => (prev ?? []).filter((c) => c !== cls))}
-                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-teal-600 text-teal-950 rounded-md cursor-pointer hover:bg-teal-700 transition-colors"
+                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-[#4f7cff] text-white rounded-md cursor-pointer hover:bg-[#4369f5] transition-colors"
                         >
                           {zh(cls)}
                           <svg className="w-2.5 h-2.5 opacity-70" viewBox="0 0 12 12" fill="currentColor">
@@ -517,7 +517,7 @@ export function ParameterPanel({
                       value={classSearch}
                       onChange={(e) => setClassSearch(e.target.value)}
                       placeholder="搜索匹配 80 类…"
-                      className="w-full px-2.5 py-1 text-[11px] border border-gray-200 rounded-md focus:outline-none focus:border-teal-600 bg-white/80 placeholder:text-gray-350"
+                      className="w-full px-2.5 py-1 text-[11px] border border-gray-200 rounded-md focus:outline-none focus:border-teal-600 bg-white/80 placeholder:text-gray-400"
                     />
                     {classSearch && (() => {
                       const q = classSearch.toLowerCase();
@@ -688,7 +688,7 @@ export function ParameterPanel({
         <button
           onClick={handleSubmit}
           disabled={submitting}
-          className="px-5 py-2 text-xs font-medium bg-gradient-to-r from-teal-600 to-teal-700 text-teal-950 rounded-lg hover:from-teal-700 hover:to-teal-800 disabled:opacity-50 transition-all shadow-sm"
+          className="g-btn g-btn-primary"
         >
           {submitting ? "提交中..." : onBatchSubmit ? "批量解析" : reparse ? "重新解析" : "参数启动"}
         </button>

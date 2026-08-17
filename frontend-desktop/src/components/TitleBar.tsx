@@ -199,7 +199,7 @@ export function TitleBar() {
         {/* 窗口控制（仅 pywebview 桌面端） */}
         {inPywebview && (<>
           <button className="tb-win-btn" onClick={onMin} title="最小化" aria-label="最小化">
-            <svg width="13" height="13" viewBox="0 0 14 14">
+            <svg width="12" height="12" viewBox="0 0 14 14">
               <line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
             </svg>
           </button>

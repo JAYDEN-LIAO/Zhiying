@@ -56,7 +56,7 @@ function CaseHeader({ onNewCase }: { onNewCase: () => void }) {
         <p className="text-[12px] text-gray-500 leading-tight">案例素材归档</p>
       </div>
       <button className="g-btn g-btn-primary" onClick={onNewCase}>
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 3h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 3h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
         新建案例
       </button>
     </div>
@@ -107,7 +107,7 @@ function CaseList({
             </div>
           );
         })}
-        {groups.length === 0 && <div className="g-empty"><span>暂无案例，点击「新建案例」</span></div>}
+        {groups.length === 0 && <div className="g-empty"><IconFolder /><span>暂无案例，点击「新建案例」</span></div>}
       </div>
     </div>
   );
@@ -217,16 +217,16 @@ function CaseContent({
             <option value="completed">已完成</option>
             <option value="failed">失败</option>
           </select>
-          {/* 上传文件：白底 outline（与新建案例蓝色等大） */}
+          {/* 上传：白底 outline（与新建案例蓝色等大） */}
           <button className="g-btn" onClick={onUpload} disabled={isUploading}>
             <IconPlus />
-            {isUploading ? "上传中..." : "上传文件"}
+            {isUploading ? "上传中..." : "上传"}
           </button>
-          {/* 一键解析：未勾选 → 处理当前列表全部待处理；勾选后 → 批量解析勾选的 */}
+          {/* 解析：未勾选 → 处理当前列表全部待处理；勾选后 → 批量解析勾选的 */}
           <button className="g-btn g-btn-primary" onClick={onAnalyze}
             disabled={analyzing || (selected.size === 0 && allPendingIds.length === 0)} title="配置参数并启动待处理视频">
             <IconPlay2 />
-            {selected.size > 0 ? `批量解析 (${selected.size})` : `一键解析 (${allPendingIds.length})`}
+            {selected.size > 0 ? `批量解析 (${selected.size})` : `解析 (${allPendingIds.length})`}
           </button>
         </div>
       </div>
@@ -285,22 +285,22 @@ function CaseContent({
                   </td>
                   <td className="text-right pr-4 whitespace-nowrap">
                     <div className="inline-flex items-center gap-1.5">
-                      {/* 四个操作：编辑(重命名) → 解析(闪电) → 预览/结果 → 删除 */}
-                      <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors" title="重命名文件"
-                        onClick={() => startEdit("file", f.id, splitName(f.name, f.file_ext).base)}>
-                        <IconPencil />
-                      </button>
-                      {/* 闪电对所有状态显示：已完成 = 实心 + 重新配置参数解析（走 reanalyze 建新版本）；未完成 = 描边 + 配置参数启动 */}
-                      <button className="p-1.5 rounded-md text-[#4f7cff] hover:bg-blue-50 transition-colors"
+                      {/* 四个操作：解析(闪电) → 预览/结果 → 重命名 → 删除（前三个灰、hover 变蓝；删除红） */}
+                      <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors"
                         title={f.current_status === "completed" ? "重新配置参数解析" : "配置参数并解析"}
                         onClick={() => onOpenFile(f, true, f.current_status === "completed")}>
                         {f.current_status === "completed" ? <IconBoltSolid /> : <IconBolt />}
                       </button>
                       {/* 预览/查看结果合并为一个眼睛按钮：未处理=预览，已完成=查看结果 */}
-                      <button className="p-1.5 rounded-md text-gray-500 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors"
+                      <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors"
                         title={f.current_status === "completed" ? "查看结果" : "预览视频"}
                         onClick={() => onOpenFile(f, false)}>
                         <IconEye />
+                      </button>
+                      {/* 重命名文件：内联编辑 */}
+                      <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors" title="重命名文件"
+                        onClick={() => startEdit("file", f.id, splitName(f.name, f.file_ext).base)}>
+                        <IconPencil />
                       </button>
                       <button className="p-1.5 rounded-md text-red-500 hover:text-red-600 hover:bg-red-50 transition-colors" title="删除文件"
                         onClick={() => onDeleteFile(f)}>
@@ -339,7 +339,7 @@ function CaseContent({
                 <td className="text-right pr-4 whitespace-nowrap">
                   <div className="inline-flex items-center gap-1.5">
                     {tree.startsWith("g:") && (
-                      <button className="p-1.5 rounded-md text-gray-500 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors" title="预览图片"
+                      <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors" title="预览图片"
                         onClick={() => setPreviewImg(img)}>
                         <IconEye />
                       </button>
@@ -357,7 +357,7 @@ function CaseContent({
         {displayFiles.length === 0 && images.length === 0 && (
           <div className="g-empty">
             <IconFolder />
-            <span>{search || statusFilter !== "all" ? "当前筛选下暂无文件" : "点击「上传文件」归档视频/图片到此案例"}</span>
+            <span>{search || statusFilter !== "all" ? "当前筛选下暂无文件" : "点击「上传」归档视频/图片到此案例"}</span>
           </div>
         )}
       </div>
@@ -368,7 +368,7 @@ function CaseContent({
           <div className="g-modal" style={{ maxWidth: "70vw" }} onClick={(e) => e.stopPropagation()}>
             <div className="g-card-hd">
               <span className="g-card-tt">{previewImg.name}</span>
-              <button className="g-btn g-btn-sm" onClick={() => setPreviewImg(null)}>关闭</button>
+              <button className="g-btn g-btn-sm" onClick={() => setPreviewImg(null)}>×</button>
             </div>
             <div className="p-4 flex items-center justify-center bg-gray-50" style={{ minHeight: 320 }}>
               <img src={api.getAssetFileUrl(group.groupId, previewImg.id)} alt={previewImg.name}
@@ -595,8 +595,7 @@ export function FileLibrary() {
       const r = await api.analyzeBatch(batchTargets, params);
       setSelected(new Set());
       setBatchTargets(null);
-      load();
-      alert(`已提交 ${r.started} 个任务${r.skipped > 0 ? `，跳过 ${r.skipped} 个` : ""}`);
+      load();  // 提交结果靠列表刷新 + 侧栏徽章自然反馈，不弹原生窗
     } catch (err) {
       throw err instanceof Error ? err : new Error("批量解析失败");
     } finally {

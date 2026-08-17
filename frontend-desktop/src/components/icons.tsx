@@ -30,7 +30,7 @@ export function IconHistory() {
 
 export function IconPlus() {
   return (
-    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round">
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round">
       <line x1="12" y1="5" x2="12" y2="19" />
       <line x1="5" y1="12" x2="19" y2="12" />
     </svg>
@@ -251,7 +251,7 @@ export function IconNet() {
 
 export function IconPlay2() {
   return (
-    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
       <path d="M8 5v14l11-7z" />
     </svg>
   );
@@ -338,6 +338,16 @@ export function IconLog() {
       <polyline points="14 2 14 8 20 8" />
       <line x1="16" y1="13" x2="8" y2="13" />
       <line x1="16" y1="17" x2="8" y2="17" />
+    </svg>
+  );
+}
+
+export function IconRetry({ className = "" }: { className?: string }) {
+  /* 逆时针重试箭头：失败任务重试按钮用（busy 时可叠加 animate-spin） */
+  return (
+    <svg className={`w-4 h-4 ${className}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="1 4 1 10 7 10" />
+      <path d="M3.51 15a9 9 0 102.13-9.36L1 10" />
     </svg>
   );
 }

@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
 import type { VideoResponse, PipelineStage } from "../types";
 import { fmtDuration, fmtDate, versionName } from "../utils/helpers";
-import { IconDownload, IconPlus } from "./icons";
+import { IconDownload, IconBolt, IconBoltSolid } from "./icons";
 import { ExportMenu } from "./ExportMenu";
 import { ParameterPanel } from "./ParameterPanel";
 import { VideoPlayer } from "./VideoPlayer";
@@ -38,13 +38,13 @@ const langLabel: Record<string, string> = { auto: "自动", zh: "中文", en: "E
 
 /* ═══════════════ ① 顶部卡 ═══════════════ */
 function WbHeader({
-  videoName, groupName, curVersionName, hasVideo, isPending, isProcessing, onReanalyze, onOpenHistory, onOpenExport,
+  videoName, groupName, curVersionName, hasVideo, isPending, isProcessing, isCompleted, onReanalyze, onOpenHistory, onOpenExport,
 }: {
-  videoName: string; groupName: string | null; curVersionName: string; hasVideo: boolean; isPending: boolean; isProcessing: boolean;
+  videoName: string; groupName: string | null; curVersionName: string; hasVideo: boolean; isPending: boolean; isProcessing: boolean; isCompleted: boolean;
   onReanalyze: () => void; onOpenHistory: () => void; onOpenExport: () => void;
 }) {
   return (
-    <div className="case-card flex items-center justify-between flex-wrap gap-y-1.5 px-5 py-2 min-h-[60px] shrink-0">
+    <div className="case-card flex items-center justify-between flex-wrap gap-y-1.5 px-5 py-2 min-h-[56px] shrink-0">
       <div className="flex items-center gap-3 min-w-0">
         <div className="shrink-0">
           <h1 className="text-[16px] font-semibold text-gray-900 leading-tight">视频解析</h1>
@@ -63,14 +63,14 @@ function WbHeader({
       <div className="flex items-center gap-2 shrink-0">
         <span className="text-[11.5px] text-[#4f7cff] font-medium bg-[#eaf1ff] rounded px-2 py-1 truncate max-w-[200px]" title={curVersionName}>{curVersionName || "未选择版本"}</span>
         <button className="g-btn" onClick={onOpenHistory} disabled={!hasVideo} title="解析版本历史">
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
           历史记录
         </button>
-        <button className="g-btn g-btn-primary" onClick={onReanalyze} disabled={!hasVideo || isProcessing}>
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 1112.9 5.3M4.5 12V7.5M4.5 12h4.5M19.5 12a7.5 7.5 0 01-12.9-5.3M19.5 12v4.5M19.5 12H15" /></svg>
-          {isPending ? "开始解析" : "重新解析"}
-        </button>
         <button className="g-btn" onClick={onOpenExport} disabled={!hasVideo}><IconDownload />导出</button>
+        <button className="g-btn g-btn-primary" onClick={onReanalyze} disabled={!hasVideo || isProcessing} title={isPending ? "配置参数并启动解析" : "重新配置参数解析"}>
+          {isCompleted ? <IconBoltSolid /> : <IconBolt />}
+          {isPending ? "解析" : "重新解析"}
+        </button>
       </div>
     </div>
   );
@@ -478,7 +478,9 @@ export function Workbench() {
         hasVideo={!!currentVideo}
         isPending={isPending}
         isProcessing={isProcessing}
-        onReanalyze={() => { setReparseMode(true); setParamsOpen(true); }}
+        isCompleted={isCompleted}
+        // 解析：pending 视频 = 原地配置参数并启动（reparse=false）；已完成/失败 = 重新解析建新版本
+        onReanalyze={() => { setReparseMode(!isPending); setParamsOpen(true); }}
         onOpenHistory={() => setTopPanel((p) => (p === "history" ? null : "history"))}
         onOpenExport={() => setTopPanel((p) => (p === "export" ? null : "export"))}
       />

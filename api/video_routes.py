@@ -13,6 +13,7 @@ import shutil
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db
@@ -57,6 +58,17 @@ async def register_video(
     asyncio.create_task(format_service.process_format(video.id, payload.file_path))
 
     return APIResponse(data=VideoResponse.model_validate(video))
+
+
+async def _ensure_group_exists(db: AsyncSession, group_id: uuid.UUID) -> None:
+    """校验案例（分组）存在——不存在返回友好提示（前端可能传了已删除/陈旧的案例 id）。
+
+    纯上传/批量上传归组时若 group_id 失效，直接 FK 报错会 500 + 一屏堆栈；
+    这里提前校验给 400 文案，并作为 create_video 的兜底 catch。
+    """
+    row = await db.execute(select(VideoGroup).where(VideoGroup.id == group_id))
+    if row.scalar_one_or_none() is None:
+        raise HTTPException(status_code=400, detail="案例不存在或已被删除，请刷新案例列表后重试")
 
 
 @router.post("/videos/upload", status_code=201)
@@ -133,7 +145,13 @@ async def upload_video(
         group_id=group_id,
     )
 
-    video = await create_video(db, dto)
+    if group_id is not None:
+        await _ensure_group_exists(db, group_id)
+    try:
+        video = await create_video(db, dto)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="案例不存在或已被删除，请刷新案例列表后重试")
     logger.info("[Upload] video=%s file=%s size=%d (pending, await params)", video.id, file.filename, file_size)
 
     # 同步探测格式（<100ms），异步执行 remux + proxy
@@ -252,6 +270,9 @@ async def upload_videos_batch(
         await db.commit()  # commit 让独立 session 能读到 group
         await db.refresh(created_group)
         group_id = created_group.id
+    else:
+        # 复用指定案例：先校验存在，避免并发创建时 FK 报错
+        await _ensure_group_exists(db, group_id)
 
     # 解析 detection_classes
     detection_classes_list: list[str] | None = None
@@ -306,7 +327,11 @@ async def upload_videos_batch(
 
             # ★ 每个文件使用独立 session，不共享主 session
             async with db_factory() as fsession:
-                video = await create_video(fsession, dto)
+                try:
+                    video = await create_video(fsession, dto)
+                except IntegrityError:
+                    await fsession.rollback()
+                    raise HTTPException(status_code=400, detail="案例不存在或已被删除，请刷新案例列表后重试")
                 # 同步 probe（probe_and_save 内部使用自己的 session）
                 await format_service.probe_and_save(video.id, dest_path)
 

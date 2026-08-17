@@ -92,6 +92,11 @@ class PipelineQueue:
     ) -> str:
         """入队一个任务：INSERT queued 行（DB 持久化）+ 喂内存队列。立即返回 task_id。"""
         task_id = str(uuid.uuid4())
+        # ⚠️ 调用方一般把 video_id 放在 payload 里（{"video_id": ...}）而非形参；
+        #   形参未传时从 payload 取，保证 pipeline_tasks.video_id 列非空
+        #   → 侧栏「排队中」黄徽章 / _task_to_dto.queued 靠它匹配（此前一直 NULL 查不到）
+        if video_id is None and isinstance(payload, dict):
+            video_id = payload.get("video_id")
         if self._db is not None:
             from core.models import PipelineTask
             async with self._db() as session:

@@ -36,8 +36,16 @@ _PRODUCT_MODELS = [
 ]
 
 
-async def _task_to_dto(session: AsyncSession, v: Video) -> TaskItem:
-    """版本行 → TaskItem（补 file_name/group_name）。"""
+async def _task_to_dto(
+    session: AsyncSession,
+    v: Video,
+    queued_video_ids: set[uuid.UUID] | None = None,
+) -> TaskItem:
+    """版本行 → TaskItem（补 file_name/group_name/queued）。
+
+    queued_video_ids：当前「排队中」的 video_id 集合 —— list_tasks 一次性批量查好传入（防 N+1）；
+    单查场景传 None → 内部按当前视频查一条。
+    """
     group_name = None
     if v.group_id:
         row = await session.execute(
@@ -49,6 +57,15 @@ async def _task_to_dto(session: AsyncSession, v: Video) -> TaskItem:
     duration_sec = None
     if v.processing_started_at and v.updated_at:
         duration_sec = (v.updated_at - v.processing_started_at).total_seconds()
+    # 排队中：pipeline_tasks 有 status='queued' 的行的 video（全局队列等 worker，侧栏黄徽章数据）
+    if queued_video_ids is not None:
+        queued = v.id in queued_video_ids
+    else:
+        row = await session.execute(
+            text("SELECT 1 FROM pipeline_tasks WHERE video_id = :vid AND status = 'queued' LIMIT 1"),
+            {"vid": v.id},
+        )
+        queued = row.first() is not None
     return TaskItem(
         id=v.id,
         version_no=v.version_no,
@@ -57,6 +74,7 @@ async def _task_to_dto(session: AsyncSession, v: Video) -> TaskItem:
         status=v.status,
         progress=v.progress,
         error_message=v.error_message,
+        queued=queued,
         detection_enabled=v.detection_enabled,
         face_enabled=v.face_enabled,
         plate_enabled=v.plate_enabled,
@@ -86,7 +104,12 @@ async def list_tasks(
         )
     result = await db.execute(stmt)
     videos = list(result.scalars().all())
-    items = [await _task_to_dto(db, v) for v in videos]
+    # 一次性批量查「排队中」video_id 集合（侧栏黄徽章数据，防 N+1）
+    qrows = await db.execute(
+        text("SELECT video_id FROM pipeline_tasks WHERE status = 'queued'")
+    )
+    queued_ids = {r[0] for r in qrows if r[0] is not None}
+    items = [await _task_to_dto(db, v, queued_ids) for v in videos]
     return APIResponse(data=items)
 
 

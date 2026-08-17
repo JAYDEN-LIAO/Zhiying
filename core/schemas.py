@@ -469,6 +469,7 @@ class TaskItem(BaseModel):
     created_at: datetime
     updated_at: datetime | None = None
     duration_sec: float | None = None      # 真实处理时长（updated_at − processing_started_at）
+    queued: bool = False                   # 在全局管道队列等待 worker（pipeline_tasks queued，侧栏黄徽章）
     # ── 功能开关（版本详细命名：V2-物体检测(车牌识别)-搜索功能）──
     detection_enabled: bool = False
     face_enabled: bool = False

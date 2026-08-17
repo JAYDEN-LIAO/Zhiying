@@ -10,12 +10,14 @@ import { api } from "../services/api";
 import { useApp } from "../AppContext";
 import type { TaskItem, TaskLogLine } from "../types";
 import { fmtDate, fmtDuration, fmtTime, versionName } from "../utils/helpers";
-import { IconDownload, IconReport, IconLog } from "./icons";
+import { IconDownload, IconReport, IconLog, IconTask, IconRetry } from "./icons";
 
 const FILTERS = [
-  { key: "all", label: "全部任务" },
-  { key: "active", label: "处理中" },
-  { key: "history", label: "已完成/失败" },
+  { key: "all", label: "全部" },
+  { key: "completed", label: "已完成" },
+  { key: "processing", label: "处理中" },
+  { key: "queued", label: "排队中" },
+  { key: "failed", label: "失败" },
 ] as const;
 type FilterKey = typeof FILTERS[number]["key"];
 
@@ -25,49 +27,55 @@ const STATUS_META: Record<string, { label: string; cls: string; pulse?: boolean 
   completed: { label: "已完成", cls: "ok" },
   failed: { label: "失败", cls: "err" },
 };
+/* 排队中：已提交、在管道队列等 worker（status=pending + queued，黄徽章） */
+const QUEUED_META: { label: string; cls: string; pulse?: boolean } = { label: "排队中", cls: "warn" };
 
 /* ═══════════════════════ ① 顶部卡 ═══════════════════════ */
-function TaskHeader({ onExportAll }: { onExportAll: () => void }) {
+function TaskHeader({
+  filter, onFilter, onExportAll,
+}: {
+  filter: FilterKey;
+  onFilter: (f: FilterKey) => void;
+  onExportAll: () => void;
+}) {
   return (
     <div className="case-card flex items-center justify-between flex-wrap gap-y-1.5 px-5 py-2 min-h-[56px] shrink-0">
       <div>
         <h1 className="text-[16px] font-semibold text-gray-900 leading-tight">任务中心</h1>
         <p className="text-[12px] text-gray-500 leading-tight">后台进程监控与历史记录追溯</p>
       </div>
-      <button className="g-btn g-btn-primary" onClick={onExportAll}>
-        <IconDownload />
-        批量导出
-      </button>
+      <div className="flex items-center gap-2 shrink-0">
+        <span className="text-[11px] text-gray-400">每 1.5 秒自动刷新</span>
+        <select className="g-input !h-[30px] !text-[12px]" value={filter}
+          onChange={(e) => onFilter(e.target.value as FilterKey)} title="筛选状态">
+          {FILTERS.map((f) => (
+            <option key={f.key} value={f.key}>{f.label}</option>
+          ))}
+        </select>
+        <button className="g-btn g-btn-primary" onClick={onExportAll}>
+          <IconDownload />
+          导出
+        </button>
+      </div>
     </div>
   );
 }
 
 /* ═══════════════════════ ② 正文卡 ═══════════════════════ */
 function TaskBody({
-  tasks, filter, onFilter, onOpenLog, onExportReport, onOpenTask, busyId, onRetry,
+  tasks, onOpenLog, onExportReport, onOpenTask, busyId, onRetry, highlightIds,
 }: {
   tasks: TaskItem[];
-  filter: FilterKey;
-  onFilter: (f: FilterKey) => void;
   onOpenLog: (t: TaskItem) => void;
   onExportReport: (t: TaskItem) => void;
   onOpenTask: (t: TaskItem) => void;
   busyId: string | null;
   onRetry: (t: TaskItem) => void;
+  highlightIds: string[];  // 本次进入任务中心待高亮的「新完成」行 id
 }) {
   return (
     <div className="case-card flex-1 min-h-0 flex flex-col overflow-hidden">
-      {/* 筛选 Tab */}
-      <div className="px-4 border-b border-gray-100 flex items-center gap-2 flex-wrap shrink-0">
-        {FILTERS.map((f) => (
-          <button key={f.key} className={"g-tab " + (filter === f.key ? "active" : "")} onClick={() => onFilter(f.key)}>
-            {f.label}
-          </button>
-        ))}
-        <span className="ml-auto text-[11.5px] text-gray-500">每 4 秒自动刷新</span>
-      </div>
-
-      {/* 任务表格 */}
+      {/* 任务表格（筛选已上移至顶部卡下拉） */}
       <div className="flex-1 min-h-0 overflow-auto">
         <table className="g-table">
           <thead>
@@ -83,14 +91,16 @@ function TaskBody({
           </thead>
           <tbody>
             {tasks.map((t) => {
-              const sm = STATUS_META[t.status] || STATUS_META.pending;
+              const sm = t.status === "pending" && t.queued ? QUEUED_META : STATUS_META[t.status] || STATUS_META.pending;
               return (
-                <tr key={t.id}>
+                <tr
+                  key={t.id}
+                  className={"cursor-pointer " + (highlightIds.includes(t.id) ? "task-row-new" : "")}
+                  onClick={() => onOpenTask(t)}
+                  title="点击进入视频解析"
+                >
                   <td className="!pr-0">
-                    <div
-                      className="text-[13px] text-gray-800 truncate max-w-[280px] cursor-pointer hover:text-[#4f7cff] transition-colors"
-                      title="点击进入视频解析" onClick={() => onOpenTask(t)}
-                    >{t.file_name ?? t.id.slice(0, 8)}</div>
+                    <div className="text-[13px] text-gray-800 truncate max-w-[280px]">{t.file_name ?? t.id.slice(0, 8)}</div>
                     <div className="text-[11px] text-gray-500 font-mono">{t.id.slice(0, 8)}</div>
                   </td>
                   <td className="text-[12px] text-gray-600 !px-0">
@@ -111,14 +121,17 @@ function TaskBody({
                   <td className="text-gray-500 font-mono !pl-1">{fmtDuration(t.duration_sec)}</td>
                   <td className="text-right pr-4 whitespace-nowrap">
                     {t.status === "failed" && (
-                      <button className="g-btn !px-2 !py-1 mr-1" onClick={() => onRetry(t)} disabled={busyId === t.id}>
-                        {busyId === t.id ? "重试中…" : "重试"}
+                      <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors mr-1" title="重试"
+                        onClick={(e) => { e.stopPropagation(); onRetry(t); }} disabled={busyId === t.id}>
+                        <IconRetry className={busyId === t.id ? "animate-spin" : ""} />
                       </button>
                     )}
-                    <button className="g-btn !px-2 !py-1 mr-1" title="导出报告" onClick={() => onExportReport(t)}>
+                    <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors mr-1" title="导出报告"
+                      onClick={(e) => { e.stopPropagation(); onExportReport(t); }}>
                       <IconReport />
                     </button>
-                    <button className="g-btn !px-2 !py-1" title="任务日志" onClick={() => onOpenLog(t)}>
+                    <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors" title="任务日志"
+                      onClick={(e) => { e.stopPropagation(); onOpenLog(t); }}>
                       <IconLog />
                     </button>
                   </td>
@@ -127,14 +140,14 @@ function TaskBody({
             })}
           </tbody>
         </table>
-        {tasks.length === 0 && <div className="g-empty"><span>当前筛选下暂无任务</span></div>}
+        {tasks.length === 0 && <div className="g-empty"><IconTask /><span>当前筛选下暂无任务</span></div>}
       </div>
     </div>
   );
 }
 
 export function TaskCenter() {
-  const { openWorkbench } = useApp();
+  const { openWorkbench, taskHighlightIds } = useApp();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [logTask, setLogTask] = useState<TaskItem | null>(null);
@@ -143,11 +156,21 @@ export function TaskCenter() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = () => {
-    api.listTasks(filter).then((data) => setTasks(data ?? [])).catch(() => {});
+    // 一次拉全量，客户端按筛选状态过滤（后端 scope 只支持 all/active/history）
+    api.listTasks("all").then((data) => {
+      // 任务中心只显示已提交任务：剔除纯待处理（仅上传未提交，status=pending 且未排队）
+      const raw = (data ?? []).filter((t) => !(t.status === "pending" && !t.queued));
+      let list = raw;
+      if (filter === "completed") list = raw.filter((t) => t.status === "completed");
+      else if (filter === "processing") list = raw.filter((t) => t.status === "processing");
+      else if (filter === "queued") list = raw.filter((t) => !!t.queued);
+      else if (filter === "failed") list = raw.filter((t) => t.status === "failed");
+      setTasks(list);
+    }).catch(() => {});
   };
   useEffect(() => { load(); }, [filter]);
   useEffect(() => {
-    const iv = setInterval(load, 4000);
+    const iv = setInterval(load, 1500);
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
@@ -195,19 +218,18 @@ export function TaskCenter() {
 
   return (
     <div className="h-full flex flex-col gap-2 p-2">
-      {/* ① 顶部卡 */}
-      <TaskHeader onExportAll={exportAll} />
+      {/* ① 顶部卡（含状态筛选下拉 + 导出） */}
+      <TaskHeader filter={filter} onFilter={setFilter} onExportAll={exportAll} />
 
       {/* ② 正文卡 */}
       <TaskBody
         tasks={tasks}
-        filter={filter}
-        onFilter={setFilter}
         onOpenLog={openLog}
         onExportReport={exportReport}
         onOpenTask={(t) => openWorkbench(t.id, { openParams: false, versionId: t.id })}
         busyId={busyId}
         onRetry={retry}
+        highlightIds={taskHighlightIds}
       />
 
       {/* 日志弹窗 */}
@@ -216,7 +238,7 @@ export function TaskCenter() {
           <div className="g-modal" style={{ width: 600 }}>
             <div className="g-card-hd">
               <span className="g-card-tt">任务日志 · {logTask.file_name ?? ""}</span>
-              <button className="g-btn g-btn-sm" onClick={() => setLogTask(null)}>关闭</button>
+              <button className="g-btn g-btn-sm" onClick={() => setLogTask(null)}>×</button>
             </div>
             <div className="p-4" style={{ maxHeight: "60vh", overflowY: "auto", fontFamily: "var(--font-mono)", fontSize: 12, background: "#0d1117", color: "#d1d5db" }}>
               {loadingLog && <div className="text-gray-400">加载中…</div>}

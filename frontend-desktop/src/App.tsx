@@ -12,11 +12,15 @@ import { TaskCenter } from "./components/TaskCenter";
 import { SettingsPage } from "./components/SettingsPage";
 
 function Shell() {
-  const { page, navigate, settingsTab, navigateSettings, videos, activeTaskCount, dragActive } = useApp();
+  const { page, navigate, settingsTab, navigateSettings, pendingFileCount, queuedTaskCount, newCompletedCount, failedTaskCount, runningTaskCount, dragActive } = useApp();
 
+  /* 侧栏徽章：案例库灰=仅上传未提交；视频解析蓝=处理中(恒1)；任务中心 黄=排队中 绿=新完成 红=失败 */
   const counts = {
-    files: videos.length,
-    tasks: activeTaskCount,
+    files: pendingFileCount,
+    workbench: runningTaskCount > 0 ? 1 : 0,
+    queued: queuedTaskCount,
+    newCompleted: newCompletedCount,
+    failed: failedTaskCount,
   };
 
   return (
