@@ -70,6 +70,56 @@ if ($Deploy) {
     }
     if ($runningShell -or $leakedBackend) { Start-Sleep -Milliseconds 1000 }
 
+    # ── 0.5) 停掉内嵌 postgres（常驻 daemon）：postgres 不依赖 _internal 目录句柄，
+    #    但它从旧 _internal 加载了 MSVC 运行库（vendor\pg\bin 不自带 MSVCP140/VCRUNTIME，
+    #    postgres 兜底从 PATH 里的 _internal 加载），进程活着就锁住那 3 个 DLL →
+    #    壳和 backend_child 杀干净后 _internal 仍删不掉。必须一并 pg_ctl stop。 ──
+    $pgCtl = Join-Path $Root "vendor\pg\bin\pg_ctl.exe"
+    $pgData = Join-Path $Root "data\pgdata"
+    $pgDataFwd = $pgData.Replace('\', '/')  # postgres 命令行里 -D 是正斜杠路径
+    if ((Test-Path $pgCtl) -and (Test-Path (Join-Path $pgData "PG_VERSION"))) {
+        Write-Host "  停止内嵌 postgres（释放 _internal 运行时 DLL）…"
+        $prevEAP = $ErrorActionPreference
+        try {
+            # 关键：临时把 ErrorActionPreference 降到 Continue。PS 5.1 在 Stop 下会把原生命令
+            # 的 stderr 升成 NativeCommandError 直接中止脚本（实测 2>&1 / 2>$null 都拦不住），
+            # 而 pg_ctl 在 postgres「没在跑」时必然向 stderr 报错退出 1 —— 两种状态对部署等价
+            # （该停/已停），都不该中断。Continue 下 stderr 只是非致命错误，正常静默丢弃。
+            $ErrorActionPreference = 'Continue'
+            & $pgCtl -D $pgData stop -m fast 2>$null
+            $null = $LASTEXITCODE
+            # 等 postmaster（命令行带 -D pgdata 的主进程）真正退出，DLL 句柄释放后 _internal 才删得掉。
+            # forkchild 不匹配 -D 也不怕：它随主进程退出。轮询最多 ~6s。
+            $pgAlive = @()
+            for ($i = 0; $i -lt 12; $i++) {
+                $pgAlive = @(Get-CimInstance Win32_Process -Filter "Name = 'postgres.exe'" -ErrorAction SilentlyContinue |
+                    Where-Object { ($_.CommandLine -replace '\\', '/') -like "*$pgDataFwd*" })
+                if ($pgAlive.Count -eq 0) { break }
+                Start-Sleep -Milliseconds 500
+            }
+            # pg_ctl 停不干净 → 升级 immediate 强停（宁可下次启动做崩溃恢复，也不带着锁删 _internal）
+            if ($pgAlive.Count -gt 0) {
+                Write-Host "  pg_ctl 未能在 6s 内停掉 postgres，升级 immediate 强停…"
+                & $pgCtl -D $pgData stop -m immediate 2>$null
+                $null = $LASTEXITCODE
+                Start-Sleep -Milliseconds 1000
+            }
+            # 极端残留（进程失联/PID 文件丢失等）→ 按 vendor/pg 定位整个嵌入式集群（含 forkchild）硬杀
+            $pgRemain = @(Get-CimInstance Win32_Process -Filter "Name = 'postgres.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { ($_.CommandLine -replace '\\', '/') -like "*vendor/pg*" })
+            if ($pgRemain.Count -gt 0) {
+                Write-Host ("  强制结束残留 postgres（PID {0}）…" -f (($pgRemain | ForEach-Object ProcessId) -join ", "))
+                $pgRemain | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+                Start-Sleep -Milliseconds 800
+            }
+        } catch {
+            # 本步骤任何异常都不该炸掉部署 —— 真正的兜底在校验 _internal 是否删得掉那一步
+            Write-Host "  停止 postgres 步骤异常（忽略，_internal 删除环节仍会兜底校验）：$($_.Exception.Message)"
+        } finally {
+            $ErrorActionPreference = $prevEAP
+        }
+    }
+
     # ── 1) 清旧 exe + _internal：删除重试 3 次（锁往往极短暂），仍删不掉就明确报错，
     #    绝不带着残留继续拷贝（残留正是嵌套的来源）。 ──
     Remove-Item -Recurse -Force $dst -ErrorAction SilentlyContinue
