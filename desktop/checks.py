@@ -71,7 +71,18 @@ def check_models(root: Path, python: str | None = None) -> dict:
     """
     python = python or sys.executable
     script = root / "deploy" / "download_models.py"
-    cmd = [python, str(script), "--component", "all", "--model-root", str(root / MODEL_ROOT), "--verify-only"]
+    # 读 config.yaml 的 embedding_profile（机器实际装的 2B/8B）传给 verify——
+    # 否则默认 8b 会让 2B 机器误报「embedding 未齐全」→ 启动器卡死白屏
+    profile = "8b"
+    try:
+        for _line in (root / "config" / "config.yaml").read_text(encoding="utf-8").splitlines():
+            if "embedding_profile" in _line and ":" in _line:
+                profile = _line.split(":", 1)[1].strip().strip('"\'') or profile
+                break
+    except Exception:
+        pass
+    cmd = [python, str(script), "--component", "all", "--embedding-profile", profile,
+           "--model-root", str(root / MODEL_ROOT), "--verify-only"]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, creationflags=_NO_WINDOW)
     except Exception as e:  # 超时 / 找不到 python 等
