@@ -138,6 +138,18 @@ def _ensure_pg_conf(root: Path) -> None:
                 f"unix_socket_directories = '{data.as_posix()}'\n")
 
 
+def _pg_accepting(root: Path, port: int) -> bool:
+    """postgres 是否已在 127.0.0.1:port 接受连接（pg_isready 探测）。"""
+    try:
+        r = subprocess.run(
+            [str(_pg_bin(root, "pg_isready")), "-h", "127.0.0.1", "-p", str(port)],
+            capture_output=True, timeout=5, creationflags=_NO_WINDOW,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 def _psql(root: Path, port: int, db: str, sql: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [str(_pg_bin(root, "psql")), "-h", "127.0.0.1", "-p", str(port), "-U", "zhiying",
@@ -162,12 +174,18 @@ def _start_embedded(root: Path, log, timeout: int) -> bool:
     data = _pg_data(root)
     logfile = root / _PG_LOG_REL
     logfile.parent.mkdir(parents=True, exist_ok=True)
-    if not _run([str(_pg_bin(root, "pg_ctl")), "-D", str(data), "-l", str(logfile), "start", "-w"],
-                log, timeout=timeout):
+    port = _pg_port(root)
+    # 已在运行（上次启动残留/并发）→ 直接复用，跳过 pg_ctl start
+    # （否则报「另一服务器进程可能正在运行」+ 日志文件被占 Permission denied）
+    if _pg_accepting(root, port):
+        log.write("内嵌 PostgreSQL 已在运行（复用）")
+    elif not _run([str(_pg_bin(root, "pg_ctl")), "-D", str(data), "-l", str(logfile), "start", "-w"],
+                  log, timeout=timeout):
         log.write("[FAIL] pg_ctl start 失败，详见 data/pg.log")
         return False
-    _create_db_if_needed(root, _pg_port(root), log)
-    log.write("内嵌 PostgreSQL 已启动")
+    else:
+        log.write("内嵌 PostgreSQL 已启动")
+    _create_db_if_needed(root, port, log)
     return True
 
 
