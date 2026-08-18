@@ -4,12 +4,13 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 echo ==================================================
-echo   智影桌面端 自动更新
+echo   智影 install2 — 一键更新 + 打包 exe
+echo   （先跑 install1 首次安装，之后云端有更新就跑本脚本）
 echo   %date% %time%
 echo ==================================================
 echo.
 
-echo [1/5] git pull（读取 install.bat 保存的代理，缺失则手动输入）...
+echo [1/6] git pull（读取 install1 保存的代理，缺失则手动输入）...
 set "PROXY="
 if exist "data\proxy.txt" set /p PROXY=<data\proxy.txt
 if "%PROXY%"=="" (
@@ -39,13 +40,29 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM 把代理写入环境，供后续 pip 下载依赖使用
+if not "%PROXY%"=="" (
+    set "HTTP_PROXY=%PROXY%"
+    set "HTTPS_PROXY=%PROXY%"
+)
+
 echo.
-echo [2/5] 安装桌面壳依赖（desktop\requirements.txt，含 psutil）...
+echo [2/6] 安装后端依赖（requirements.txt，新增依赖会装上，已装秒过）...
+.venv\Scripts\pip.exe install -r requirements.txt
+if errorlevel 1 (
+    echo.
+    echo [错误] 后端依赖安装失败，见上方报错
+    pause
+    exit /b 1
+)
+
+echo.
+echo [3/6] 安装桌面壳依赖（desktop\requirements.txt，含 psutil）...
 .venv\Scripts\pip.exe install -r desktop\requirements.txt
 if errorlevel 1 echo [警告] pip 依赖安装失败，继续后续步骤
 
 echo.
-echo [3/5] npm install（frontend-desktop）...
+echo [4/6] npm install（frontend-desktop）...
 pushd frontend-desktop
 call npm install
 if errorlevel 1 (
@@ -57,7 +74,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/5] npm run build（重建桌面前端 dist，gitignore 不入库必须本地构建）...
+echo [5/6] npm run build（重建桌面前端 dist，gitignore 不入库必须本地构建）...
 call npm run build
 if errorlevel 1 (
     echo.
@@ -69,7 +86,7 @@ if errorlevel 1 (
 popd
 
 echo.
-echo [5/5] 重打桌面壳 exe（desktop\build_exe.ps1 -Deploy）...
+echo [6/6] 重打桌面壳 exe（desktop\build_exe.ps1 -Deploy）...
 powershell -ExecutionPolicy Bypass -File desktop\build_exe.ps1 -Deploy
 if errorlevel 1 (
     echo.

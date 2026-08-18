@@ -5,13 +5,13 @@
 > 历史: v0.22 部署系统+设置/参数+Detection重构+删除处理中 / v0.24 云智接入+生产部署 / v0.26 平台文件id跳转 / v0.27 搜索修正+车牌模糊搜索 / v0.28 云智嵌入UI / v0.29 人脸链路重构+搜索隔离 / v0.31 人脸交互+搜索范围+跨视频穿透+置信度
 > v0.32: 全局任务队列（PipelineQueue FIFO + worker 池 + pipeline_tasks 表持久化，批量上传排队防 OOM；重启恢复 + 排队中回调 + 幂等）
 > v0.33: 摘要链路根治重构（max_scenes 场景数上限 / caption 并发+降级+配置穿透 / text_encode 批量 / summary 预算截断 / 增量补摘要修复 / keyframe 抽帧 resize / summary_mode 默认 vlm_llm）
-> v0.34 候选（桌面端重构 + 文件库/多版本/任务中心，未发版，桌面前端/部署侧）: 浅蓝管理后台主题 + frameless 自定义窗口外框（TitleBar 拖拽/窗口按钮/版本徽章, js_api 桥接）+ 4 页模型（文件库/视频解析/任务中心/系统设置）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane）+ 系统监控（psutil）+ `update.bat` 一键更新
+> v0.34 候选（桌面端重构 + 文件库/多版本/任务中心，未发版，桌面前端/部署侧）: 浅蓝管理后台主题 + frameless 自定义窗口外框（TitleBar 拖拽/窗口按钮/版本徽章, js_api 桥接）+ 4 页模型（文件库/视频解析/任务中心/系统设置）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane）+ 系统监控（psutil）+ `install2.bat` 一键更新
 > v0.34 候选（文件库/多版本/任务中心/页面裂解，未发版）: 后端 videos.file_id/version_no 版本链 + video_groups.number/owner + task_logs 表 + /groups /files /versions /reanalyze /tasks 端点 + 任务日志生命周期 + 耗时（processing_started_at）+ 导出报告（/tasks/{id}/report md + /tasks/export-batch zip）；前端 TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2 + 卡片空隙透渐变
 > 桌面 EXE + 双部署路径（未发版）: build_exe.ps1 -Deploy 一条命令打纯壳 exe + setup_linux.sh/setup_windows.ps1 补全 + bump 全机接入
 > v0.34 候选（案例库批量解析/交互 + 搜索卡重构 + 桌面壳，未发版）: POST /videos/analyze-batch 精确勾选批量解析（不走组同步、可选整批参数）；PUT /files/{id} + PUT /groups/{id}/assets/{id} 文件/素材重命名（无后缀自动补真实扩展名）；FileItem/CaseAssetItem.file_ext 后缀展示字段；案例编辑/编号自动填充 A-YYYY-MMDD-NN；搜索卡案例-文件范围（当前视频/案例/文件多选，未处理隐藏）+ 无视频可交互 + 跨视频结果切主视频 + pendingSeek 可靠定位 + 搜索卡单实例跨空态保留；TitleBar 手动拖拽（最大化先还原再跟随）；g-btn 全局 nowrap 防挤压
 > v0.34 候选（桌面端稳定性修复，未发版，桌面前端/壳）: build_exe.ps1 部署加固（杀运行中壳+遗留后端 / $src\* 内容拷贝杜绝 _internal\_internal 嵌套 / 部署后自检 python313.dll）；backend_child 看门狗改持有父进程句柄信号检测（免疫 PID 复用）+ 启动前 sweep_orphan_backends 沿父链清孤儿；窗口控制 is_maximized 读真实 WindowState + toggle 修标志 + resize 同步图标；关闭确认改主题化弹窗（去 pywebview 原生 MessageBox）；.gitignore 补构建产物
 > v0.34 候选（桌面交互 + 暗色主题 + 布局，未发版，桌面前端/壳）: 标题栏「最近更新」（i 下拉 → SplashApi get_recent_commits 项目根 git log）+ 太阳/月亮主题切换（暗色=中性炭灰环境+靛蓝强调色，html.dark 类 + CSS 变量调色板重映射 + index.html 内联防闪烁）；案例库闪电全状态显示（完成=实心 IconBoltSolid + 「重新配置参数解析」→ reparse 建新版本）+ 编辑按钮移入操作格 4 按钮 + 铅笔 edit-3；TaskCenter 导出报告/日志图标；参数面板 4:3 顶向下三段网格 + 物体检测/文字识别调换；工作台恒渲染 DetectionPanel 空态标题 + 播放器/时间轴小圆角；设置页响应式两列卡片网格（去 max-w-900 死区，编码卡独占整行）
-> v0.34 候选（一键安装器 + 内嵌 PostgreSQL + 后端封装，未发版，部署侧）: install.bat 交互式安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/模型/config/建表，免 Docker/WSL2，前端交给 update.bat）；内嵌 PostgreSQL（EDB PG17 便携 zip + 预编译 pgvector → vendor/pg，desktop/db.py 双模式自动托管，桌面启动器 initdb/起停/建库）；后端封装 = deploy/build_backend_pyc.py 编译 .pyc 字节码包 + backend_launcher.py 统一启动器（封装/源码双模式 + 父进程看门狗）+ core/paths.py frozen 路径解析（ZHIYING_PROJECT_ROOT）→ build_exe.ps1 打进 _internal/backend_pyc，客户端无明文源码
+> v0.34 候选（一键安装器 + 内嵌 PostgreSQL + 后端封装，未发版，部署侧）: install1.bat 交互式安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/模型/config/建表，免 Docker/WSL2，前端交给 install2.bat）；内嵌 PostgreSQL（EDB PG17 便携 zip + 预编译 pgvector → vendor/pg，desktop/db.py 双模式自动托管，桌面启动器 initdb/起停/建库）；后端封装 = deploy/build_backend_pyc.py 编译 .pyc 字节码包 + backend_launcher.py 统一启动器（封装/源码双模式 + 父进程看门狗）+ core/paths.py frozen 路径解析（ZHIYING_PROJECT_ROOT）→ build_exe.ps1 打进 _internal/backend_pyc，客户端无明文源码
 > v0.34 候选（模型适配 embedding_profile，未发版，后端）: 向量编码档位化 8b=4096（默认）/2b=2048（低显存平替）；core/embedding_profile.py EmbedVector 懒读全局维度建表 + config_loader._apply_embedding_profile 联动模型路径与维度 + db.py 迁移参数化；改 config embedding_profile + 重启即换档，⚠️ 维度不同需重建向量库；人脸 512 不受影响
 > v0.34 候选（侧栏徽章系统 + 任务中心交互 + 后端排队检测修复，未发版）: 徽章 = 案例库灰(仅上传未提交，pending 且未入队 且 未版本化) + 视频解析蓝「1」(有视频处理中，未选中视频点进自动定位) + 任务中心 黄(排队中 queued)/绿(新完成，进任务中心清零 + 首次进入整行淡绿高亮)/红(失败，实时计数)；**待处理剥离**：任务中心只显示已提交任务（排队/处理中/已完成/失败）；任务中心整行点击跳转 + hover 淡灰 #dbe2ea + 重试图标(IconRetry, busy 旋转) + 筛选下拉(全部/已完成/处理中/排队中/失败，导出左侧) + 1.5s 刷新；后端 **pipeline_queue.enqueue 从 payload 取 video_id**（根治排队行 video_id 全 NULL → queued 检测失效）+ **TaskItem.queued 字段**（list_tasks 批量查排队集合防 N+1）+ upload 传 group_id 先校验案例存在 + IntegrityError 兜底友好 400；rename_file 行 id→file_id 解析修复（版本化重命名 404 根治）；工具栏按钮图标 16px 统一 + g-btn-primary 统一 + 行内幽灵按钮一致
 
@@ -595,7 +595,7 @@ React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @them
 - `desktop/requirements.txt` 含 `psutil`；前端 `window.pywebview` 存在才渲染窗口按钮（浏览器 dev 隐藏）
 - `build_exe.ps1 -Deploy` 加固：部署前杀运行中壳 + 遗留 backend_child、旧目录删除重试、`$src\*` 内容拷贝杜绝 `_internal\_internal` 嵌套、部署后自检 python313.dll 落地（区分「嵌套」与「真缺失」，不再一律误报杀软）
 
-**更新发布**：根目录 `update.bat` 一键自动更新（Windows）：git pull（走 7897 代理）→ pip 装 desktop 依赖 → npm install/build（dist gitignored 必须本地建）→ `build_exe.ps1 -Deploy` 重打 exe。
+**更新发布**：根目录 `install2.bat` 一键自动更新（Windows）：git pull（走 7897 代理）→ pip 装 desktop 依赖 → npm install/build（dist gitignored 必须本地建）→ `build_exe.ps1 -Deploy` 重打 exe。
 
 ## Key Design Decisions
 

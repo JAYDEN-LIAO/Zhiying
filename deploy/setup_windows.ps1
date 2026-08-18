@@ -5,7 +5,7 @@
 #        命令行窗口交互（选 2B/8B 模型 + 输代理）→ 自动托管：
 #          Python → .venv+依赖 → 内嵌 PostgreSQL(vendor/pg) → 模型(按档位)
 #          → config.yaml 生成 → 建表 → 校验
-#        完成后无缝交给根目录 update.bat（前端构建 / 打 exe 的日常更新走它）。
+#        完成后无缝交给根目录 install2.bat（前端构建 / 打 exe 的日常更新走它）。
 #
 #  用法： 双击本文件，或
 #         powershell -ExecutionPolicy Bypass -File deploy\setup_windows.ps1
@@ -191,14 +191,14 @@ Write-Ok "已选档位: $script:EmbeddingProfile"
 $proxyInput = Read-Host "输入代理地址（如 http://127.0.0.1:7897；能直连可留空）"
 $script:Proxy = ($proxyInput.Trim() -replace '/$', '')
 if ($script:Proxy) { Write-Ok "代理: $script:Proxy" } else { Write-Warn "未使用代理（国内源直连，GitHub 组件可能失败）" }
-# 保存代理到 data/proxy.txt，供 update.bat 复用（机器相关，data/ 已 gitignore）
+# 保存代理到 data/proxy.txt，供 install2.bat 复用（机器相关，data/ 已 gitignore）
 $proxyFile = Join-Path $ProjectRoot "data\proxy.txt"
 New-Item -ItemType Directory -Force -Path (Split-Path $proxyFile) | Out-Null
 [System.IO.File]::WriteAllText($proxyFile, [string]$script:Proxy)
-Write-Ok "代理已保存到 data/proxy.txt（update.bat 自动读取）"
+Write-Ok "代理已保存到 data/proxy.txt（install2.bat 自动读取）"
 
 # ───────────────────────────── 1/6 Python ─────────────────────────────
-Write-Step "1/6" "Python + FFmpeg 环境"
+Write-Step "1/6" "Python + FFmpeg + Node.js 环境"
 # winget 装的新命令要刷新 PATH 才在本会话可用（读注册表机器/用户 PATH）
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
@@ -208,8 +208,9 @@ if ($py) {
     Write-Ok "检测到 Python $ver"
 } else {
     Write-Info "未检测到 Python，用 winget 安装 Python 3.13 ..."
+    # winget 走 WinINET（系统代理）；若失败给出明确指引（手动装或开系统代理）
     $null = & winget install --id Python.Python.3.13 --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Python 安装失败" }
+    if ($LASTEXITCODE -ne 0) { throw "Python 安装失败（请检查网络/系统代理后重试，或手动安装 Python 3.13 并勾选 Add to PATH）" }
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
     Write-Ok "Python 3.13 已安装"
 }
@@ -250,6 +251,22 @@ if ($ffEnc -notmatch "h264_nvenc" -or $ffDec -notmatch "h264_cuvid") {
     Write-Warn "FFmpeg 缺少 CUDA 编解码（h264_nvenc/h264_cuvid）——会静默回退 CPU，性能骤降；建议用 Gyan 完整版重装后重跑"
 } else {
     Write-Ok "FFmpeg CUDA 能力正常（h264_nvenc + h264_cuvid）"
+}
+
+# Node.js（前端构建必需：Vite/React 编译需要 Node 运行时 + npm 包管理器）
+Write-Info "检查 Node.js ..."
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Write-Info "未检测到 Node，用 winget 安装 Node.js（含 npm）..."
+    $null = & winget install --id OpenJS.NodeJS --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Node.js 安装失败（请检查代理/网络后重试，或手动安装 Node.js LTS）" }
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+}
+$nodeVer = (& node --version 2>&1)
+Write-Ok "Node.js $nodeVer"
+# npm 国内镜像（中国网络免代理拉依赖；写入用户配置持久生效）
+if (Get-Command npm -ErrorAction SilentlyContinue) {
+    $null = & npm config set registry https://registry.npmmirror.com 2>&1
+    Write-Ok "npm 镜像已配置：registry.npmmirror.com（install2 拉依赖免代理）"
 }
 
 # ───────────────────────────── 2/6 .venv + 依赖 ─────────────────────────────
@@ -456,7 +473,7 @@ Write-Host "  档位: $script:EmbeddingProfile  |  代理: $($script:Proxy)"
 Write-Host "  内嵌 PostgreSQL: vendor/pg（端口 5432，数据在 data/pgdata）"
 Write-Host "  模型: models\ 就绪  |  config.yaml: 已生成"
 Write-Host ""
-Write-Host "  后续日常更新/启动：双击根目录 update.bat（git pull + 依赖 + 前端 + 打 exe）"
+Write-Host "  后续日常更新/启动：双击根目录 install2.bat（git pull + 依赖 + 前端 + 打 exe）"
 Write-Host "  或直接启动桌面端：python desktop\app.py"
 Write-Host "══════════════════════════════" -ForegroundColor Green
 Read-Host "`n安装流程结束（按回车关闭此窗口）"

@@ -16,7 +16,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `setup_windows.ps1` | **Windows 交互式一键安装器**（入口 = 根目录 `install.bat` 双击）：选 **2B/8B** + 输代理 → Python/FFmpeg → .venv + CUDA torch + 依赖 → **内嵌 PostgreSQL**(`vendor/pg`，免 Docker/WSL2) → 模型(按档位) → 生成 config.yaml → init_db 建表 → 校验完成（前端构建交给 `update.bat`） |
+| `setup_windows.ps1` | **Windows 交互式一键安装器**（入口 = 根目录 `install1.bat` 双击）：选 **2B/8B** + 输代理 → Python/FFmpeg → .venv + CUDA torch + 依赖 → **内嵌 PostgreSQL**(`vendor/pg`，免 Docker/WSL2) → 模型(按档位) → 生成 config.yaml → init_db 建表 → 校验完成（前端构建交给 `install2.bat`） |
 | `setup_linux.sh` | **Linux 开发机一键安装器**（开发态，规格同 Windows）：apt / venv / CUDA torch / requirements+onnxruntime / 模型 / Docker db / config.yaml / Node+前端 dist |
 | `build_backend_pyc.py` | 后端源码编译为 `.pyc` 字节码包 → `build/backend_pyc/`（封装模式：客户端盘上无明文源码；`build_exe.ps1` 打 exe 前调用） |
 | `download_models.py` | 模型下载/校验（embedding 按 `--embedding-profile 8b/2b` 选档，yolo/reid/face/plate/segmenter，断点续传、`--verify-only`） |
@@ -44,7 +44,7 @@
 
 ### 3.1 Windows 桌面机（desktop 路径，全新机）
 
-全新 Windows（可能只有 git、连 python 都没有）：**U盘 / git clone 把源码放好** → **双击根目录 `install.bat`**（或 `deploy\setup_windows.ps1`）。
+全新 Windows（可能只有 git、连 python 都没有）：**U盘 / git clone 把源码放好** → **双击根目录 `install1.bat`**（或 `deploy\setup_windows.ps1`）。
 
 **交互安装（命令行窗口）**：
 1. 选 embedding 档位：**1 = 8B（Qwen3-VL-Embedding-8B，4096 维，需 ~16GB 显存）/ 2 = 2B（Qwen3-VL-Embedding-2B，2048 维，低显存平替）** —— 一台机器一个模型，向量维度随选择定死（`embedding_profile`）
@@ -63,7 +63,7 @@
 - **代理策略**：`github.com` / `download.pytorch.org` / `enterprisedb.com` **走代理**（直连不通或极慢）；**`modelscope.cn` 强制直连**（国内 CDN，绕国际代理反而更慢更易断）。
 - 网络波动时模型下载**断线自动续传**（`.incomplete` 保留），不白丢进度；任何错误落盘 `vendor/install.log` 并红字显示，不会无声闪退。
 
-**装完即用**：双击根目录 `update.bat`（git pull + 依赖 + 前端 npm build + 重打 exe）做日常更新/构建，或 `python desktop\app.py` 直接跑桌面端。
+**装完即用**：双击根目录 `install2.bat`（git pull + 依赖 + 前端 npm build + 重打 exe）做日常更新/构建，或 `python desktop\app.py` 直接跑桌面端。
 
 > **总下载量约 25GB+**（torch ~2.6GB + embedding 8B 16GB / 2B ~4GB + 其余模型），请预留磁盘空间。
 

@@ -34,11 +34,11 @@ curl -X POST -H "Content-Type: application/json" \
 > **Note on API Keys**: Place keys in a `.env` file at project root (gitignored)，或在前端设置页填写。  
 > **摘要默认 `vlm_llm`（API 模式）**，需要 DashScope（画面描述）+ DeepSeek（摘要）key。`native_video`（本地视频原生理解）已置灰退役。
 
-**Windows 桌面端**：全新机双击 `install.bat`（交互式：选 **2B/8B** embedding 档位 + 输代理 → 自动装 Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**(vendor/pg，免 Docker/WSL2)/模型/config/建表）装机后，双击 `智影桌面端.exe`（构建方法见 `desktop/README.md`）或 `python desktop/app.py`——启动器自动检查就绪 → 起内嵌 PostgreSQL → 起本地后端 → 打开 pywebview 桌面窗口加载桌面前端（`ZHIYING_FRONTEND=desktop` 挂载 frontend-desktop/dist，与服务器前端 `frontend/` 完全隔离）。**日常更新用根目录 `update.bat` 一键自动更新**（git pull 走 7897 代理 → pip 依赖 → npm install/build → 重打 exe）。
+**Windows 桌面端**：全新机双击 `install1.bat`（交互式：选 **2B/8B** embedding 档位 + 输代理 → 自动装 Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**(vendor/pg，免 Docker/WSL2)/模型/config/建表）装机后，双击 `智影桌面端.exe`（构建方法见 `desktop/README.md`）或 `python desktop/app.py`——启动器自动检查就绪 → 起内嵌 PostgreSQL → 起本地后端 → 打开 pywebview 桌面窗口加载桌面前端（`ZHIYING_FRONTEND=desktop` 挂载 frontend-desktop/dist，与服务器前端 `frontend/` 完全隔离）。**日常更新用根目录 `install2.bat` 一键自动更新**（git pull 走 7897 代理 → pip 依赖 → npm install/build → 重打 exe）。
 
 ## Windows 部署
 
-**从零部署**：全新 Windows + NVIDIA GPU 机器（U盘/git clone 放好源码）上，双击根目录 **`install.bat`** 交互式一键安装——选 **2B/8B** embedding 档位 + 输代理 → 自动装 Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**(vendor/pg，免 Docker/WSL2/重启)/模型(按档位)/config.yaml/建表；装完双击 `智影桌面端.exe` 拉起桌面进程（构建方法见 `desktop/README.md`），日常更新走 `update.bat`。
+**从零部署**：全新 Windows + NVIDIA GPU 机器（U盘/git clone 放好源码）上，双击根目录 **`install1.bat`** 交互式一键安装——选 **2B/8B** embedding 档位 + 输代理 → 自动装 Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**(vendor/pg，免 Docker/WSL2/重启)/模型(按档位)/config.yaml/建表；装完双击 `智影桌面端.exe` 拉起桌面进程（构建方法见 `desktop/README.md`），日常更新走 `install2.bat`。
 
 **Linux 开发机部署**：换新开发机时 `git clone` 后跑 `bash deploy/setup_linux.sh`（交互输代理 / `--proxy ... --non-interactive` 全自动），一键装齐环境/依赖/模型/前端，形态与本机一致，用于开发改代码测试。
 
@@ -79,7 +79,7 @@ curl -X POST -H "Content-Type: application/json" \
 | Scene Thumbnails Export (zip) | `GET/POST /api/v1/videos/{id}/export/thumbnails` | ✅ |
 | System Settings (API 服务 + 存储路径 + 管道性能) | `GET/PUT /api/v1/settings`（API 密钥/服务商端点/存储路径 + 管道性能：编码三档模板/检测参数/量化/并发上限，保存即运行时生效，量化需重启）+ `GET /api/v1/settings/pipeline` | ✅ |
 | Pipeline Presets (参数预设) | `GET/POST/PUT/DELETE /api/v1/settings/presets` + `POST /{id}/apply`（data/presets.json 多套命名参数快照，一键套用） | ✅ |
-| Windows 从零部署 | `install.bat` 交互式一键安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**/模型按档位/config/建表；免 Docker/WSL2）→ `update.bat` 日常更新 | ✅ |
+| Windows 从零部署 | `install1.bat` 交互式一键安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**/模型按档位/config/建表；免 Docker/WSL2）→ `install2.bat` 日常更新 | ✅ |
 | 全局 GPU 锁 + 任务队列 | `core/gpu_lock.py` 串行化 embedder/YOLO 前向（防驱动故障）；`core/pipeline_queue.py` PipelineQueue worker 池限流并发管道（批量上传排队防 OOM，v0.32） | ✅ |
 | Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 (unified objects view + face toggle) | ✅ |
 | Track Crop Embedding (track search) | `POST /api/v1/search/semantic` (track path) | ✅ |
@@ -93,7 +93,7 @@ curl -X POST -H "Content-Type: application/json" \
 | Orphan Storage Sweep | `POST /maintenance/sweep`（dry-run/执行）+ `GET /maintenance/storage` + CLI `scripts/sweep_storage.py` | ✅ |
 | 云智平台集成 (v0.24) | `POST /api/v1/videos/register-external`（平台共享文件就地引用，`source_owned=false` 删视频不删源文件）+ `POST /internal/yunzhi/jobs`（立即 202，进度/完成/失败回调，幂等）+ 前端 Bridge SDK | ✅ |
 | 平台文件 id 自动跳转 (v0.26) | `GET /api/v1/videos/external/{file_id}` — 平台文件库资源 ID 存入 `videos.external_file_id`（register-external + jobs 透传）；Bridge connect() 后凭 `context.resource.id` 自动打开对应视频历史详情（非文件入口/无匹配 → 默认工作台） | ✅ |
-| 桌面端启动器 + 桌面前端（v0.34 重构） | `desktop/` pywebview 壳（**frameless 自定义窗口外框** + 窗口控制/系统监控 js_api）+ `build_exe.ps1 -Deploy` 一键构建部署纯产品启动器 exe + `frontend-desktop/` 独立前端（**浅蓝管理后台主题 + 4 页模型：文件库/视频解析/任务中心/系统设置 + 工作台 SplitPane 分栏 + 系统监控**，`ZHIYING_FRONTEND=desktop` 挂载）+ 根目录 `update.bat` 一键自动更新 | ✅ |
+| 桌面端启动器 + 桌面前端（v0.34 重构） | `desktop/` pywebview 壳（**frameless 自定义窗口外框** + 窗口控制/系统监控 js_api）+ `build_exe.ps1 -Deploy` 一键构建部署纯产品启动器 exe + `frontend-desktop/` 独立前端（**浅蓝管理后台主题 + 4 页模型：文件库/视频解析/任务中心/系统设置 + 工作台 SplitPane 分栏 + 系统监控**，`ZHIYING_FRONTEND=desktop` 挂载）+ 根目录 `install2.bat` 一键自动更新 | ✅ |
 | 文件库 + 多版本解析 (v0.34) | `videos.file_id/version_no` 版本链（一次解析=一个版本行）+ `video_groups.number/owner` 案例编号/负责人 + `/groups /files /videos/{id}/versions /videos/{id}/reanalyze` 端点 + 案例素材 `/groups/{id}/assets` | ✅ |
 | 任务中心 (v0.34) | `GET /tasks` scope 过滤 + `/tasks/{id}/log` + `/tasks/{id}/retry`；**耗时** `processing_started_at`（排队不计入）；**日志生命周期** 上传/参数/重解析/管道/重试全链写入 `task_logs`；**导出报告** `GET /tasks/{id}/report`（Markdown）+ `POST /tasks/export-batch`（zip） | ✅ |
 | 桌面端页面组件裂解 (v0.34) | TaskCenter 裂解 TaskHeader/TaskBody；SettingsPage 4 子页收敛 2（系统设置=系统+参数预设，模型参数=模型参数+API密钥）+ 各页裂解子组件；卡片空隙靠透明根容器 + `app-main-flat` 透出渐变 | ✅ |
@@ -181,8 +181,8 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 ```
 zhiying/
 ├── bump                 # 版本号一键提升启动器 (→ scripts/bump_version.py)
-├── install.bat          # 新机一键部署入口（全新 Windows 双击：选 2B/8B + 代理 → 自动装环境/模型/内嵌pg/config/建表）
-├── update.bat           # 桌面端一键自动更新（Windows：git pull 走 7897 代理 + pip 依赖 + npm install/build + 重打 exe）
+├── install1.bat          # 新机一键部署入口（全新 Windows 双击：选 2B/8B + 代理 → 自动装环境/模型/内嵌pg/config/建表）
+├── install2.bat           # 桌面端一键自动更新（Windows：git pull 走 7897 代理 + pip 依赖 + npm install/build + 重打 exe）
 ├── run.py                # 本地开发启动入口（按 config.yaml server 段绑端口，reload）
 ├── backend_launcher.py   # 后端子进程统一启动器（封装/源码双模式，含父进程看门狗）
 ├── main.py               # FastAPI entry point (+ 静态托管 frontend/dist, 部署免 nginx)
@@ -280,7 +280,7 @@ zhiying/
 ├── models/               # Local model weights (gitignored; yolo26s.pt, yolo26n-cls.pt 等在仓库内)
 ├── data/                 # Video storage & artifacts + settings.json/presets.json (gitignored)
 ├── config/               # YAML config, prompts, schema
-├── deploy/               # 部署套件: setup_windows.ps1 (Windows 交互式一键安装, 入口 install.bat) + setup_linux.sh (Linux 开发机) + build_backend_pyc.py (封装字节码包) + download_models.py (支持 --embedding-profile) / deploy.md / deploy_feedback.md
+├── deploy/               # 部署套件: setup_windows.ps1 (Windows 交互式一键安装, 入口 install1.bat) + setup_linux.sh (Linux 开发机) + build_backend_pyc.py (封装字节码包) + download_models.py (支持 --embedding-profile) / deploy.md / deploy_feedback.md
 ├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开毛玻璃启动窗→就绪进前端→优雅关闭; desktop.bat 入口; build_exe.ps1 -Deploy 一键构建部署 exe)
 ├── frontend-desktop/     # 桌面独立前端（v0.34 重构：浅蓝管理后台主题 + frameless 自定义窗口标题栏 + 4 页模型 文件库/视频解析/任务中心/系统设置 + AppContext 导航 + 工作台 SplitPane 分栏 + 系统监控；TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2；标题栏「最近更新」+ 太阳/月亮暗色主题、案例库闪电全状态、设置页两列网格；与服务器 frontend/ 完全隔离; desktop.bat 加载其 dist）
 ├── frontend-shared/      # 双前端共享后端对接层 (api/types/labels/helpers 一份实现, 两端 services/api.ts 等是再导出指针; 后端接口/字段变更只改这里)
@@ -290,7 +290,7 @@ zhiying/
 
 ## Development Status
 
-- **v0.34 候选（未发版，部署 + 封装）— 一键安装器 + 内嵌 PostgreSQL + 后端封装（藏代码）**: `install.bat` 交互式安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/模型/config/建表，免 Docker/WSL2，前端交给 update.bat）；内嵌 PostgreSQL（EDB PG17 便携 zip + 预编译 pgvector → `vendor/pg`，`desktop/db.py` 双模式自动托管）；后端封装 = `deploy/build_backend_pyc.py` 编译 `.pyc` 字节码包 + `backend_launcher.py` 统一启动器 + `core/paths.py` frozen 路径解析（ZHIYING_PROJECT_ROOT），`build_exe.ps1` 打进 `_internal/backend_pyc`——**客户端盘上无明文源码**。
+- **v0.34 候选（未发版，部署 + 封装）— 一键安装器 + 内嵌 PostgreSQL + 后端封装（藏代码）**: `install1.bat` 交互式安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/模型/config/建表，免 Docker/WSL2，前端交给 install2.bat）；内嵌 PostgreSQL（EDB PG17 便携 zip + 预编译 pgvector → `vendor/pg`，`desktop/db.py` 双模式自动托管）；后端封装 = `deploy/build_backend_pyc.py` 编译 `.pyc` 字节码包 + `backend_launcher.py` 统一启动器 + `core/paths.py` frozen 路径解析（ZHIYING_PROJECT_ROOT），`build_exe.ps1` 打进 `_internal/backend_pyc`——**客户端盘上无明文源码**。
 - **v0.34 候选（未发版，后端）— 模型适配 embedding_profile**: 向量编码模型档位化——`8b`=Qwen3-VL-Embedding-8B/4096 维（默认）、`2b`=Qwen3-VL-Embedding-2B/2048 维（低显存平替）；新增 `core/embedding_profile.py`（`EmbedVector()` 懒读全局维度建表）+ `config_loader._apply_embedding_profile` 联动「模型路径 + 向量维度」；`core/db.py` 迁移参数化；改 config `embedding_profile` + 重启后端即换档，⚠️ 维度不同需重建向量库；人脸 512（ArcFace）与档位无关不受影响。
 - **v0.34 候选（未发版，桌面端 + 后端）— 侧栏徽章系统 + 任务中心交互 + 后端排队检测修复**:
   - **侧栏徽章**：案例库🩶灰=仅上传未提交（pending 且未入队 且 未版本化）；视频解析🔵蓝「1」=有视频处理中（未选中视频时点进视频解析**自动定位处理中视频**）；任务中心 🟡黄=排队中 / 🟢绿=新完成（进任务中心清零 + 首次进入整行淡绿高亮）/ 🔴红=处理失败（实时计数）
@@ -312,7 +312,7 @@ zhiying/
   - **案例库**：案例编辑（名称/编号/负责人）+ 删除红色可见 + 编号自动填充 `A-YYYY-MMDD-NN`；文件与图片重命名（内联编辑，后端 `PUT /files/{id}` + `PUT /groups/{id}/assets/{id}`）；文件操作改图标按钮（智能解析/预览合并/删除）+ 文件名铅笔右对齐；**后缀作展示字段**（`file_ext` 真实扩展名，编辑框只含主名、重命名不影响后缀）
   - **搜索卡**：下拉重构为**案例-文件**结构（当前视频/案例/文件多选，未处理直接隐藏、未索引置灰）；无视频也可交互（全部=空选）；跨视频结果点击**切主视频**（播放器/时间轴/检测/摘要同步）+ `pendingSeek` 可靠定位；搜索卡合并为**单实例**（空态↔有视频结果/范围保留）
   - **工作台/桌面壳**：三卡片待处理态统一（居中灰字）；搜索卡纵向滚动修复 + 横滚动条删除；`.g-btn` 全局 nowrap + 工具栏 flex-wrap 防窄窗口挤压；TitleBar 改**手动拖拽**（最大化先还原再跟随光标）+ `SplashApi.move`；标题改「视频智能快速检索平台」；人脸按钮图标修正
-- **桌面端重构（未发版，桌面前端/部署侧）**: 浅蓝管理后台主题 + frameless 自定义窗口外框 + 4 页模型（文件库/视频解析/任务中心/系统设置，设置 4 子页拆入导航）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane 分栏）+ 系统监控（psutil）+ 根目录 `update.bat` 一键更新。
+- **桌面端重构（未发版，桌面前端/部署侧）**: 浅蓝管理后台主题 + frameless 自定义窗口外框 + 4 页模型（文件库/视频解析/任务中心/系统设置，设置 4 子页拆入导航）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane 分栏）+ 系统监控（psutil）+ 根目录 `install2.bat` 一键更新。
 - **文件库 + 多版本解析 + 任务中心（未发版）**: 后端 `videos.file_id/version_no` 版本链 + `video_groups.number/owner` + `task_logs` 表 + `/groups /files /versions /reanalyze /tasks` 端点；前端案例库/视频解析/任务中心界面重构；任务中心日志生命周期（上传→完成全链）+ 耗时（`processing_started_at`）+ 导出报告（Markdown/zip）。
 - **桌面端页面组件裂解（未发版）**: TaskCenter 裂解 TaskHeader/TaskBody（删删除按钮、失败任务导出报告左侧加重试、字段顺序 任务文件/版本/所属 + 耗时列）；SettingsPage 4 子页收敛 2（系统设置=系统+参数预设，模型参数=模型参数+API密钥）+ 每页裂解子组件；设置页根容器去白底 + `app-main-flat` 透渐变实现卡片空隙；设置保存按钮统一 `g-btn g-btn-primary`。
 - **桌面端稳定性修复（未发版，桌面前端/壳）**: `build_exe.ps1` 部署加固（杀运行中壳+遗留后端 / `$src\*` 内容拷贝杜绝 `_internal\_internal` 嵌套 / 部署后自检 python313.dll 落地，不再静默产出半残 exe）；`backend_child` 看门狗改**持有父进程句柄**信号检测（`OpenProcess(SYNCHRONIZE)` + `WaitForSingleObject`，**免疫 PID 复用**，根治孤儿后端锁 `_internal` DLL）；启动前 `sweep_orphan_backends` 沿父链清遗留孤儿（兼容 `.venv\Scripts\python.exe` 重定向器三层）；窗口控制修复（`is_maximized` 读真实 WindowState、toggle 修标志、resize 同步图标）；关闭确认改**主题化弹窗**（去 pywebview 原生 MessageBox）；`.gitignore` 补 `/_internal/` 与 `/智影桌面端.exe` 构建产物。
