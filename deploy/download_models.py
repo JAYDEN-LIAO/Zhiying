@@ -293,6 +293,15 @@ def _download_modelscope_file(url: str, target: Path) -> None:
     print()
     if downloaded <= 0:
         raise RuntimeError(f"{target.name}: download produced no data")
+    # 校验 safetensors 头部有效：防止断点续传拼接出损坏文件（曾产坏 model.safetensors → header too large）
+    if target.name.endswith(".safetensors"):
+        try:
+            from safetensors import safe_open
+            with safe_open(str(partial), framework="pt") as _f:
+                _ = len(_f.keys())
+        except Exception as exc:
+            partial.unlink(missing_ok=True)
+            raise RuntimeError(f"{target.name}: 下载文件损坏（{exc}），删除重下")
     os.replace(partial, target)
 
 

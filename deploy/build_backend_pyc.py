@@ -13,6 +13,7 @@ datas 打进 _internal。
 from __future__ import annotations
 
 import compileall
+import py_compile
 import shutil
 import sys
 from pathlib import Path
@@ -23,9 +24,14 @@ OUT = ROOT / "build" / "backend_pyc"
 
 
 def _compile_tree(dst: Path) -> None:
-    """编译目录下全部 .py 为 __pycache__/*.pyc，然后删除 .py。"""
-    compileall.compile_dir(str(dst), force=True, quiet=1)
-    for f in dst.rglob("*.py"):
+    """编译目录下全部 .py 为包根 legacy .pyc（SourcelessFileLoader 可导入），然后删除 .py。
+
+    注意：不能用 compileall——它产出 __pycache__/*.cpython-XX.pyc，Python 在无对应 .py
+    源时**无法导入**这种形式（封装后端会报 No module named 'core.db'）。必须生成
+    <模块>.pyc 在包根（core/db.py → core/db.pyc），Python 才能无源导入。
+    """
+    for f in sorted(dst.rglob("*.py")):
+        py_compile.compile(str(f), cfile=str(f.with_suffix(".pyc")), doraise=True)
         f.unlink()
 
 
