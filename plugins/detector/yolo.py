@@ -39,6 +39,39 @@ COCO_CLASSES: list[str] = [
 ]
 
 
+def _torchvision_cuda_compat() -> bool:
+    """torch 为 CUDA 构建时，torchvision 必须是同源 CUDA 构建（否则 YOLO GPU NMS 必崩）。
+
+    经典错配：`torch==X.Y.Z+cuNNN` + `torchvision==A.B.C`（PyPI 默认 CPU 构建）→
+    `torchvision::nms` 在 CUDA 张量上报 NotImplementedError，YOLO 首批带检测框前向抛异常。
+    torchvision 的 CUDA 构建版本串带 `+cu` 后缀（如 `0.28.0+cu130`），CPU 构建无后缀。
+    """
+    try:
+        import torch
+        import torchvision
+    except ImportError:
+        return True  # 依赖工具缺失时由下游报错，不在此越权断言
+    if not torch.cuda.is_available():
+        return True  # CPU 机器无需 CUDA NMS
+    version = getattr(torchvision, "__version__", "") or ""
+    return "+cu" in version.lower()
+
+
+def _torchvision_fix_hint() -> str:
+    import torch
+    import torchvision
+    cu = getattr(torch.version, "cuda", "") or ""
+    torch_v = getattr(torch, "__version__", "?")
+    tv_v = getattr(torchvision, "__version__", "?")
+    return (
+        f"torch={torch_v} 是 CUDA 构建，但 torchvision={tv_v} 是 CPU 构建"
+        f"（版本串无 +cu 后缀），YOLO 的 GPU NMS（torchvision::nms）会报 "
+        f"`NotImplementedError: ... 'CUDA' backend`。请重装同源 CUDA 版（替换 cu{cu}）：\n"
+        f"  pip install torchvision --index-url https://download.pytorch.org/whl/cu{cu}\n"
+        f"Windows PyPI 不发 CUDA 版 torchvision，必须走 PyTorch 官方源（install1/install2 已内置同源安装）。"
+    )
+
+
 class YoloDetector(BaseDetector):
     """YOLO11 物体检测 + 追踪 — 批量 GPU 推理 + BoT-SORT。
 
@@ -61,6 +94,10 @@ class YoloDetector(BaseDetector):
         imgsz: int = 640,
         **kwargs,
     ) -> None:
+        # 启动即检查 torch/torchvision CUDA 错配（只告警不阻塞——搜索/摘要等非检测流程仍可用）
+        if not _torchvision_cuda_compat():
+            logger.error("[YoloDetector] torch/torchvision CUDA 错配：\n%s", _torchvision_fix_hint())
+
         self._model_name = model
         self._conf = confidence_threshold
         self._iou = iou_threshold
@@ -142,6 +179,16 @@ class YoloDetector(BaseDetector):
         self._tracker_config = str(project_root / "config" / "botsort.yaml")
 
         import torch
+
+        # 真正跑检测前再挡一道：错配环境下直接给出清晰报错，而不是让 CUDA NMS 在
+        # 首批带检测框的前向里抛晦涩 NotImplementedError（配合 DetectionRunner 死锁修复，
+        # 此刻会正常演变为「管道失败」并写入任务日志）。
+        if not _torchvision_cuda_compat():
+            from core.exceptions import PluginLoadError
+            raise PluginLoadError(
+                "[YoloDetector] torch/torchvision CUDA 错配——YOLO 检测不可用。\n"
+                + _torchvision_fix_hint()
+            )
 
         logger.info("[YoloDetector] Loading model: %s", model_path)
         self._model = YOLO(model_path)

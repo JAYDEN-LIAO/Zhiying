@@ -25,7 +25,7 @@ import logging
 import cv2
 import numpy as np
 
-from pipeline.runners.base import OperationRunner, PipelineContext
+from pipeline.runners.base import OperationRunner, PipelineContext, put_sentinel
 from utils.video_util import stream_frames
 
 logger = logging.getLogger(__name__)
@@ -168,7 +168,9 @@ class DetectionRunner(OperationRunner):
                 logger.error("[DetectionRunner] Frame extraction failed: %s", e)
                 extract_error = e
             finally:
-                await inner_queue.put(None)
+                # 结束信号：非阻塞必达。consumer 可能已因异常退出、inner_queue 满且无人
+                # 消费——若在此无限阻塞，会吞掉 consumer 抛出的原始异常并永久挂起。
+                put_sentinel(inner_queue)
             extract_frame_count = frame_idx
 
         extract_task = asyncio.create_task(_extract())
@@ -226,15 +228,22 @@ class DetectionRunner(OperationRunner):
                 )
                 processed += len(batch_frames)
         finally:
-            # 通知 search_encode 流结束
+            # 通知 search_encode 流结束（非阻塞必达，防 search_queue 满时自身卡死）
             if search_queue is not None:
-                await search_queue.put(None)
-            # 停止帧提取后台任务
+                put_sentinel(search_queue)
+            # 停止帧提取后台任务。extract 收尾已非阻塞，正常立即返回；
+            # 加有限超时兜底，绝不让此处无限等待吞掉 consumer/上游抛出的异常。
             extract_task.cancel()
             try:
-                await extract_task
+                await asyncio.wait_for(extract_task, timeout=5)
             except asyncio.CancelledError:
                 pass
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[DetectionRunner] Extract task took >5s to stop (error=%r); "
+                    "continuing so any upstream exception surfaces",
+                    extract_error,
+                )
 
         if extract_error:
             raise extract_error  # type: ignore[misc]

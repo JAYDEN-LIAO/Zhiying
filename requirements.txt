@@ -29,7 +29,13 @@ opencv-python-headless>=4.9.0
 # ══════════════════════════════════════════════
 #  ML framework
 # ══════════════════════════════════════════════
+# ⚠️ torch 与 torchvision 必须同源同构建安装（install1.bat / setup_windows.ps1 /
+#   setup_linux.sh 会从 PyTorch 官方源一起装 `torch torchvision`）。
+#   不要单独在 requirements 里给 x86/Windows 加 torchvision 条目——PyPI 只有 CPU 构建，
+#   会覆盖成 CPU 版 → torchvision::nms 在 CUDA 上报 NotImplementedError，YOLO 检测崩
+#   （plugins/detector/yolo.py 启动/检测有错配保险丝）。ARM64（DGX Spark/GB10）装 CPU 版 torchvision 无碍。
 torch>=2.1.0
+torchvision; platform_machine == "aarch64" or platform_machine == "arm64" or platform_machine == "ARM64"
 transformers>=4.50.0
 accelerate>=1.1.0  # embedder 用 device_map 加载必需（transformers torch extra 亦要求）
 bitsandbytes>=0.49.0

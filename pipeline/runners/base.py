@@ -5,6 +5,7 @@ Runner 基础设施 — OperationRunner ABC + Operation 数据类 + PipelineCont
 """
 
 from abc import ABC, abstractmethod
+import asyncio
 from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
 
@@ -14,6 +15,30 @@ from core.interfaces import VideoContext
 from core.status_tracker import StatusTracker
 from core.models import Video
 from core.prompt_loader import PromptLoader
+
+
+def put_sentinel(queue: asyncio.Queue) -> None:
+    """非阻塞推送队尾结束信号（None）——队列满时先腾一个槽，保证信号必达。
+
+    关键：生产者/消费者收尾时**绝不能无限阻塞在 put()**。若队列已满而消费方
+    提前退出（例如模型抛错后 consumer 已离开消费循环），`await put(None)` 会
+    永远等不到空槽，进而把上游真实异常吞掉、导致任务永久挂起（进度冻结、
+    无失败日志）。腾一个槽（丢弃最旧一元素）后信号必然进入队列；丢弃的
+    元素在收尾阶段无下游消费，代价可忽略。
+
+    调用方负责将 queue 的消息消费侧设计为「收到 None 即退出」。
+    """
+    try:
+        queue.put_nowait(None)
+    except asyncio.QueueFull:
+        try:
+            queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+        try:
+            queue.put_nowait(None)
+        except asyncio.QueueFull:
+            pass  # 极端竞态兜底：放弃信号，不影响主流程（消费侧另有超时/判空退出）
 
 
 def effective_summary_mode(video, config) -> str:
