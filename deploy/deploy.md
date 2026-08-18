@@ -16,10 +16,10 @@
 
 | 文件 | 作用 |
 |---|---|
-| `setup_windows.ps1` | **Windows 交互式一键安装器**（入口 = 根目录 `install1.bat` 双击）：选 **2B/8B** + 输代理 → Python/FFmpeg → .venv + CUDA torch + 依赖 → **内嵌 PostgreSQL**(`vendor/pg`，免 Docker/WSL2) → 模型(按档位) → 生成 config.yaml → init_db 建表 → 校验完成（前端构建交给 `install2.bat`） |
+| `setup_windows.ps1` | **Windows 交互式一键安装器**（入口 = 根目录 `install1.bat` 双击）：选 **2B/8B** + 输代理 → Python/FFmpeg → .venv + CUDA torch + 依赖 → **内嵌 PostgreSQL**(`vendor/pg`，免 Docker/WSL2) → 模型(按档位) → 生成 config.yaml → init_db 建表 → **WebView2 Runtime 自动更新**（<151 过旧会 pywebview 静默白屏，下载 Evergreen 更新到最新，失败仅告警） → 校验完成（前端构建交给 `install2.bat`） |
 | `setup_linux.sh` | **Linux 开发机一键安装器**（开发态，规格同 Windows）：apt / venv / CUDA torch / requirements+onnxruntime / 模型 / Docker db / config.yaml / Node+前端 dist |
-| `build_backend_pyc.py` | 后端源码编译为 `.pyc` 字节码包 → `build/backend_pyc/`（封装模式：客户端盘上无明文源码；`build_exe.ps1` 打 exe 前调用） |
-| `download_models.py` | 模型下载/校验（embedding 按 `--embedding-profile 8b/2b` 选档，yolo/reid/face/plate/segmenter，断点续传、`--verify-only`） |
+| `build_backend_pyc.py` | 后端源码编译为 `.pyc` 字节码包 → `build/backend_pyc/`（封装模式：客户端盘上无明文源码；**用 `py_compile` 生成包根 legacy `<模块>.pyc`**——compileall 的 `__pycache__/*.cpython-XX.pyc` 在无源时 Python 不可导入，会致封装后端 `No module named 'core.db'` → exe 白屏；`build_exe.ps1` 打 exe 前调用） |
+| `download_models.py` | 模型下载/校验（embedding 按 `--embedding-profile 8b/2b` 选档，yolo/reid/face/plate/segmenter，断点续传、`--verify-only`；**safetensors 下载后 `safe_open` 校验头部**——续传拼接产坏则删除重下） |
 | `deploy_feedback.md` | 部署实测问题与修复历史（踩坑记录，含本次所有修复的说明） |
 
 > 旧 `write_windows_config.py`（生成 config/config.windows.yaml）与 `start_windows.ps1`（后端启动脚本）已删除——
@@ -37,6 +37,7 @@
 | **embedding 档位** | 安装时交互选 **2B / 8B**——决定装哪个模型 + 向量维度（2B=2048 / 8B=4096）+ config `embedding_profile`；一台机器一个模型 |
 | **磁盘 25GB+** | torch ~2.6GB + 模型（embedding 8B 16GB / 2B ~4GB）+ 其余 |
 | **代理（可选）** | 安装时交互输入；GitHub / PyTorch / 模型源被墙需走代理，国内源直连 |
+| **WebView2 Runtime** | 桌面端 exe（pywebview）必需。过旧（<151，pywebview 6.2.1 需 ICoreWebView2Environment10）会**静默白屏**（实测 runtime 100 报 COM E_NOINTERFACE）——`install1` 自动检测并下载 Evergreen 安装器更新到最新，失败仅告警不中断（服务器后端不依赖） |
 
 ---
 
@@ -62,6 +63,8 @@
 - 所有下载（FFmpeg / PG zip / 模型）均有**超时兜底 + 断点续传 + 实时进度**；pip 用 `--progress-bar raw` 显示大文件进度，不再静默。
 - **代理策略**：`github.com` / `download.pytorch.org` / `enterprisedb.com` **走代理**（直连不通或极慢）；**`modelscope.cn` 强制直连**（国内 CDN，绕国际代理反而更慢更易断）。
 - 网络波动时模型下载**断线自动续传**（`.incomplete` 保留），不白丢进度；任何错误落盘 `vendor/install.log` 并红字显示，不会无声闪退。
+- **WebView2 Runtime 自动更新**（环境段）：检测版本（注册表 pv + 兜底扫 `EdgeWebView\Application` 目录），<151 下载 Evergreen 安装器 `/silent /install` 更新到最新——过旧 pywebview 会**静默白屏**（pywebview 6.2.1 需 ICoreWebView2Environment10，实测 runtime 100 报 COM E_NOINTERFACE）；失败仅告警不中断（服务器后端不依赖）。
+- **构建健壮性**（`build_exe.ps1`）：部署前 **pg_ctl 幂等停内嵌 postgres**（常驻 daemon 从旧 `_internal` 加载 MSVC 运行库锁 DLL → `_internal` 删不掉；ErrorActionPreference 降 Continue 防 stderr 炸脚本 + 轮询 / immediate 强停 / 硬杀三级兜底）。
 
 **装完即用**：双击根目录 `install2.bat`（git pull + 依赖 + 前端 npm build + 重打 exe）做日常更新/构建，或 `python desktop\app.py` 直接跑桌面端。
 
@@ -99,7 +102,7 @@ bash deploy/setup_linux.sh --proxy http://127.0.0.1:7897 --non-interactive
 # 【0】桌面端（Windows 桌面机，装完即用，推荐）
 # 双击 智影桌面端.exe（构建方法见 desktop/README.md；exe + _internal 放项目根）
 # 或开发态等价：python desktop\app.py
-# 启动器自动：检查就绪 → 起内嵌 PostgreSQL（vendor/pg，首次自动 initdb+建库）→
+# 启动器自动：检查就绪 → 起内嵌 PostgreSQL（vendor/pg，首次自动 initdb+建库，已在运行则 pg_isready 探测直接复用）→
 #             起后端（ZHIYING_FRONTEND=desktop）→ 打开 WebView2 产品窗
 
 # 【1】数据库（内嵌 PostgreSQL，装完即由启动器自动托管，无需手动）
@@ -153,6 +156,11 @@ npm run dev
 | aarch64（GB10/DGX Spark）torch 装不上 CUDA | `setup_linux.sh` 会提示走 conda：`conda install pytorch torchvision pytorch-cuda -c pytorch -c nvidia`（参考机 GB10 就是 anaconda 环境） |
 | Linux 前端构建报 node 版本过旧 | `setup_linux.sh` 自动走 NodeSource 装 v22；失败则手动装 node≥20 后重跑 |
 | `config/config.yaml` 缺失 | 安装脚本会从 example 自动生成；缺失时桌面启动器会提示先跑安装脚本 |
+| 桌面端 exe 打开白屏（无任何提示） | **WebView2 Runtime 过旧**（pywebview 6.2.1 需 ≥151，实测 runtime 100 报 COM E_NOINTERFACE）。`install1` 已自动更新到最新；仍白屏则手动重装 Evergreen（`go.microsoft.com/fwlink/p/?LinkId=2124703`） |
+| `install2` 重打 exe 时 `_internal` / exe 删不掉（提示占用） | 内嵌 postgres 常驻 daemon 从旧 `_internal` 加载 MSVC 运行库锁 DLL。`build_exe.ps1` 部署前已幂等 `pg_ctl stop`（三级兜底）；残留可手动 `vendor\pg\bin\pg_ctl -D data\pgdata stop` |
+| 封装后端 exe 白屏 + 日志报 `No module named 'core.db'` | `build_backend_pyc.py` 已改 `py_compile` 生成包根 legacy `.pyc`（compileall 的 `__pycache__` 形式无源时 Python 不可导入）；重跑 `build_backend_pyc.py` + `build_exe.ps1 -Deploy` |
+| embedder 加载失败 `header too large` | 断点续传拼接产坏 `model.safetensors`。`download_models.py` 已加 `safe_open` 头部校验，损坏自动删除重下；可 `--verify-only` 校验 |
+| 桌面启动器误报「模型未齐全」卡白屏（2B 机器） | `desktop/checks.py` 已读 `config.yaml` 的 `embedding_profile` 传给 `verify`（不再默认查 8B 目录）；确认 config 里 `embedding_profile: 2b` |
 
 ---
 

@@ -192,6 +192,11 @@ def _apply_settings_overrides(cfg: dict) -> None:
     # 4. 管道性能 → 覆盖编码三档模板 / 检测参数 / 全局开关 / 模型参数
     #    编码三档模板（encode_profiles）逐档覆盖；其余数值参数按 PIPELINE_NUMERIC_SPEC 钳制。
     pipeline = data.get("pipeline", {}) or {}
+    # 用户显式覆盖编码/量化字段 → 记录字段名，档位自适应只让位被覆盖字段（没改的仍按 2b 档自适应）
+    global _ENCODING_OVERRIDDEN
+    for _f in ("encode_profiles", "default_encode_profile", "quantization"):
+        if pipeline.get(_f):
+            _ENCODING_OVERRIDDEN.add(_f)
     pcfg = cfg.setdefault("pipeline", {})
     det = cfg.setdefault("plugins", {}).setdefault("detector", {})
     profiles = pcfg.setdefault("encode_profiles", {}) or {}
@@ -271,6 +276,18 @@ _DEFAULT_EMBEDDING_PROFILES: dict[str, dict] = {
     "2b": {"model": "models/Qwen/Qwen3-VL-Embedding-2B", "dimension": 2048},
 }
 
+# ── 2b 档编码/量化默认（低显存平替：模板默认按 8b 优化较重，8GB 机器套直跑不稳）──
+# 仅在 settings.json 未覆盖（_ENCODING_OVERRIDDEN=False）时套用；用户设置永远优先。
+# 分辨率落在 ENCODE_PROFILE_NUMERIC_SPEC 范围内（宽度/高度 ≥224，批量 8 倍数）。
+_2B_ENCODE_DEFAULTS: dict[str, dict] = {
+    "fast":     {"encode_width": 336, "encode_height": 224, "encode_batch_size": 256},
+    "balanced": {"encode_width": 448, "encode_height": 224, "encode_batch_size": 256},
+    "precise":  {"encode_width": 448, "encode_height": 336, "encode_batch_size": 128},
+}
+
+# 用户在设置页（settings.json）显式覆盖的编码/量化字段集合 —— 档位自适应只让位被覆盖的字段
+_ENCODING_OVERRIDDEN: set[str] = set()
+
 
 def _apply_embedding_profile(cfg: dict) -> None:
     """按 config 的 `embedding_profile` 档位联动「模型路径 + 向量维度」（模型适配）。
@@ -296,6 +313,18 @@ def _apply_embedding_profile(cfg: dict) -> None:
     set_embed_dim(dim)
     if model:
         cfg.setdefault("plugins", {}).setdefault("embedder", {}).setdefault("params", {})["model_name"] = model
+
+    # 档位感知（2b）：低显存平替 — 用户未覆盖的编码/量化字段套用 2b 轻量默认
+    # （config.yaml 模板默认按 8b 优化：balanced 504×336/512、precise 672×448/256，8GB 机器直跑偏重）
+    if key == "2b":
+        pcfg = cfg.setdefault("pipeline", {})
+        if "encode_profiles" not in _ENCODING_OVERRIDDEN:
+            pcfg["encode_profiles"] = {k: dict(v) for k, v in _2B_ENCODE_DEFAULTS.items()}
+        if "default_encode_profile" not in _ENCODING_OVERRIDDEN:
+            pcfg.setdefault("default_encode_profile", "balanced")
+        if "quantization" not in _ENCODING_OVERRIDDEN:
+            embed_params = cfg.setdefault("plugins", {}).setdefault("embedder", {}).setdefault("params", {})
+            embed_params.setdefault("quantization", "none")  # 2B 模型 ~4GB FP16，8GB 显存无需量化
 
 
 @lru_cache(maxsize=1)

@@ -127,13 +127,11 @@ input, textarea, [contenteditable="true"] { user-select: text; }
 }
 .tb-drag { flex: 1; display: flex; align-items: center; gap: 10px; height: 100%; min-width: 0; }
 .tb-logo {
-  width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+  width: 26px; height: 26px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 2px 8px rgba(79, 124, 255, 0.35);
-  overflow: hidden;
 }
 .tb-logo img {
-  width: 100%; height: 100%; object-fit: cover;
+  width: 100%; height: 100%; object-fit: contain;
 }
 .tb-title {
   font-size: 15px; font-weight: 600; color: #2b3a63; letter-spacing: 0.4px; white-space: nowrap;
@@ -153,6 +151,16 @@ input, textarea, [contenteditable="true"] { user-select: text; }
 }
 .tb-win-btn:hover { background: rgba(255, 255, 255, 0.7); color: #1e293b; }
 .tb-win-btn.close:hover { background: #ef4444; color: #fff; }
+
+/* ── 模态/弹窗关闭钮：无框无底 ×（与标题栏窗口按钮同风格，hover 淡红底）── */
+.modal-x {
+  width: 28px; height: 28px; border: none; background: transparent; color: #64748b;
+  border-radius: 6px; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all 0.15s; flex-shrink: 0; line-height: 1; font-size: 16px;
+}
+.modal-x:hover { background: rgba(239, 68, 68, 0.08); color: #ef4444; }
+.dark .modal-x { color: #98a0af; }
+.dark .modal-x:hover { background: rgba(239, 68, 68, 0.16); color: #f87171; }
 
 /* ── 侧边栏 Sidebar（210px = 168 的 5/4；透明继承壳渐变，与顶栏接壤无边界） ── */
 .sidebar {

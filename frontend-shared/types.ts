@@ -339,6 +339,9 @@ export interface EncodeProfileSettings {
 }
 
 export interface PipelineSettings {
+  /* 当前 vector embedding 档位（8b=4096 / 2b=2048，来自 GET /settings/pipeline）*/
+  embedding_profile?: string;
+  embedding_profiles?: Record<string, { model?: string; dimension?: number }>;
   /* 编码三档模板 + 默认档 */
   encode_profiles: Record<string, EncodeProfileSettings>;
   default_encode_profile: string;
@@ -399,6 +402,18 @@ export interface SettingsUpdate {
   providers?: Record<string, ProviderSettingsEdit>;
   storage?: Partial<StorageInfo>;
   pipeline?: PipelineSettingsUpdate;
+}
+
+/* GET /settings/pipeline — 当前生效管道配置（含档位信息，v0.34候选 档位感知） */
+export interface PipelineConfigInfo {
+  embedding_profile?: string;
+  embedding_profiles?: Record<string, { model?: string; dimension?: number }>;
+  default_encode_profile?: string;
+  encode_profiles?: Record<string, EncodeProfileSettings>;
+  use_nvdec?: boolean;
+  chunk_encoding?: boolean;
+  default_summary_mode?: string;
+  plugins?: Record<string, boolean>;
 }
 
 /* ── 参数预设 (v0.22: 多套命名参数快照，一键套用) ── */

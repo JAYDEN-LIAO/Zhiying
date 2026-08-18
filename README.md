@@ -34,11 +34,11 @@ curl -X POST -H "Content-Type: application/json" \
 > **Note on API Keys**: Place keys in a `.env` file at project root (gitignored)，或在前端设置页填写。  
 > **摘要默认 `vlm_llm`（API 模式）**，需要 DashScope（画面描述）+ DeepSeek（摘要）key。`native_video`（本地视频原生理解）已置灰退役。
 
-**Windows 桌面端**：全新机双击 `install1.bat`（交互式：选 **2B/8B** embedding 档位 + 输代理 → 自动装 Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**(vendor/pg，免 Docker/WSL2)/模型/config/建表）装机后，双击 `智影桌面端.exe`（构建方法见 `desktop/README.md`）或 `python desktop/app.py`——启动器自动检查就绪 → 起内嵌 PostgreSQL → 起本地后端 → 打开 pywebview 桌面窗口加载桌面前端（`ZHIYING_FRONTEND=desktop` 挂载 frontend-desktop/dist，与服务器前端 `frontend/` 完全隔离）。**日常更新用根目录 `install2.bat` 一键自动更新**（git pull 走 7897 代理 → pip 依赖 → npm install/build → 重打 exe）。
+**Windows 桌面端**：全新机双击 `install1.bat`（交互式：选 **2B/8B** embedding 档位 + 输代理 → 自动装 Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**(vendor/pg，免 Docker/WSL2)/模型/config/建表 + **WebView2 Runtime 自动更新**（过旧会 pywebview 静默白屏，失败仅告警））装机后，双击 `智影桌面端.exe`（构建方法见 `desktop/README.md`）或 `python desktop/app.py`——启动器自动检查就绪 → 起内嵌 PostgreSQL → 起本地后端 → 打开 pywebview 桌面窗口加载桌面前端（`ZHIYING_FRONTEND=desktop` 挂载 frontend-desktop/dist，与服务器前端 `frontend/` 完全隔离）。**日常更新用根目录 `install2.bat` 一键自动更新**（git pull 走 7897 代理 → pip 依赖 → npm install/build → 重打 exe）。
 
 ## Windows 部署
 
-**从零部署**：全新 Windows + NVIDIA GPU 机器（U盘/git clone 放好源码）上，双击根目录 **`install1.bat`** 交互式一键安装——选 **2B/8B** embedding 档位 + 输代理 → 自动装 Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**(vendor/pg，免 Docker/WSL2/重启)/模型(按档位)/config.yaml/建表；装完双击 `智影桌面端.exe` 拉起桌面进程（构建方法见 `desktop/README.md`），日常更新走 `install2.bat`。
+**从零部署**：全新 Windows + NVIDIA GPU 机器（U盘/git clone 放好源码）上，双击根目录 **`install1.bat`** 交互式一键安装——选 **2B/8B** embedding 档位 + 输代理 → 自动装 Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**(vendor/pg，免 Docker/WSL2/重启)/模型(按档位)/config.yaml/建表 + **WebView2 Runtime 自动更新**（过旧会 pywebview 静默白屏，自动更新到最新）；装完双击 `智影桌面端.exe` 拉起桌面进程（构建方法见 `desktop/README.md`），日常更新走 `install2.bat`。
 
 **Linux 开发机部署**：换新开发机时 `git clone` 后跑 `bash deploy/setup_linux.sh`（交互输代理 / `--proxy ... --non-interactive` 全自动），一键装齐环境/依赖/模型/前端，形态与本机一致，用于开发改代码测试。
 
@@ -78,8 +78,8 @@ curl -X POST -H "Content-Type: application/json" \
 | Video Clip Export | `GET/POST /api/v1/videos/{id}/export/clip` | ✅ |
 | Scene Thumbnails Export (zip) | `GET/POST /api/v1/videos/{id}/export/thumbnails` | ✅ |
 | System Settings (API 服务 + 存储路径 + 管道性能) | `GET/PUT /api/v1/settings`（API 密钥/服务商端点/存储路径 + 管道性能：编码三档模板/检测参数/量化/并发上限，保存即运行时生效，量化需重启）+ `GET /api/v1/settings/pipeline` | ✅ |
-| Pipeline Presets (参数预设) | `GET/POST/PUT/DELETE /api/v1/settings/presets` + `POST /{id}/apply`（data/presets.json 多套命名参数快照，一键套用） | ✅ |
-| Windows 从零部署 | `install1.bat` 交互式一键安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**/模型按档位/config/建表；免 Docker/WSL2）→ `install2.bat` 日常更新 | ✅ |
+| Pipeline Presets (参数预设) | `GET/POST/PUT/DELETE /api/v1/settings/presets` + `POST /{id}/apply`（config/presets.json 多套命名参数快照，一键套用；**随 git 共享，部署/换机开箱复用**） | ✅ |
+| Windows 从零部署 | `install1.bat` 交互式一键安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/**内嵌 PostgreSQL**/模型按档位/config/建表 + **WebView2 Runtime 自动更新**（过旧 pywebview 白屏）；免 Docker/WSL2）→ `install2.bat` 日常更新 | ✅ |
 | 全局 GPU 锁 + 任务队列 | `core/gpu_lock.py` 串行化 embedder/YOLO 前向（防驱动故障）；`core/pipeline_queue.py` PipelineQueue worker 池限流并发管道（批量上传排队防 OOM，v0.32） | ✅ |
 | Frontend Dashboard | React 19 + Vite + Tailwind CSS 4 (unified objects view + face toggle) | ✅ |
 | Track Crop Embedding (track search) | `POST /api/v1/search/semantic` (track path) | ✅ |
@@ -145,7 +145,7 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 - **声明式 DAG 引擎** — 15 个操作注册在 `pipeline/operations.py`（gate 条件 + 依赖边），EventDrivenScheduler 事件驱动执行；搜索/摘要路径解耦，与 detection 共享单 NVDEC 流（生产者-消费者并发）。
 - **插件化** — 10 个插件 ABC + 工厂动态加载（config.yaml 换后端零代码改动）；4 条编码路径（frame/chunk/text/track）+ 7 路检索 + 人脸/车牌 + 4 级参数系统。
 - **存储卫生 (v0.21)** — 删除即清盘（DB 级联 + 引用追踪）+ 孤儿清扫（`POST /maintenance/sweep` / `scripts/sweep_storage.py`）。
-- **设置与参数系统 (v0.22)** — 系统设置页四区（存储/模型参数/参数预设/API 密钥），`data/settings.json` 覆盖 config.yaml 运行时生效；参数预设 `data/presets.json` 命名快照一键套用；4 级参数系统逐视频控制管道。
+- **设置与参数系统 (v0.22)** — 系统设置页四区（存储/模型参数/参数预设/API 密钥），`data/settings.json` 覆盖 config.yaml 运行时生效；参数预设 `config/presets.json` 命名快照一键套用；4 级参数系统逐视频控制管道。
 - **从零部署 (v0.22)** — `deploy/setup_windows.ps1` 一键安装（系统级/依赖级/模型级 + 自校验）；单份配置自动降级 captioner（本地 8B 缺失 → qwen_api）。
 - **双前端共存** — `frontend/`（服务器, v0.28 云智嵌入 UI）+ `frontend-desktop/`（桌面独立前端）UI 完全隔离；共用同一后端，`main.py` 按 `ZHIYING_FRONTEND` 切挂载（默认服务器, 桌面启动器传 desktop）。**对接层 `frontend-shared/` 一份实现**（api/types/labels/helpers, 双端再导出复用）——后端接口/字段变更只改一处。
 - **架构细节见 `docs/arch.md`**（Pipeline Detail / Database Schema / API Endpoints / Key Design Decisions）。
@@ -278,7 +278,7 @@ zhiying/
 │   ├── package.json
 │   └── vite.config.ts
 ├── models/               # Local model weights (gitignored; yolo26s.pt, yolo26n-cls.pt 等在仓库内)
-├── data/                 # Video storage & artifacts + settings.json/presets.json (gitignored)
+├── data/                 # Video storage & artifacts + settings.json (gitignored; 预设已移 config/presets.json 随 git 走)
 ├── config/               # YAML config, prompts, schema
 ├── deploy/               # 部署套件: setup_windows.ps1 (Windows 交互式一键安装, 入口 install1.bat) + setup_linux.sh (Linux 开发机) + build_backend_pyc.py (封装字节码包) + download_models.py (支持 --embedding-profile) / deploy.md / deploy_feedback.md
 ├── desktop/              # 桌面端启动器 (Windows, pywebview 壳: 检查模型→起 db→起 uvicorn→开毛玻璃启动窗→就绪进前端→优雅关闭; desktop.bat 入口; build_exe.ps1 -Deploy 一键构建部署 exe)
@@ -290,7 +290,11 @@ zhiying/
 
 ## Development Status
 
-- **v0.34 候选（未发版，部署 + 封装）— 一键安装器 + 内嵌 PostgreSQL + 后端封装（藏代码）**: `install1.bat` 交互式安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/模型/config/建表，免 Docker/WSL2，前端交给 install2.bat）；内嵌 PostgreSQL（EDB PG17 便携 zip + 预编译 pgvector → `vendor/pg`，`desktop/db.py` 双模式自动托管）；后端封装 = `deploy/build_backend_pyc.py` 编译 `.pyc` 字节码包 + `backend_launcher.py` 统一启动器 + `core/paths.py` frozen 路径解析（ZHIYING_PROJECT_ROOT），`build_exe.ps1` 打进 `_internal/backend_pyc`——**客户端盘上无明文源码**。
+- **v0.34 候选（未发版，2026-08-18）— 设置档位感知 + 参数预设迁移 + 桌面壳打磨**:
+  - **设置档位感知（2b 自动降档）**: `config_loader._apply_embedding_profile` 在 2b 档自动套用轻量编码/量化默认（`_2B_ENCODE_DEFAULTS`：balanced 448×224/256、precise 448×336/128、quantization none——模板默认按 8b 优化，8GB 机器直跑 504×336/512 偏重）；用户设置页手动保存的字段永远优先（`_ENCODING_OVERRIDDEN` **字段级**让位，改什么保留什么、没改的仍按 2b 自适应，四场景测试通过）；`GET /settings/pipeline` 返回 `embedding_profile` + `embedding_profiles`（维度）；桌面前端设置页编码卡右上角**档位徽标**（2B · 2048 维 / 8B · 4096 维）+ 量化文案/三档模板推荐按档位（2b 默认 none，量化仍可选省显存，`ENCODE_PROFILE_RECOMMEND_2B` 与后端对齐）
+  - **参数预设随 git 迁移**: 预设存储 `data/presets.json`（gitignored）→ **`config/presets.json`（入仓库随 git 走）**——建/改/删预设后提交即随仓库迁移，部署/换机开箱复用；旧 `data/presets.json` 首次读取**自动搬迁**（老文件保留）；CLAUDE/README/arch 引用同步
+  - **桌面壳/前端打磨**: 标题栏 logo 去 box-shadow/圆角 → **透明无框呈现**（object-fit:contain）；启动页 SPLASH 图标从 32×32 PNG 换 **512 高清源**（256 base64 内嵌，48px 清晰不糊）+ 右上角 **× 终止启动**（SplashApi.quit → 停后端启动进程 + 关窗，加载中途可随时终止）；**全弹窗关闭按钮统一无框无底 ×**（新增 `.modal-x` 统一类，6 处收敛：任务日志/新建案例/编辑案例/图片预览/导出/参数设置，与标题栏窗口按钮同风格）；任务中心日志弹窗 **【一键复制】**（`copyText` 工具：clipboard + execCommand 兜底，复制后「已复制」反馈）；**文档归档清理**（backend-versioning-plan.md / develop.md / qwen_vl_captioner.py → `docs/archive/`，archive README 更新）；.gitignore 补 `*.lnk`
+- **v0.34 候选（未发版，部署 + 封装）— 一键安装器 + 内嵌 PostgreSQL + 后端封装（藏代码）**: `install1.bat` 交互式安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/模型/config/建表，免 Docker/WSL2，前端交给 install2.bat）；内嵌 PostgreSQL（EDB PG17 便携 zip + 预编译 pgvector → `vendor/pg`，`desktop/db.py` 双模式自动托管）；后端封装 = `deploy/build_backend_pyc.py` 编译 `.pyc` 字节码包 + `backend_launcher.py` 统一启动器 + `core/paths.py` frozen 路径解析（ZHIYING_PROJECT_ROOT），`build_exe.ps1` 打进 `_internal/backend_pyc`——**客户端盘上无明文源码**。**装机+构建健壮性（2026-08-18）**：install1 自动更新 **WebView2 Runtime**（<151 过旧会 pywebview 静默白屏——pywebview 6.2.1 需 ICoreWebView2Environment10，实测 runtime 100 报 COM E_NOINTERFACE，下载 Evergreen 更新到最新，失败仅告警）；`build_backend_pyc.py` 改用 **py_compile 生成包根 legacy `.pyc`**（compileall 的 `__pycache__/*.cpython-XX.pyc` 无源时 Python 不可导入 → 封装后端报 `No module named 'core.db'` → exe 白屏）；`download_models.py` 下载后 **safe_open 校验 safetensors 头部**（断点续传拼接产坏 → header too large → 删除重下）；`build_exe.ps1 -Deploy` 部署前 **pg_ctl 幂等停内嵌 postgres**（常驻 daemon 从旧 `_internal` 加载 MSVC 运行库锁 DLL 删不掉；ErrorActionPreference 降 Continue 防 stderr 炸脚本 + 轮询/immediate 强停/硬杀三级兜底）；`desktop/db.py` **start_db 幂等**（pg_isready 探测已在运行直接复用，跳过 pg_ctl start）；`desktop/checks.py` **check_models 读 config embedding_profile 传 verify**（防 2B 机器默认查 8B 误报「模型未齐全」启动卡白屏）；双前端 `index.html` **Google Fonts 改异步加载**（`media="print" onload`，去渲染阻塞防白屏）。
 - **v0.34 候选（未发版，后端）— 模型适配 embedding_profile**: 向量编码模型档位化——`8b`=Qwen3-VL-Embedding-8B/4096 维（默认）、`2b`=Qwen3-VL-Embedding-2B/2048 维（低显存平替）；新增 `core/embedding_profile.py`（`EmbedVector()` 懒读全局维度建表）+ `config_loader._apply_embedding_profile` 联动「模型路径 + 向量维度」；`core/db.py` 迁移参数化；改 config `embedding_profile` + 重启后端即换档，⚠️ 维度不同需重建向量库；人脸 512（ArcFace）与档位无关不受影响。
 - **v0.34 候选（未发版，桌面端 + 后端）— 侧栏徽章系统 + 任务中心交互 + 后端排队检测修复**:
   - **侧栏徽章**：案例库🩶灰=仅上传未提交（pending 且未入队 且 未版本化）；视频解析🔵蓝「1」=有视频处理中（未选中视频时点进视频解析**自动定位处理中视频**）；任务中心 🟡黄=排队中 / 🟢绿=新完成（进任务中心清零 + 首次进入整行淡绿高亮）/ 🔴红=处理失败（实时计数）

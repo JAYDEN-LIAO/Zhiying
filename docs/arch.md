@@ -5,6 +5,7 @@
 > 历史: v0.22 部署系统+设置/参数+Detection重构+删除处理中 / v0.24 云智接入+生产部署 / v0.26 平台文件id跳转 / v0.27 搜索修正+车牌模糊搜索 / v0.28 云智嵌入UI / v0.29 人脸链路重构+搜索隔离 / v0.31 人脸交互+搜索范围+跨视频穿透+置信度
 > v0.32: 全局任务队列（PipelineQueue FIFO + worker 池 + pipeline_tasks 表持久化，批量上传排队防 OOM；重启恢复 + 排队中回调 + 幂等）
 > v0.33: 摘要链路根治重构（max_scenes 场景数上限 / caption 并发+降级+配置穿透 / text_encode 批量 / summary 预算截断 / 增量补摘要修复 / keyframe 抽帧 resize / summary_mode 默认 vlm_llm）
+> v0.34 候选（设置档位感知 + 参数预设迁移 + 桌面壳打磨，2026-08-18，未发版）: **设置档位感知**——`config_loader._apply_embedding_profile` 2b 档自动套轻量编码/量化默认（`_2B_ENCODE_DEFAULTS`：balanced 448×224/256、precise 448×336/128、quantization none），`_ENCODING_OVERRIDDEN` 字段级让位设置页手动保存值；`GET /settings/pipeline` 返回 embedding_profile + embedding_profiles；桌面前端设置页档位徽标（2B·2048 维/8B·4096 维）+ 按档推荐/量化文案。**参数预设迁移**：`data/presets.json` → `config/presets.json` **入仓库随 git 走**（部署/换机开箱复用，旧库自动搬迁）。**桌面壳/前端**：标题栏 logo 无框透明；启动页 SPLASH 图标换 512 高清源（256 base64）+ 右上角 × 终止启动（SplashApi.quit→停后端+关窗）；全弹窗关闭按钮统一 `.modal-x` 无框无底 ×（6 处）；任务日志【一键复制】（copyText）；文档归档清理（backend-versioning-plan/develop/qwen_vl_captioner → docs/archive/）+ .gitignore *.lnk
 > v0.34 候选（桌面端重构 + 文件库/多版本/任务中心，未发版，桌面前端/部署侧）: 浅蓝管理后台主题 + frameless 自定义窗口外框（TitleBar 拖拽/窗口按钮/版本徽章, js_api 桥接）+ 4 页模型（文件库/视频解析/任务中心/系统设置）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane）+ 系统监控（psutil）+ `install2.bat` 一键更新
 > v0.34 候选（文件库/多版本/任务中心/页面裂解，未发版）: 后端 videos.file_id/version_no 版本链 + video_groups.number/owner + task_logs 表 + /groups /files /versions /reanalyze /tasks 端点 + 任务日志生命周期 + 耗时（processing_started_at）+ 导出报告（/tasks/{id}/report md + /tasks/export-batch zip）；前端 TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2 + 卡片空隙透渐变
 > 桌面 EXE + 双部署路径（未发版）: build_exe.ps1 -Deploy 一条命令打纯壳 exe + setup_linux.sh/setup_windows.ps1 补全 + bump 全机接入
@@ -14,6 +15,7 @@
 > v0.34 候选（一键安装器 + 内嵌 PostgreSQL + 后端封装，未发版，部署侧）: install1.bat 交互式安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/模型/config/建表，免 Docker/WSL2，前端交给 install2.bat）；内嵌 PostgreSQL（EDB PG17 便携 zip + 预编译 pgvector → vendor/pg，desktop/db.py 双模式自动托管，桌面启动器 initdb/起停/建库）；后端封装 = deploy/build_backend_pyc.py 编译 .pyc 字节码包 + backend_launcher.py 统一启动器（封装/源码双模式 + 父进程看门狗）+ core/paths.py frozen 路径解析（ZHIYING_PROJECT_ROOT）→ build_exe.ps1 打进 _internal/backend_pyc，客户端无明文源码
 > v0.34 候选（模型适配 embedding_profile，未发版，后端）: 向量编码档位化 8b=4096（默认）/2b=2048（低显存平替）；core/embedding_profile.py EmbedVector 懒读全局维度建表 + config_loader._apply_embedding_profile 联动模型路径与维度 + db.py 迁移参数化；改 config embedding_profile + 重启即换档，⚠️ 维度不同需重建向量库；人脸 512 不受影响
 > v0.34 候选（侧栏徽章系统 + 任务中心交互 + 后端排队检测修复，未发版）: 徽章 = 案例库灰(仅上传未提交，pending 且未入队 且 未版本化) + 视频解析蓝「1」(有视频处理中，未选中视频点进自动定位) + 任务中心 黄(排队中 queued)/绿(新完成，进任务中心清零 + 首次进入整行淡绿高亮)/红(失败，实时计数)；**待处理剥离**：任务中心只显示已提交任务（排队/处理中/已完成/失败）；任务中心整行点击跳转 + hover 淡灰 #dbe2ea + 重试图标(IconRetry, busy 旋转) + 筛选下拉(全部/已完成/处理中/排队中/失败，导出左侧) + 1.5s 刷新；后端 **pipeline_queue.enqueue 从 payload 取 video_id**（根治排队行 video_id 全 NULL → queued 检测失效）+ **TaskItem.queued 字段**（list_tasks 批量查排队集合防 N+1）+ upload 传 group_id 先校验案例存在 + IntegrityError 兜底友好 400；rename_file 行 id→file_id 解析修复（版本化重命名 404 根治）；工具栏按钮图标 16px 统一 + g-btn-primary 统一 + 行内幽灵按钮一致
+> v0.34 候选（装机+构建健壮性，2026-08-18，部署侧/壳/前端）: install1 自动更新 **WebView2 Runtime**（<151 过旧 pywebview 静默白屏——pywebview 6.2.1 捆绑 SDK 1.0.3856.49 需 ICoreWebView2Environment10，实测 runtime 100 报 COM E_NOINTERFACE → 桌面端白屏；下载 Evergreen 安装器更新到最新，失败仅告警不中断，服务器后端不依赖）；`build_backend_pyc.py` 改用 **py_compile 生成包根 legacy .pyc**（compileall 的 `__pycache__/*.cpython-XX.pyc` 无源时 Python 不可导入 → 封装后端报 `No module named 'core.db'` → exe 白屏）；`download_models.py` 下载后 **safe_open 校验 safetensors 头部**（断点续传拼接产坏 → header too large → 删除重下）；`build_exe.ps1 -Deploy` 部署前 **pg_ctl 幂等停内嵌 postgres**（常驻 daemon 从旧 `_internal` 加载 MSVC 运行库锁 DLL → 删不掉；ErrorActionPreference 降 Continue 防「postgres 没在跑时 stderr 被 Stop 升成 NativeCommandError 炸脚本」+ 轮询 ~6s / immediate 强停 / 按 vendor/pg 定位硬杀三级兜底）；`desktop/db.py` **start_db 幂等**（pg_isready 探测已在运行直接复用）；`desktop/checks.py` **check_models 读 config embedding_profile 传 verify**（防 2B 机器默认查 8B 误报「模型未齐全」卡白屏）；双前端 `index.html` **Google Fonts 改异步加载**（`media="print" onload="this.media='all'"`，去渲染阻塞防白屏）
 
 ## System Data Flow
 
@@ -53,7 +55,7 @@
 │  └──────────────────────────┘
 │  ┌─ SettingsService (v0.22) ┐
 │  │ settings.json 运行时覆盖 │
-│  │ presets.json 参数预设    │
+│  │ config/presets.json 参数预设│
 │  └──────────────────────────┘
 └──────────────┬─────────────┘
                │
@@ -161,7 +163,7 @@ Incremental: Only L3 switches (summary_enabled / search_index_enabled) can be to
   load_config() 每次 _apply_settings_overrides 合并 → 保存清 lru_cache → 运行时生效
   （唯一例外 quantization：启动加载，改后需重启后端）
 
-参数预设 — 多套命名参数快照，一键套用 (data/presets.json):
+参数预设 — 多套命名参数快照，一键套用 (config/presets.json):
   POST   /settings/presets            快照「当前生效」管道参数为新预设
   GET    /settings/presets            列出
   PUT    /settings/presets/{id}       重命名
@@ -593,7 +595,9 @@ React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @them
 - 启动页（`SPLASH_HTML`）：**毛玻璃启动页**（前端同款渐变背景 + 毛玻璃卡片 + 标题「视频智能快速检索平台」+ 阶段进度条，**模型加载段按后端日志 tqdm `Loading weights: X%` 实时推进 10%→90%**，亮暗自适应，就绪显示版本）；独立「启动日志」控制窗已移除（`LogApi`/`LOG_HTML` 删除，`get_logs` 迁入 `SplashApi`，日志仍落盘 `data/logs`）；前端 `index.html` 加 `#boot` 毛玻璃过渡遮罩（无进度条，React 挂载后淡出，防白屏/避免「进度回退」误解）
 - 后端生命周期：统一经 `backend_launcher.py` 拉起 uvicorn（封装模式读 `_internal/backend_pyc` 字节码包 + `ZHIYING_PROJECT_ROOT` 指向应用根；源码模式直接 import），含 **父进程句柄看门狗**（`OpenProcess(SYNCHRONIZE)` + `WaitForSingleObject`，免疫 PID 复用，父死 ~3s 内 `os._exit(3)`）；启动前 `checks.sweep_orphan_backends` 沿父链（兼容 `.venv\Scripts\python.exe` 重定向器三层）清遗留孤儿，防占端口/锁 `_internal` DLL
 - `desktop/requirements.txt` 含 `psutil`；前端 `window.pywebview` 存在才渲染窗口按钮（浏览器 dev 隐藏）
-- `build_exe.ps1 -Deploy` 加固：部署前杀运行中壳 + 遗留 backend_child、旧目录删除重试、`$src\*` 内容拷贝杜绝 `_internal\_internal` 嵌套、部署后自检 python313.dll 落地（区分「嵌套」与「真缺失」，不再一律误报杀软）
+- `build_exe.ps1 -Deploy` 加固：部署前杀运行中壳 + 遗留 backend_child、**部署前 pg_ctl 幂等停内嵌 postgres**（常驻 daemon 从旧 `_internal` 加载 MSVC 运行库锁 3 个 DLL，壳和 backend_child 杀干净也删不掉；ErrorActionPreference 降 Continue 防「postgres 没在跑时 stderr 被 Stop 升成 NativeCommandError 炸脚本」+ 轮询 ~6s / immediate 强停 / 按 vendor/pg 定位硬杀三级兜底）、旧目录删除重试、`$src\*` 内容拷贝杜绝 `_internal\_internal` 嵌套、部署后自检 python313.dll 落地（区分「嵌套」与「真缺失」，不再一律误报杀软）
+- `desktop/db.py` **start_db 幂等**：`pg_isready` 探测 127.0.0.1:port 已在接受连接 → 直接复用跳过 `pg_ctl start`（根治「另一服务器进程可能正在运行」+ 日志文件被占 Permission denied 启动失败）；`desktop/checks.py` **check_models 从 config.yaml 解析 `embedding_profile`（2b/8b）传 `--verify-only`**（否则 2B 机器默认查 8B 目录误报「embedding 未齐全」→ 启动器判定失败卡白屏）
+- 前端 `index.html`（双前端）Google Fonts 外链改 `media="print" onload="this.media='all'"` **异步加载**，去渲染阻塞防白屏
 
 **更新发布**：根目录 `install2.bat` 一键自动更新（Windows）：git pull（走 7897 代理）→ pip 装 desktop 依赖 → npm install/build（dist gitignored 必须本地建）→ `build_exe.ps1 -Deploy` 重打 exe。
 

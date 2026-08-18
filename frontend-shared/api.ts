@@ -13,6 +13,7 @@ import type {
   SettingsData,
   SettingsUpdate,
   PipelinePreset,
+  PipelineConfigInfo,
   DetectionData,
   DetectionRange,
   FaceData,
@@ -294,6 +295,11 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+  },
+
+  /* 当前生效管道配置（含 embedding_profile 档位，v0.34候选 档位感知） */
+  getPipelineConfig() {
+    return request<PipelineConfigInfo>(`${BASE}/settings/pipeline`);
   },
 
   /* ── 参数预设（v0.22） ── */

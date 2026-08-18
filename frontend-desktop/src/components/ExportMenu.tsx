@@ -38,7 +38,7 @@ export function ExportMenu({
     <div className="w-full" onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
         <h3 className="font-bold text-gray-900 text-sm">导出视频片段或节点</h3>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+        <button onClick={onClose} className="modal-x" title="关闭" aria-label="关闭">
           <IconClose />
         </button>
       </div>

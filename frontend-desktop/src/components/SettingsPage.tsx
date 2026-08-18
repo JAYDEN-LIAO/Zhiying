@@ -11,7 +11,7 @@
 
 import { useState, useEffect } from "react";
 import { api } from "../services/api";
-import type { EncodeProfileSettingsUpdate, PipelinePreset, PipelineSettingsUpdate, SettingsData, SettingsUpdate } from "../types";
+import type { EncodeProfileSettingsUpdate, PipelineConfigInfo, PipelinePreset, PipelineSettingsUpdate, SettingsData, SettingsUpdate } from "../types";
 import { fmtFullDate } from "../utils/helpers";
 
 const PROVIDER_IDS = ["dashscope", "deepseek"] as const;
@@ -20,7 +20,7 @@ const PROVIDER_HINT: Record<string, string> = {
   deepseek: "摘要生成（summary，vlm_llm 模式）",
 };
 
-/* ── 编码三档模板：显示名 + 推荐参数（placeholder 显示）── */
+/* ── 编码三档模板：显示名 + 推荐参数（placeholder 显示，按 embedding_profile 档位切换）── */
 const ENCODE_PROFILE_IDS = ["fast", "balanced", "precise"] as const;
 const ENCODE_PROFILE_LABEL: Record<string, string> = {
   fast: "快速 fast",
@@ -32,6 +32,14 @@ const ENCODE_PROFILE_RECOMMEND: Record<string, { encode_width: number; encode_he
   balanced: { encode_width: 504, encode_height: 336, encode_batch_size: 512 },
   precise: { encode_width: 672, encode_height: 448, encode_batch_size: 256 },
 };
+/* 2b 低显存档推荐（与后端 config_loader._2B_ENCODE_DEFAULTS 对齐）*/
+const ENCODE_PROFILE_RECOMMEND_2B: Record<string, { encode_width: number; encode_height: number; encode_batch_size: number }> = {
+  fast: { encode_width: 336, encode_height: 224, encode_batch_size: 256 },
+  balanced: { encode_width: 448, encode_height: 224, encode_batch_size: 256 },
+  precise: { encode_width: 448, encode_height: 336, encode_batch_size: 128 },
+};
+const profileRecommendFor = (profile?: string) =>
+  profile === "2b" ? ENCODE_PROFILE_RECOMMEND_2B : ENCODE_PROFILE_RECOMMEND;
 const strOr = (v: number | undefined): string => (v != null ? String(v) : "");
 
 /* ── 统一样式（模块级，供各子组件复用） ── */
@@ -241,7 +249,7 @@ function PipelineSection({
 
 /* ═══════════════════════ 模型参数：① 编码 ═══════════════════════ */
 function EncoderSection({
-  pipelineEdit, setPipelineEdit, profileEdit, setProfileEdit, saving, onSave,
+  pipelineEdit, setPipelineEdit, profileEdit, setProfileEdit, saving, onSave, profileInfo,
 }: {
   pipelineEdit: PipelineSettingsUpdate;
   setPipelineEdit: (p: PipelineSettingsUpdate) => void;
@@ -249,11 +257,20 @@ function EncoderSection({
   setProfileEdit: (updater: (prev: Record<string, EncodeProfileSettingsUpdate>) => Record<string, EncodeProfileSettingsUpdate>) => void;
   saving: string | null;
   onSave: () => void;
+  profileInfo: PipelineConfigInfo | null;
 }) {
+  const profile = profileInfo?.embedding_profile || "8b";
+  const dim = profileInfo?.embedding_profiles?.[profile]?.dimension;
+  const recTable = profileRecommendFor(profile);
   return (
     <div className={cardCls + " xl:col-span-2"}>
-      <h3 className={cardTitleCls}>编码（Embedder）</h3>
-      <p className={cardDescCls}>三档编码模板可各调分辨率与批大小（placeholder 为推荐值）；参数面板选档 = 用该档值。分辨率 224-960，批大小 8-1024（8 倍数）</p>
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <h3 className={cardTitleCls}>编码（Embedder）</h3>
+        <span className="shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--color-accent-blue)]/10 text-[var(--color-accent-blue)]">
+          {profile === "2b" ? `当前档位 2B${dim ? ` · ${dim} 维` : ""}` : `当前档位 8B${dim ? ` · ${dim} 维` : ""}`}
+        </span>
+      </div>
+      <p className={cardDescCls}>三档编码模板可各调分辨率与批大小（placeholder 为{profile === "2b" ? "2B 档推荐值" : "推荐值"}）；参数面板选档 = 用该档值。分辨率 224-960，批大小 8-1024（8 倍数）</p>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -272,12 +289,16 @@ function EncoderSection({
             <select value={pipelineEdit.quantization}
               onChange={(e) => setPipelineEdit({ ...pipelineEdit, quantization: e.target.value })}
               className={inputCls}>
-              <option value="">跟随 config.yaml</option>
+              <option value="">跟随 {profile === "2b" ? "2B 档默认（none）" : "config.yaml"}</option>
               <option value="none">none（FP16，质量最好）</option>
-              <option value="8bit">8bit（~8GB，推荐 24GB）</option>
-              <option value="4bit">4bit（~4GB，最省）</option>
+              <option value="8bit">8bit（{profile === "2b" ? "~2GB，可选省显存" : "~8GB，24GB 卡推荐"}）</option>
+              <option value="4bit">4bit（{profile === "2b" ? "~1GB，最省" : "~4GB，最省"}）</option>
             </select>
-            <p className={hintCls}>⚠️ 需重启后端；8bit/4bit 需 pip install bitsandbytes</p>
+            {profile === "2b" ? (
+              <p className={hintCls}>⚠️ 需重启后端；2B 模型约 4GB，本机 8GB 显存默认 none 即可，无需量化；8bit/4bit 需 pip install bitsandbytes</p>
+            ) : (
+              <p className={hintCls}>⚠️ 需重启后端；8bit/4bit 需 pip install bitsandbytes</p>
+            )}
           </div>
         </div>
 
@@ -290,7 +311,7 @@ function EncoderSection({
             </div>
             {ENCODE_PROFILE_IDS.map((pid) => {
               const p = profileEdit[pid] ?? {};
-              const rec = ENCODE_PROFILE_RECOMMEND[pid];
+              const rec = recTable[pid];
               return (
                 <div key={pid} className="grid grid-cols-[96px_1fr_1fr_1fr] gap-2 px-3 py-2 border-t border-[var(--color-border-light)]">
                   <span className="text-xs font-medium text-[var(--color-text-secondary)] self-center">{ENCODE_PROFILE_LABEL[pid]}</span>
@@ -456,6 +477,8 @@ export function SettingsPage({
 }) {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(true);
+  // 当前 vector embedding 档位（GET /settings/pipeline）——设置页按 2b/8b 显示徽标与推荐
+  const [profileInfo, setProfileInfo] = useState<PipelineConfigInfo | null>(null);
 
   // 编辑态
   const [apiKeyEdit, setApiKeyEdit] = useState<Record<string, string>>({});
@@ -593,6 +616,10 @@ export function SettingsPage({
 
   useEffect(() => { load(); }, []);
   useEffect(() => { loadPresets(); }, []);
+  // 档位信息（独立于 settings.json 的当前生效配置）：设置页据此显示档位徽标 + 按档推荐
+  useEffect(() => {
+    api.getPipelineConfig().then(setProfileInfo).catch(() => setProfileInfo(null));
+  }, []);
 
   const flash = (type: "ok" | "err", text: string) => {
     setMsg({ type, text });
@@ -693,6 +720,7 @@ export function SettingsPage({
                 setProfileEdit={setProfileEdit}
                 saving={saving}
                 onSave={saveEncode}
+                profileInfo={profileInfo}
               />
               <DetectionSection
                 pipelineEdit={pipelineEdit}

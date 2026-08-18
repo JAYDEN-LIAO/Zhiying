@@ -49,7 +49,12 @@ async def get_pipeline_config() -> APIResponse[dict]:
         for cat in ("transcriber", "detector", "face", "plate", "ocr")
     }
 
+    # 当前 vector embedding 档位（8b=4096 / 2b=2048）——前端设置页据此显示档位徽标 + 按档推荐
+    embedding_profile = str(config.get("embedding_profile", "8b")).strip().lower()
+
     return APIResponse(data={
+        "embedding_profile": embedding_profile,
+        "embedding_profiles": config.get("embedding_profiles", {}),
         "default_encode_profile": pipeline_cfg.get("default_encode_profile", "balanced"),
         "encode_profiles": pipeline_cfg.get("encode_profiles", {}),
         "use_nvdec": pipeline_cfg.get("use_nvdec", False),

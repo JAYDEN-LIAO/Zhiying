@@ -20,6 +20,9 @@ storage:
 #   2b: Qwen3-VL-Embedding-2B → 2048 维（低显存机器平替）
 #   换档 = 改 embedding_profile + 重启后端；⚠️ 维度不同，换档后需重建向量库
 #   （每个库的 pgvector 列维度在建表时定死，4096/2048 不能混存）。
+#   ⚠️ 2b 档启动时自动套用轻量编码/量化默认（见 core/config_loader._2B_ENCODE_DEFAULTS：
+#      balanced 448×224/256、precise 448×336/128、quantization none）——8GB 机器直跑 8b
+#      取向模板（504×336/512 等）偏重；用户在设置页手动保存的编码/量化永远优先。
 embedding_profile: 8b
 embedding_profiles:
   8b: { model: "models/Qwen/Qwen3-VL-Embedding-8B", dimension: 4096 }

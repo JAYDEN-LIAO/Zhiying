@@ -14,6 +14,30 @@ export function fmtDuration(sec: number | null): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+/* 复制文本到剪贴板：navigator.clipboard（安全上下文）→ execCommand 兜底（pywebview http 非安全上下文仍可用）。返回是否成功。 */
+export async function copyText(text: string): Promise<boolean> {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fall through */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 /* 后端 created_at 存 UTC（datetime.now(timezone.utc)），API 通常带 "Z" 偏移；
    个别路径（新记录默认值）可能不带偏移 → 无偏移时按 UTC 解析（补 Z）。 */
 export function parseUtcIso(iso: string): Date {

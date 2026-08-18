@@ -383,7 +383,7 @@ export function ParameterPanel({
         <h2 className="font-bold text-slate-800 text-base">
           {batchCount ? `批量解析（${batchCount} 个文件）` : "参数设置"}
         </h2>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+        <button onClick={onClose} className="modal-x" title="关闭" aria-label="关闭">
           <IconClose />
         </button>
       </div>

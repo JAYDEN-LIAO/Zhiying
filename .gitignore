@@ -9,6 +9,7 @@ build/
 # ── 桌面壳构建产物（PyInstaller onedir 部署到项目根，不入库）──
 /_internal/
 /智影桌面端.exe
+*.lnk
 
 # ── Test / coverage ──
 .pytest_cache/

@@ -368,7 +368,7 @@ function CaseContent({
           <div className="g-modal" style={{ maxWidth: "70vw" }} onClick={(e) => e.stopPropagation()}>
             <div className="g-card-hd">
               <span className="g-card-tt">{previewImg.name}</span>
-              <button className="g-btn g-btn-sm" onClick={() => setPreviewImg(null)}>×</button>
+              <button className="modal-x" onClick={() => setPreviewImg(null)} title="关闭" aria-label="关闭">×</button>
             </div>
             <div className="p-4 flex items-center justify-center bg-gray-50" style={{ minHeight: 320 }}>
               <img src={api.getAssetFileUrl(group.groupId, previewImg.id)} alt={previewImg.name}
@@ -635,7 +635,7 @@ export function FileLibrary() {
           <div className="g-modal" style={{ width: 440 }}>
             <div className="g-card-hd">
               <span className="g-card-tt">新建案例</span>
-              <button className="g-btn g-btn-sm" onClick={() => setShowNewGroup(false)}>×</button>
+              <button className="modal-x" onClick={() => setShowNewGroup(false)} title="关闭" aria-label="关闭">×</button>
             </div>
             <div className="p-5 space-y-4">
               <div>
@@ -667,7 +667,7 @@ export function FileLibrary() {
           <div className="g-modal" style={{ width: 440 }}>
             <div className="g-card-hd">
               <span className="g-card-tt">编辑案例</span>
-              <button className="g-btn g-btn-sm" onClick={() => setEditCase(null)}>×</button>
+              <button className="modal-x" onClick={() => setEditCase(null)} title="关闭" aria-label="关闭">×</button>
             </div>
             <div className="p-5 space-y-4">
               <div>
