@@ -191,6 +191,11 @@ Write-Ok "已选档位: $script:EmbeddingProfile"
 $proxyInput = Read-Host "输入代理地址（如 http://127.0.0.1:7897；能直连可留空）"
 $script:Proxy = ($proxyInput.Trim() -replace '/$', '')
 if ($script:Proxy) { Write-Ok "代理: $script:Proxy" } else { Write-Warn "未使用代理（国内源直连，GitHub 组件可能失败）" }
+# 保存代理到 data/proxy.txt，供 update.bat 复用（机器相关，data/ 已 gitignore）
+$proxyFile = Join-Path $ProjectRoot "data\proxy.txt"
+New-Item -ItemType Directory -Force -Path (Split-Path $proxyFile) | Out-Null
+[System.IO.File]::WriteAllText($proxyFile, [string]$script:Proxy)
+Write-Ok "代理已保存到 data/proxy.txt（update.bat 自动读取）"
 
 # ───────────────────────────── 1/6 Python ─────────────────────────────
 Write-Step "1/6" "Python + FFmpeg 环境"
