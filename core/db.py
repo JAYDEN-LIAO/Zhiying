@@ -49,6 +49,9 @@ async def init_db():
     - 执行增量迁移（ALTER TABLE ADD COLUMN）
     - 清理：删除废弃列、枚举类型、tsvector 触发器
     """
+    # ⚠️ 必须 import models 注册 ORM 表：否则独立调用 init_db()（安装器 6/6 / 脚本）
+    # 时 Base.metadata 为空，create_all 建不出任何表，后续迁移报 relation does not exist
+    from core import models  # noqa: F401
     async with engine.begin() as conn:
         # ── 扩展 ──
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))

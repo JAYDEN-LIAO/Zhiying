@@ -315,14 +315,43 @@ def download_face(retries: int) -> None:
 
 
 def download_plate(retries: int) -> None:
-    """预热 HyperLPR3：直接调用其 initialization() 下载并解压模型包。"""
+    """预热 HyperLPR3：自行下载 + 解压，绕开 hyperlpr3 initialization() 的 Windows 文件锁 bug。
+
+    根源（deploy_feedback §15）：hyperlpr3.config.configuration.down_model_zip 里
+    `f = zipfile.ZipFile(name, "r")` 解压后从不 f.close() 就 os.remove(name)——Windows 下
+    打开的读句柄默认拒绝删除 → WinError 32（文件被占用）。此处用 `with` 确保 zipfile/requests
+    句柄全部关闭后再删 zip。URL/版本取自 hyperlpr3 自身 settings（不硬编码）。
+    """
     if plate_complete():
         print("[skip] HyperLPR3 models already complete")
         return
 
     def _do():
-        from hyperlpr3.config.configuration import initialization
-        initialization()
+        import requests
+        import zipfile
+        from hyperlpr3.config import settings as _s
+
+        base = Path.home() / ".hyperlpr3"
+        base.mkdir(parents=True, exist_ok=True)
+        version = _s._MODEL_VERSION_
+        url = os.path.join(_s._ONLINE_URL_, version) + ".zip"
+        zip_path = base / f"{version}.zip"
+
+        # 下载（with 确保 requests 响应关闭、连接不泄漏；国内源强制直连）
+        with _NoProxy(), requests.get(url, stream=True, timeout=(30, 120)) as resp:
+            resp.raise_for_status()
+            with zip_path.open("wb") as out:
+                for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        out.write(chunk)
+
+        # 解压（with 确保 zipfile 句柄关闭后再删 zip —— 根治 WinError 32）
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(base)
+
+        # 此刻无任何句柄占用 zip，Windows 可正常删除
+        zip_path.unlink(missing_ok=True)
+
         if not plate_complete():
             raise RuntimeError("download finished but HyperLPR3 models are incomplete")
 

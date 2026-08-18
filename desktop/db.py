@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -74,14 +75,36 @@ def db_available(root: Path) -> bool:
 
 def _run(cmd: list[str], log, timeout: int) -> bool:
     log.write("$ " + " ".join(str(c) for c in cmd))
+    tmp_path = None
     try:
+        # 用临时文件代替 PIPE：pg_ctl 启动的 postgres 会继承 PIPE 写端，
+        # `for line in proc.stdout` 会永不 EOF 卡死（postgres 一直持有管道）。文件方案不受影响。
+        tmp = tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8")
+        tmp_path = tmp.name
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            cmd, stdout=tmp, stderr=subprocess.STDOUT, text=True,
             creationflags=_NO_WINDOW,
         )
-        for line in proc.stdout:
-            log.write(line.rstrip())
-        proc.wait(timeout=timeout)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            log.write(f"[timeout] {timeout}s 超时，已终止")
+            tmp.close()
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            return False
+        tmp.close()
+        # 用系统本地编码读（pg_ctl 输出是系统代码页，如中文 Windows = GBK；UTF-8 会解码成乱码再触发 print 编码错误）
+        with open(tmp_path, errors="replace") as f:
+            for line in f:
+                log.write(line.rstrip())
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
         return proc.returncode == 0
     except Exception as e:
         log.write(f"执行失败: {e}")
@@ -110,8 +133,9 @@ def _ensure_pg_conf(root: Path) -> None:
         return
     port = _pg_port(root)
     with conf.open("a", encoding="utf-8") as f:
+        # ⚠️ 路径必须用正斜杠：PG 配置解析器把单引号里的 `\` 当转义剥掉（'D:\data' → 'D:data'）
         f.write(f"\n{marker}\nlisten_addresses = '127.0.0.1'\nport = {port}\n"
-                f"unix_socket_directories = '{data}'\n")
+                f"unix_socket_directories = '{data.as_posix()}'\n")
 
 
 def _psql(root: Path, port: int, db: str, sql: str) -> subprocess.CompletedProcess:

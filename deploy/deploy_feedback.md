@@ -281,6 +281,7 @@
 | 10 | **modelscope 走代理反而慢/更易断** | 国内 CDN 绕国际代理。**修复**：`_NoProxy` 上下文强制直连（`NO_PROXY=*`），并删掉脚本里对 modelscope 的代理回退 |
 | 11 | **winget 直调 EAP 隐患** | `& winget` 无 `2>&1`。**修复**：加 `2>&1` |
 | 12 | **lap 未显式声明** | BoT-SORT 匹配依赖（§13 建议过）。**修复**：`requirements.txt` 加 `lap>=0.5.12` |
+| 13 | **plate 模型 WinError 32 文件锁** | hyperlpr3 `down_model_zip` 解压后**不 `f.close()` 就 `os.remove(zip)`**——Windows 下打开的读句柄默认拒绝删除 → WinError 32（文件被占用）→ 解压失败、重试死循环。**修复**：`download_models.py` 绕开 `initialization()`，自行下载+解压（`with requests` 关连接 + `with zipfile` 关句柄**后再删 zip**），URL/版本取 hyperlpr3 自身 settings |
 
 **已验证**：PS5.1 解析 0 错 / `download_models.py` `py_compile` + `--verify-only` / onnxruntime 桩在 throwaway venv 实测（**注意**：Python 3.13 venv 的 `site.getsitepackages()[0]` 返回根目录，必须用 `sysconfig.get_paths()["purelib"]`）/ modelscope 文件直链支持 Range(206) 可续传。
 
@@ -288,4 +289,19 @@
 
 ---
 
-*最后更新：2026-08-17（安装器实战加固：BOM/提权cwd/onnxruntime桩/modelscope续传直连 等 12 项）*
+## 16. 内嵌 PostgreSQL 启动/建表修复（2026-08-18）— 4 个根因
+
+装机走到 6/6 时内嵌 PG 启动失败 + init_db 建表失败，逐层定位出 4 个独立根因（都在 `desktop/db.py` / `core/db.py`）：
+
+| # | 问题 | 根因 / 修复 |
+|---|---|---|
+| 1 | **PG 启动报 `could not create lock file "D:zhiyingdatapgdata/..."`** | `_ensure_pg_conf` 把 `unix_socket_directories = '{data}'`（反斜杠路径）写进 postgresql.conf——**PG 配置解析器把单引号里的 `\` 当转义符剥掉** → 路径变 `D:zhiyingdatapgdata` → 建 socket 锁文件失败。**修复**：写配置用 `data.as_posix()`（正斜杠，Windows PG 认） |
+| 2 | **start_db 卡死（postgres 已起但调用不返回）** | `_run` 用 `for line in proc.stdout` 读管道——**pg_ctl 启动的 postgres 继承管道写端 → 永不 EOF → 死等**。**修复**：`_run` 改用临时文件接收输出 + `proc.wait(timeout)` |
+| 3 | **`_run` 报 `'gbk' codec can't encode character`** | 读临时文件用 `encoding="utf-8"`，但 pg_ctl 输出是**系统代码页（中文 Windows=GBK）** → 误解码成乱码再触发 print 编码错误。**修复**：用系统本地编码读（`open(tmp, errors="replace")`） |
+| 4 | **init_db 报 `relation "scenes" does not exist`（建 0 表）** | 安装器 6/6 独立调用 `init_db()` 时 **`core/models` 未 import → `Base.metadata` 空 → create_all 建不出表** → 第一条迁移 ALTER 失败（应用正常启动会经路由 import models 才注册）。**修复**：`core/db.py` 的 `init_db()` 开头 `from core import models` 注册表 |
+
+**验证**：start_db → True、wait_db_healthy → True、init_db → 15 张表。全流程可跑通。
+
+---
+
+*最后更新：2026-08-18（内嵌 PG 启动/建表 4 根因修复：反斜杠转义 / PIPE 继承死等 / GBK 编码 / init_db 空 metadata）*
