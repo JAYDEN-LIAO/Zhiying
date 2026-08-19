@@ -17,10 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.interfaces import VideoContext
 from core.models import Video, Scene, VideoStatus
 from core.cancellation import is_cancelled
-from core.status_tracker import StatusTracker
+from core.status_tracker import StatusTracker, STAGE2_OPS
 from core.prompt_loader import get_prompt_loader
 from core.repository import (
     bulk_insert_scenes, save_video_artifacts, bulk_update_scenes_captions,
+    bulk_update_scenes_entities,
     bulk_insert_frame_detections, bulk_insert_tracks,
     bulk_insert_track_embeddings,
     bulk_insert_face_identities, bulk_insert_face_detections,
@@ -338,7 +339,10 @@ class PipelineEngine:
                         await result
 
             await self._log_task("管道完成")
-            await tracker.mark_completed()
+            # v0.35 两阶段：精析族 ops 实际运行过 → COMPLETED；仅摘要（quick）→ READY_FOR_ANALYSIS
+            # 词汇对齐前端 ProcessStatus 枚举（PRE_PROCESSING/READY_FOR_ANALYSIS/ANALYZING/COMPLETED/FAILED）
+            stage2_ran = any(n in STAGE2_OPS for n in enabled_names)
+            await tracker.mark_completed(process_status="COMPLETED" if stage2_ran else "READY_FOR_ANALYSIS")
             logger.info("[Pipeline] video %s completed", self.video.id)
 
         except Exception as e:
@@ -365,9 +369,12 @@ class PipelineEngine:
         v = self.video
         need_summary = 'summary' in added_modalities
         need_search = 'search_index' in added_modalities
+        need_detection = 'detection' in added_modalities  # v0.35 阶段二：精细化精析
+        prev_process_status = v.process_status  # 失败时还原（阶段二中断不把已完成视频停在 ANALYZING）
 
         try:
-            await self._set_processing()
+            # v0.35 阶段二 → ANALYZING；其余增量 → PRE_PROCESSING（词汇对齐前端 ProcessStatus 枚举）
+            await self._set_processing("ANALYZING" if need_detection else "PRE_PROCESSING")
 
             # 确定需要运行的操作子集
             op_names: set[str] = set()
@@ -385,6 +392,16 @@ class PipelineEngine:
                 else:
                     # 纯搜索路径: search_encode（自抽帧+编码，不依赖 scene）
                     op_names.add("search_encode")
+            if need_detection and v.detection_enabled and v.vision_enabled:
+                # 阶段二：detection → track_encode / face / plate
+                # 硬约束：face/plate 消费 detection 内存态 track_best_frames（不落库），必须一起重跑
+                op_names.add("detection")
+                if v.search_index_enabled:
+                    op_names.add("track_encode")
+                if v.face_enabled:
+                    op_names.add("face")
+                if v.plate_enabled:
+                    op_names.add("plate")
 
             enabled = [op for op in ALL_OPERATIONS if op.name in op_names]
 
@@ -407,8 +424,25 @@ class PipelineEngine:
                         )
                     await session.commit()
 
-            # 从 DB 加载已有场景（need_summary 或 need_search 且摘要开启时）
-            if (need_summary or need_search) and v.summary_enabled:
+            # 清理旧检测/精析产物（阶段二重跑防残留叠加）
+            if need_detection:
+                from sqlalchemy import delete as sa_delete
+                from core.models import FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection
+                async with self.db_session_factory() as session:
+                    await session.execute(sa_delete(FrameDetection).where(FrameDetection.video_id == v.id))
+                    await session.execute(sa_delete(Track).where(Track.video_id == v.id))
+                    await session.execute(sa_delete(TrackEmbedding).where(TrackEmbedding.video_id == v.id))
+                    await session.execute(sa_delete(FaceDetection).where(FaceDetection.video_id == v.id))
+                    await session.execute(sa_delete(FaceIdentity).where(FaceIdentity.video_id == v.id))
+                    await session.execute(sa_delete(PlateDetection).where(PlateDetection.video_id == v.id))
+                    # 场景实体聚合待重算，先清空
+                    await session.execute(
+                        update(Scene).where(Scene.video_id == v.id).values(entities=None)
+                    )
+                    await session.commit()
+
+            # 从 DB 加载已有场景（need_summary / need_search / need_detection 且摘要开启时）
+            if (need_summary or need_search or need_detection) and v.summary_enabled:
                 await self._load_scenes_from_db()
 
             await self._load_plugins(enabled)
@@ -454,10 +488,13 @@ class PipelineEngine:
                 logger.info("[Incremental] video %s deleted, aborting", self.video.id)
                 return
 
+            if need_detection:
+                await self._persist_detection_only()
             if need_summary:
                 await self._persist_summary_only()
 
-            await tracker.mark_completed()
+            # v0.35 阶段二完成 → COMPLETED；摘要/搜索增量保持原阶段状态
+            await tracker.mark_completed(process_status="COMPLETED" if need_detection else None)
             logger.info("[Incremental] video %s completed", self.video.id)
 
         except Exception as e:
@@ -469,7 +506,11 @@ class PipelineEngine:
                 await session.execute(
                     update(Video)
                     .where(Video.id == self.video.id)
-                    .values(status=VideoStatus.COMPLETED, error_message=f"Incremental failed: {e}")
+                    .values(
+                        status=VideoStatus.COMPLETED,
+                        process_status=prev_process_status,
+                        error_message=f"Incremental failed: {e}",
+                    )
                 )
                 await session.commit()
 
@@ -595,6 +636,64 @@ class PipelineEngine:
                     for s in self.ctx.scenes
                 ])
 
+    async def _persist_detection_only(self) -> None:
+        """阶段二精析落库：检测/追踪/人脸/车牌 + 场景实体聚合 + 产物计数。
+
+        不碰 scenes/summary（阶段一已落）；检测表已由 run_incremental 清理过，直接重插。
+        """
+        async with self.db_session_factory() as session:
+            # 检测实体聚合到场景（scenes 已从 DB 重载）
+            _aggregate_scene_entities(self.ctx.scenes, self.ctx.frame_detections)
+
+            # 检测 + 追踪
+            if self.ctx.frame_detections:
+                await bulk_insert_frame_detections(session, self.ctx.frame_detections)
+                await bulk_insert_tracks(session, self.ctx.tracks)
+
+            # track 嵌入
+            if self.ctx.track_embeddings:
+                await bulk_insert_track_embeddings(
+                    session, self.video.id, self.ctx.track_embeddings,
+                )
+
+            # 人脸识别 — 先插 identities 拿 DB ID 映射，再回填 detections
+            if self.ctx.face_identities:
+                label_to_id = await bulk_insert_face_identities(session, self.ctx.face_identities)
+                if self.ctx.face_detections and label_to_id:
+                    for fd in self.ctx.face_detections:
+                        db_id = label_to_id.get(fd.pop("_label", ""))
+                        if db_id is not None:
+                            fd["identity_id"] = db_id
+                await bulk_insert_face_detections(session, self.ctx.face_detections)
+            elif self.ctx.face_detections:
+                await bulk_insert_face_detections(session, self.ctx.face_detections)
+
+            # 车牌识别
+            if self.ctx.plate_detections:
+                await bulk_insert_plate_detections(session, self.ctx.plate_detections)
+
+            # 场景实体聚合回写（阶段二前已清空）
+            if self.ctx.scenes:
+                await bulk_update_scenes_entities(session, self.video.id, [
+                    {"scene_index": s.scene_index, "entities": s.entities}
+                    for s in self.ctx.scenes
+                ])
+
+            # 阶段二产物计数（详情抽屉统计条数据源）
+            await session.execute(
+                update(Video)
+                .where(Video.id == self.video.id)
+                .values(
+                    analysis_entities={
+                        "face": len(self.ctx.face_identities) if self.ctx.face_identities else 0,
+                        "plate": len(self.ctx.plate_detections) if self.ctx.plate_detections else 0,
+                        "ocr": 0,
+                    },
+                    analysis_progress=1.0,
+                )
+            )
+            await session.commit()
+
     async def _load_scenes_from_db(self) -> None:
         """从 DB 加载已有场景数据到 ctx.scenes（增量用）。"""
         from sqlalchemy import select
@@ -627,8 +726,12 @@ class PipelineEngine:
 
         logger.info("[Pipeline] Loaded %d scenes from DB for incremental run", len(self.ctx.scenes))
 
-    async def _set_processing(self) -> None:
-        """修改视频状态为 processing，并记录处理开始时间（任务中心「耗时」）。"""
+    async def _set_processing(self, process_status: str = "PRE_PROCESSING") -> None:
+        """修改视频状态为 processing，并记录处理开始时间（任务中心「耗时」）。
+
+        process_status: v0.35 两阶段状态 — run() 阶段一 PRE_PROCESSING，
+        run_incremental 阶段二 ANALYZING（词汇对齐前端 ProcessStatus 枚举）。
+        """
         from datetime import datetime, timezone
         async with self.db_session_factory() as session:
             await session.execute(
@@ -637,6 +740,7 @@ class PipelineEngine:
                 .values(
                     status=VideoStatus.PROCESSING,
                     processing_started_at=datetime.now(timezone.utc),
+                    process_status=process_status,
                 )
             )
             await session.commit()

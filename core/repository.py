@@ -46,6 +46,7 @@ async def create_video(session: AsyncSession, video_dto: VideoCreate) -> Video:
         plate_enabled=video_dto.plate_enabled,
         summary_enabled=video_dto.summary_enabled,
         summary_mode=video_dto.summary_mode,
+        parse_mode=video_dto.parse_mode,
         search_index_enabled=video_dto.search_index_enabled,
         sample_fps=video_dto.sample_fps,
         segment_threshold=video_dto.segment_threshold,
@@ -304,6 +305,10 @@ async def bulk_insert_scenes(
         logger.warning("[Repo] Empty scenes_list for video %s, skipping", video_id)
         return
 
+    # 全量重跑管道前先清该视频旧场景，防重复累积（scenes 无 (video_id, scene_index)
+    # 唯一约束，旧代码重跑会插重复行 → thumbnail 查询 one_or_none 抛 MultipleResultsFound）
+    await session.execute(delete(Scene.__table__).where(Scene.video_id == video_id))
+
     scene_rows = [
         {
             "video_id": video_id,
@@ -379,6 +384,38 @@ async def bulk_update_scenes_captions(
     except Exception:
         await session.rollback()
         logger.exception("[Repo] Failed to bulk update scene captions for video %s", video_id)
+        raise
+
+
+async def bulk_update_scenes_entities(
+    session: AsyncSession,
+    video_id: uuid.UUID,
+    scenes_list: list[dict],
+) -> None:
+    """批量更新已有场景的 entities（阶段二精析后把检测聚合回写，不新增行）。
+
+    scenes_list 每项: {scene_index, entities}。按 (video_id, scene_index) 匹配。方法内 commit。
+    """
+    if not scenes_list:
+        return
+
+    try:
+        stmt = (
+            update(Scene.__table__)
+            .where(Scene.video_id == video_id)
+            .where(Scene.scene_index == bindparam("_scene_index"))
+            .values(entities=bindparam("entities"))
+        )
+        rows = [
+            {"_scene_index": s.get("scene_index"), "entities": s.get("entities")}
+            for s in scenes_list
+        ]
+        await session.execute(stmt, rows)
+        await session.commit()
+        logger.info("[Repo] Bulk updated %d scene entities for video %s", len(rows), video_id)
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to bulk update scene entities for video %s", video_id)
         raise
 
 
@@ -646,7 +683,9 @@ async def list_file_roots(session: AsyncSession) -> list[dict]:
         current_row AS (
             SELECT r2.id, COALESCE(r2.file_id, r2.id) AS fkey,
                    r2.status_lower AS cur_status,
-                   r2.progress AS cur_progress, r2.summary AS cur_summary, r2.version_no AS cur_vno
+                   r2.progress AS cur_progress, r2.summary AS cur_summary, r2.version_no AS cur_vno,
+                   r2.process_status AS cur_process_status, r2.parse_mode AS cur_parse_mode,
+                   r2.analysis_progress AS cur_analysis_progress, r2.analysis_entities AS cur_analysis_entities
             FROM ranked r2
             WHERE r2.cur_rn = 1
         )
@@ -655,6 +694,10 @@ async def list_file_roots(session: AsyncSession) -> list[dict]:
                cr.cur_progress AS current_progress,
                cr.cur_summary AS current_summary,
                cr.cur_vno AS current_version_no,
+               cr.cur_process_status AS process_status,
+               cr.cur_parse_mode AS parse_mode,
+               cr.cur_analysis_progress AS analysis_progress,
+               cr.cur_analysis_entities AS analysis_entities,
                wc.versions_count
         FROM ranked r
         LEFT JOIN with_cnt wc ON wc.fkey = COALESCE(r.file_id, r.id)

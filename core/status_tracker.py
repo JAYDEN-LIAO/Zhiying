@@ -17,6 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.models import Video, VideoStatus
 
 
+# 阶段二（精细化精析）ops：整体进度之外独立推进 analysis_progress（v0.35 两阶段处理流）
+STAGE2_OPS = {"detection", "track_encode", "face", "plate"}
+
+
 class StatusTracker:
     """异步状态更新器 — Pipeline 进度持久化。
 
@@ -137,15 +141,32 @@ class StatusTracker:
             if description is None:
                 description = self._descriptions.get(phase, phase)
 
+            # 阶段二进度：精析族 ops 的加权子进度 → analysis_progress（0~1）
+            # 阶段一期间精析 op 未启用/未更新 → 列表空 → 不写（保持 NULL）
+            stage2_ops = [n for n in self._op_progress if n in STAGE2_OPS]
+            analysis_progress: float | None = None
+            if stage2_ops:
+                wsum = sum(self._weights.get(n, 0) for n in stage2_ops) or 1.0
+                analysis_progress = (
+                    sum(self._weights.get(n, 0) * self._op_progress[n] for n in stage2_ops) / wsum
+                )
+
             async with self.db_session_factory() as session:
+                values: dict = {
+                    "progress": round(self._overall_progress, 4),
+                    "status_detail": description,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+                if analysis_progress is not None:
+                    values["analysis_progress"] = round(analysis_progress, 4)
+                # 标准一次跑：精析 op 有实际进度 → 阶段一→阶段二 状态翻转
+                # （阶段一期间精析 op 进度恒 0，不会误翻）；词汇对齐前端 ProcessStatus 枚举
+                if any(self._op_progress.get(n, 0) > 0 for n in STAGE2_OPS):
+                    values["process_status"] = "ANALYZING"
                 await session.execute(
                     update(Video)
                     .where(Video.id == self.video_id)
-                    .values(
-                        progress=round(self._overall_progress, 4),
-                        status_detail=description,
-                        updated_at=datetime.now(timezone.utc),
-                    )
+                    .values(**values)
                 )
                 await session.commit()
 
@@ -158,11 +179,11 @@ class StatusTracker:
 
     # ── 最终状态 ──
 
-    async def mark_completed(self) -> None:
-        """标记视频处理完成。"""
+    async def mark_completed(self, process_status: str | None = None) -> None:
+        """标记视频处理完成。process_status: 两阶段状态（v0.35），默认 COMPLETED。"""
         async with self._lock:
             self._overall_progress = 1.0
-            await self._set_status(VideoStatus.COMPLETED, progress=1.0)
+            await self._set_status(VideoStatus.COMPLETED, progress=1.0, process_status=process_status)
             if self._on_progress is not None:
                 try:
                     await self._on_progress(1.0, "处理完成")
@@ -180,6 +201,7 @@ class StatusTracker:
                         status=VideoStatus.FAILED,
                         error_message=error,
                         progress=round(self._overall_progress, 4),
+                        process_status="FAILED",
                         updated_at=datetime.now(timezone.utc),
                     )
                 )
@@ -190,15 +212,18 @@ class StatusTracker:
                 except Exception:
                     pass
 
-    async def _set_status(self, status: VideoStatus, progress: float) -> None:
+    async def _set_status(self, status: VideoStatus, progress: float, process_status: str | None = None) -> None:
         async with self.db_session_factory() as session:
+            values: dict = {
+                "status": status,
+                "progress": progress,
+                "updated_at": datetime.now(timezone.utc),
+            }
+            if process_status is not None:
+                values["process_status"] = process_status
             await session.execute(
                 update(Video)
                 .where(Video.id == self.video_id)
-                .values(
-                    status=status,
-                    progress=progress,
-                    updated_at=datetime.now(timezone.utc),
-                )
+                .values(**values)
             )
             await session.commit()

@@ -24,7 +24,7 @@ from core.schemas import (
     FileItem, VersionInfo,
 )
 from core.config_loader import load_config
-from core.models import Video, VideoGroup, VideoStatus
+from core.models import Video, VideoGroup, VideoStatus, PipelineTask
 from core.repository import (
     create_video, get_video_with_relations, get_video_by_external_file_id,
     list_videos, delete_video,
@@ -88,6 +88,7 @@ async def upload_video(
     plate_enabled: bool = Form(False),
     summary_enabled: bool = Form(True),
     summary_mode: str = Form("vlm_llm"),
+    parse_mode: str = Form("standard"),  # v0.35 解析模式: quick(仅摘要)/standard(标准检索)
     search_index_enabled: bool = Form(True),
     sample_fps: float = Form(1.0),
     segment_threshold: float = Form(0.5),
@@ -137,6 +138,7 @@ async def upload_video(
         plate_enabled=plate_enabled,
         summary_enabled=summary_enabled,
         summary_mode=summary_mode,
+        parse_mode=parse_mode,
         search_index_enabled=search_index_enabled,
         sample_fps=sample_fps,
         segment_threshold=segment_threshold,
@@ -242,6 +244,7 @@ async def upload_videos_batch(
     plate_enabled: bool = Form(False),
     summary_enabled: bool = Form(True),
     summary_mode: str = Form("vlm_llm"),
+    parse_mode: str = Form("standard"),  # v0.35 解析模式: quick(仅摘要)/standard(标准检索)
     search_index_enabled: bool = Form(True),
     sample_fps: float = Form(1.0),
     segment_threshold: float = Form(0.5),
@@ -357,10 +360,13 @@ async def analyze_videos_batch(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
-    """批量解析：精确启动指定视频的管道（仅 pending），不触发组同步。
+    """批量解析：精确启动指定视频的处理，不触发组同步。
 
-    用于案例库「批量解析」——勾选谁就启动谁，同组其余 pending 兄弟保持不动
-    （区别于 PUT /params 的组同步行为）。params 可选：提供则整批应用该参数集。
+    - pending → 启动完整管道（阶段一+二按 parse_mode）
+    - completed → v0.35 阶段二：触发精细化精析（detection/face/plate），走 incremental 不重跑阶段一
+    用于案例库「批量解析」与详情抽屉「启动智能分析」——勾选谁就启动谁，
+    同组其余 pending 兄弟保持不动（区别于 PUT /params 的组同步行为）。
+    params 可选：提供则整批应用该参数集。
     """
     params = payload.params
     started = 0
@@ -372,7 +378,27 @@ async def analyze_videos_batch(
             skipped += 1
             continue
         status_val = video.status.value if hasattr(video.status, "value") else video.status
-        if status_val != "pending":
+        # 防重复入队：该视频已有 queued/running 任务则跳过（批量重复触发保护）
+        dup = await db.execute(
+            select(PipelineTask.id)
+            .where(
+                PipelineTask.video_id == video.id,
+                PipelineTask.status.in_(["queued", "running"]),
+            )
+            .limit(1)
+        )
+        if dup.scalar_one_or_none() is not None:
+            skipped += 1
+            continue
+        if status_val == "completed":
+            # v0.35 阶段二：已完成视频触发精细化精析（detection/face/plate），
+            # 走 incremental 不重跑阶段一；quick 完成态升级 standard 属此路径
+            task_type = "incremental"
+            task_payload = {"video_id": str(video.id), "added_modalities": ["detection"]}
+        elif status_val == "pending":
+            task_type = "pipeline"
+            task_payload = {"video_id": str(video.id)}
+        else:
             skipped += 1
             continue
         if params is not None:
@@ -389,6 +415,7 @@ async def analyze_videos_batch(
                     plate_enabled=params.plate_enabled,
                     summary_enabled=params.summary_enabled,
                     summary_mode=params.summary_mode,
+                    parse_mode=params.parse_mode,
                     search_index_enabled=params.search_index_enabled,
                     language=params.language,
                     sample_fps=params.sample_fps,
@@ -398,8 +425,8 @@ async def analyze_videos_batch(
                     encode_profile=params.encode_profile,
                 )
             )
-        await request.app.state.pipeline_queue.enqueue("pipeline", {"video_id": str(video.id)})
-        await append_task_log(db, video.id, "批量解析：任务入队")
+        await request.app.state.pipeline_queue.enqueue(task_type, task_payload)
+        await append_task_log(db, video.id, "批量解析：任务入队" if task_type == "pipeline" else "精细化分析：任务入队")
         started += 1
 
     logger.info("[AnalyzeBatch] requested=%d started=%d skipped=%d", len(payload.video_ids), started, skipped)
@@ -438,6 +465,7 @@ async def reuse_video(
         plate_enabled=payload.plate_enabled,
         summary_enabled=payload.summary_enabled,
         summary_mode=payload.summary_mode,
+        parse_mode=payload.parse_mode,
         search_index_enabled=payload.search_index_enabled,
         sample_fps=payload.sample_fps,
         segment_threshold=payload.segment_threshold,
@@ -494,6 +522,7 @@ async def update_video_params(
                 plate_enabled=payload.plate_enabled,
                 summary_enabled=payload.summary_enabled,
                 summary_mode=payload.summary_mode,
+                parse_mode=payload.parse_mode,
                 search_index_enabled=payload.search_index_enabled,
                 language=payload.language,
                 sample_fps=payload.sample_fps,
@@ -545,6 +574,7 @@ async def update_video_params(
                         plate_enabled=payload.plate_enabled,
                         summary_enabled=payload.summary_enabled,
                         summary_mode=payload.summary_mode,
+                        parse_mode=payload.parse_mode,
                         search_index_enabled=payload.search_index_enabled,
                         language=payload.language,
                         sample_fps=payload.sample_fps,
@@ -864,7 +894,7 @@ async def get_thumbnail(
             SceneModel.scene_index == scene_index,
         )
     )
-    row = result.one_or_none()
+    row = result.first()
     if row is None or not row.keyframe_path:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
     if not os.path.exists(row.keyframe_path):
@@ -1057,6 +1087,11 @@ async def list_files(db: AsyncSession = Depends(get_db)) -> APIResponse[list[Fil
         current_progress=float(r.get("current_progress") or 0.0),
         current_summary=r.get("current_summary"),
         versions_count=int(r.get("versions_count") or 1),
+        # v0.35 两阶段处理流 + 解析模式（当前版本行透出）
+        process_status=r.get("process_status"),
+        parse_mode=r.get("parse_mode"),
+        analysis_progress=r.get("analysis_progress"),
+        analysis_entities=r.get("analysis_entities"),
     ) for r in rows]
     return APIResponse(data=items)
 

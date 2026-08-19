@@ -5,6 +5,22 @@
 /* ── Enums ── */
 
 export type VideoStatus = "pending" | "processing" | "completed" | "failed";
+
+/* ── 两阶段处理流状态（v0.36）──
+   阶段一：入库预处理（转码 / 关键帧 / 摘要，自动）
+   阶段二：精细化分析（人脸 / OCR / 车牌，手动触发） */
+export type ProcessStatus =
+  | "PRE_PROCESSING"      // 预处理中：正在转码或生成摘要（只能等待）
+  | "READY_FOR_ANALYSIS"  // 待精析：摘要已生成、可播放，未做深度识别
+  | "ANALYZING"           // 分析中：人脸 / OCR / 车牌识别进行中
+  | "COMPLETED"           // 已完成：所有选定算法执行完毕
+  | "FAILED";             // 失败：处理出错
+
+/* ── 解析模式（v0.37 上传与配置阶段：模式分流）──
+   quick    极速概览模式：仅文本摘要，低算力，极快
+   standard 标准检索模式：提取人 / 车 / 字结构化数据，中/高算力，较慢 */
+export type ParseMode = "quick" | "standard";
+
 export type ContentType = "general" | "meeting" | "surveillance" | "text_recognition" | "custom";
 
 /* ── Format / Proxy status (v0.13) ── */
@@ -264,6 +280,12 @@ export interface FileItem {
   current_progress: number;
   current_summary: { one_liner?: string } | null;
   versions_count: number;
+  /* ── 两阶段处理流（v0.36；后端新增字段，缺失时前端降级推断）── */
+  process_status?: ProcessStatus | null;
+  analysis_progress?: number | null;   // 阶段二进度 0~100
+  analysis_entities?: { face?: number; plate?: number; ocr?: number } | null;
+  /* ── 解析模式（v0.37；极速概览 / 标准检索，上传配置阶段选择，缺失时按 entities 推断）── */
+  parse_mode?: ParseMode | null;
 }
 
 export interface VersionInfo {
