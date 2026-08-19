@@ -20,14 +20,14 @@ from core.models import Scene, FrameEmbedding, Chunk
 from core.search import (
     frame_vector_search, chunk_vector_search,
     text_vector_search, track_vector_search,
-    plate_text_search,
+    plate_text_search, ocr_text_search,
 )
 
 logger = logging.getLogger(__name__)
 
-_PRECISION_ORDER = {"frame": 0, "chunk": 1, "text": 2, "label": 3, "track": 2, "plate": 4}
+_PRECISION_ORDER = {"frame": 0, "chunk": 1, "text": 2, "label": 3, "track": 2, "plate": 4, "ocr": 4}
 _CLUSTER_GAP = 4.0  # 帧聚类最大间隔（秒）
-_PATH_WEIGHT = {"frame": 1.0, "chunk": 0.7, "text": 0.85, "label": 1.0, "track": 0.9, "plate": 0.95}
+_PATH_WEIGHT = {"frame": 1.0, "chunk": 0.7, "text": 0.85, "label": 1.0, "track": 0.9, "plate": 0.95, "ocr": 0.95}
 
 
 class SearchEngine:
@@ -64,7 +64,7 @@ class SearchEngine:
             统一格式的搜索结果列表，按 similarity 降序。
         """
         if search_types is None:
-            search_types = ["frame", "chunk", "text", "label", "track", "plate"]
+            search_types = ["frame", "chunk", "text", "label", "track", "plate", "ocr"]
 
         # 文本查询 → 向量编码（仅一次，三条路共享）
         vec = image_vec
@@ -86,6 +86,8 @@ class SearchEngine:
             tasks.append(self._track_search(vec, video_ids, top_k * 2))
         if "plate" in search_types and query:
             tasks.append(self._plate_search(query, video_ids, top_k * 2))
+        if "ocr" in search_types and query:
+            tasks.append(self._ocr_search(query, video_ids, top_k * 2))
 
         if not tasks:
             return []
@@ -233,6 +235,35 @@ class SearchEngine:
             "thumbnail_url": thumb,
         }
 
+    async def _ocr_search(
+        self,
+        query: str,
+        video_ids: list[str] | None,
+        limit: int,
+    ) -> list[dict]:
+        """OCR 文字精确检索 — ILIKE/编辑距离，定位到帧时间戳。"""
+        async with self.db_session_factory() as session:
+            results = await ocr_text_search(
+                session, query, limit=limit, video_ids=video_ids,
+            )
+        return [self._ocr_to_dict(o, sim) for o, sim in results]
+
+    @staticmethod
+    def _ocr_to_dict(ocr, sim: float) -> dict:
+        bbox = ocr.bbox
+        return {
+            "video_id": str(ocr.video_id),
+            "scene_index": 0,
+            "precise_start": ocr.timestamp_sec,
+            "precise_end": None,
+            "precision_level": "ocr",
+            "similarity": float(sim),
+            "source": "ocr",
+            "text": ocr.text,
+            "bbox": bbox,
+            "thumbnail_url": None,  # 文字框裁剪后置（v1 走 scene polyfill 缩略图）
+        }
+
     async def _label_search(
         self,
         query: str,
@@ -274,6 +305,7 @@ class SearchEngine:
         frames: list[dict] = []
         tracks: list[dict] = []
         plates: list[dict] = []
+        ocrs: list[dict] = []
         others: list[dict] = []
         for ranked in ranked_lists:
             for item in ranked:
@@ -283,6 +315,8 @@ class SearchEngine:
                     tracks.append(item)
                 elif item.get("source") == "plate":
                     plates.append(item)
+                elif item.get("source") == "ocr":
+                    ocrs.append(item)
                 else:
                     others.append(item)
 
@@ -339,6 +373,15 @@ class SearchEngine:
                 plate_map[key] = dict(item)
                 plate_map[key]["match_paths"] = [item.get("source", "plate")]
 
+        # ── OCR 独立去重：scene_index 恒 0（无法进 other 的 scene 桶），
+        #    按 (video_id, exact timestamp) 唯一；同帧多命中保留最高相似度 ──
+        ocr_map: dict[tuple[str, float], dict] = {}
+        for item in ocrs:
+            key = (item["video_id"], round(float(item.get("precise_start") or 0.0), 2))
+            if key not in ocr_map or item.get("similarity", 0) > ocr_map[key].get("similarity", 0):
+                ocr_map[key] = dict(item)
+                ocr_map[key]["match_paths"] = [item.get("source", "ocr")]
+
         # ── 非帧结果：去重叠 + 按 scene 合并 ──
         other_map: dict[tuple[str, int], dict] = {}
         for item in others:
@@ -356,7 +399,7 @@ class SearchEngine:
                 if src not in ex.get("match_paths", []):
                     ex.setdefault("match_paths", []).append(src)
 
-        merged = clusters + list(other_map.values()) + list(plate_map.values()) + list(track_map.values())
+        merged = clusters + list(other_map.values()) + list(plate_map.values()) + list(ocr_map.values()) + list(track_map.values())
         # 通用置信度（v0.30）: 校准分数 = 相似度 × 路径权重，作为跨路径统一可排行的置信度。
         # frame 1.0 > text 0.85 > chunk 0.7，确保高精度结果优先；前端据此显示与排序一致的置信度。
         for item in merged:
@@ -381,8 +424,8 @@ class SearchEngine:
             }
 
         for item in merged:
-            if item.get("source") == "track":
-                continue  # track 自有独立元数据，无需 scene 信息
+            if item.get("source") in ("track", "ocr"):
+                continue  # track/ocr 自有独立元数据（文字/bbox/时间戳），无需 scene 信息
             key = (item["video_id"], item["scene_index"])
             s = scenes_map.get(key)
             if s:

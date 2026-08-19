@@ -18,6 +18,7 @@ import type {
   DetectionRange,
   FaceData,
   PlateData,
+  OcrData,
   FaceSearchResult,
   VideoMetadata,
   ProxyStatus,
@@ -213,7 +214,7 @@ export const api = {
       body: JSON.stringify({
         query,
         video_ids: options?.video_ids,
-        search_types: options?.search_types ?? ["frame", "chunk", "text", "track", "label", "plate"],
+        search_types: options?.search_types ?? ["frame", "chunk", "text", "track", "label", "plate", "ocr"],
         top_k: options?.top_k ?? 20,
         min_similarity: options?.min_similarity ?? 0.3,
       }),
@@ -282,6 +283,11 @@ export const api = {
   /* ── Plate data ── */
   fetchPlateData(videoId: string) {
     return request<PlateData>(`${BASE}/videos/${videoId}/plate/data`);
+  },
+
+  /* ── OCR 画面文字数据 (v0.34) ── */
+  fetchOcrData(videoId: string) {
+    return request<OcrData>(`${BASE}/videos/${videoId}/ocr/data`);
   },
 
   /* ── Settings ── */

@@ -38,6 +38,7 @@
 | **磁盘 25GB+** | torch ~2.6GB + 模型（embedding 8B 16GB / 2B ~4GB）+ 其余 |
 | **代理（可选）** | 安装时交互输入；GitHub / PyTorch / 模型源被墙需走代理，国内源直连 |
 | **WebView2 Runtime** | 桌面端 exe（pywebview）必需。过旧（<151，pywebview 6.2.1 需 ICoreWebView2Environment10）会**静默白屏**（实测 runtime 100 报 COM E_NOINTERFACE）——`install1` 自动检测并下载 Evergreen 安装器更新到最新，失败仅告警不中断（服务器后端不依赖） |
+| **OCR DirectML（v0.34）** | OCR 用 RapidOCR(PP-OCRv3 ONNX) + onnxruntime-DirectML。DML 版 onnxruntime **不在 requirements 直装**，由 `install1`(setup_windows.ps1) / `install2` 幂等装到 **`vendor/ort_dml`**（隔离子进程用，不污染人脸/车牌依赖的全局 onnxruntime-gpu/CUDA）。`rapidocr-onnxruntime` 在 requirements 常规安装 |
 
 ---
 

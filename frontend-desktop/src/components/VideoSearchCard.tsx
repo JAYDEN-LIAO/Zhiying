@@ -63,6 +63,7 @@ export function VideoSearchCard({
   const [error, setError] = useState<string | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [plateMode, setPlateMode] = useState(false);
+  const [ocrMode, setOcrMode] = useState(false);
   // 检索范围（案例-文件）：current=当前视频 / custom=选中文件集
   const [scope, setScope] = useState<"current" | "custom">("custom");
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
@@ -128,6 +129,7 @@ export function VideoSearchCard({
   const detInScope = scopeVideos.some(v => v.detection_enabled);
   const faceDisabled = !detInScope || !scopeVideos.some(v => v.face_enabled);
   const plateDisabled = !detInScope || !scopeVideos.some(v => v.plate_enabled);
+  const ocrDisabled = !detInScope || !scopeVideos.some(v => v.ocr_enabled);
   // 语义/图搜可用性：全库（null）恒可用；具体范围需范围内有视频开搜索索引
   const semanticReady = searchVideoIds == null || scopeVideos.some(v => v.search_index_enabled);
 
@@ -228,11 +230,13 @@ export function VideoSearchCard({
         video_ids: searchVideoIds ?? undefined,
         // 车牌模式：只跑车牌路 + 提高上限（「一个字列出所有相关」）
         ...(plateMode ? { search_types: ["plate"], top_k: 100 } : {}),
+        // OCR 文字模式：只跑文字路，精确串匹配聊天/字幕原文
+        ...(ocrMode ? { search_types: ["ocr"], top_k: 100 } : {}),
       });
       setResults(data.results ?? []); setHasSearched(true);
     } catch (err) { setError(err instanceof Error ? err.message : "搜索失败"); }
     finally { setSearching(false); }
-  }, [query, searchVideoIds, plateMode]);
+  }, [query, searchVideoIds, plateMode, ocrMode]);
 
   const resultCount = results.length;
 
@@ -267,6 +271,7 @@ export function VideoSearchCard({
           <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${semanticReady ? "bg-blue-50 text-blue-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title="语义搜索（文本/场景/物体）">语义</span>
           <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${semanticReady ? "bg-teal-50 text-teal-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title="通用图搜（以图搜图）">图搜</span>
           <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${!plateDisabled ? "bg-amber-50 text-amber-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title={plateDisabled ? "范围内无已开启车牌识别的视频，车牌搜索不可用" : "车牌识别"}>车牌</span>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${!ocrDisabled ? "bg-cyan-50 text-cyan-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title={ocrDisabled ? "范围内无已开启文字识别的视频，文字搜索不可用" : "画面文字"}>文字</span>
           <span className={`text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 transition-colors ${!faceDisabled ? "bg-purple-50 text-purple-600 font-semibold" : "bg-gray-100 text-gray-400"}`} title={faceDisabled ? "范围内无已开启人脸识别的视频，人脸搜索不可用" : "人脸识别"}>人脸</span>
         </div>
       </div>
@@ -362,16 +367,16 @@ export function VideoSearchCard({
             <input
               className="block w-full h-full box-border rounded-lg border border-gray-300 bg-gray-50 text-gray-900 outline-none transition-colors
                 focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100 placeholder:text-gray-400
-                text-[12px] py-0 pr-[104px]"
+                text-[12px] py-0 pr-[132px]"
               type="text" value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              placeholder={plateMode ? "输入车牌任意字符模糊搜索…" : "场景 物体 车牌 动作 人物..."}
+              placeholder={plateMode ? "输入车牌任意字符模糊搜索…" : ocrMode ? "输入聊天/字幕原话精确搜索…" : "场景 物体 车牌 动作 人物..."}
             />
 
           {/* Plate fuzzy-search mode toggle（未开车牌处理则置灰；联合搜索时范围内有任一视频开车牌即可） */}
           <button
-            onClick={() => { if (!plateDisabled || plateMode) setPlateMode(v => !v); }}
+            onClick={() => { if (!plateDisabled || plateMode) { setPlateMode(v => !v); setOcrMode(false); } }}
             title={plateDisabled ? "未开启车牌处理" : (plateMode ? "退出车牌模糊搜索模式" : "车牌模糊搜索：输入任意字符/数字，列出所有相关车牌")}
             className={`absolute right-7 top-1/2 -translate-y-1/2 h-6 min-w-6 px-1 rounded flex items-center justify-center text-[11px] font-bold transition-colors ${
               plateDisabled ? "bg-gray-200 text-gray-600"
@@ -382,10 +387,23 @@ export function VideoSearchCard({
             牌
           </button>
 
+          {/* OCR 文字搜索 toggle（v0.34：与车牌互斥，只跑 ocr 路精确串匹配） */}
+          <button
+            onClick={() => { if (!ocrDisabled || ocrMode) { setOcrMode(v => !v); setPlateMode(false); } }}
+            title={ocrDisabled ? "未开启文字识别" : (ocrMode ? "退出文字搜索模式" : "文字搜索：输入聊天/字幕原话，精确定位到帧")}
+            className={`absolute right-[52px] top-1/2 -translate-y-1/2 h-6 min-w-6 px-1 rounded flex items-center justify-center text-[11px] font-bold transition-colors ${
+              ocrDisabled ? "bg-gray-200 text-gray-600"
+                : ocrMode ? "bg-cyan-400 text-white"
+                : "bg-cyan-50 text-cyan-600 hover:bg-cyan-100"
+            }`}
+          >
+            文
+          </button>
+
           {/* Image search (inside input right) — 顺序最左 */}
           <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageSearch} className="hidden" />
           <button onClick={() => imageInputRef.current?.click()} disabled={imageSearching}
-            className="absolute right-[52px] top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-teal-50 hover:bg-teal-100 text-teal-600 flex items-center justify-center transition-colors disabled:opacity-50" title="以图搜图">
+            className="absolute right-[76px] top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-teal-50 hover:bg-teal-100 text-teal-600 flex items-center justify-center transition-colors disabled:opacity-50" title="以图搜图">
             {imageSearching ? <span className="inline-block w-3 h-3 border-2 border-teal-300 border-t-teal-500 rounded-full animate-spin" /> : (
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
@@ -405,9 +423,9 @@ export function VideoSearchCard({
             )}
           </button>
 
-            {/* Text search spinner（在车牌按钮左侧，避免盖住右侧按钮） */}
+            {/* Text search spinner（在最右侧按钮左侧，避免盖住右侧按钮） */}
             {searching && (
-              <span className="absolute right-[80px] top-1/2 -translate-y-1/2 inline-block w-3.5 h-3.5 border-2 border-teal-300 border-t-teal-500 rounded-full animate-spin" />
+              <span className="absolute right-[108px] top-1/2 -translate-y-1/2 inline-block w-3.5 h-3.5 border-2 border-teal-300 border-t-teal-500 rounded-full animate-spin" />
             )}
           </div>
         </div>
@@ -498,17 +516,20 @@ export function VideoSearchCard({
           {results.map((item, idx) => {
             const isTrack = item.precision_level === "track";
             const isPlate = item.precision_level === "plate";
-            // v0.30: 统一标签——图搜=图片搜索(teal)；语义按精度分=画面定位(蓝)/物体定位(玫红)/车牌搜索(琥珀)
+            const isOcr = item.precision_level === "ocr";
+            // v0.30: 统一标签——图搜=图片搜索(teal)；语义按精度分=画面定位(蓝)/物体定位(玫红)/车牌搜索(琥珀)；OCR=文字搜索(青)
             const typeLabel = searchMode === "image" ? "图片搜索"
               : isTrack ? "物体定位"
               : isPlate ? "车牌搜索"
+              : isOcr ? "文字搜索"
               : "画面定位";
             const typeClass = searchMode === "image" ? "image"
               : isTrack ? "track"
               : isPlate ? "plate"
+              : isOcr ? "ocr"
               : "semantic";
             return (
-              <div key={isTrack ? `track-${item.video_id}-${item.track_id}` : isPlate ? `plate-${item.video_id}-${item.track_id}-${idx}` : (item.scene_id || idx)}
+              <div key={isTrack ? `track-${item.video_id}-${item.track_id}` : isPlate ? `plate-${item.video_id}-${item.track_id}-${idx}` : isOcr ? `ocr-${item.video_id}-${item.precise_start}-${idx}` : (item.scene_id || idx)}
                 className="sr-item"
                 onClick={() => {
                   // v0.19: 跨视频跳转（搜索结果自己发起的切换 → 抑制搜索卡重置，保留结果与范围）
@@ -549,10 +570,15 @@ export function VideoSearchCard({
                         <span className="sr-tag">{zhLabel(item.class_name, item.display_seq ?? item.track_id!)}</span>
                       ) : isPlate && item.plate_text ? (
                         <span className="sr-tag" style={{ color: "#d97706" }}>{item.plate_text}</span>
+                      ) : isOcr && item.ocr_text ? (
+                        <span className="sr-tag" style={{ color: "#0891b2" }}>{item.ocr_text}</span>
                       ) : null}
                       {item.similarity != null && <span className="sr-score">{Math.round((item.confidence ?? item.similarity) * 100)}%</span>}
                       <span className={`sr-type ${typeClass}`}>{typeLabel}</span>
                     </div>
+                    {isOcr && item.ocr_text && (
+                      <div className="sr-text" style={{ color: "#155e75", WebkitLineClamp: "unset" }}>{item.ocr_text}</div>
+                    )}
                     <div className="sr-acts relative z-20" onClick={(e) => e.stopPropagation()}>
                       {isTrack && item.track_id != null ? (
                         trackExportOpen !== item.track_id ? (
@@ -592,7 +618,7 @@ export function VideoSearchCard({
         {!hasSearched && !searching && !imageSearching && !faceSearching && !error && (
           <div className="flex flex-col items-center justify-center py-8 text-gray-400">
             <svg className="w-8 h-8 mb-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-            <p className="text-xs">{plateMode ? "输入车牌任意字符，列出所有相关车牌" : "输入关键词搜索视频画面"}</p>
+            <p className="text-xs">{plateMode ? "输入车牌任意字符，列出所有相关车牌" : ocrMode ? "输入聊天/字幕原话，精确匹配画面文字" : "输入关键词搜索视频画面"}</p>
           </div>
         )}
       </div>

@@ -65,6 +65,16 @@ ENCODE_PROFILE_NUMERIC_SPEC: dict[str, dict] = {
 }
 ENCODE_PROFILE_NAMES = ("fast", "balanced", "precise")
 
+# OCR 参数规格（v0.34）— 设置页 pipeline.ocr 覆盖 plugins.ocr.params 时按此钳制。
+# max_width 的 recommend 置 0（表示未限制/原分辨率）；空串/非法值走 clamp 失败 → 保持 config 默认。
+OCR_NUMERIC_SPEC: dict[str, dict] = {
+    "sample_fps":  {"cast": float, "min": 0.05, "max": 5.0,  "step": 0.05, "recommend": 1.0},
+    "conf_thresh": {"cast": float, "min": 0.1,  "max": 1.0,  "step": 0.05, "recommend": 0.5},
+    "max_width":   {"cast": int,   "min": 320,  "max": 7680, "step": 1,    "recommend": 0},
+    "scale":       {"cast": float, "min": 0.5,  "max": 4.0,  "step": 0.1,  "recommend": 1.0},
+}
+OCR_LANGS = ("ch", "en", "japan", "korean")
+
 
 def clamp_param(spec: dict, value) -> float | int | None:
     """把数值钳制到 [min, max] 并按 step 取整；无法转换返回 None。"""
@@ -268,6 +278,23 @@ def _apply_settings_overrides(cfg: dict) -> None:
         v = str(pipeline["quantization"]).strip().lower()
         if v in ("none", "8bit", "4bit"):
             cfg.setdefault("plugins", {}).setdefault("embedder", {}).setdefault("params", {})["quantization"] = v
+
+    # ── OCR 参数（v0.34）→ plugins.ocr.params（工厂唯一消费点）──
+    #   载体 settings.json `pipeline.ocr` 嵌套子键（仿 encode_profiles），
+    #   合并落点 plugins.ocr.params → OcrRunner / 工厂实例化直接读取生效值。
+    ocr_pipeline = pipeline.get("ocr")
+    if isinstance(ocr_pipeline, dict):
+        ocr_params = cfg.setdefault("plugins", {}).setdefault("ocr", {}).setdefault("params", {})
+        for key, spec in OCR_NUMERIC_SPEC.items():
+            if ocr_pipeline.get(key) is None:
+                continue
+            v = clamp_param(spec, ocr_pipeline[key])
+            if v is not None:
+                ocr_params[key] = v
+        if ocr_pipeline.get("lang") is not None:
+            v = str(ocr_pipeline["lang"]).strip().lower()
+            if v in OCR_LANGS:
+                ocr_params["lang"] = v
 
 
 # ── embedding_profile 内置默认档位（config.yaml 未声明 embedding_profiles 时兜底）──

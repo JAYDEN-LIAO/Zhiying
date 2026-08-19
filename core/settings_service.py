@@ -28,6 +28,8 @@ from core.config_loader import (
     PIPELINE_NUMERIC_SPEC,
     ENCODE_PROFILE_NUMERIC_SPEC,
     ENCODE_PROFILE_NAMES,
+    OCR_NUMERIC_SPEC,
+    OCR_LANGS,
     clamp_param,
 )
 
@@ -233,6 +235,19 @@ def get_current_settings() -> dict:
         "segment_threshold": saved_pipeline.get("segment_threshold") or pipeline_cfg.get("segment_threshold", 0.5),
     }
 
+    # ── OCR 参数（v0.34）：settings.json pipeline.ocr 覆盖 > config plugins.ocr.params ──
+    ocr_cfg = config.get("plugins", {}).get("ocr", {}).get("params", {}) or {}
+    saved_ocr = saved_pipeline.get("ocr") or {}
+    saved_max_width = saved_ocr.get("max_width")
+    pipeline_result["ocr"] = {
+        "sample_fps": saved_ocr.get("sample_fps") or ocr_cfg.get("sample_fps", 1.0),
+        "conf_thresh": saved_ocr.get("conf_thresh") or ocr_cfg.get("conf_thresh", 0.5),
+        "max_width": saved_max_width if saved_max_width is not None
+                     else ocr_cfg.get("max_width"),
+        "scale": saved_ocr.get("scale") or ocr_cfg.get("scale", 1.0),
+        "lang": saved_ocr.get("lang") or ocr_cfg.get("lang", "ch"),
+    }
+
     return {
         "api_keys": api_keys_result,
         "providers": providers_result,
@@ -354,6 +369,33 @@ def update_settings(payload: dict) -> bool:
             val = pipeline.get(key)
             if isinstance(val, bool):
                 data.setdefault("pipeline", {})[key] = val
+
+        # ── OCR 参数（v0.34）：嵌套 `pipeline.ocr`，合并进既有覆盖（不覆盖未发送字段）。
+        #    数值按 OCR_NUMERIC_SPEC 钳制；空串或多位=删除该字段覆盖（回退 config 默认）。 ──
+        ocr_in = pipeline.get("ocr")
+        if isinstance(ocr_in, dict):
+            stored_ocr = data.setdefault("pipeline", {}).setdefault("ocr", {})
+            for key, spec in OCR_NUMERIC_SPEC.items():
+                val = ocr_in.get(key)
+                if val is None:
+                    continue  # 未发送 → 保持已有覆盖
+                if isinstance(val, str) and not val.strip():
+                    stored_ocr.pop(key, None)
+                    continue
+                clamped = clamp_param(spec, val)
+                if clamped is None:
+                    logger.warning("[Settings] Invalid ocr.%s: %r", key, val)
+                    continue
+                stored_ocr[key] = clamped
+            lang = ocr_in.get("lang")
+            if lang is not None:
+                v = str(lang).strip().lower()
+                if v in OCR_LANGS:
+                    stored_ocr["lang"] = v
+                elif v:
+                    logger.warning("[Settings] Invalid ocr.lang: %r", lang)
+            if not stored_ocr:
+                data.get("pipeline", {}).pop("ocr", None)
 
         # ── 兼容清理：旧的扁平编码键（v0.22 前 schema）已废弃，保存时清除 ──
         for legacy in ("encode_batch_size", "encode_width", "encode_height"):

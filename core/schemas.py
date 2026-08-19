@@ -186,9 +186,9 @@ class PipelineParams(BaseModel):
         if not self.vision_enabled and not self.audio_enabled:
             raise ValueError("视觉分析和音频转录至少开启一个")
 
-        # 至少一个功能
-        if not self.search_index_enabled and not self.summary_enabled:
-            raise ValueError("搜索索引和智能摘要至少开启一个")
+        # 至少一个功能（v0.34 起 OCR 独立模式是第三态：仅 OCR 提取，不建索引、不摘要）
+        if not self.search_index_enabled and not self.summary_enabled and not self.ocr_enabled:
+            raise ValueError("搜索索引、智能摘要和文字识别至少开启一个")
 
         return self
 
@@ -349,6 +349,7 @@ class VideoListItem(BaseModel):
     # 参数展示字段（来自 Video ORM）
     audio_enabled: bool            = False
     caption_enabled: bool          = True
+    ocr_enabled: bool              = False
     detection_enabled: bool        = False
     detection_classes: list[str] | None = None
     face_enabled: bool             = False

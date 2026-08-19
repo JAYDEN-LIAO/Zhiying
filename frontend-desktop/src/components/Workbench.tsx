@@ -89,7 +89,7 @@ function WbStage({ player, timeline }: { player: React.ReactNode; timeline: Reac
 }
 
 /* ═══════════════ ③ 右摘要卡（摘要 ⇄ 历史） ═══════════════ */
-function WbSummary({ currentVideo }: { currentVideo: VideoResponse | null }) {
+function WbSummary({ currentVideo, onSeekTo }: { currentVideo: VideoResponse | null; onSeekTo: (start: number, end: number | null) => void }) {
   return (
     <div className="case-card h-full flex flex-col min-h-0 overflow-hidden">
       <div className="g-card-title">
@@ -106,7 +106,7 @@ function WbSummary({ currentVideo }: { currentVideo: VideoResponse | null }) {
         )}
       </div>
       <div className="flex-1 min-h-0 overflow-auto p-2">
-        <VideoSummaryCard video={currentVideo} />
+        <VideoSummaryCard video={currentVideo} onSeekTo={(ts) => onSeekTo(ts, null)} />
       </div>
     </div>
   );
@@ -593,7 +593,7 @@ export function Workbench() {
           {/* 右侧：摘要卡 + 分析卡（col 拖拽） */}
           <div className="h-full min-w-0">
             <SplitPane direction="col" initial={22} min={12} max={45} className="h-full w-full">
-              <WbSummary currentVideo={currentVideo} />
+              <WbSummary currentVideo={currentVideo} onSeekTo={handleSeekTo} />
               <WbAnalysis
                 detection={
                   /* 恒渲染 DetectionPanel：其内部已按 无视频/未开启/处理中/无数据 分态渲染「物体检测」标题（与摘要/搜索卡一致） */

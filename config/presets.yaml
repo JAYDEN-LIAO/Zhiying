@@ -44,12 +44,13 @@ presets:
     ocr_enabled: true          # 核心：OCR 文字提取
     caption_enabled: false     # 不需要 VLM 画面描述
     detection_enabled: false   # YOLO 插件未实现
-    search_index_enabled: true
+    search_index_enabled: false  # OCR 独立模式不构建向量索引（search_encode 需 search_index；
+                                 #   此处关闭 → DAG 退化为 duration→ocr，零索引开销）
     summary_enabled: false     # caption 关闭 → summary 强制关闭
 
 # 模块可用性：控制前端开关是否置灰
 # 当对应插件 backend 为 null 时，模块不可用
 module_availability:
   audio_enabled: false         # transcriber backend: null
-  ocr_enabled: false           # OCR backend: null
+  ocr_enabled: true            # OCR backend: paddleocr（点亮前端开关）
   detection_enabled: false     # YOLO 未实现

@@ -2,7 +2,7 @@
 
 ## Overview
 
-智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（15 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌识别 → 7 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。当前状态 **v0.34 候选**（未发版，累积中）。
+智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。当前状态 **v0.34 候选**（未发版，累积中）。
 
 关键锚点：
 - **生产部署**：10.0.0.176（systemd `zhiying.service`，8011）；发版 `./bump` → 服务器 `bash deploy.sh v<tag>`；运维参考 gitignored `docs/server.md`
@@ -21,17 +21,18 @@ run.py / deploy.sh         本地开发启动（config.yaml server 段绑端口�
 main.py                    FastAPI app, lifespan, shared embedder/detector（app.state, detector 懒加载）; 静态托管前端（ZHIYING_FRONTEND 切 frontend/ 或 frontend-desktop/ dist）
 api/                       路由（/api/v1 前缀；yunzhi_routes 根路径挂载）
   video_routes.py          Video CRUD + upload/upload/batch + register-external + stream(hevc 智能路由) + thumbnail + external-id 跳转 + reanalyze 版本化 + analyze-batch 批量解析 + 文件重命名
-  search_routes.py         语义搜索 + pipeline/operations
+  search_routes.py         语义搜索（含 OCR 第 8 路）+ pipeline/operations
+  ocr_routes.py            GET /videos/{id}/ocr/data 画面文字清单
   settings_routes.py       GET/PUT /settings + /settings/pipeline + /settings/presets（参数预设 CRUD/apply）
   tasks_routes.py          任务中心：/tasks + {id}/log + {id}/retry + {id}/report(md) + export-batch(zip) + TaskItem.queued
   groups_routes.py         案例/文件库：/groups CRUD + /files + /groups/{id}/assets 素材 + 素材重命名
   detection/face/plate/export/maintenance_routes.py  检测/人脸/车牌数据+缩略图; 导出 clip/frames/track/thumbnails; 存储清扫 sweep/storage
-core/                      models.py（15 表 ORM）· schemas.py（DTO）· repository.py（数据访问 + append_task_log）· search.py（6 路检索）· db.py（init_db 增量迁移 + pgvector）
+core/                      models.py（15 表 ORM）· schemas.py（DTO）· repository.py（数据访问 + append_task_log）· search.py（7 路检索：frame/chunk/text/track/plate/ocr/face）· db.py（init_db 增量迁移 + pgvector）
                            config_loader.py（config + .env + settings 覆盖 + 参数钳制 + captioner 自动降级 + embedding_profile 联动）· settings_service.py + presets_service.py（设置/参数预设）
                            storage_manager.py（删除清盘/孤儿清扫）· gpu_lock.py（全局 GPU 串行锁）· cancellation.py（删除处理中视频后管道优雅中止）· embedding_profile.py· paths.py· version.py（版本唯一来源）
-pipeline/                  engine.py（EventDrivenScheduler DAG 执行器）· operations.py（15 op 注册表）· search_engine.py（7 路并行召回 + 去重）
-  runners/                 15 个操作 runner：duration/segmentation/transcription/keyframe/alignment/caption/summary/frame_encode/chunk_encode/text_encode/detection/track_encode/face/plate/search_encode
-plugins/                   factory.py 动态加载；detector/yolo + face/insightface + plate/hyperlpr + embedder/qwen_vl_embedder（内存路径零磁盘 I/O，可按 bitsandbytes 量化）+ ocr/grounding 占位
+pipeline/                  engine.py（EventDrivenScheduler DAG 执行器）· operations.py（16 op 注册表）· search_engine.py（8 路并行召回 + 去重）
+  runners/                 16 个操作 runner：duration/segmentation/transcription/keyframe/alignment/caption/summary/frame_encode/chunk_encode/text_encode/detection/track_encode/face/plate/search_encode/ocr
+plugins/                   factory.py 动态加载；detector/yolo + face/insightface + plate/hyperlpr + ocr/rapidocr（PP-OCRv3 ONNX，DirectML 独立子进程，不占主 GPU/CUDA）+ embedder/qwen_vl_embedder（内存路径零磁盘 I/O，可按 bitsandbytes 量化）+ grounding 占位；easyocr.py 已移除（精度弱，OCR 定版 rapidocr）
 services/                  video_service（管道调度，并发由 PipelineQueue 队列 worker 池限流）· yunzhi_job_service（云智任务执行+回调）· format_service（probe/remux/proxy 两层格式兼容）· export_service· report_service
 utils/                     video_util（FFmpeg + stream_frames NVDEC MJPEG/cv2）· metadata（三级元数据）· video_source（来源规则引擎，文件头魔数嗅探监控品牌）
 desktop/                   桌面端 pywebview 壳：app.py/state/checks/db/backend/logs/webview_panel + build_exe.ps1（-Deploy 打纯壳 exe）；SPLASH 毛玻璃启动页；SplashApi 窗口控制/系统监控/启动日志；backend_launcher 统一拉起后端（封装字节码/源码双模式 + 父进程看门狗）
@@ -51,9 +52,9 @@ backend_launcher.py       后端子进程统一启动器（父进程看门狗，
   POST /videos/upload(/upload/batch 批量建组) → 存盘 → 同步 probe → 建记录(pending) → 异步 remux/proxy
   PUT /videos/{id}/params → 校验 → 入队 → PipelineEngine.run()(pending) / run_incremental()(completed, 仅 summary/search_index)
   DELETE /videos/{id} → 404 守卫 → 处理中可删(cancellation 登记, 管道 persist 前优雅中止) → 批量删行(DB 级联) → StorageManager 引用判定清盘
-  PipelineEngine 事件驱动 DAG(15 ops): duration → detection(生产者-消费者, 共享 NVDEC 流) → track_encode → face/plate; segmentation → keyframes → caption → summary → frame/text/chunk_encode
+  PipelineEngine 事件驱动 DAG(16 ops): duration → detection(生产者-消费者, 共享 NVDEC 流) → track_encode → face/plate; segmentation → keyframes → caption → summary → frame/text/chunk_encode; ocr(自抽高清帧, RapidOCR+DirectML 独立子进程) → ocr_detections
   GET /videos/{id}/stream?hevc_ok=: H.264 直出 / HEVC+hevc_ok→remuxed / 非 HEVC→proxy(按需懒生成, 永不主动)
-  搜索 6 路并行 + 图搜：frame/chunk/text/label/track/plate；详见 docs/arch.md
+  搜索 7 路并行 + 图搜：frame/chunk/text/label/track/plate/ocr；详见 docs/arch.md
 
 文件库 / 多版本 / 任务中心:
   一次解析 = 一个版本行(videos.file_id+version_no 版本链)；reanalyze 建新版本入队；analyze-batch 精确勾选批量解析
@@ -76,6 +77,7 @@ backend_launcher.py       后端子进程统一启动器（父进程看门狗，
 - **设置运行时生效**: 上传路由/FormatService/VideoService 均用新鲜 `load_config()`（勿用启动时 app.state.config 快照）；数值按 `PIPELINE_NUMERIC_SPEC`/`clamp_param` 钳制。
 - **参数预设**: `config/presets.json` 命名快照（不含存储路径/API key），套用写 settings.json 覆盖区；入仓库随 git 走，旧 data/presets.json 首次读取自动搬迁。
 - **全局 GPU 锁**: 所有 embedder encode_* / YOLO detect 前向必须 `async with gpu_lock`（并发前向会触发驱动硬故障蓝屏/卡死）；detection 攒批用 **128**（1024 长批持锁 ~20s 饿死 embedder）。锁只串行 GPU 计算，不串行 NVDEC/DB。
+- **OCR DML 隔离（v0.34 定版）**: onnxruntime 与 onnxruntime-directml 共用 `import onnxruntime` 名、进程内只能一份——RapidOCR 必须走**独立子进程**（`plugins/ocr/rapidocr_worker.py`，启动时 `sys.path` 前置 `vendor/ort_dml` 加载 DML），**绝不**在主进程改全局 onnxruntime（否则静默剥夺人脸/车牌 CUDA）。`onnxruntime-directml` 由 install1/install2 装到 `vendor/ort_dml`（不在 requirements 直装）。OCR 文本去重在 `pipeline/runners/ocr.py:_dedup_tracklets`：全局合并 + 固定文字抑制（static_frames/static_move_eps）+ 模糊合并（difflib 子串/相似）+ 阅读序。
 - **共享单实例**: embedder + detector 启动预载 app.state（detector 懒加载），业务经 `shared_detector` 注入，禁用 `load_plugin("detector"/"embedder")` 重复实例化；captioner 按需加载。
 - **全局任务队列**: PipelineQueue FIFO + N worker（N=max_concurrent_videos）+ `pipeline_tasks` 表持久化；所有管道触发点统一入队；重启恢复（queued 重入队 / running yunzhi 续跑 / running pipeline 标失败）；enqueue 未传 video_id 时自动从 payload 取。
 - **向量维度**: 随 embedding_profile（`EmbedVector()` 懒读全局维度，8b=4096 / 2b=2048）；所有向量列用它；人脸固定 `Vector(512)`。换档改 config + 重启，维度不同需重建向量库。**2b 档自动套用轻量编码/量化默认**（`_2B_ENCODE_DEFAULTS`）；`_ENCODING_OVERRIDDEN` 字段级让位用户设置页保存值。无 pgvector HNSW（4096 超 2000，demo 规模全扫描 <1ms）。
@@ -112,16 +114,16 @@ backend_launcher.py       后端子进程统一启动器（父进程看门狗，
 
 ## Status
 
-**已完成**：DAG(15 ops) / 4-path 编码 / 双层 ReID 检测跟踪 / 7 路搜索+图搜 / 人脸+车牌 / 双模式摘要(vlm_llm 默认) / 多格式 remux+proxy / 存储卫生 / 4 级参数+增量 / 系统设置+参数预设 / 全局 GPU 锁+共享实例 / 任务队列 / 文件库+多版本+任务中心 / 批量解析+重命名 / 云智嵌入 UI / 桌面端重构 + pywebview 壳 + 生产部署 / 档位感知设置 / 预设随 git 迁移。
+**已完成**：DAG(16 ops) / 4-path 编码 / 双层 ReID 检测跟踪 / 8 路搜索+图搜 / 人脸+车牌+OCR / **OCR 定版 RapidOCR+DirectML 子进程**（含去重/固定文字抑制/模糊合并/阅读序）/ 双模式摘要(vlm_llm 默认) / 多格式 remux+proxy / 存储卫生 / 4 级参数+增量 / 系统设置+参数预设 / 全局 GPU 锁+共享实例 / 任务队列 / 文件库+多版本+任务中心 / 批量解析+重命名 / 云智嵌入 UI / 桌面端重构 + pywebview 壳 + 生产部署 / 档位感知设置 / 预设随 git 迁移。
 
-**待办**：OCR 实现 / Grounding(Florence-2)。
+**待办**：Grounding(Florence-2)。
 
 ## Agent Instructions
 
 > Read this section last. It tells you how to behave in this project.
 
 1. **Don't modify `.env`** — contains API keys, gitignored.
-2. **Don't delete empty `__init__.py` / 空占位** — plugins/ocr/、plugins/grounding/ 是故意占位；`api/maintenance_routes.py` 等是活跃路由，NOT stubs。
+2. **Don't delete empty `__init__.py` / 空占位** — plugins/grounding/ 是故意占位（plugins/ocr/ 已实现，paddleocr.py 勿删）；`api/maintenance_routes.py` 等是活跃路由，NOT stubs。
 3. **Config-driven + operation registration**: 新感知模块 = `pipeline/runners/` 新 runner + `pipeline/operations.py` 一个 Operation；新插件后端注册到 `plugins/factory.py`（CATEGORY_MAP / _MODULE_OVERRIDES / _CLASS_OVERRIDES）。业务逻辑不硬编码模型引用。
 4. **Sync vs Async**: 插件接口全 async；同步模型推理必须 `asyncio.to_thread()`。
 5. **Search paths**: `config_loader.py` / `prompt_loader.py` 用 `Path(__file__).resolve().parent.parent` 定位项目根，保持惯例。

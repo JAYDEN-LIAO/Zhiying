@@ -24,7 +24,7 @@ from core.repository import (
     bulk_insert_frame_detections, bulk_insert_tracks,
     bulk_insert_track_embeddings,
     bulk_insert_face_identities, bulk_insert_face_detections,
-    bulk_insert_plate_detections,
+    bulk_insert_plate_detections, bulk_insert_ocr_detections,
 )
 from plugins.factory import load_plugin
 from pipeline.operations import ALL_OPERATIONS
@@ -325,6 +325,8 @@ class PipelineEngine:
                 parts.append(f"人脸检测 {len(self.ctx.face_detections)}")
             if self.ctx.plate_detections:
                 parts.append(f"车牌 {len(self.ctx.plate_detections)}")
+            if self.ctx.ocr_detections:
+                parts.append(f"文字 {len(self.ctx.ocr_detections)}")
             await self._log_task("产物落库：" + "、".join(parts))
 
             # 卸载 captioner（仅当不是共享实例时才释放 GPU 显存）
@@ -567,6 +569,10 @@ class PipelineEngine:
             # 车牌识别
             if self.ctx.plate_detections:
                 await bulk_insert_plate_detections(session, self.ctx.plate_detections)
+
+            # OCR 画面文字
+            if self.ctx.ocr_detections:
+                await bulk_insert_ocr_detections(session, self.ctx.ocr_detections)
 
             await session.commit()
 

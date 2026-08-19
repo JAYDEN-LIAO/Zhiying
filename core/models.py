@@ -345,6 +345,9 @@ class Video(Base):
     plate_detections: Mapped[list["PlateDetection"]] = relationship(
         "PlateDetection", back_populates="video", cascade="all, delete-orphan",
     )
+    ocr_detections: Mapped[list["OCRDetection"]] = relationship(
+        "OCRDetection", back_populates="video", cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         UniqueConstraint("file_id", "version_no", name="uq_videos_file_version"),
@@ -942,6 +945,51 @@ class PlateDetection(Base):
         Index("ix_plate_dets_text", "video_id", "plate_text"),
         Index("ix_plate_dets_track", "video_id", "track_id"),
         {"comment": "车牌检测结果表 — PaddleOCR 检测 + 识别，支持文本搜索"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# OCRDetection — 画面文字识别结果（v0.34）
+# ═══════════════════════════════════════════════════════════
+
+class OCRDetection(Base):
+    """画面文字识别结果表 — 每帧每文字框一行。
+
+    独立感知模块：与 detection/plate 同层，depends_on=["duration"]，自抽高清帧。
+    精确文字检索走 ocr_text_search（ILIKE + 编辑距离），无需向量列。
+    """
+
+    __tablename__ = "ocr_detections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    timestamp_sec: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="视频时间戳(秒)",
+    )
+    text: Mapped[str] = mapped_column(
+        String(1024), nullable=False, comment="识别出的文字内容",
+    )
+    bbox: Mapped[dict] = mapped_column(
+        JSONB, nullable=False,
+        comment="文字框边界 {x1,y1,x2,y2}，归一化 0-1",
+    )
+    confidence: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="文字识别置信度 (0~1)",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+
+    video: Mapped["Video"] = relationship("Video", back_populates="ocr_detections")
+
+    __table_args__ = (
+        Index("ix_ocr_dets_video_ts", "video_id", "timestamp_sec"),
+        {"comment": "画面文字识别结果表 — PaddleOCR 检测 + 识别，支持精确文字检索"},
     )
 
 

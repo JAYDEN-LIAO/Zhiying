@@ -407,6 +407,71 @@ function DetectionSection({
   );
 }
 
+/* ═══════════════════════ 模型参数：④ 画面文字提取 OCR ═══════════════════════ */
+function OcrSection({
+  pipelineEdit, setPipelineEdit, saving, onSave,
+}: {
+  pipelineEdit: PipelineSettingsUpdate;
+  setPipelineEdit: (p: PipelineSettingsUpdate) => void;
+  saving: string | null;
+  onSave: () => void;
+}) {
+  const ocr = pipelineEdit.ocr ?? {};
+  const setOcr = (k: keyof NonNullable<PipelineSettingsUpdate["ocr"]>, v: string) =>
+    setPipelineEdit({ ...pipelineEdit, ocr: { ...ocr, [k]: v } });
+  return (
+    <div className={cardCls}>
+      <h3 className={cardTitleCls}>画面文字提取（OCR）</h3>
+      <p className={cardDescCls}>录屏聊天 / 字幕 / 屏幕文字提取；CPU 运行不占 GPU 锁。参数对下一次解析运行时生效</p>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>采样帧率 (sample_fps)</label>
+            <input type="number" min={0.05} max={5} step={0.05} value={ocr.sample_fps} placeholder="1.0"
+              onChange={(e) => setOcr("sample_fps", e.target.value)} className={inputCls} />
+            <p className={hintCls}>推荐 1.0（快速滑动聊天建议 1-2）；0.05-5.0</p>
+          </div>
+          <div>
+            <label className={labelCls}>置信度门槛 (conf_thresh)</label>
+            <input type="number" min={0.1} max={1} step={0.05} value={ocr.conf_thresh} placeholder="0.5"
+              onChange={(e) => setOcr("conf_thresh", e.target.value)} className={inputCls} />
+            <p className={hintCls}>推荐 0.5；0.1-1.0（更低可捞低分文字但噪音增多）</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>最大宽度 (max_width)</label>
+            <input type="number" min={320} max={7680} step={1} value={ocr.max_width} placeholder="留空=原分辨率"
+              onChange={(e) => setOcr("max_width", e.target.value)} className={inputCls} />
+            <p className={hintCls}>留空/0=原分辨率；1280 可省 CPU（聊天小字慎用）</p>
+          </div>
+          <div>
+            <label className={labelCls}>放大倍数 (scale)</label>
+            <input type="number" min={0.5} max={4} step={0.1} value={ocr.scale} placeholder="1.0"
+              onChange={(e) => setOcr("scale", e.target.value)} className={inputCls} />
+            <p className={hintCls}>聊天小字可 2.0 上采样；0.5-4.0</p>
+          </div>
+        </div>
+        <div>
+          <label className={labelCls}>语言 (lang)</label>
+          <select value={ocr.lang} onChange={(e) => setOcr("lang", e.target.value)} className={inputCls}>
+            <option value="">跟随 config.yaml（默认 ch）</option>
+            <option value="ch">ch（中文）</option>
+            <option value="en">en（英文）</option>
+            <option value="japan">japan（日文）</option>
+            <option value="korean">korean（韩文）</option>
+          </select>
+        </div>
+        <div className="flex justify-end">
+          <button onClick={onSave} disabled={saving === "ocr"} className="g-btn g-btn-primary">
+            {saving === "ocr" ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════════════ 模型参数：③ API 密钥与服务 ═══════════════════════ */
 function ApiKeysSection({
   settings, providerEdit, setProviderEdit, apiKeyEdit, setApiKeyEdit, saving, onSave,
@@ -501,6 +566,7 @@ export function SettingsPage({
     max_concurrent_videos: "",
     sample_fps: "",
     segment_threshold: "",
+    ocr: { sample_fps: "", conf_thresh: "", max_width: "", scale: "", lang: "" },
   });
   // 编码三档模板编辑态（各档独立分辨率 + 批大小）
   const [profileEdit, setProfileEdit] = useState<Record<string, EncodeProfileSettingsUpdate>>({
@@ -591,6 +657,13 @@ export function SettingsPage({
         max_concurrent_videos: data.pipeline?.max_concurrent_videos != null ? String(data.pipeline.max_concurrent_videos) : "",
         sample_fps: data.pipeline?.sample_fps != null ? String(data.pipeline.sample_fps) : "",
         segment_threshold: data.pipeline?.segment_threshold != null ? String(data.pipeline.segment_threshold) : "",
+        ocr: {
+          sample_fps: data.pipeline?.ocr?.sample_fps != null ? String(data.pipeline.ocr.sample_fps) : "",
+          conf_thresh: data.pipeline?.ocr?.conf_thresh != null ? String(data.pipeline.ocr.conf_thresh) : "",
+          max_width: data.pipeline?.ocr?.max_width != null ? String(data.pipeline.ocr.max_width) : "",
+          scale: data.pipeline?.ocr?.scale != null ? String(data.pipeline.ocr.scale) : "",
+          lang: data.pipeline?.ocr?.lang ?? "",
+        },
       });
       const profiles = data.pipeline?.encode_profiles ?? {};
       setProfileEdit({
@@ -700,6 +773,16 @@ export function SettingsPage({
     finally { setSaving(null); }
   };
 
+  const saveOcr = async () => {
+    setSaving("ocr"); setMsg(null);
+    try {
+      await api.updateSettings({ pipeline: { ocr: pipelineEdit.ocr } });
+      load();
+      flash("ok", "OCR 参数已保存：采样/置信度/分辨率/语言对下一次解析运行时生效");
+    } catch (e) { flash("err", e instanceof Error ? e.message : "保存失败"); }
+    finally { setSaving(null); }
+  };
+
   return (
     <div className="h-full overflow-y-auto">
       {/* 内容（子页切换由左侧导航控制，见 AppContext settingsTab） */}
@@ -727,6 +810,12 @@ export function SettingsPage({
                 setPipelineEdit={setPipelineEdit}
                 saving={saving}
                 onSave={saveDetect}
+              />
+              <OcrSection
+                pipelineEdit={pipelineEdit}
+                setPipelineEdit={setPipelineEdit}
+                saving={saving}
+                onSave={saveOcr}
               />
               <ApiKeysSection
                 settings={settings}

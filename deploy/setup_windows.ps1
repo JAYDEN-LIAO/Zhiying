@@ -395,6 +395,36 @@ $rc = Invoke-Native @($VenvPython, $onnxChkTmp)
 Remove-Item $onnxChkTmp -Force -ErrorAction SilentlyContinue
 if ($rc -ne 0) { Write-Warn "onnxruntime-gpu 校验/修复失败（人脸/车牌可能走 CPU）" }
 
+# OCR 画面文字提取（v0.34）：RapidOCR 用独立 onnxruntime-directml，装在 vendor/ort_dml
+#   （不参与上面 requirements 的全局 onnxruntime——DML 与 CUDA 共用 import onnxruntime 名，
+#   进程内只能有一份；RapidOCR 放在独立子进程里 sys.path 前置加载 DML，人脸/车牌 CUDA 不受影响）
+Write-Info "安装 OCR DirectML 引擎（vendor/ort_dml，隔离子进程用）..."
+$ortDmlDir = Join-Path $ProjectRoot "vendor\ort_dml"
+New-Item -ItemType Directory -Force -Path $ortDmlDir | Out-Null
+$dmlArgs = @("-m", "pip", "install", "--target", $ortDmlDir, "--progress-bar", "raw", "onnxruntime-directml==1.24.4", "--quiet")
+if ($script:Proxy) { $dmlArgs = $dmlArgs + @("--proxy", $script:Proxy) }
+$rc = Invoke-Native (@($VenvPython) + $dmlArgs)
+if ($rc -ne 0) {
+    Write-Warn "onnxruntime-directml 安装失败（OCR 将退化 CPU / 需手动装 vendor/ort_dml）"
+} else {
+    # 校验 DML provider 与 RapidOCR 可加载
+    $dmlChkPy = @"
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(r"$ortDmlDir")))
+import onnxruntime as o
+provs = o.get_available_providers()
+if "DmlExecutionProvider" not in provs:
+    print("[ocr-dml] WARN DmlExecutionProvider missing:", provs, file=sys.stderr)
+else:
+    print("[ocr-dml] OK providers:", provs)
+"@
+    $dmlChkTmp = Join-Path $ProjectRoot "vendor\.chk-ocr-dml.py"
+    Set-Content -Path $dmlChkTmp -Value $dmlChkPy -Encoding UTF8
+    $rc = Invoke-Native @($VenvPython, $dmlChkTmp)
+    Remove-Item $dmlChkTmp -Force -ErrorAction SilentlyContinue
+    if ($rc -ne 0) { Write-Warn "OCR DML 校验未过（检查 RapidOCR/vendor/ort_dml）" }
+}
+
 # 验证 PyTorch GPU 可用
 $rc = Invoke-Native @($VenvPython, "-c",
     "import torch; assert torch.cuda.is_available(), 'cuda-unavailable'; print('torch', torch.__version__, '| cuda', torch.version.cuda, '|', torch.cuda.get_device_name(0))")

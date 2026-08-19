@@ -1,6 +1,6 @@
 # Zhiying — Universal Video Analytics Engine
 
-通用视频分析引擎：上传视频 → 声明式 DAG 管道（15 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪 + 人脸/车牌识别 → 7 路语义搜索 + 图搜。面向单 GPU（8–32GB）设计，已接入云智(Yunzhi)平台异步任务，生产部署于 10.0.0.176。
+通用视频分析引擎：上传视频 → 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪 + 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜。面向单 GPU（8–32GB）设计，已接入云智(Yunzhi)平台异步任务，生产部署于 10.0.0.176。
 
 ## Quick Start
 
@@ -49,6 +49,7 @@ curl -X POST -H "Content-Type: application/json" -d '{"query":"a man in black"}'
 | 语义搜索（frame/chunk/text/label/track/plate 6 路） | `POST /search/semantic` | ✅ |
 | 人脸识别（SCRFD + ArcFace 512d 聚类, 双锚检索） | `GET /videos/{id}/face/data` · `POST /search/face` | ✅ |
 | 车牌识别（HyperLPR3） | `GET /videos/{id}/plate/data` + 模糊搜索 | ✅ |
+| OCR 画面文字提取（RapidOCR PP-OCRv3 + DirectML, 独立子进程） | `GET /videos/{id}/ocr/data` · 第 8 路 `search_types=["ocr"]` 精确串检索 | ✅ |
 | 通用图搜（Qwen3-VL-Embedding → frame_embeddings） | `POST /search/image` | ✅ |
 | 搜索数据隔离 / 五种搜索样式统一 | 严格按 video_ids 过滤 + uniform sr-item 卡片 | ✅ |
 | 导出（clip/frames/track 视频/thumbnails zip） | `GET/POST /videos/{id}/export/...` | ✅ |
@@ -72,12 +73,13 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
          │    └─ Frame/Text/Chunk embedding (4 编码路径, 分辨率 3 档预设)
          ├─ Object Detection — YOLO11s + BoT-SORT (可选，双门控) → 逐帧检测 → 跨帧追踪
          ├─ Face (SCRFD+ArcFace 512d 聚类) / Plate (HyperLPR3)（可选，三门控）
+         ├─ OCR — 自抽高清帧 + RapidOCR(PP-OCRv3 ONNX, DirectML 独立子进程)（可选，双门控）→ ocr_detections 精确文字检索
          ├─ Global ReID Stitch（crop mean pool → cosine 合并同一身份 tracklet）
          ├─ Source Analysis（规则引擎：phone/camera/surveillance + 文件头魔数嗅探品牌）
          └─ Shared GPU models（embedder/detector 预载 app.state；GPU 前向串行锁防驱动故障）
-搜索: 6 路并行召回 + 人脸图搜 + 通用图搜 → 合并去重 → 统一 confidence
+搜索: 7 路并行召回 + 人脸图搜 + 通用图搜（含 OCR 精确文字）→ 合并去重 → 统一 confidence
 ```
-- **声明式 DAG** — 15 操作注册在 `pipeline/operations.py`（gate + 依赖边），EventDrivenScheduler 事件驱动；搜索/摘要路径解耦，与 detection 共享单 NVDEC 流。
+- **声明式 DAG** — 16 操作注册在 `pipeline/operations.py`（gate + 依赖边），EventDrivenScheduler 事件驱动；搜索/摘要/OCR 路径解耦，与 detection 共享单 NVDEC 流。
 - **插件化** — 10 插件 ABC + 工厂动态加载；4 条编码路径 + 7 路检索 + 人脸/车牌 + 4 级参数系统。
 - **设置与参数运行时生效** — settings.json 覆盖 config.yaml（量化需重启）；参数预设 `config/presets.json` 命名快照一键套用（随 git 迁移）。
 - **双前端共存** — `frontend/`（服务器）+ `frontend-desktop/`（桌面）UI 完全隔离共用后端，`ZHIYING_FRONTEND` 切挂载；对接层 `frontend-shared/` 一份实现。
@@ -94,6 +96,7 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 | Caption/Summary | Qwen-VL-Max (DashScope) + DeepSeek（vlm_llm 模式, 默认） |
 | Scene/Transcript | TransNetV2 / 时长分段 · faster-whisper（opt-in） |
 | Face/Plate | InsightFace SCRFD + ArcFace R50 · HyperLPR3 (ONNX Runtime) |
+| OCR | RapidOCR PP-OCRv3 ONNX + DirectML 子进程（DML 隔离，零影响人脸/车牌 CUDA） |
 | Video Processing | FFmpeg (asyncio subprocess, NVDEC MJPEG pipe) |
 | Desktop Shell | pywebview + 内嵌便携 PostgreSQL（免 Docker/WSL2), 后端字节码封装 |
 
@@ -109,11 +112,11 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 zhiying/
 ├── bump / install1.bat / install2.bat   # 发版启动器 / 新机一键部署 / 桌面端一键更新
 ├── run.py / main.py / backend_launcher.py
-├── api/            # 路由: video/search/settings/tasks/groups/detection/face/plate/export/maintenance/yunzhi
+├── api/            # 路由: video/search/settings/tasks/groups/detection/face/plate/ocr/export/maintenance/yunzhi
 ├── core/           # models(15表)/schemas/repository/search/db/config_loader/settings_service/presets_service
 │                   #   storage_manager/gpu_lock/cancellation/embedding_profile/paths/version/prompt_loader
-├── pipeline/       # engine(DAG 执行器) / operations(15 op) / runners/(15 runner) / search_engine
-├── plugins/        # factory + detector/face/plate/embedder/captioner/summarizer/segmenter/transcriber/(ocr,grounding 占位)
+├── pipeline/       # engine(DAG 执行器) / operations(16 op) / runners/(16 runner) / search_engine
+├── plugins/        # factory + detector/face/plate/ocr/embedder/captioner/summarizer/segmenter/transcriber/(grounding 占位)
 ├── services/       # video_service / yunzhi_job_service / format_service / export_service / report_service
 ├── utils/          # video_util / metadata / video_source
 ├── config/         # config.yaml(gitignored) + config.yaml.example + presets.json(随 git 共享) + prompts.yaml
@@ -123,7 +126,7 @@ zhiying/
 ├── desktop/        # 桌面端 pywebview 壳 + build_exe.ps1(打纯壳 exe)
 ├── deploy/         # setup_windows.ps1 / setup_linux.sh / build_backend_pyc.py / download_models.py / deploy*.md
 ├── scripts/        # sweep_storage.py / bump_version.py / mock_yunzhi_platform.py
-└── docs/           # arch.md(权威架构) / archive/(历史归档) / ocr.md / server.md(gitignored)
+└── docs/           # arch.md(权威架构) / archive/(历史归档, 含 ocr 改造) / server.md(gitignored)
 ```
 
 ## Development Status
@@ -134,8 +137,9 @@ zhiying/
 - 搜索卡案例-文件范围 + 跨视频切主视频 + 单实例保留结果
 - 一键安装器 + 内嵌 PostgreSQL + 后端字节码封装 + 部署/构建健壮性（WebView2 Runtime 更新 / pyc legacy / safetensors 校验 / 幂等停 pg / start_db 幂等 / check_models 按档位）
 - 设置档位感知（2b 自动套用轻量编码/量化默认 + 设置页档位徽标）+ 参数预设随 git 迁移（config/presets.json）
+- OCR 定版：**RapidOCR(PP-OCRv3 ONNX) + DirectML 独立子进程**（替代 PaddleOCR/EasyOCR，中文精度第一梯队，DML 隔离零影响人脸/车牌 CUDA）+ 文本去重/顺序整理（固定文字只读一遍、同句全局合并、模糊合并、阅读序）+ 移除 easyocr 依赖 + requirements/install 补齐
 - 桌面壳打磨：启动页 512 高清图标 + × 终止启动 + 全弹窗关闭按钮统一无框无底 + 任务日志一键复制 + 标题栏 logo 无框透明
 
 **里程碑摘要**：v0.33 摘要链路根治（max_scenes/并发降级/预算截断）· v0.32 全局任务队列 · v0.31 人脸搜索+搜索范围+跨视频穿透 · v0.29 人脸链路重构+搜索隔离 · v0.28 云智嵌入 UI · v0.27 车牌模糊搜索 · v0.26 平台文件 id 跳转 · v0.24 云智接入+生产部署 · 更早见 git log。
 
-**Planned**：OCR（设计见 `docs/ocr.md`）/ Grounding(Florence-2)。
+**Planned**：Grounding(Florence-2)。

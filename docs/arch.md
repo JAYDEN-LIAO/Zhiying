@@ -2,7 +2,7 @@
 
 > Version: 0.34 候选 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > Frontend: React 19 + Vite 6 + Tailwind CSS 4（双前端：frontend/ 服务器 + frontend-desktop/ 桌面，共享 frontend-shared/ 对接层）
-> 核心能力：15-op 声明式 DAG · 4 编码路径 · YOLO11/BoT-SORT 双层 ReID · 人脸/车牌 · 7 路搜索+图搜 · 存储卫生 · 4 级参数+设置/预设 · 全局任务队列 · 文件库/多版本/任务中心 · 云智接入 · 桌面端（pywebview 壳 + 4 页管理后台）
+> 核心能力：16-op 声明式 DAG · 4 编码路径 · YOLO11/BoT-SORT 双层 ReID · 人脸/车牌/OCR · 8 路搜索+图搜 · 存储卫生 · 4 级参数+设置/预设 · 全局任务队列 · 文件库/多版本/任务中心 · 云智接入 · 桌面端（pywebview 壳 + 4 页管理后台）
 
 ## System Data Flow
 
@@ -36,7 +36,8 @@
   Pipeline DAG (EventDrivenScheduler): videos/scenes/transcripts/frame_embeddings/
   duration → detection(生产者-消费者, 共享 NVDEC 流) → track_encode → face/plate     chunks/track_embeddings
   duration → segmentation→keyframes→caption→summary→frame/text/chunk_encode         /tracks/detections/
-  → _persist() → mark_completed()                                                  face_identities/face_detections/
+  duration → ocr(自抽高清帧, RapidOCR PP-OCRv3 ONNX, DirectML 独立子进程) → ocr_detections                                  face_identities/face_detections/
+  → _persist() → mark_completed()                                                  /ocr_detections
 ```
 
 ## Parameter System
@@ -74,9 +75,10 @@ GET/PUT /settings → data/settings.json（网站运行时生效, 保存即生�
 ## Pipeline Detail
 
 ```
-DAG 阶段流（15 ops, 每 op 一个 asyncio 任务等待上游事件）:
+DAG 阶段流（16 ops, 每 op 一个 asyncio 任务等待上游事件）:
   duration
     ├─ search_encode（仅摘要关时）— 与 detection 共享单 NVDEC 流, 64 帧一批 → frame_embeddings
+    ├─ ocr（v0.34 独立感知模块）— 自抽高清帧, RapidOCR(PP-OCRv3 ONNX) 走 DirectML 独立子进程, 内容去重/固定文字抑制/模糊合并 → ocr_detections
     ├─ detection（10fps 生产者-消费者, 攒批 128）→ track_encode（读检测缓存 crop mean pool）→ face/plate
     └─ segmentation（TransNetV2 / 时长固定段, max_scenes 上限）
          → keyframes（1fps, 抽帧统一 resize 到编码预设分辨率）→ caption（vlm_llm API 并发限流+失败降级）→ summary（vlm_llm, 输入预算截断）
@@ -102,7 +104,7 @@ plugins/factory.py: load_plugin(config, category) → import + 实例化; null b
   CATEGORY_MAP / IMPL_CLASS_MAP / _MODULE_OVERRIDES / _CLASS_OVERRIDES
 后端: segmenter(transnetv2) · captioner(qwen_api 默认 / qwen3_vl 本地可选) · embedder(qwen3_vl_embedding, 档位驱动)
       summarizer(vllm=DeepSeek) · transcriber(null) · detector(yolo) · face(insightface) · plate(hyperlpr/paddle)
-      ocr(null) · grounding(null) 占位
+      ocr(rapidocr=PP-OCRv3 ONNX via DirectML 独立子进程) · grounding(null) 占位
 约定: 插件接口异步; 同步模型推理 MUST asyncio.to_thread(); 禁用 load_plugin("detector"/"embedder") 重复实例化（共享单实例）
 人脸/车牌推理 ONNX（x86 装 onnxruntime-gpu, ARM64 自动 CPU）
 ```
@@ -110,13 +112,13 @@ plugins/factory.py: load_plugin(config, category) → import + 实例化; null b
 ## Search Architecture
 
 ```
-Semantic Search: query → embedder.encode_text() 一次 → 6 路并行召回:
-  frame(1fps 精确) / chunk(滑窗, 默认关) / text(caption+ocr+transcript) / label(JSONB @>) / track(crop 跨模态) / plate(Levenshtein+ILIKE+归一化)
+Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
+  frame(1fps 精确) / chunk(滑窗, 默认关) / text(caption+ocr+transcript) / label(JSONB @>) / track(crop 跨模态) / plate(Levenshtein+ILIKE+归一化) / ocr(画面文字精确串匹配, ILIKE+编辑距离, v0.34)
 图搜: /search/face（ArcFace 512d → face_identities, GREATEST(最典型脸, 均值) 双锚）· /search/image（Qwen3-VL → frame_embeddings, 独立 search_image_only 路径帧不聚类）
-合并去重: 帧簇(间隔≤4s)优先, chunk/text 与帧重叠丢弃; confidence = 相似度 × 路径权重（frame 1.0/track 0.9/plate 0.95/text 0.85/chunk 0.7）
+合并去重: 帧簇(间隔≤4s)优先, chunk/text 与帧重叠丢弃; plate/ocr/track 独立去重（无 scene 概念, 各自按 track/时间戳唯一）; confidence = 相似度 × 路径权重（frame 1.0/track 0.9/plate 0.95/ocr 0.95/text 0.85/chunk 0.7）
 范围过滤: video_ids 空列表 → 空(fail-closed); None=全库; ⚠️ search/face + /search/image 参数必须 Form(...) 声明（防 query 取 None 全库泄漏）
 返回: precision_level / precise_start/end / match_paths / thumbnail_url / track_id? / bbox? / confidence?
-core/search.py: frame_vector_search · chunk_vector_search · text_vector_search · track_vector_search · plate_text_search · face_identity_search
+core/search.py: frame_vector_search · chunk_vector_search · text_vector_search · track_vector_search · plate_text_search · ocr_text_search · face_identity_search
 ```
 
 ## Database Schema
@@ -135,6 +137,7 @@ core/search.py: frame_vector_search · chunk_vector_search · text_vector_search
 | `face_identities` | identity_label, **face_embedding**(512 均值) + **best_face_embedding**(512 最典型脸), best_track_id, first/last_seen, avg_quality, best_face_bbox | 聚类身份 |
 | `face_detections` | identity_id(FK), track_id, timestamp_sec, bbox(JSONB), quality_score, face_embedding(512) | 逐帧人脸 |
 | `plate_detections` | track_id, plate_text, plate_type, char_confidences(JSONB), bbox, detection_confidence | 车牌 |
+| `ocr_detections` | timestamp_sec, text, bbox(JSONB), confidence | 画面文字（第 8 路精确检索） |
 | `pipeline_tasks` | type, dedup_key, video_id, payload_json, status, error | 任务队列持久化 |
 | `task_logs` | task_id(=版本行 id), seq, level, message, created_at | 任务生命周期日志 |
 
@@ -158,8 +161,9 @@ core/search.py: frame_vector_search · chunk_vector_search · text_vector_search
 | GET | `/api/v1/videos/{id}/detection/tracks` · `/detections` · `/thumbnail` | 检测轨迹 / 时间窗检测框 / 缩略图 |
 | GET | `/api/v1/videos/{id}/face/data` · `/face/thumbnail` | 人脸数据 / 缩略图 |
 | GET | `/api/v1/videos/{id}/plate/data` · `/plate/thumbnail` | 车牌数据 / 缩略图 |
+| GET | `/api/v1/videos/{id}/ocr/data` | OCR 画面文字清单（按时间戳，桌面前端「文字」标签页） |
 | GET/POST | `/api/v1/videos/{id}/export/clip` · `/frames` · `/track/{tid}` · `/thumbnails` | 导出片段/帧/轨迹/缩略图 |
-| POST | `/api/v1/search/semantic` · `/search/face` · `/search/image` | 语义 / 人脸图搜 / 通用图搜 |
+| POST | `/api/v1/search/semantic` · `/search/face` · `/search/image` | 语义（含 OCR 第 8 路 search_types=["ocr"]）/ 人脸图搜 / 通用图搜 |
 | GET/POST | `/api/v1/files` · `/files/{file_id}` | 文件库列表 / 重命名 |
 | GET/POST | `/api/v1/groups` · `/groups/{id}` · `/groups/{id}/assets` | 案例 CRUD / 素材 |
 | GET/POST | `/api/v1/tasks` · `/{id}/log` · `/{id}/retry` · `/{id}/report` · `/export-batch` | 任务中心 |
@@ -195,11 +199,12 @@ core/search.py: frame_vector_search · chunk_vector_search · text_vector_search
 | 搜索数据隔离 | search/face+image 改 Form(...) 声明修全库泄漏；单视频搜索严格过滤 |
 | embedding 档位化 (8b/2b) | 低显存机器平替：档位联动模型路径+向量维度；2b 自动套轻量编码/量化默认 |
 | 参数预设随 git 迁移 | config/presets.json 入仓库，部署/换机开箱复用 |
+| OCR 独立感知模块（v0.34） | 自抽高清帧（读具体字符需像素清晰，复用检测低分辨率帧不可逆）→ **RapidOCR(PP-OCRv3 ONNX) + DirectML EP**（中文精度第一梯队）+ 独立表 + 精确串检索（第 8 路）。**DML 隔离走独立子进程**：onnxruntime 与 onnxruntime-directml 共用 `import onnxruntime` 名，进程内只能一份——为不破坏人脸/车牌依赖的全局 onnxruntime-gpu(CUDA)，RapidOCR 放子进程前置 `vendor/ort_dml` 加载 DML。OCR 文本去重：全局合并 + 固定文字抑制 + 模糊合并 + 阅读序。「OCR 独立模式」= text_recognition 场景关 search_index + 校验器放行仅 OCR 第三态 |
 
 ## Current Status
-**核心链路全部 ✅**：Pipeline DAG(15 ops) / 4 编码路径 / 双层 ReID / 7 路搜索+图搜 / 人脸+车牌 / 双模式摘要(vlm_llm 默认) / 多格式 / 存储卫生 / 4 级参数+增量 / 设置+预设 / GPU 锁+共享实例 / 任务队列 / 文件库+多版本+任务中心 / 批量解析+重命名 / 档位感知设置 / 云智嵌入 / 桌面端重构 / 生产部署。详见 README「Development Status」。
+**核心链路全部 ✅**：Pipeline DAG(16 ops) / 4 编码路径 / 双层 ReID / 8 路搜索+图搜 / 人脸+车牌+OCR / 双模式摘要(vlm_llm 默认) / 多格式 / 存储卫生 / 4 级参数+增量 / 设置+预设 / GPU 锁+共享实例 / 任务队列 / 文件库+多版本+任务中心 / 批量解析+重命名 / 档位感知设置 / 云智嵌入 / 桌面端重构 / 生产部署。详见 README「Development Status」。
 
-**非完全状态**：Chunk 编码（config 控制默认关）· OCR（设计见 docs/ocr.md, 实现待办）· Grounding（Florence-2 占位）· Reindex（待办）。AI 生成检测已移除（列保留恒 not_run）。
+**非完全状态**：Chunk 编码（config 控制默认关）· OCR 导出/文字框裁剪/语义增强（预留）· Grounding（Florence-2 占位）· Reindex（待办）。AI 生成检测已移除（列保留恒 not_run）。
 
 ## 版本发布
 见 README「版本号与发布」（`./bump` 联动 core/version.py + frontend/package.json + tag 强绑定 v<__version__>；后端 + 服务器前端/共享层改动必须发版）。

@@ -15,7 +15,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.models import Scene, FrameEmbedding, Chunk, TrackEmbedding, PlateDetection, FaceIdentity
+from core.models import Scene, FrameEmbedding, Chunk, TrackEmbedding, PlateDetection, FaceIdentity, OCRDetection
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +139,8 @@ async def track_vector_search(
 # ═══════════════════════════════════════════════════════════
 _FULL_WIDTH = "０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ"
 _HALF_WIDTH = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-_SEPARATORS = "·　-‐–— ／/."
+# 分隔符含聊天常见中点（・･）：OCR 提取的聊天文本/姓名常带，做匹配分隔符统一剔除（v0.34）
+_SEPARATORS = "·　-‐–— ／/." + "･・"
 
 
 def _normalize_plate(s: str) -> str:
@@ -190,6 +191,42 @@ async def plate_text_search(
         stmt = stmt.where(PlateDetection.video_id.in_(video_ids))
     result = await session.execute(stmt)
     return [(row.PlateDetection, row.sim) for row in result]
+
+
+# ═══════════════════════════════════════════════════════════
+# 5b. OCR 画面文字精确搜索（v0.34，第 8 路）
+# ═══════════════════════════════════════════════════════════
+
+async def ocr_text_search(
+    session: AsyncSession,
+    query: str,
+    limit: int = 20,
+    video_ids: list[str] | None = None,
+) -> list[tuple[OCRDetection, float]]:
+    """OCR 文字精确检索 — 归一化后 ILIKE 子串 + Levenshtein 编辑距离（照 plate_text_search）。
+
+    复用 _normalize_plate 的归一化规则（全角→半角 / 去分隔符 / 统一大写）——聊天文本同样适用。
+    聊天场景核心价值：引原话 / 搜人名 / 数字 / 链接，逐字节定位到那一帧。
+    """
+    from sqlalchemy import func as sa_func, or_
+
+    q = _normalize_plate(query)
+    ocr_norm = _plate_norm_sql(OCRDetection.text)
+    dist = sa_func.levenshtein(ocr_norm, q).label("dist")
+    similarity = (1.0 / (1.0 + sa_func.least(dist, 2))).label("sim")
+    stmt = (
+        select(OCRDetection, similarity)
+        .where(or_(
+            ocr_norm.ilike(f"%{q}%"),
+            dist <= 2,
+        ))
+        .order_by(dist.asc())
+        .limit(limit)
+    )
+    if video_ids is not None:
+        stmt = stmt.where(OCRDetection.video_id.in_(video_ids))
+    result = await session.execute(stmt)
+    return [(row.OCRDetection, row.sim) for row in result]
 
 
 # ═══════════════════════════════════════════════════════════

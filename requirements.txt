@@ -71,6 +71,14 @@ hyperlpr3>=0.1
 paddlepaddle>=2.6.0
 paddleocr>=2.7.0          # 备选车牌后端 (paddle_plate.py)
 
+#  OCR 画面文字提取 — RapidOCR (PP-OCRv3 ONNX)，v0.34 生产定版
+#   推理走 onnxruntime DirectML EP，但 DML 版 onnxruntime 装在独立 vendor/ort_dml
+#   （pip install --target vendor/ort_dml onnxruntime-directml==1.24.4，走代理），
+#   由 plugins/ocr/rapidocr_worker.py 在子进程内 sys.path 前置加载——不干扰全局
+#   onnxruntime-gpu(CUDA，人脸/车牌依赖)。部署机需装好 vendor/ort_dml，见
+#   install1.bat / setup_windows.ps1 / docs/ocr-engine-migration-plan.md。
+rapidocr-onnxruntime>=1.2.0
+
 #  Speech transcription — opt-in（面板置灰；部署不装，需要时取消注释）
 #  faster-whisper>=1.0
 # ══════════════════════════════════════════════

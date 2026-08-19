@@ -64,6 +64,8 @@ _MODULE_OVERRIDES: dict[tuple[str, str], str] = {
     ("face", "insightface"): "insightface_face",
     ("plate", "paddle"): "paddle_plate",
     ("plate", "hyperlpr"): "hyperlpr_plate",
+    ("ocr", "paddleocr"): "paddleocr",
+    ("ocr", "rapidocr"): "rapidocr",
 }
 
 # 后端标识 → 实现类名覆盖
@@ -77,6 +79,7 @@ _CLASS_OVERRIDES: dict[tuple[str, str], str] = {
     ("face", "insightface"): "InsightFaceRecognizer",
     ("plate", "paddle"): "PaddlePlateRecognizer",
     ("plate", "hyperlpr"): "HyperLPRPlateRecognizer",
+    ("ocr", "rapidocr"): "RapidOCRExtractor",
 }
 
 

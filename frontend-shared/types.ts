@@ -36,6 +36,7 @@ export interface VideoListItem {
   summary_one_liner: string | null;
   audio_enabled: boolean;
   caption_enabled: boolean;
+  ocr_enabled: boolean;
   detection_enabled: boolean;
   detection_classes: string[] | null;
   face_enabled: boolean;
@@ -166,7 +167,7 @@ export interface SearchResultItem {
   scene_range_end: number;
   precise_start: number | null;
   precise_end: number | null;
-  precision_level: "frame" | "chunk" | "text" | "label" | "track" | "plate" | "scene";
+  precision_level: "frame" | "chunk" | "text" | "label" | "track" | "plate" | "ocr" | "scene";
   match_paths: string[];
   caption: string | null;
   ocr_text: string | null;
@@ -360,6 +361,14 @@ export interface PipelineSettings {
   /* 场景分割（v0.33 起全局设置，从逐视频高级参数移入） */
   sample_fps: number;
   segment_threshold: number;
+  /* OCR 参数（v0.34）— 生效值（settings 覆盖 > config 默认） */
+  ocr?: {
+    sample_fps: number;
+    conf_thresh: number;
+    max_width: number | null;
+    scale: number;
+    lang: string;
+  };
 }
 
 export interface EncodeProfileSettingsUpdate {
@@ -383,6 +392,14 @@ export interface PipelineSettingsUpdate {
   max_concurrent_videos?: string;
   sample_fps?: string;
   segment_threshold?: string;
+  /* OCR 参数（v0.34）— 数值为字符串；空字符串=删除覆盖（回退 config 默认） */
+  ocr?: {
+    sample_fps?: string;
+    conf_thresh?: string;
+    max_width?: string;
+    scale?: string;
+    lang?: string;
+  };
 }
 
 export interface SettingsData {
@@ -506,6 +523,21 @@ export interface PlateDetectionItem {
 export interface PlateData {
   has_plate: boolean;
   detections: PlateDetectionItem[];
+}
+
+/* ── OCR 画面文字识别 (v0.34, GET /videos/{id}/ocr/data) ── */
+
+export interface OCRDetectionItem {
+  id: number;
+  timestamp_sec: number;
+  text: string;
+  bbox: { x1: number; y1: number; x2: number; y2: number };
+  confidence: number;
+}
+
+export interface OcrData {
+  has_ocr: boolean;
+  detections: OCRDetectionItem[];
 }
 
 /* ── Video Metadata (GET /api/v1/videos/{id}/metadata) ── */
