@@ -11,7 +11,7 @@ import type { VideoListItem, VideoGroup, VideoResponse } from "./types";
 import { useYunzhi } from "./platform/YunzhiProvider";
 import type { YunzhiResource } from "./platform/yunzhi-bridge";
 
-export type Page = "files" | "workbench" | "tasks" | "settings";
+export type Page = "files" | "workbench" | "search" | "tasks" | "settings";
 export type SettingsTab = "system" | "model";
 
 interface AppCtx {
@@ -43,7 +43,7 @@ interface AppCtx {
   refreshList: () => void;
   /* 上传：统一入口，上传后跳工作台 + 打开参数 */
   isUploading: boolean;
-  uploadFiles: (files: FileList | File[], groupId?: string, opts?: { stay?: boolean }) => Promise<void>;
+  uploadFiles: (files: FileList | File[], groupId?: string, opts?: { stay?: boolean }) => Promise<string[]>;
   registerExternalFiles: (items: YunzhiResource[]) => Promise<void>;
   handleUploadClick: (groupId?: string, opts?: { stay?: boolean }) => void;
   /* 删除协调 */
@@ -200,24 +200,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /* ── 上传（原 Dashboard handleFiles + registerExternal） ── */
   const uploadFiles = useCallback(async (fileList: FileList | File[], groupId?: string, opts?: { stay?: boolean }) => {
     const files = Array.from(fileList);
-    if (files.length === 0) return;
+    if (files.length === 0) return [];
     setIsUploading(true);
     try {
-      let newId: string;
+      let newIds: string[];
       if (files.length === 1) {
         const r = await api.upload(files[0], undefined, groupId);
-        newId = r.id;
+        newIds = [r.id];
       } else {
         const results = await api.uploadBatch(files, undefined, groupId);
-        newId = results[0].id;
+        newIds = results.map((r) => r.id);
       }
       refreshList();
       // 文件库归档场景 stay=true → 不跳转工作台（视频留待「智能解析」再配置）
-      if (!opts?.stay) openWorkbench(newId, { openParams: true });
+      if (!opts?.stay) openWorkbench(newIds[0], { openParams: true });
+      return newIds;
     } catch (err) {
       alert(err instanceof Error ? err.message : "上传失败");
+      return [];
+    } finally {
+      setIsUploading(false);
     }
-    setIsUploading(false);
   }, [refreshList, openWorkbench]);
 
   const registerExternalFiles = useCallback(async (items: YunzhiResource[]) => {

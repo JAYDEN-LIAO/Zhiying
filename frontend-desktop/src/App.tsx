@@ -8,6 +8,7 @@ import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Workbench } from "./components/Workbench";
 import { FileLibrary } from "./components/FileLibrary";
+import { GlobalSearch } from "./components/GlobalSearch";
 import { TaskCenter } from "./components/TaskCenter";
 import { SettingsPage } from "./components/SettingsPage";
 
@@ -31,9 +32,10 @@ function Shell() {
       <div className="app-body">
         <Sidebar page={page} settingsTab={settingsTab} onNavigate={navigate} onNavigateSettings={navigateSettings} counts={counts} />
 
-        <main className={"app-main" + (page === "files" || page === "workbench" || page === "tasks" || page === "settings" ? " app-main-flat" : "")}>
+        <main className={"app-main" + (page === "files" || page === "workbench" || page === "search" || page === "tasks" || page === "settings" ? " app-main-flat" : "")}>
           {page === "files" && <FileLibrary />}
           {page === "workbench" && <Workbench />}
+          {page === "search" && <GlobalSearch />}
           {page === "tasks" && <TaskCenter />}
           {page === "settings" && <SettingsPage section={settingsTab} onSectionChange={navigateSettings} />}
         </main>

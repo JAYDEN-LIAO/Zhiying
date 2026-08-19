@@ -313,6 +313,24 @@ class Video(Base):
         comment="管道真正开始处理的时间（入队/排队不计入），任务中心「耗时」数据源",
     )
 
+    # ── 两阶段处理流 + 解析模式 (v0.35 前后端协同) ──
+    process_status: Mapped[str | None] = mapped_column(
+        String(32), nullable=True,
+        comment="两阶段处理状态（前端 ProcessStatus 枚举）: PRE_PROCESSING / READY_FOR_ANALYSIS / ANALYZING / COMPLETED / FAILED；NULL=老数据未标记（前端按 status/产物推断）",
+    )
+    parse_mode: Mapped[str] = mapped_column(
+        String(16), default="standard", nullable=False,
+        comment="解析模式: quick(极速概览, 仅文本摘要) / standard(标准检索, 提取人/车/字结构化数据)",
+    )
+    analysis_progress: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="阶段二(精细化分析)进度 0.0 ~ 1.0，与整体 progress 独立",
+    )
+    analysis_entities: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="阶段二产出计数: {face, plate, ocr}（详情抽屉统计条数据源）",
+    )
+
     # ── 关联 ──
     group: Mapped["VideoGroup | None"] = relationship(
         "VideoGroup", back_populates="videos",
@@ -431,7 +449,7 @@ class Scene(Base):
 
     # ── 索引 ──
     __table_args__ = (
-        Index("idx_scenes_video_scene", "video_id", "scene_index"),
+        UniqueConstraint("video_id", "scene_index", name="uq_scenes_video_scene"),
         Index("idx_scenes_start_sec", "video_id", "start_sec"),
         {"comment": "场景表 — 核心检索粒度, 每行代表一个镜头片段"},
     )

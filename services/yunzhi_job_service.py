@@ -53,6 +53,7 @@ def default_params_for_operation(operation: str) -> dict:
         "plate_enabled": False,
         "summary_enabled": True,
         "summary_mode": "vlm_llm",
+        "parse_mode": "standard",
         "search_index_enabled": True,
         "language": "auto",
         "sample_fps": 1.0,

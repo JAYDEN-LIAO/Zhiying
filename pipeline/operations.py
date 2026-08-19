@@ -146,7 +146,9 @@ ALL_OPERATIONS: list[Operation] = [
 
     Operation(
         name="track_encode", runner=TrackEncodeRunner(),
-        depends_on=["detection", "frame_encode"],
+        # 仅依赖 detection（读其内存态 track_crop_cache 做嵌入+缝合）；
+        # 阶段二 incremental 不含 frame_encode，去掉该依赖以免语义误导
+        depends_on=["detection"],
         gate=lambda v, cfg: (
             v.detection_enabled
             and v.search_index_enabled
