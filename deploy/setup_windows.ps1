@@ -269,6 +269,57 @@ if (Get-Command npm -ErrorAction SilentlyContinue) {
     Write-Ok "npm 镜像已配置：registry.npmmirror.com（install2 拉依赖免代理）"
 }
 
+# WebView2 Runtime（桌面端 exe 的 pywebview 依赖）。
+# ⚠️ 版本过旧会「静默白屏」：pywebview 6.2.1 捆绑的 WebView2 SDK 1.0.3856.49 需新接口
+#    ICoreWebView2Environment10（runtime ≥ 101）；实测 runtime 100.0.1185.36 会 COM
+#    E_NOINTERFACE → WebView2 控件初始化失败 → 窗口全白、无任何提示（本机真实踩坑）。
+# 策略：低于 $MinWebView2（151 为本机实测可用版本）就下载微软 Evergreen 安装器更新到最新
+#    —— 多跑无害（已最新则秒过）、缺了必挂（桌面端白屏）。失败只告警不中断（服务器后端不受影响）。
+Write-Info "检查 WebView2 Runtime（桌面端必需，过旧会白屏）..."
+$MinWebView2 = [version]"151.0.0.0"
+$Wv2Setup = Join-Path $ProjectRoot "vendor\webview2-bootstrap.exe"
+function Get-WebView2Version {
+    $regKeys = @(
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        "HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    )
+    foreach ($k in $regKeys) {
+        if (Test-Path $k) {
+            $pv = (Get-ItemProperty $k -ErrorAction SilentlyContinue).pv
+            if ($pv) { return $pv }
+        }
+    }
+    # 兜底：扫 EdgeWebView 应用目录的版本文件夹（如 151.0.4129.93；SetupMetrics 等目录不匹配数字）
+    $dir = Get-ChildItem "C:\Program Files (x86)\Microsoft\EdgeWebView\Application" -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^\d+\.\d+\.\d+' } |
+        Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+    if ($dir) { return $dir.Name }
+    return $null
+}
+$wv2Ver = Get-WebView2Version
+if ($wv2Ver -and ([version]$wv2Ver -ge $MinWebView2)) {
+    Write-Ok "WebView2 Runtime $wv2Ver（满足最低 $MinWebView2）"
+} else {
+    Write-Warn "WebView2 Runtime 当前: $($(if ($wv2Ver) { $wv2Ver } else { '未安装' }))（要求 ≥ $MinWebView2）—— 下载并更新到最新 Evergreen ..."
+    $wv2Ok = $false
+    if (Invoke-Download "https://go.microsoft.com/fwlink/p/?LinkId=2124703" $Wv2Setup $true) {
+        Write-Info "运行 WebView2 Runtime 安装器（/silent /install，本脚本已提权，无需再 UAC）..."
+        $eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        try {
+            $p = Start-Process -FilePath $Wv2Setup -ArgumentList "/silent", "/install" -Wait -PassThru
+            Write-Info "WebView2 安装器退出码 $($p.ExitCode)"
+        } catch { Write-Warn "WebView2 安装器启动失败: $($_.Exception.Message)" }
+        finally { $ErrorActionPreference = $eap }
+        Start-Sleep -Seconds 2
+        $wv2New = Get-WebView2Version
+        if ($wv2New -and ([version]$wv2New -ge $MinWebView2)) { $wv2Ok = $true; Write-Ok "WebView2 Runtime 已更新到 $wv2New" }
+        else { Write-Warn "WebView2 更新后版本仍为 $wv2New（未达标）—— 桌面端 exe 可能白屏，可稍后手动重装 WebView2 Runtime" }
+    } else {
+        Write-Warn "WebView2 安装器下载失败 —— 桌面端 exe 可能白屏，可稍后手动安装 WebView2 Runtime"
+    }
+}
+
 # ───────────────────────────── 2/6 .venv + 依赖 ─────────────────────────────
 Write-Step "2/6" "虚拟环境 + 依赖"
 if (-not (Test-Path $VenvPython)) {
@@ -343,6 +394,36 @@ Set-Content -Path $onnxChkTmp -Value $onnxChkPy -Encoding UTF8
 $rc = Invoke-Native @($VenvPython, $onnxChkTmp)
 Remove-Item $onnxChkTmp -Force -ErrorAction SilentlyContinue
 if ($rc -ne 0) { Write-Warn "onnxruntime-gpu 校验/修复失败（人脸/车牌可能走 CPU）" }
+
+# OCR 画面文字提取（v0.34）：RapidOCR 用独立 onnxruntime-directml，装在 vendor/ort_dml
+#   （不参与上面 requirements 的全局 onnxruntime——DML 与 CUDA 共用 import onnxruntime 名，
+#   进程内只能有一份；RapidOCR 放在独立子进程里 sys.path 前置加载 DML，人脸/车牌 CUDA 不受影响）
+Write-Info "安装 OCR DirectML 引擎（vendor/ort_dml，隔离子进程用）..."
+$ortDmlDir = Join-Path $ProjectRoot "vendor\ort_dml"
+New-Item -ItemType Directory -Force -Path $ortDmlDir | Out-Null
+$dmlArgs = @("-m", "pip", "install", "--target", $ortDmlDir, "--progress-bar", "raw", "onnxruntime-directml==1.24.4", "--quiet")
+if ($script:Proxy) { $dmlArgs = $dmlArgs + @("--proxy", $script:Proxy) }
+$rc = Invoke-Native (@($VenvPython) + $dmlArgs)
+if ($rc -ne 0) {
+    Write-Warn "onnxruntime-directml 安装失败（OCR 将退化 CPU / 需手动装 vendor/ort_dml）"
+} else {
+    # 校验 DML provider 与 RapidOCR 可加载
+    $dmlChkPy = @"
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(r"$ortDmlDir")))
+import onnxruntime as o
+provs = o.get_available_providers()
+if "DmlExecutionProvider" not in provs:
+    print("[ocr-dml] WARN DmlExecutionProvider missing:", provs, file=sys.stderr)
+else:
+    print("[ocr-dml] OK providers:", provs)
+"@
+    $dmlChkTmp = Join-Path $ProjectRoot "vendor\.chk-ocr-dml.py"
+    Set-Content -Path $dmlChkTmp -Value $dmlChkPy -Encoding UTF8
+    $rc = Invoke-Native @($VenvPython, $dmlChkTmp)
+    Remove-Item $dmlChkTmp -Force -ErrorAction SilentlyContinue
+    if ($rc -ne 0) { Write-Warn "OCR DML 校验未过（检查 RapidOCR/vendor/ort_dml）" }
+}
 
 # 验证 PyTorch GPU 可用
 $rc = Invoke-Native @($VenvPython, "-c",

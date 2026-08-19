@@ -1,8 +1,16 @@
 # OCR 模块设计（v0.34 候选）
 
-> 视频画面文字提取：从视频抽取高清帧 → PaddleOCR 识别文字 → 独立表落库 → 精确文字检索 → 前端展示/定位。
-> 设计定稿于 2026-08-12（讨论基于 v0.33 代码现状 + 服务器 NVDEC 实测调查）。
+> 视频画面文字提取：从视频抽取高清帧 → RapidOCR(PP-OCRv3 ONNX + DirectML 子进程) 识别文字 → 独立表落库 → 精确文字检索 → 前端展示/定位。
 > 相关文档：`docs/arch.md`（架构）、`CLAUDE.md`（项目说明）。
+
+> ✅ **已实现（v0.34）**：本文按定稿落地，实施补充决策如下——
+> - **引擎定版 RapidOCR + DirectML**（`plugins/ocr/rapidocr.py` + 独立子进程 `rapidocr_worker.py`）：PaddleOCR GPU(DLL 死路)/EasyOCR(精度弱) 均不达生产级；RapidOCR 的 PP-OCRv3 ONNX 中文精度第一梯队，推理走 onnxruntime **DirectML EP**（DirectX12，不依赖 CUDA，与 torch cu130 零冲突）。因 onnxruntime 与 onnxruntime-directml 共用 `import onnxruntime` 名、进程内只能存在一份，为**不破坏人脸/车牌依赖的全局 onnxruntime-gpu(CUDA EP)**，RapidOCR 放进**独立子进程**，启动时把 `vendor/ort_dml` 前置进 sys.path 加载 DML 版。隔离详情与交付见 `docs/ocr-engine-migration-plan.md` §6
+> - **OCR 独立模式不建索引**：`text_recognition` 场景 `search_index_enabled: false`（否则 search_encode 会走「摘要关时的编码路径」仍建帧索引），校验器放行「仅 OCR」第三态（`core/schemas.py`）；DAG 退化为 `duration→ocr`，零索引开销
+> - **参数运行时覆盖**：`config.yaml plugins.ocr.params` 为基座；系统设置页 `pipeline.ocr`（sample_fps/conf_thresh/max_width/scale/lang）写入 settings.json 合并覆盖（`OCR_NUMERIC_SPEC` 钳制 + lang 枚举），运行时生效
+> - **内容去重（全局文本合并）**：滚动/滑动聊天视频里同一条文本随滚动在多帧出现（y 连续变化，甚至滚出视野再出现）——按**归一化文本全局合并成一条**，不做位置跳变拆分/短窗拆分（旧"窗口淘汰"会丢早期消息、旧位置桶会拆散同句）。顶部固定字段（时间/状态栏，如「已备餐」「11:15」）靠 **static-hold**：同文本连续 `static_frames` 帧位移 < `static_move_eps` → 判固定文字，**只读一遍**。最终按 `(首现时间, y1, x1)` 阅读序输出。去重/阈值详见本文 §4.1
+> - **分辨率处理在 runner 内**：`max_width` 缩小 / `scale` 放大经 `cv2.resize`（to_thread），不动共享 `stream_frames`
+> - **前端口径**：桌面前端 `frontend-desktop/`——摘要卡片浏览器式「摘要|文字」标签页（OcrBody 按时间戳清单、点击 seek）；搜索新增「文」按钮（`search_types=["ocr"]`，结果 sr-item 显示命中文字 chip）
+> - **未做（预留）**：`/ocr/export` 导出、`/ocr/thumbnail` 文字框裁剪、`scenes.ocr_text` 语义增强（v2）、**模糊合并**（半截字 vs 完整句，需 difflib/Levenshtein，后续单独评估）
 
 ## 概述
 
@@ -140,6 +148,25 @@ class OcrRunner(OperationRunner):
 
 > 注：`stream_frames` 的 `output_width`/`output_height` 需确认是否支持"只传宽度保比例"。若只支持双传，`max_width` 实现为"读首帧尺寸计算高度"或先不开放该参数（默认原分辨率）。
 
+### 4.1 去重与顺序整理（`_dedup_tracklets` v0.34 定稿）
+
+滚动/滑动聊天录屏中，同一段文字会被 OCR 读到多次（不同帧、不同 y 位置），需要合并成一条且按阅读顺序输出。实现为纯函数 `pipeline/runners/ocr.py:_dedup_tracklets`（无嵌入/零 GPU/纯 CPU，**不**复用 `track_encode` 的 embedding+cosine——那套不适配 OCR，还会破坏 OCR 轻量定位，仅沿用其"同一对象跨帧延续"思想）。
+
+**规则**：
+- **全局文本合并**：同一归一化文本（`core.search._normalize_text`：全角→半角/去分隔符/大写）在整个视频里合并成**一条**——同文本=同一条滚动复读（实测 ocr.mp4/ocr.txt：此场景无真正独立的第二条同文；跨 5s 滚出滚回仍是同一条）。不做位置跳变拆分、不设短窗（旧实现 5s 窗会把「别卷我」拆成两条、位置桶会拆散同句）。
+- **代表行**：取 score 最高（`len(text)*2 + confidence`）的那帧读取做代表，但 `timestamp_sec` 钉在**首现帧** → 顺序稳定。
+- **static-hold（固定文字只读一遍）**：同文本连续 `static_frames` 帧位移 < `static_move_eps`（位置纹丝不动，如顶部「已备餐」「11:15」「12:00送达」）→ 判固定 HUD/状态栏，**只保留首次一次**；一旦位移突破阈值即视为滚动内容。
+- **输出顺序**：按 `(timestamp_sec, bbox.y1, bbox.x1)` 升序 → 阅读顺序。
+
+**阈值**（config `plugins.ocr.params`，可运行时可被覆盖；不进设置页——属高级调优旋钮，改 `config.yaml` 即可）：
+
+| 键 | 默认 | 含义 |
+|---|---|---|
+| `static_frames` | 3 | 帧；同文本连续静止 ≥ 此帧数 → 判固定文字 |
+| `static_move_eps` | 0.02 | 归一化；固定文字允许的 bbox 中心位移（纹丝不动才算固定） |
+
+**边界/取舍**：**模糊合并**（半截字「你吃饭」 vs 完整「你吃饭了吗」）本期不做，需 difflib/Levenshtein（后续单独评估依赖）；OCR 感知层误读（如「8月138」vs「8月13日」）不在去重范围（不要求逐字精确，只保证顺序/去重）。
+
 ## 五、DAG 注册（operations.py，新增一个 Operation）
 
 ```python
@@ -234,17 +261,20 @@ async def ocr_text_search(session, query, limit=20, video_ids=None):
 ```yaml
 plugins:
   ocr:
-    backend: "paddleocr"
+    backend: "rapidocr"       # RapidOCR PP-OCRv3 ONNX + DirectML（生产定版）
     params:
       lang: "ch"
-      use_gpu: false        # CPU 旁路，不占 gpu_lock
-      sample_fps: 0.33      # 每 3 秒一帧
-      max_width: null       # 分辨率上限（null=原分辨率，1280 可省 CPU）
-      conf_thresh: 0.5      # 文字置信度阈值
+      conf_thresh: 0.5        # 文字置信度阈值
+      use_angle_cls: true     # 方向分类器
+      sample_fps: 2.0         # 抽帧率（滚动聊天建议 2-3；静止截图可 1）
+      max_width: null         # 分辨率上限（null=原分辨率，1280 可省 CPU）
+      scale: 1.0              # 小字放大倍数
+      static_frames: 3        # 固定文字判定帧数（顶部时间/状态栏只读一遍）
+      static_move_eps: 0.02   # 固定文字允许的 bbox 中心位移（归一化）
 ```
 
 - `config/config.yaml.example` 同步；服务器/本地 config 各自生效
-- PaddleOCR 模型首次运行自动下载（~20MB）→ **登记进 `deploy/download_models.py`** 供离线部署机预置
+- **依赖**：`onnxruntime-directml==1.24.4` 需装到 `vendor/ort_dml`（`pip install --target vendor/ort_dml onnxruntime-directml==1.24.4`，走代理）；RapidOCR 模型随包落盘（~14MB，零下载），部署机无需额外下载；全局 `onnxruntime-gpu`（人脸/车牌 CUDA）保持不动——DML 只在 OCR 子进程隔离使用
 
 ## 十一、实施步骤
 

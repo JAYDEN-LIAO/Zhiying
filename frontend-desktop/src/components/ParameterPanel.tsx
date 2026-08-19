@@ -40,7 +40,8 @@ const SCENE_PRESETS: Record<string, {
     label: "文字识别",
     desc: "扫描视频中的文件、聊天截图、票据、PPT 等文字",
     modules: { vision: true, audio: false, ocr: true, detection: false },
-    functions: { searchIndex: true, summary: false },
+    // v0.34: OCR 独立模式不建索引——searchIndex 关闭（否则摘要关时 search_encode 仍会建帧索引）
+    functions: { searchIndex: false, summary: false },
   },
 };
 
@@ -254,7 +255,8 @@ export function ParameterPanel({
   /* ── 校验 + 提交 ── */
   const validate = (): string | null => {
     if (!modules.vision && !modules.audio) return "视觉分析和音频转录至少开启一个";
-    if (!functions.searchIndex && !functions.summary) return "搜索索引和智能摘要至少开启一个";
+    // v0.34: OCR 是独立功能产物——文字识别模式下可关搜索索引+摘要（OCR 精确检索走独立 ILIKE 路径，不依赖向量索引）
+    if (!functions.searchIndex && !functions.summary && !modules.ocr) return "搜索索引、智能摘要和文字识别至少开启一个";
     if (!modules.vision && modules.detection) return "视觉分析已关闭，物体检测应同时关闭";
     if (!modules.vision && functions.summary) return "视觉分析已关闭，智能摘要应同时关闭";
     return null;
@@ -383,7 +385,7 @@ export function ParameterPanel({
         <h2 className="font-bold text-slate-800 text-base">
           {batchCount ? `批量解析（${batchCount} 个文件）` : "参数设置"}
         </h2>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+        <button onClick={onClose} className="modal-x" title="关闭" aria-label="关闭">
           <IconClose />
         </button>
       </div>
@@ -629,8 +631,8 @@ export function ParameterPanel({
                 </div>
               );
             })}
-            {!functions.searchIndex && !functions.summary && (
-              <p className="text-[11px] text-red-400 mt-1">搜索索引和智能摘要至少开启一个</p>
+            {!functions.searchIndex && !functions.summary && !modules.ocr && (
+              <p className="text-[11px] text-red-400 mt-1">搜索索引、智能摘要和文字识别至少开启一个</p>
             )}
           </div>
 

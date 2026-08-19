@@ -25,7 +25,7 @@ from core.repository import (
     bulk_insert_frame_detections, bulk_insert_tracks,
     bulk_insert_track_embeddings,
     bulk_insert_face_identities, bulk_insert_face_detections,
-    bulk_insert_plate_detections,
+    bulk_insert_plate_detections, bulk_insert_ocr_detections,
 )
 from plugins.factory import load_plugin
 from pipeline.operations import ALL_OPERATIONS
@@ -326,6 +326,8 @@ class PipelineEngine:
                 parts.append(f"人脸检测 {len(self.ctx.face_detections)}")
             if self.ctx.plate_detections:
                 parts.append(f"车牌 {len(self.ctx.plate_detections)}")
+            if self.ctx.ocr_detections:
+                parts.append(f"文字 {len(self.ctx.ocr_detections)}")
             await self._log_task("产物落库：" + "、".join(parts))
 
             # 卸载 captioner（仅当不是共享实例时才释放 GPU 显存）
@@ -400,6 +402,11 @@ class PipelineEngine:
                     op_names.add("face")
                 if v.plate_enabled:
                     op_names.add("plate")
+            # 阶段二也纳入 OCR（她的「文字识别」识别项语义）：独立感知，依赖 duration，
+            # 需同时满足 ocr 插件 backend 非空（与 operations.ocr gate 一致）
+            if need_detection and v.ocr_enabled and v.vision_enabled \
+                    and self.config.get("plugins", {}).get("ocr", {}).get("backend") is not None:
+                op_names.add("ocr")
 
             enabled = [op for op in ALL_OPERATIONS if op.name in op_names]
 
@@ -425,12 +432,13 @@ class PipelineEngine:
             # 清理旧检测/精析产物（阶段二重跑防残留叠加）
             if need_detection:
                 from sqlalchemy import delete as sa_delete
-                from core.models import FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection
+                from core.models import FrameDetection, Track, TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection, OCRDetection
                 async with self.db_session_factory() as session:
                     await session.execute(sa_delete(FrameDetection).where(FrameDetection.video_id == v.id))
                     await session.execute(sa_delete(Track).where(Track.video_id == v.id))
                     await session.execute(sa_delete(TrackEmbedding).where(TrackEmbedding.video_id == v.id))
                     await session.execute(sa_delete(FaceDetection).where(FaceDetection.video_id == v.id))
+                    await session.execute(sa_delete(OCRDetection).where(OCRDetection.video_id == v.id))
                     await session.execute(sa_delete(FaceIdentity).where(FaceIdentity.video_id == v.id))
                     await session.execute(sa_delete(PlateDetection).where(PlateDetection.video_id == v.id))
                     # 场景实体聚合待重算，先清空
@@ -609,6 +617,10 @@ class PipelineEngine:
             if self.ctx.plate_detections:
                 await bulk_insert_plate_detections(session, self.ctx.plate_detections)
 
+            # OCR 画面文字
+            if self.ctx.ocr_detections:
+                await bulk_insert_ocr_detections(session, self.ctx.ocr_detections)
+
             await session.commit()
 
     async def _persist_summary_only(self) -> None:
@@ -666,6 +678,10 @@ class PipelineEngine:
             if self.ctx.plate_detections:
                 await bulk_insert_plate_detections(session, self.ctx.plate_detections)
 
+            # OCR 画面文字（阶段二纳入，v0.35）
+            if self.ctx.ocr_detections:
+                await bulk_insert_ocr_detections(session, self.ctx.ocr_detections)
+
             # 场景实体聚合回写（阶段二前已清空）
             if self.ctx.scenes:
                 await bulk_update_scenes_entities(session, self.video.id, [
@@ -681,7 +697,7 @@ class PipelineEngine:
                     analysis_entities={
                         "face": len(self.ctx.face_identities) if self.ctx.face_identities else 0,
                         "plate": len(self.ctx.plate_detections) if self.ctx.plate_detections else 0,
-                        "ocr": 0,
+                        "ocr": len(self.ctx.ocr_detections) if self.ctx.ocr_detections else 0,
                     },
                     analysis_progress=1.0,
                 )

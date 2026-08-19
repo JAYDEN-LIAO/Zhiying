@@ -49,13 +49,25 @@ async def get_pipeline_config() -> APIResponse[dict]:
         for cat in ("transcriber", "detector", "face", "plate", "ocr")
     }
 
+    # 当前 vector embedding 档位（8b=4096 / 2b=2048）——前端设置页据此显示档位徽标 + 按档推荐
+    embedding_profile = str(config.get("embedding_profile", "8b")).strip().lower()
+
+    # OCR 生效参数（v0.34）：settings.json pipeline.ocr 覆盖已并入 plugins.ocr.params
+    ocr_params = plugins_cfg.get("ocr", {}).get("params", {}) or {}
+
     return APIResponse(data={
+        "embedding_profile": embedding_profile,
+        "embedding_profiles": config.get("embedding_profiles", {}),
         "default_encode_profile": pipeline_cfg.get("default_encode_profile", "balanced"),
         "encode_profiles": pipeline_cfg.get("encode_profiles", {}),
         "use_nvdec": pipeline_cfg.get("use_nvdec", False),
         "chunk_encoding": pipeline_cfg.get("chunk_encoding", False),
         "default_summary_mode": pipeline_cfg.get("default_summary_mode", "vlm_llm"),
         "plugins": plugin_available,
+        "ocr": {
+            "backend": (plugins_cfg.get("ocr") or {}).get("backend"),
+            "params": ocr_params,
+        },
     })
 
 

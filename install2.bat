@@ -56,6 +56,22 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM OCR 画面文字提取（v0.34）：RapidOCR 用独立 onnxruntime-directml（vendor\ort_dml）。
+REM 不在 requirements（隔离到独立子进程用，避免与全局 onnxruntime-gpu/CUDA 冲突）。
+REM 幂等：vendor\ort_dml 里没有 DmlExecutionProvider 才装。
+.venv\Scripts\python.exe -c "import sys,pathlib;sys.path.insert(0,str(pathlib.Path(r'vendor\ort_dml')));import onnxruntime as o;io=o.get_available_providers();raise SystemExit(0 if 'DmlExecutionProvider' in io else 1)" >nul 2>&1
+if errorlevel 1 (
+    echo   安装 OCR DirectML 引擎（vendor\ort_dml，首次/缺失时）...
+    set "DML_PIP_EXTRA="
+    if not "%PROXY%"=="" set "DML_PIP_EXTRA=--proxy %PROXY%"
+    call .venv\Scripts\pip.exe install --target vendor\ort_dml !DML_PIP_EXTRA! onnxruntime-directml==1.24.4 --quiet
+    if errorlevel 1 (
+        echo   [警告] onnxruntime-directml 安装失败（OCR 将退化 CPU；可稍后手动装）
+    )
+) else (
+    echo   OCR DirectML 引擎已就绪
+)
+
 echo.
 echo [3/6] 安装桌面壳依赖（desktop\requirements.txt，含 psutil）...
 .venv\Scripts\pip.exe install -r desktop\requirements.txt

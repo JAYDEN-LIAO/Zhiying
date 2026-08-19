@@ -76,7 +76,7 @@ async def search_semantic(
             precision_level=r.get("precision_level", "scene"),
             match_paths=r.get("match_paths", []),
             caption=r.get("caption"),
-            ocr_text=r.get("ocr_text"),
+            ocr_text=r.get("ocr_text") or r.get("text"),
             aligned_transcript=r.get("aligned_transcript"),
             similarity=r.get("similarity"),
             thumbnail_url=r.get("thumbnail_url") or f"/api/v1/videos/{r['video_id']}/thumbnail/{r['scene_index']}",

@@ -9,8 +9,8 @@ import { useEffect, useState } from "react";
 import { api } from "../services/api";
 import { useApp } from "../AppContext";
 import type { TaskItem, TaskLogLine } from "../types";
-import { fmtDate, fmtDuration, fmtTime, versionName } from "../utils/helpers";
-import { IconDownload, IconReport, IconLog, IconTask, IconRetry } from "./icons";
+import { fmtDate, fmtDuration, fmtTime, versionName, copyText } from "../utils/helpers";
+import { IconDownload, IconReport, IconLog, IconTask, IconRetry, IconCopy } from "./icons";
 
 const FILTERS = [
   { key: "all", label: "全部" },
@@ -153,6 +153,18 @@ export function TaskCenter() {
   const [logTask, setLogTask] = useState<TaskItem | null>(null);
   const [logs, setLogs] = useState<TaskLogLine[]>([]);
   const [loadingLog, setLoadingLog] = useState(false);
+  const [copiedLog, setCopiedLog] = useState(false);
+
+  const handleCopyLog = async () => {
+    const text = logs
+      .map((l) => `${l.created_at ?? ""} #${String(l.seq).padStart(2, "0")} ${l.message}`)
+      .join("\n");
+    if (!text) return;
+    if (await copyText(text)) {
+      setCopiedLog(true);
+      setTimeout(() => setCopiedLog(false), 2000);
+    }
+  };
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = () => {
@@ -238,7 +250,13 @@ export function TaskCenter() {
           <div className="g-modal" style={{ width: 600 }}>
             <div className="g-card-hd">
               <span className="g-card-tt">任务日志 · {logTask.file_name ?? ""}</span>
-              <button className="g-btn g-btn-sm" onClick={() => setLogTask(null)}>×</button>
+              <div className="flex items-center gap-1">
+                <button className="px-2 h-7 inline-flex items-center gap-1 text-xs rounded-md text-gray-500 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors"
+                  onClick={() => void handleCopyLog()} title="复制日志" aria-label="复制日志">
+                  {copiedLog ? "已复制" : (<><IconCopy />复制</>)}
+                </button>
+                <button className="modal-x" onClick={() => setLogTask(null)} title="关闭" aria-label="关闭">×</button>
+              </div>
             </div>
             <div className="p-4" style={{ maxHeight: "60vh", overflowY: "auto", fontFamily: "var(--font-mono)", fontSize: 12, background: "#0d1117", color: "#d1d5db" }}>
               {loadingLog && <div className="text-gray-400">加载中…</div>}

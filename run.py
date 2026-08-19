@@ -23,6 +23,13 @@ def _server_bind() -> tuple[str, int]:
 
 
 if __name__ == "__main__":
+    import sys
+
     host, port = _server_bind()
     print(f"[run.py] binding {host}:{port} (from config.yaml server section)")
-    uvicorn.run("main:app", host=host, port=port, reload=True)
+
+    # Windows 禁用 reload：uvicorn reload=True → use_subprocess=True → SelectorEventLoop，
+    # 而 Selector 不支持 asyncio.create_subprocess_exec（ffprobe/ffmpeg 全链路依赖子进程）
+    # → NotImplementedError。桌面壳(backend_launcher)同样无 reload；后端加载 ~4GB embedder，
+    # 热重载每次改码重载模型本就有害。Linux 保留热重载（Selector 支持子进程）。
+    uvicorn.run("main:app", host=host, port=port, reload=(sys.platform != "win32"))

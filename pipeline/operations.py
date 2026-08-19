@@ -25,6 +25,7 @@ from pipeline.runners.track_encode import TrackEncodeRunner
 from pipeline.runners.face import FaceRunner
 from pipeline.runners.plate import PlateRunner
 from pipeline.runners.search_encode import SearchEncodeRunner
+from pipeline.runners.ocr import OcrRunner
 
 ALL_OPERATIONS: list[Operation] = [
     Operation(
@@ -184,6 +185,18 @@ ALL_OPERATIONS: list[Operation] = [
         required_plugins=["plate"],
         label="车牌识别", description="PaddleOCR 车牌检测与文字识别",
         progress_weight=0.03,
+    ),
+
+    Operation(
+        name="ocr", runner=OcrRunner(),
+        depends_on=["duration"],  # 独立感知模块：自抽高清帧，与摘要/检测完全解耦
+        gate=lambda v, cfg: (
+            cfg.get("plugins", {}).get("ocr", {}).get("backend") is not None
+            and getattr(v, "ocr_enabled", False)
+        ),
+        required_plugins=["ocr"],
+        label="文字识别", description="画面文字提取中",
+        progress_weight=0.05,
     ),
 
 ]

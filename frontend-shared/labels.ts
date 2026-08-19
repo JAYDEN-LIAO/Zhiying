@@ -121,3 +121,14 @@ export const CLASS_COLORS: Record<string, string> = {
 export function colorOf(cls: string): string {
   return CLASS_COLORS[cls] ?? CLASS_COLORS.default;
 }
+
+/** 搜索类型中文标签（v0.34 加第 8 路 "ocr" 文字） */
+export const SEARCH_TYPE_LABELS: Record<string, string> = {
+  frame: "帧",
+  chunk: "片段",
+  text: "语义",
+  label: "标签",
+  track: "轨迹",
+  plate: "车牌",
+  ocr: "文字",
+};

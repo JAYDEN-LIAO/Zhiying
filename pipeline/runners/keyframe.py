@@ -16,6 +16,7 @@ import os
 
 from pipeline.runners.base import (
     OperationRunner, PipelineContext, effective_summary_mode, resolve_encode_profile,
+    put_sentinel,
 )
 from utils.video_util import stream_frames
 
@@ -107,9 +108,10 @@ class KeyframeRunner(OperationRunner):
                         sub_progress=min(frame_idx / max(1, total_seconds), 0.99),
                     )
         finally:
-            # 确保消费者收到结束信号（即使异常也会发送）
+            # 确保消费者收到结束信号（即使异常也会发送；非阻塞必达，
+            # 防 frame_encode 提前退出后队列满导致此处无限阻塞——同 DetectionRunner）。
             if frame_queue is not None:
-                await frame_queue.put(None)
+                put_sentinel(frame_queue)
 
         # ── 每场景后处理: 缩略图 + vlm_llm 选帧 ──
         for i, scene in enumerate(scenes):

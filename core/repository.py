@@ -624,6 +624,26 @@ async def bulk_insert_plate_detections(
         raise
 
 
+async def bulk_insert_ocr_detections(
+    session: AsyncSession,
+    rows: list[dict],
+) -> None:
+    """批量写入 OCR 画面文字识别结果 — OcrRunner 产出。"""
+    if not rows:
+        return
+    try:
+        from core.models import OCRDetection
+        from sqlalchemy import insert
+        stmt = insert(OCRDetection.__table__)
+        await session.execute(stmt, rows)
+        await session.commit()
+        logger.info("[Repo] Bulk inserted %d OCR detections", len(rows))
+    except Exception:
+        await session.rollback()
+        logger.exception("[Repo] Failed to bulk insert OCR detections")
+        raise
+
+
 # ═══════════════════════════════════════════════════════════
 # 文件库 / 多版本（v0.34）
 # ═══════════════════════════════════════════════════════════

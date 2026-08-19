@@ -13,10 +13,12 @@ import type {
   SettingsData,
   SettingsUpdate,
   PipelinePreset,
+  PipelineConfigInfo,
   DetectionData,
   DetectionRange,
   FaceData,
   PlateData,
+  OcrData,
   FaceSearchResult,
   VideoMetadata,
   ProxyStatus,
@@ -212,7 +214,7 @@ export const api = {
       body: JSON.stringify({
         query,
         video_ids: options?.video_ids,
-        search_types: options?.search_types ?? ["frame", "chunk", "text", "track", "label", "plate"],
+        search_types: options?.search_types ?? ["frame", "chunk", "text", "track", "label", "plate", "ocr"],
         top_k: options?.top_k ?? 20,
         min_similarity: options?.min_similarity ?? 0.3,
       }),
@@ -283,6 +285,11 @@ export const api = {
     return request<PlateData>(`${BASE}/videos/${videoId}/plate/data`);
   },
 
+  /* ── OCR 画面文字数据 (v0.34) ── */
+  fetchOcrData(videoId: string) {
+    return request<OcrData>(`${BASE}/videos/${videoId}/ocr/data`);
+  },
+
   /* ── Settings ── */
   getSettings() {
     return request<SettingsData>(`${BASE}/settings`);
@@ -294,6 +301,11 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+  },
+
+  /* 当前生效管道配置（含 embedding_profile 档位，v0.34候选 档位感知） */
+  getPipelineConfig() {
+    return request<PipelineConfigInfo>(`${BASE}/settings/pipeline`);
   },
 
   /* ── 参数预设（v0.22） ── */

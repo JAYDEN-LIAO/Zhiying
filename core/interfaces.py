@@ -94,6 +94,7 @@ class VideoContext:
     face_identities: list[dict] | None = None      # face runner 产出 — 聚类后的人脸身份
     face_detections: list[dict] | None = None      # face runner 产出 — 逐次人脸检出记录
     plate_detections: list[dict] | None = None     # plate runner 产出 — 车牌识别结果
+    ocr_detections: list[dict] | None = None       # ocr runner 产出 — 画面文字识别结果
 
     # 异步进度回调: async def cb(progress: float, phase: str, desc: str)
     progress_callback: Callable[[float, str, str], Awaitable[None]] | None = None
@@ -248,18 +249,24 @@ class BasePlateRecognizer(ABC):
 
 
 class BaseOCR(ABC):
-    """文字提取 — 单帧 → 可见文字。"""
+    """文字提取 — 单帧 → 可见文字列表。"""
 
     @abstractmethod
-    async def extract(self, frame: np.ndarray) -> str:
+    async def extract(self, frame: np.ndarray) -> list[dict]:
         """
-        对关键帧执行 OCR 文字提取。
+        对单帧执行 OCR，返回该帧识别出的全部文字行。
 
         Args:
             frame: 单帧图像 (H, W, C) uint8。
 
         Returns:
-            提取到的文字内容（多行文本用换行分隔）。
+            [
+                {
+                    "text": str,                          # 文字内容
+                    "bbox": {"x1","y1","x2","y2"},       # 归一化 0-1 坐标
+                    "confidence": float,                   # 置信度 0~1
+                },
+            ]
         """
         ...
 

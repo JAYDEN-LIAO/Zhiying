@@ -20,6 +20,9 @@ storage:
 #   2b: Qwen3-VL-Embedding-2B → 2048 维（低显存机器平替）
 #   换档 = 改 embedding_profile + 重启后端；⚠️ 维度不同，换档后需重建向量库
 #   （每个库的 pgvector 列维度在建表时定死，4096/2048 不能混存）。
+#   ⚠️ 2b 档启动时自动套用轻量编码/量化默认（见 core/config_loader._2B_ENCODE_DEFAULTS：
+#      balanced 448×224/256、precise 448×336/128、quantization none）——8GB 机器直跑 8b
+#      取向模板（504×336/512 等）偏重；用户在设置页手动保存的编码/量化永远优先。
 embedding_profile: 8b
 embedding_profiles:
   8b: { model: "models/Qwen/Qwen3-VL-Embedding-8B", dimension: 4096 }
@@ -47,9 +50,23 @@ plugins:
     detection_fps: 10
     imgsz: 640               # YOLO 推理分辨率（低显存可 512/416，激活近似减半）
 
-  # ── OCR（Demo 跳过）──
+  # ── OCR 文字提取（独立感知模块 v0.34；生产定版 rapidocr）──
+  # 启用：backend 设为 "rapidocr"（PaddleOCR PP-OCRv3 + DirectML，中文精度第一梯队）。
+  # 依赖：需在机器上装过 onnxruntime-directml 到 vendor/ort_dml
+  #   （.venv/Scripts/python.exe -m pip install --proxy <代理> --target vendor/ort_dml onnxruntime-directml==1.24.4）——
+  #   OCR 走独立 DML 子进程，不影响全局 onnxruntime-gpu/CUDA（人脸/车牌）。
+  # 参数可被系统设置页 pipeline.ocr 运行时覆盖。
   ocr:
-    backend: null
+    backend: "rapidocr"         # "null" 禁用
+    params:
+      lang: "ch"                # 仅 "ch"（随包 PP-OCRv3 中文模型）
+      conf_thresh: 0.5          # 文字行置信度门槛
+      use_angle_cls: true       # 方向分类器
+      sample_fps: 2.0           # 抽帧率（帧/秒）——录屏聊天等滚动场景建议 2-3；静止截图可 1
+      max_width: null           # 分辨率上限（null=原分辨率；1280 可省算力）
+      scale: 1.0                # 放大倍数（聊天小字可 2.0 上采样）
+      static_frames: 3          # 固定文字判定：同文本连续静止 ≥ 此帧数 → 顶部固定字段只读一遍
+      static_move_eps: 0.02     # 固定文字允许的 bbox 中心位移（归一化），纹丝不动才算固定
 
   # ── 画面描述 via DashScope API（默认，vlm_llm 摘要模式）──
   # 注意：摘要默认走 API 模式。native_video（本地视频原生理解）已置灰退役，

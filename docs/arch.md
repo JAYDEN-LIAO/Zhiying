@@ -1,19 +1,8 @@
 # Zhiying Architecture
 
 > Version: 0.34 候选 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
-> Frontend: React 19 + Vite 6 + Tailwind CSS 4（双前端: frontend/ 服务器 + frontend-desktop/ 桌面, 共享 frontend-shared/ 对接层）
-> 历史: v0.22 部署系统+设置/参数+Detection重构+删除处理中 / v0.24 云智接入+生产部署 / v0.26 平台文件id跳转 / v0.27 搜索修正+车牌模糊搜索 / v0.28 云智嵌入UI / v0.29 人脸链路重构+搜索隔离 / v0.31 人脸交互+搜索范围+跨视频穿透+置信度
-> v0.32: 全局任务队列（PipelineQueue FIFO + worker 池 + pipeline_tasks 表持久化，批量上传排队防 OOM；重启恢复 + 排队中回调 + 幂等）
-> v0.33: 摘要链路根治重构（max_scenes 场景数上限 / caption 并发+降级+配置穿透 / text_encode 批量 / summary 预算截断 / 增量补摘要修复 / keyframe 抽帧 resize / summary_mode 默认 vlm_llm）
-> v0.34 候选（桌面端重构 + 文件库/多版本/任务中心，未发版，桌面前端/部署侧）: 浅蓝管理后台主题 + frameless 自定义窗口外框（TitleBar 拖拽/窗口按钮/版本徽章, js_api 桥接）+ 4 页模型（文件库/视频解析/任务中心/系统设置）+ AppContext + 工作台按智影 v2 demo 骨架（SplitPane）+ 系统监控（psutil）+ `install2.bat` 一键更新
-> v0.34 候选（文件库/多版本/任务中心/页面裂解，未发版）: 后端 videos.file_id/version_no 版本链 + video_groups.number/owner + task_logs 表 + /groups /files /versions /reanalyze /tasks 端点 + 任务日志生命周期 + 耗时（processing_started_at）+ 导出报告（/tasks/{id}/report md + /tasks/export-batch zip）；前端 TaskCenter/SettingsPage 组件裂解 + 设置 4 子页收敛 2 + 卡片空隙透渐变
-> 桌面 EXE + 双部署路径（未发版）: build_exe.ps1 -Deploy 一条命令打纯壳 exe + setup_linux.sh/setup_windows.ps1 补全 + bump 全机接入
-> v0.34 候选（案例库批量解析/交互 + 搜索卡重构 + 桌面壳，未发版）: POST /videos/analyze-batch 精确勾选批量解析（不走组同步、可选整批参数）；PUT /files/{id} + PUT /groups/{id}/assets/{id} 文件/素材重命名（无后缀自动补真实扩展名）；FileItem/CaseAssetItem.file_ext 后缀展示字段；案例编辑/编号自动填充 A-YYYY-MMDD-NN；搜索卡案例-文件范围（当前视频/案例/文件多选，未处理隐藏）+ 无视频可交互 + 跨视频结果切主视频 + pendingSeek 可靠定位 + 搜索卡单实例跨空态保留；TitleBar 手动拖拽（最大化先还原再跟随）；g-btn 全局 nowrap 防挤压
-> v0.34 候选（桌面端稳定性修复，未发版，桌面前端/壳）: build_exe.ps1 部署加固（杀运行中壳+遗留后端 / $src\* 内容拷贝杜绝 _internal\_internal 嵌套 / 部署后自检 python313.dll）；backend_child 看门狗改持有父进程句柄信号检测（免疫 PID 复用）+ 启动前 sweep_orphan_backends 沿父链清孤儿；窗口控制 is_maximized 读真实 WindowState + toggle 修标志 + resize 同步图标；关闭确认改主题化弹窗（去 pywebview 原生 MessageBox）；.gitignore 补构建产物
-> v0.34 候选（桌面交互 + 暗色主题 + 布局，未发版，桌面前端/壳）: 标题栏「最近更新」（i 下拉 → SplashApi get_recent_commits 项目根 git log）+ 太阳/月亮主题切换（暗色=中性炭灰环境+靛蓝强调色，html.dark 类 + CSS 变量调色板重映射 + index.html 内联防闪烁）；案例库闪电全状态显示（完成=实心 IconBoltSolid + 「重新配置参数解析」→ reparse 建新版本）+ 编辑按钮移入操作格 4 按钮 + 铅笔 edit-3；TaskCenter 导出报告/日志图标；参数面板 4:3 顶向下三段网格 + 物体检测/文字识别调换；工作台恒渲染 DetectionPanel 空态标题 + 播放器/时间轴小圆角；设置页响应式两列卡片网格（去 max-w-900 死区，编码卡独占整行）
-> v0.34 候选（一键安装器 + 内嵌 PostgreSQL + 后端封装，未发版，部署侧）: install1.bat 交互式安装（选 2B/8B + 代理 → Python/FFmpeg/CUDA torch/依赖/模型/config/建表，免 Docker/WSL2，前端交给 install2.bat）；内嵌 PostgreSQL（EDB PG17 便携 zip + 预编译 pgvector → vendor/pg，desktop/db.py 双模式自动托管，桌面启动器 initdb/起停/建库）；后端封装 = deploy/build_backend_pyc.py 编译 .pyc 字节码包 + backend_launcher.py 统一启动器（封装/源码双模式 + 父进程看门狗）+ core/paths.py frozen 路径解析（ZHIYING_PROJECT_ROOT）→ build_exe.ps1 打进 _internal/backend_pyc，客户端无明文源码
-> v0.34 候选（模型适配 embedding_profile，未发版，后端）: 向量编码档位化 8b=4096（默认）/2b=2048（低显存平替）；core/embedding_profile.py EmbedVector 懒读全局维度建表 + config_loader._apply_embedding_profile 联动模型路径与维度 + db.py 迁移参数化；改 config embedding_profile + 重启即换档，⚠️ 维度不同需重建向量库；人脸 512 不受影响
-> v0.34 候选（侧栏徽章系统 + 任务中心交互 + 后端排队检测修复，未发版）: 徽章 = 案例库灰(仅上传未提交，pending 且未入队 且 未版本化) + 视频解析蓝「1」(有视频处理中，未选中视频点进自动定位) + 任务中心 黄(排队中 queued)/绿(新完成，进任务中心清零 + 首次进入整行淡绿高亮)/红(失败，实时计数)；**待处理剥离**：任务中心只显示已提交任务（排队/处理中/已完成/失败）；任务中心整行点击跳转 + hover 淡灰 #dbe2ea + 重试图标(IconRetry, busy 旋转) + 筛选下拉(全部/已完成/处理中/排队中/失败，导出左侧) + 1.5s 刷新；后端 **pipeline_queue.enqueue 从 payload 取 video_id**（根治排队行 video_id 全 NULL → queued 检测失效）+ **TaskItem.queued 字段**（list_tasks 批量查排队集合防 N+1）+ upload 传 group_id 先校验案例存在 + IntegrityError 兜底友好 400；rename_file 行 id→file_id 解析修复（版本化重命名 404 根治）；工具栏按钮图标 16px 统一 + g-btn-primary 统一 + 行内幽灵按钮一致
+> Frontend: React 19 + Vite 6 + Tailwind CSS 4（双前端：frontend/ 服务器 + frontend-desktop/ 桌面，共享 frontend-shared/ 对接层）
+> 核心能力：16-op 声明式 DAG · 4 编码路径 · YOLO11/BoT-SORT 双层 ReID · 人脸/车牌/OCR · 8 路搜索+图搜 · 存储卫生 · 4 级参数+设置/预设 · 全局任务队列 · 文件库/多版本/任务中心 · 云智接入 · 桌面端（pywebview 壳 + 4 页管理后台）
 
 ## System Data Flow
 
@@ -22,639 +11,200 @@
 │                     Client (CLI/Browser / React Frontend)                        │
 └──────────────────┬────────────────────────────┬──────────────────┬───────────────┘
                    │ POST /videos/upload (single)     │ POST /search/semantic │ GET /videos/
-                   │ + POST /videos/upload/batch (v0.19) │ GET /videos/{id}/meta │
-                   │ + PUT /videos/{id}/params     │                        │
+                   │ + /upload/batch · PUT /params    │ + /search/face·image   │
                    ▼                            ▼                        ▼
 ┌─────────────────────────────┐  ┌─────────────────────────────┐  ┌──────────────────┐
-│     FastAPI (main.py)       │  │   SearchEngine              │  │  React Dashboard │
-│                             │  │   ┌─ frame (1fps 精确)     │  │  ┌── video player │
-│  ┌─ api/video_routes.py ──┐ │  │   ├─ chunk (滑动窗口)      │  │  ├── pipeline UI  │
-│  │ upload/register/params  │ │  │   ├─ text (caption 语义)    │  │  ├── search panel │
-│  │ stream (hevc_ok 路由)   │ │  │   ├─ label (JSONB 精确)     │  │  ├── history list │
-│  │ proxy-status/thumbnail  │ │  │   └─ track (crop 跨模态)    │  │  ├── det panel    │
-│  │ delete/metadata        │ │  │   └─ plate (Levenshtein)   │  │  └── export btn   │
-│  └─────────────────────────┘ │  └──────────┬──────────────────┘  └──────────────────┘
-│  ┌─ api/export_routes.py ──┐ │             │
-│  │ clip / frames / track   │ │  ┌──────────▼──────────────────┐
-│  │ thumbnails (GET+POST)   │ │  │   Embedder (local GPU)      │
-│  └─────────────────────────┘ │  │   encode_text("query")      │
-│  ┌─ api/detection_routes.py │  │   encode_image(frame)       │
-│  │ tracks/detections+thumb │  └──────────────────────────────┘
-│  └───────────┬──────────────┘
-│  ┌─ FormatService (v0.13)  ─┐
-│  │ probe → remux → proxy    │
-│  │ (按需, 异步, 不阻塞上传) │
-│  └──────────────────────────┘
-│  ┌─ StorageManager (v0.21)─┐
-│  │ delete → 批量删DB+清盘   │
-│  │   └ 处理中: cancellation│
-│  │     登记 → 管道优雅中止  │
-│  │ sweep → 孤儿清扫        │
-│  └──────────────────────────┘
-│  ┌─ SettingsService (v0.22) ┐
-│  │ settings.json 运行时覆盖 │
-│  │ presets.json 参数预设    │
-│  └──────────────────────────┘
-└──────────────┬─────────────┘
-               │
-               ▼
-┌─────────────────────────────┐
-│  VideoService               │
-│  process_video(video_id)    │
-│    → PipelineEngine.run()   │
-└──────────┬──────────────────┘
-           │
-           ▼
-┌─────────────────────────────┐
-│  PipelineEngine             │
-│  EventDrivenScheduler (v0.10)│
-│  Each op awaits upstream     │
-│  ┌─ duration                │
-│  │  → detect ──→ search_queue ──→ search_encode (队列消费) │
-│  │  → seg + transcribe      │
-│  │    → keyframes + align   │
-│  │      → caption           │
-│  │      → frame_encode      │
-│  │      → text_encode       │
-│  │    → track_encode        │
-│  │    → face + plate        │
-│  │  → summary               │
-│  └─ Persist → DB            │
-└─────────────────────────────┘
-           │
-           ▼
-┌─────────────────────────────┐
-│  PostgreSQL + pgvector      │
-│                             │
-│  videos (metadata, summary) │
-│  scenes (text_embedding, caption)│
-│  transcripts (full text)    │
-│  frame_embeddings (1fps)    │
-│  track_embeddings (crop)    │
-│  chunks (滑动窗口)           │
-└─────────────────────────────┘
+│     FastAPI (main.py)       │  │   SearchEngine              │  │  React Frontend  │
+│  ┌─ api/video_routes.py ─┐  │  │   ┌─ frame (1fps 精确)     │  │  ┌── video player │
+│  │ upload/register/params │  │  │   ├─ chunk (滑动窗口)      │  │  ├── pipeline UI  │
+│  │ stream (hevc 路由)     │  │  │   ├─ text (caption 语义)    │  │  ├── search panel │
+│  │ delete/metadata       │  │  │   ├─ label (JSONB 精确)     │  │  └── det panel    │
+│  └─────────────────────────┘  │  │   └─ track/plate          │  └──────────────────┘
+│  ┌─ api/export_routes.py ─┐  │  └──────────┬──────────────────┘
+│  │ clip / frames / track  │  │             │
+│  │ thumbnails (GET+POST)  │  │  ┌──────────▼──────────────────┐
+│  └─────────────────────────┘  │  │   Embedder (local GPU)      │
+│  ┌─ api/tasks/groups ─────┐  │  │   encode_text("query")      │
+│  │ 任务中心 / 文件库        │  │  │   encode_image(frame)       │
+│  └───────────┬────────────┘  │  └──────────────────────────────┘
+│  ┌─ FormatService ──────────┐ │
+│  │ probe → remux → proxy    │ │  StorageManager（删除清盘/孤儿清扫）
+│  │ (按需, 异步)              │ │  SettingsService + PresetsService（运行时生效, 预设入仓库随 git）
+│  └──────────────────────────┘ └───── VideoService → PipelineEngine（DAG, 任务队列入队）─────
+└──────────────┬─────────────┘        │
+               ▼                      ▼                PostgreSQL + pgvector
+  Pipeline DAG (EventDrivenScheduler): videos/scenes/transcripts/frame_embeddings/
+  duration → detection(生产者-消费者, 共享 NVDEC 流) → track_encode → face/plate     chunks/track_embeddings
+  duration → segmentation→keyframes→caption→summary→frame/text/chunk_encode         /tracks/detections/
+  duration → ocr(自抽高清帧, RapidOCR PP-OCRv3 ONNX, DirectML 独立子进程) → ocr_detections                                  face_identities/face_detections/
+  → _persist() → mark_completed()                                                  /ocr_detections
 ```
 
-## Parameter System (v0.8)
+## Parameter System
 
 ```
-4-level hierarchy controlling pipeline execution:
-
-L1: Scene Type (1 of 5)
-  ├─ general       → all modules balanced open
-  ├─ meeting       → audio+ocr forced ON, transcript core
-  ├─ surveillance  → audio OFF, summary OFF, detection ON
-  ├─ text_recognition → ocr ON, caption OFF, audio OFF
-  └─ custom        → user-modified preset, auto-saved to localStorage
-
-L2: Perception Modules (6 switches, 1 grayed)
-  ├─ vision_enabled   → frame processing master switch
-  ├─ audio_enabled    → transcription (grayed when plugin disabled)
-  ├─ ocr_enabled      → text from frames (grayed when plugin disabled)
-  ├─ caption_enabled  → VLM scene description
-  ├─ detection_enabled → YOLO11 + BoT-SORT object detection (dual-gated: config + per-video)
-  └─ grounding_enabled → Florence-2 grounding (always grayed, plugin not implemented)
-
-L3: Function Switches (3)
-  ├─ search_index_enabled → 4-path encoding for semantic search (frame+chunk+text+track)
-  ├─ summary_enabled      → global structured summary
-
-L4: Advanced Params (7)
-  ├─ language, sample_fps, segment_threshold
-  ├─ caption_with_context, summary_detail
-  ├─ encode_profile: "fast" | "balanced" | "precise" | null (全局默认)
-  └─ summary_mode: "vlm_llm" (默认, API驱动) | "native_video" (已置灰退役: 前端不再可选; 后端代码保留兼容历史记录——effective_summary_mode() 在 captioner 为 qwen_api 时自动映射为 vlm_llm, 旧视频仍正常处理; captioner 8B 不再下载)
-
-Validation: PipelineParams model_validator in core/schemas.py
-  ● vision OFF → ocr/caption/detection forced OFF
-  ● caption OFF → summary forced OFF
-  ● vision+audio both OFF → reject
-  ● search+summary both OFF → reject
-
-Incremental: Only L3 switches (summary_enabled / search_index_enabled) can be toggled on completed videos
-  → summary_mode change requires new video record (POST /videos/reuse)
-  → runs run_incremental() → skips completed phases
+4 级层次控制管道执行:
+  L1 场景 (general/meeting/surveillance/text_recognition/custom) → 模块默认
+  L2 感知模块: vision/audio/ocr/caption/detection/grounding（各开关, 插件禁用时置灰）
+  L3 功能开关: search_index_enabled / summary_enabled（已完成的视频可增量重跑这两项）
+  L4 高级参数: language/sample_fps/segment_threshold/caption_with_context/summary_detail/
+              encode_profile(fast/balanced/precise)/summary_mode(vlm_llm 默认)
+校验: vision OFF→ocr/caption/detection 强制 OFF；caption OFF→summary OFF；vision+audio 双 OFF 拒绝；search+summary 双 OFF 拒绝
+增量: 仅 L3 可对已完成视频增量；summary_mode 变更需新建记录
+门控: detection 双门控(config backend + per-video)；face/plate 三门控(+face_enabled/plate_enabled)
 ```
 
-## Settings & Presets (v0.22)
+## Settings & Presets
 
 ```
-系统设置 — 全局运行时生效（settings.json 覆盖 config.yaml）:
-  GET/PUT /settings 读写 data/settings.json:
-    api_keys   {dashscope, deepseek}            → 注入 env → _ENV_OVERRIDES 流入插件（脱敏显示末4位）
-    providers  {dashscope/base_url+model, deepseek/...} → 覆盖 captioner/summarizer 配置
-    storage    {video_dir, artifact_dir}         → 覆盖 storage 配置
-    pipeline   (见下)                            → 覆盖 pipeline + plugins.detector + embedder.quantization
-
-  pipeline 段:
-    encode_profiles       三档模板 {fast/balanced/precise: {encode_width, encode_height, encode_batch_size}}
-    default_encode_profile 默认档 fast/balanced/precise
-    detection_fps / detector_batch_size / confidence_threshold / iou_threshold   → plugins.detector
-    yolo_imgsz             → plugins.detector.imgsz (320-640, 32倍数)
-    use_nvdec / chunk_encoding   布尔开关
-    quantization          embedder 量化 none/8bit/4bit（⚠️ 启动时加载，改后需重启）
-    max_concurrent_videos 并发管道上限 → PipelineQueue worker 池（0/未设=1 串行，v0.32 队列）
-    max_scenes            目标场景数上限 → segmentation（长视频固定段数 / TransNetV2 结果合并，默认 6）
-
-  core/config_loader: PIPELINE_NUMERIC_SPEC + ENCODE_PROFILE_NUMERIC_SPEC + clamp_param()
-    → 保存/应用时范围钳制 + 步进取整；空字符串 = 删除覆盖（回退 config.yaml）
-  load_config() 每次 _apply_settings_overrides 合并 → 保存清 lru_cache → 运行时生效
-  （唯一例外 quantization：启动加载，改后需重启后端）
-
-参数预设 — 多套命名参数快照，一键套用 (data/presets.json):
-  POST   /settings/presets            快照「当前生效」管道参数为新预设
-  GET    /settings/presets            列出
-  PUT    /settings/presets/{id}       重命名
-  DELETE /settings/presets/{id}       删除
-  POST   /settings/presets/{id}/apply 套用 → 写回 settings.json 覆盖区，运行时生效
-  预设只含管道性能/模型参数（编码+检测+开关+量化+并发），不含存储路径与 API 密钥（机器相关）
-
-配置统一 (v0.22, 部署): 单份 config/config.yaml 通用所有机器
-  - embedder 相对模型路径自动解析到项目根（对齐 detector，摆脱 cwd 依赖）
-  - captioner 配 qwen3_vl 但本地 8B 模型缺失 → _auto_fallback_captioner 自动降级 qwen_api (DashScope, WARNING)
-  - 摘要模式默认 vlm_llm（API 驱动）; native_video 已置灰退役, 由 runners/base.py effective_summary_mode() 兜底兼容历史记录（captioner 为 qwen_api 时自动映射 vlm_llm, 旧视频仍正常处理; captioner 8B 不再下载）
-  - 无需 config.windows.yaml / ZHIYING_CONFIG（后者仅保留为自定义配置覆盖入口）
+GET/PUT /settings → data/settings.json（网站运行时生效, 保存即生效除非 quantization）:
+  api_keys {dashscope, deepseek}     → 注入 env
+  providers {base_url, model}        → 覆盖 captioner/summarizer 配置
+  storage {video_dir, artifact_dir}  → 覆盖存储路径
+  pipeline {encode_profiles 三档模板, default_encode_profile, detection_fps/batch/imgsz/阈值,
+            use_nvdec, chunk_encoding, quantization(需重启), max_concurrent_videos, max_scenes,
+            sample_fps, segment_threshold}  → 覆盖 config
+  core/config_loader: PIPELINE_NUMERIC_SPEC + clamp_param 钳制；每次 load_config() _apply_settings_overrides 合并
+参数预设 /settings/presets → config/presets.json（命名快照, 入仓库随 git 迁移, 不含存储路径/API key）:
+  套用 = 写回 settings.json pipeline 覆盖区 → 运行时生效
+档位感知: GET /settings/pipeline 返回 embedding_profile(8b/2b) + embedding_profiles(维度) + 生效 encode 配置
+  2b 档自动套用轻量编码/量化默认（_2B_ENCODE_DEFAULTS: balanced 448×224/256, precise 448×336/128, quantization none）;
+  _ENCODING_OVERRIDDEN 字段级让位用户设置页保存值
 ```
 
 ## Pipeline Detail
 
 ```
-DAG 阶段流 (EventDrivenScheduler, 15 ops, 每 op 一个 asyncio 任务等待上游事件):
+DAG 阶段流（16 ops, 每 op 一个 asyncio 任务等待上游事件）:
   duration
-    ├─ search_encode (仅 summary_enabled=False) — 与 detection 共享单 NVDEC 流, 64 帧一批消费 → frame_embeddings
-    ├─ detection (10fps, 生产者-消费者, 攒批 128) → track_encode → face / plate
-    └─ segmentation (场景数上限 max_scenes: 长视频按 duration/max_scenes 固定段数, TransNetV2 结果超限按累计时长合并)
-         → keyframes (1fps, 抽帧统一 resize 到编码预设分辨率, NVDEC MJPEG pipe / cv2) → asyncio.Queue(512) 并发编码
-         → caption (vlm_llm 并发限流 + 单场景失败降级; native_video 已置灰退役) → summary (预算截断, 默认 vlm_llm)
+    ├─ search_encode（仅摘要关时）— 与 detection 共享单 NVDEC 流, 64 帧一批 → frame_embeddings
+    ├─ ocr（v0.34 独立感知模块）— 自抽高清帧, RapidOCR(PP-OCRv3 ONNX) 走 DirectML 独立子进程, 内容去重/固定文字抑制/模糊合并 → ocr_detections
+    ├─ detection（10fps 生产者-消费者, 攒批 128）→ track_encode（读检测缓存 crop mean pool）→ face/plate
+    └─ segmentation（TransNetV2 / 时长固定段, max_scenes 上限）
+         → keyframes（1fps, 抽帧统一 resize 到编码预设分辨率）→ caption（vlm_llm API 并发限流+失败降级）→ summary（vlm_llm, 输入预算截断）
   → _persist() → mark_completed()
-
-GPU 串行 (v0.22): 所有 embedder encode_* / YOLO detect 前向持 core/gpu_lock 全局锁
-  → 并发前向（YOLO cuDNN 卷积 + bitsandbytes 8bit matmul）在 24GB 机器触发驱动硬故障
-  → detection 攒批 128（约 2-4s 持锁），1024 长批持锁 ~20s 会饿死 embedder / 卡死共享流
-并发管道 (v0.32 队列): max_concurrent_videos → PipelineQueue worker 池（0/未设=1 串行 FIFO 排队），防批量并发 OOM
-
-Keyframe 消费 4 链路:
-  ① frame_encode → frame_embeddings 表 (1fps 帧向量)
-  ② chunk_encode → chunks 表 (滑动窗口, 默认关闭; 窗口 ≤5s 不切 / 5-60s 半时长 / >60s 30s/步15s)
-  ③ text_encode → scenes.text_embedding (caption+ocr+transcript 语义)
-  ④ caption → scene.caption
-
-Caption 双模式: native_video (Qwen3-VL-8B 本地 GPU 原生视频理解 → 结构化 JSON; 已置灰退役, 8B 不再下载) / vlm_llm (Qwen-VL-Max API 看图, 默认; v0.33 并发限流 + 单场景失败重试降级, with_context/max_new_tokens 从 captioner.params 子层读, 默认关 with_context)
-Summary 双模式: native_video (纯 Python 聚合器, 无 API 成本; 已置灰退役) / vlm_llm (DeepSeek API, 默认)
-Track 语义路 (track_encode): 读 detection 缓存 640×384 crop (每 2s, 零 FFmpeg seek)
-  → 挑 20%/50%/80% 3 帧 → mean pool → cosine ≥0.85 + 同类 + 时序不重叠 全局缝合
-  → track_embeddings 表
-
-人脸路 (face, v0.29 重构):
-  detection 收尾 `_upgrade_best_frames` 把 person/vehicle 类 best 帧升级为全分辨率 (ffmpeg seek)
-  → FaceRunner 多帧采样: 短 track(<5s) 用 best 帧 / 长 track 按 [first_seen,last_seen] 补采 2~3 帧
-  → SCRFD 提脸 + ArcFace R50 512d → 护栏式双阈值聚类:
-     同 track 内 (时间连续强先验) sim ≥ 0.30 合并; 跨 track sim ≥ 0.58 才合并 (防并错不同人)
-  → 检索锚点: best_face_embedding = 与均值最接近的最典型单脸 (非质量分最高)
-  → face_identities (含 best_track_id 身份↔track 映射) + face_detections 落库
-  → v0.31 前端交互: /face/data 每身份返回 appearances（按 track 聚合 min/max 时间段，人脸行展开显示"人 #N"）；
-     搜索人脸结果点击 → 定位检测栏"人脸"视图 + 展开身份 + 视频定位（跳第一条出现时间点）；
-     选中身份 → 其归属 person track 集合在视频框金色高亮 + 时间轴联动 + 丝滑定位
-Persist: bulk_insert_scenes + insert transcript + update videos (duration/summary/status_detail)
-
-任务队列 (v0.32, core/pipeline_queue.py PipelineQueue):
-  FIFO asyncio.Queue + N worker（N = pipeline.max_concurrent_videos，0/未设=1 串行，防批量并发 GPU OOM）
-  ├─ 所有管道触发点统一入队：yunzhi jobs（202 后入队 + "排队中"低进度回调）、上传 params、组同步、增量
-  ├─ pipeline_tasks 表 DB 持久化：queued → running → completed/failed；payload_json 存回调 URL + jobToken
-  ├─ 重启恢复：queued 重入队；running yunzhi 续跑（有 video_id 复用，防重复建视频）；running pipeline/incremental 标失败
-  ├─ 幂等：dedup_key 列，进程内 dict 快路径 + DB 兜底（跨重启）
-  └─ worker 数随设置运行时 configure() 调整；shutdown() 哨兵退出优雅关停
-
-文件库 / 多版本 / 任务中心 (v0.34):
-  ├─ 版本模型：videos.file_id + version_no 版本链（一次解析 = 一个版本行，产物按 video_id 天然隔离，唯一索引 (file_id, version_no)）；遗留视频 file_id NULL = 独立文件（自身即版本 1）
-  ├─ 文件库：GET /files 每 file_id 一行；GET /videos/{id}/versions 版本链；POST /videos/{id}/reanalyze 建新版本行（复用 reuse 复制机制）；video_groups.number/owner 案例编号/负责人；/groups/{id}/assets 案例素材
-  ├─ 任务中心：GET /tasks scope 过滤（all/active/history）；「耗时」= updated_at − videos.processing_started_at（_set_processing 写入，排队不计入，retry 置空重新计时）
-  ├─ 日志生命周期：统一 append_task_log（core/repository，task_logs 表 seq 递增）— create_video / PUT params / reanalyze / engine（开始/完成/失败）/ retry
-  ├─ 导出报告：GET /tasks/{id}/report 生成 Markdown（report_service.build_report_md，产物表单表异常降级）；POST /tasks/export-batch zip 打包；中文文件名 URL 编码（HTTP header 仅 latin-1）
-  ├─ 批量解析（v0.34候选）：POST /videos/analyze-batch 精确勾选启动（仅 pending、不走组同步、可选 params 整批应用）— 前端勾选列 + 一键/批量解析（弹参数面板）
-  └─ 重命名 / 后缀展示（v0.34候选）：PUT /files/{id}（更新全部版本行 file_name，无后缀自动补真实扩展名）+ PUT /groups/{id}/assets/{id}（仅改显示名）；FileItem/CaseAssetItem.file_ext 真实扩展名作展示字段（编辑框只含主名，重命名不影响后缀）
-```
-
-## Module Dependency
-
-```
-main.py
-  ├─ core/db.py, core/config_loader.py
-  └─ api/router.py (挂载 /api/v1)
-        ├─ api/video_routes.py, search_routes.py, settings_routes.py
-        ├─ api/detection_routes.py, export_routes.py, face_routes.py, plate_routes.py
-        ├─ api/maintenance_routes.py (存储清扫)
-        ├─ api/deps.py → core/models.py, core/schemas.py, core/repository.py
-        │     ├─ services/video_service.py → pipeline/engine.py
-        │     │     ├─ pipeline/operations.py + pipeline/runners/*.py (15 runners)
-        │     │     ├─ utils/video_util.py, utils/metadata.py
-        │     │     └─ plugins/factory.py → plugins/{captioner,embedder,summarizer,segmenter,
-        │     │                              transcriber,detector,face,plate,ocr,grounding}/
-        │     └─ pipeline/search_engine.py → core/search.py
-        └─ services/export_service.py → utils/video_util.py
-
-core/  models.py (12 表) · schemas.py (DTO) · repository.py (数据访问) · storage_manager.py (存储卫生)
-       search.py (6 检索) · db.py (引擎/init_db) · config_loader.py (settings 覆盖/参数钳制/自动降级)
-       settings_service.py (设置) · presets_service.py (参数预设) · gpu_lock.py (GPU 串行锁)
-       cancellation.py (管道取消登记, 删除处理中视频后优雅中止)
-       prompt_loader.py · status_tracker.py (进度) · interfaces.py (10 插件 ABC) · exceptions.py
-config/  config.yaml (server/db/storage/plugins/pipeline) · config_schema.py · prompts.yaml
-frontend/  Dashboard.tsx + components/ (19, v0.28 删 Sidebar) + hooks/ (8) + 对接层指针（实现见 frontend-shared/）
-frontend-desktop/  独立前端（v0.34 浅蓝管理后台 4 页模型, 见下「桌面端前端」小节）; frontend-shared/  api/types/labels/helpers 一份实现（双端复用）
-utils/  video_util.py (FFmpeg) · metadata.py (三级元数据) · video_source.py (来源规则引擎)
-services/  video_service.py (管道调度) · format_service.py (remux/proxy) · export_service.py
+GPU 串行: 所有 embedder encode_* / YOLO detect 前向持 core/gpu_lock 全局锁（并发前向触发驱动硬故障; detection 攒批 128 防饿死 embedder）
+并发: max_concurrent_videos → PipelineQueue worker 池（0/未设=1 串行 FIFO, 防批量并发 OOM）
+Keyframe 4 消费链: frame_encode → frame_embeddings · chunk_encode → chunks(滑窗, 默认关) · text_encode → scenes.text_embedding · caption → scene.caption
+摘要: vlm_llm 默认（Qwen-VL-Max 看图 + DeepSeek 摘要, 并发限流+失败重试降级+预算截断）; native_video 已置灰退役（代码保留兼容历史）
+人脸路: detection 收尾升级 person/vehicle best 帧为全分辨率 → FACEFRAME 多帧采样 → SCRFD 提脸 + ArcFace 512d → 护栏式双阈值聚类
+       （同 track 0.30 宽松合并, 跨 track 0.58 保守合并）→ face_identities(最典型脸主锚 + 均值兜底) + face_detections
+任务队列 (core/pipeline_queue.py): FIFO + N worker + pipeline_tasks 表持久化
+  所有管道触发点统一入队；重启恢复（queued 重入队 / running yunzhi 续跑 / running pipeline 标失败）；幂等（dedup_key）
+文件库/多版本/任务中心:
+  videos.file_id+version_no 版本链（一次解析=一个版本行, 产物按 video_id 隔离, (file_id,version_no) 唯一索引）
+  日志生命周期统一 repository.append_task_log（task_logs 表）；耗时 = updated_at − processing_started_at（排队不计入）
+  批量解析 POST /videos/analyze-batch（精确勾选, 不走组同步）；文件/素材重命名 PUT /files/{id} + /groups/{id}/assets/{id}
 ```
 
 ## Plugin System
 
 ```
-plugins/factory.py:
-  load_plugin(config, "captioner")
-    → import plugins.captioner.qwen_api_captioner
-    → instantiate QwenAPICaptioner(base_url, api_key, ...)
-    → return instance (or None if disabled)
-
-  CATEGORY_MAP:       category → package path
-  IMPL_CLASS_MAP:     category → expected class name
-  _MODULE_OVERRIDES:  (category, backend) → .py filename
-  _CLASS_OVERRIDES:   (category, backend) → implementation class name
-
-config.yaml controls which backends to load:
-
-  segmenter:   transnetv2    → TransNetV2 neural network scene detection
-  captioner:   qwen_api      → Qwen-VL-Max DashScope API (default, vlm_llm 模式; native_video 已置灰退役)
-               qwen3_vl      → local Qwen3-VL-8B video understanding (仅开发机有本地 8B 模型时可选)
-  embedder:    qwen3_vl_embedding_8b → local GPU model (Qwen3-VL-Embedding-8B), loaded at startup
-                                       可选 quantization none/8bit/4bit (bitsandbytes); 相对路径解析到项目根
-  summarizer:  vllm          → DeepSeek API (vlm_llm mode only; native mode uses Python aggregator)
-                               (截断自愈: finish_reason=length → max_tokens 翻倍重试 ≤3 次 + JSON 截断修复)
-  transcriber: null          → disabled (faster-whisper plugin exists, opt-in)
-  detector:    yolo          → YOLO11s object detection (默认启用; batch_size/imgsz 可配; 共享单实例懒加载)
-  face:        insightface   → InsightFace SCRFD + ArcFace R50 (512d)
-  plate:       hyperlpr      → HyperLPR3 ONNX Runtime LPR (with PaddleOCR alternative)
-  ocr:         null          → disabled (placeholder)
-  grounding:   null          → disabled (placeholder)
-
-所有 embedder encode_* / YOLO detect 前向持 core/gpu_lock 全局锁串行（v0.22，防并发驱动故障）
-
-人脸/车牌 ONNX 推理依赖 onnxruntime：x86/Windows 装 onnxruntime-gpu（GPU 探针含 CUDAExecutionProvider）；
-ARM64（DGX Spark/GB10）无 onnxruntime-gpu wheel → requirements 环境标记自动装 onnxruntime CPU 版（人脸/车牌走 CPU）。
-
+plugins/factory.py: load_plugin(config, category) → import + 实例化; null backend = 禁用
+  CATEGORY_MAP / IMPL_CLASS_MAP / _MODULE_OVERRIDES / _CLASS_OVERRIDES
+后端: segmenter(transnetv2) · captioner(qwen_api 默认 / qwen3_vl 本地可选) · embedder(qwen3_vl_embedding, 档位驱动)
+      summarizer(vllm=DeepSeek) · transcriber(null) · detector(yolo) · face(insightface) · plate(hyperlpr/paddle)
+      ocr(rapidocr=PP-OCRv3 ONNX via DirectML 独立子进程) · grounding(null) 占位
+约定: 插件接口异步; 同步模型推理 MUST asyncio.to_thread(); 禁用 load_plugin("detector"/"embedder") 重复实例化（共享单实例）
+人脸/车牌推理 ONNX（x86 装 onnxruntime-gpu, ARM64 自动 CPU）
+```
 
 ## Search Architecture
 
 ```
-Semantic Search: POST /api/v1/search/semantic — query → embedder.encode_text() (编码一次)
-  → 6 路并行召回:
-     frame (1fps 精确秒) / chunk (滑窗, 默认关) / text (caption+ocr+transcript 语义)
-     label (JSONB @> entities) / track (crop 跨模态, 返回具体物体) / plate (Levenshtein + ILIKE + 字符归一化)
-  → Face 图搜: POST /search/face — 图片 → ArcFace 512d → face_identities cosine
-     (v0.29 双锚: GREATEST(best_face_embedding 最典型单脸, face_embedding 均值) 取高, 漏检最低;
-      返回 appearances 该身份全部出现时间段)
-  → 通用图搜: POST /search/image — 图片 → Qwen3-VL 4096-dim → frame_embeddings
-     (专用 search_image_only 路径: 帧不聚类, 每帧独立精确到秒, 不补 scene 信息)
-  → 合并去重: 帧簇(间隔≤4s)优先, chunk/text 与帧重叠丢弃, track/plate 各按 (video_id, track_id) 去重
-  → v0.31 通用置信度: 每结果 confidence = 相似度 × 路径权重（frame 1.0 / track 0.9 / plate 0.95 / text 0.85 / chunk 0.7），
-     跨路径统一排行（search + search_image_only 口径一致）；前端显示 confidence%
-  → 范围过滤: video_ids 为空列表 → 返回空（fail-closed, `if video_ids is not None`）；None=全库
-  → ⚠️ 搜索隔离 (v0.29 修复): search/face + search/image 的 video_ids 等参数必须 Form(...) 声明
-    （曾误声明为 query → form-data 提交取不到 → None → 全库泄漏）；单视频搜索严格隔离
-  → v0.31 搜索范围: 前端范围模型 current/group/all/custom（all=不传 video_ids 全库 / custom=自定义跨视频多选）；
-     无视频默认工作台直接全库搜索；跨视频结果点击保留结果与范围（suppress-flag + videoId prop 根治重置）+ seekTarget 可靠 seek
-     → v0.34候选 桌面端范围改案例-文件结构：下拉 = 当前视频 / 案例全选 / 文件多选（未处理直接隐藏、未索引置灰），
-       无视频也可交互（空选=全库）；跨视频结果点击**切主视频**（播放器/时间轴/检测/摘要同步）+ pendingSeek 等新视频就绪再定位；
-       搜索卡合并单实例（空态↔有视频结果/范围保留）
-  返回: {precision_level, precise_start/end, match_paths, thumbnail_url, track_id?, bbox?, confidence?}
-
-core/search.py 6 种检索函数:
-  frame_vector_search · chunk_vector_search · text_vector_search
-  track_vector_search · plate_text_search (Levenshtein + ILIKE + 归一化, 单字模糊) · face_identity_search (ArcFace cosine)
+Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
+  frame(1fps 精确) / chunk(滑窗, 默认关) / text(caption+ocr+transcript) / label(JSONB @>) / track(crop 跨模态) / plate(Levenshtein+ILIKE+归一化) / ocr(画面文字精确串匹配, ILIKE+编辑距离, v0.34)
+图搜: /search/face（ArcFace 512d → face_identities, GREATEST(最典型脸, 均值) 双锚）· /search/image（Qwen3-VL → frame_embeddings, 独立 search_image_only 路径帧不聚类）
+合并去重: 帧簇(间隔≤4s)优先, chunk/text 与帧重叠丢弃; plate/ocr/track 独立去重（无 scene 概念, 各自按 track/时间戳唯一）; confidence = 相似度 × 路径权重（frame 1.0/track 0.9/plate 0.95/ocr 0.95/text 0.85/chunk 0.7）
+范围过滤: video_ids 空列表 → 空(fail-closed); None=全库; ⚠️ search/face + /search/image 参数必须 Form(...) 声明（防 query 取 None 全库泄漏）
+返回: precision_level / precise_start/end / match_paths / thumbnail_url / track_id? / bbox? / confidence?
+core/search.py: frame_vector_search · chunk_vector_search · text_vector_search · track_vector_search · plate_text_search · ocr_text_search · face_identity_search
 ```
 
 ## Database Schema
 
-```
-video_groups (v0.19 多视频分组)
-  ├─ id (UUID PK), name (nullable), created_at, updated_at
-  └─ videos: list["Video"] (relationship)
+| Table | 关键列 | 用途 |
+|---|---|---|
+| `video_groups` | id, name, number/owner(案例编号/负责人) | 视频分组/案例 |
+| `videos` | id, status/progress, summary(JSONB), summary_mode, 感知/功能开关, 高级参数, 格式字段, **source_owned**, **group_id**, **external_file_id**(平台 id), **file_id+version_no**(版本链), **processing_started_at**(耗时), metadata_json, source_analysis | 主表 |
+| `scenes` | scene_index, start/end_sec, **text_embedding**(EmbedVector), caption, ocr_text, aligned_transcript, entities(JSONB) | 搜索主粒度 |
+| `transcripts` | full_text, words(JSONB) | 字幕 |
+| `frame_embeddings` | timestamp_sec, embedding(EmbedVector), is_keyframe | 1fps 帧向量 |
+| `chunks` | chunk_index, start/end_sec, embedding(EmbedVector) | 滑窗向量 |
+| `frame_detections` | track_id, timestamp_sec, class_name, confidence, bbox(JSONB) | YOLO 逐帧检测 |
+| `tracks` | track_id, class_name, first/last_seen, frame_count, segments(JSONB) | 轨迹摘要 |
+| `track_embeddings` | track_id, embedding(EmbedVector), timestamp_sec, bbox(JSONB) | 轨迹 crop 向量 |
+| `face_identities` | identity_label, **face_embedding**(512 均值) + **best_face_embedding**(512 最典型脸), best_track_id, first/last_seen, avg_quality, best_face_bbox | 聚类身份 |
+| `face_detections` | identity_id(FK), track_id, timestamp_sec, bbox(JSONB), quality_score, face_embedding(512) | 逐帧人脸 |
+| `plate_detections` | track_id, plate_text, plate_type, char_confidences(JSONB), bbox, detection_confidence | 车牌 |
+| `ocr_detections` | timestamp_sec, text, bbox(JSONB), confidence | 画面文字（第 8 路精确检索） |
+| `pipeline_tasks` | type, dedup_key, video_id, payload_json, status, error | 任务队列持久化 |
+| `task_logs` | task_id(=版本行 id), seq, level, message, created_at | 任务生命周期日志 |
 
-videos
-  ├─ id (UUID PK), status, progress, error_message
-  ├─ file_path, file_name, file_size, duration
-  ├─ content_type, language
-  ├─ perception: audio/vision/ocr/grounding/caption/detection_enabled, detection_classes
-  ├─ function: search_index_enabled, summary_enabled, summary_mode
-  ├─ advanced: sample_fps, segment_threshold, caption_with_context, summary_detail
-  ├─ summary (JSONB)
-  ├─ metadata_json (JSONB)          — 缓存的完整技术元数据（首次提取后后续 <1ms）
-  ├─ source_analysis (JSONB)        — 视频来源分析：类型/置信度/证据链/监控品牌
-  ├─ ai_detect_result (JSONB)       — [残留] AI 生成检测结果（AICheck 服务已移除，此列保留但恒为 not_run）
-  ├─ status_detail (管道实时操作描述)
-  ├─ source_owned (Boolean, 默认 true; 平台共享文件= false → 删除不 unlink 源文件, v0.24)
-  ├─ external_file_id (Int, nullable, v0.26) — 云智平台文件库资源 ID，前端凭它自动跳转
-  ├─ file_id (UUID, nullable, v0.34) — 逻辑文件 ID：首次解析生成，同文件多版本共享；唯一索引 (file_id, version_no)
-  ├─ version_no (Int, nullable, v0.34) — 每文件版本号 1,2,3…（版本行 = 一次解析，产物按 video_id 天然隔离）
-  ├─ processing_started_at (Timestamptz, nullable, v0.34) — 管道真正开始处理时间（入队/排队不计入），任务中心「耗时」= updated_at − 此列
-  ├─ group_id (UUID FK → video_groups.id, nullable, v0.19) — NULL=单视频未分组
-  └─ created_at, updated_at
-
-scenes
-  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
-  ├─ scene_index, start_sec, end_sec, keyframe_path
-  ├─ text_embedding (Vector 4096)    — caption+ocr+transcript 语义向量
-  ├─ ocr_text, aligned_transcript, caption, prev_caption
-  ├─ entities (JSONB)
-  └─ created_at
-
-transcripts
-  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE, UNIQUE)
-  ├─ full_text, words (JSONB, 字词级时间戳)
-  ├─ language, duration_transcribed
-  └─ created_at
-
-frame_embeddings
-  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
-  ├─ scene_index, timestamp_sec
-  ├─ embedding (Vector 4096), thumbnail_path, is_keyframe
-  └─ created_at
-
-chunks
-  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
-  ├─ scene_index, chunk_index, start_sec, end_sec
-  ├─ embedding (Vector 4096), thumbnail_path
-  └─ created_at
-
-frame_detections
-  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
-  ├─ track_id, timestamp_sec, class_name, confidence
-  ├─ bbox (JSONB, {x1, y1, x2, y2} 归一化 0-1)
-  └─ created_at
-
-tracks
-  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
-  ├─ track_id, class_name, first_seen, last_seen, frame_count
-  ├─ segments (JSONB, [{start, end}, ...]) — ReID 合并后的多段时间片段
-  └─ created_at
-
-track_embeddings
-  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
-  ├─ track_id, class_name, embedding (Vector 4096)
-  ├─ timestamp_sec, bbox (JSONB)
-  └─ created_at
-
-face_identities
-  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
-  ├─ identity_label (String, "人物 A/B/C..."), face_count
-  ├─ face_embedding (Vector 512 — ArcFace R50 output, 均值兜底)
-  ├─ best_face_embedding (Vector 512 — 最典型单脸, v0.29 检索主锚)
-  ├─ best_track_id (Integer, v0.29 身份↔track 映射)
-  ├─ first_seen, last_seen, avg_quality
-  ├─ best_face_timestamp, best_face_bbox (JSONB)
-  └─ created_at
-
-face_detections
-  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
-  ├─ identity_id (FK → face_identities.id, SET NULL)
-  ├─ track_id, timestamp_sec
-  ├─ bbox (JSONB), quality_score, face_embedding (Vector 512)
-  └─ created_at
-
-plate_detections
-  ├─ id (SERIAL PK), video_id (UUID FK → videos.id CASCADE)
-  ├─ track_id, class_name, timestamp_sec
-  ├─ plate_text, plate_type (blue/yellow/green/white)
-  ├─ char_confidences (JSONB), bbox (JSONB), detection_confidence
-  └─ created_at
-
-pipeline_tasks (v0.32 任务队列持久化)
-  ├─ id (UUID PK), type (yunzhi_job/pipeline/incremental)
-  ├─ dedup_key (String, index — 幂等键), video_id (UUID, 恢复续跑防重复建)
-  ├─ payload_json (Text — 序列化任务载荷, yunzhi 含回调 URL + jobToken)
-  ├─ status (queued/running/completed/failed), error (Text)
-  └─ created_at, updated_at
-
-task_logs (v0.34 任务生命周期日志)
-  ├─ id (SERIAL PK), task_id (UUID = 版本行 videos.id, index)
-  ├─ seq (Int — 每 task 递增), level (info/error), message (Text)
-  └─ created_at (Timestamptz)
-  写入统一走 core/repository.append_task_log：create_video(任务已创建) / PUT params(参数已提交，任务入队) / reanalyze(重新解析新版本) / engine(管道开始/完成/失败) / retry(任务重试)
-```
+向量列 = `EmbedVector()`（维度随 embedding_profile 8b=4096 / 2b=2048）；人脸固定 `Vector(512)`。无 pgvector HNSW（4096 超 2000 上限，demo 规模全扫描 <1ms）。`init_db()` 增量迁移（ADD COLUMN IF NOT EXISTS）。
 
 ## API Endpoints
 
 | Method | Path | Description |
-|--------|------|-------------|
-| POST | /api/v1/videos | 注册视频任务 (JSON body) |
-| POST | /api/v1/videos/upload | 上传视频文件 (multipart, 不启动 Pipeline, group_id=NULL) |
-| POST | /api/v1/videos/upload/batch | 批量上传视频文件 (multipart, 创建 VideoGroup, 并发处理) |
-| POST | /api/v1/videos/register-external | 平台共享文件就地引用 (source_owned=false, 删视频不删源文件, v0.24) |
-| GET | /api/v1/videos/external/{file_id} | 按云智平台文件库资源 ID 查找视频（Bridge context.resource.id → 自动跳转目标；无匹配 404，v0.26） |
-| PUT | /api/v1/videos/{id}/params | 设置参数 + 启动 Pipeline (pending/completed) |
-| POST | /api/v1/videos/reuse | 基于已有视频创建新记录 (复用文件) |
-| GET | /api/v1/videos/ | 视频列表 (按创建时间降序) |
-| GET | /api/v1/videos/{id} | 视频详情 + 关联 scenes + transcript |
-| GET | /api/v1/videos/{id}/status | 轻量进度查询 |
-| GET | /api/v1/videos/{id}/stream | 视频流式播放 (支持 Range) |
-| GET | /api/v1/videos/{id}/thumbnail/{scene_index} | 场景缩略图 |
-| DELETE | /api/v1/videos/{id} | 删除视频 (级联+清盘; 处理中可删, 管道优雅中止) |
-| GET | /api/v1/videos/{id}/metadata | 视频元数据 + 来源分析 (支持 ?verbose=true, 自动缓存) |
-| GET | /api/v1/settings | 获取系统设置 (API 密钥/服务商端点与模型/存储路径/管道性能) |
-| PUT | /api/v1/settings | 更新系统设置 (密钥/服务商/存储/pipeline 段皆可，保存即运行时生效；量化需重启) |
-| GET | /api/v1/settings/pipeline | 获取 Pipeline 配置 (编码预设/摘要模式默认/插件可用性) |
-| GET | /api/v1/settings/presets | 列出参数预设 (v0.22) |
-| POST | /api/v1/settings/presets | 创建参数预设 (快照当前生效管道参数) |
-| PUT | /api/v1/settings/presets/{id} | 重命名参数预设 |
-| DELETE | /api/v1/settings/presets/{id} | 删除参数预设 |
-| POST | /api/v1/settings/presets/{id}/apply | 套用参数预设 (写回 settings.json 覆盖区, 运行时生效) |
-| GET | /api/v1/pipeline/operations | 查询启用的操作列表 + 进度范围 |
-| GET | /api/v1/videos/{id}/detection/tracks | 追踪轨迹摘要 (v0.22 替代旧 /detection/data) |
-| GET | /api/v1/videos/{id}/detection/detections | 时间窗逐帧检测框 (v0.22, 按需区间加载) |
-| GET | /api/v1/videos/{id}/detection/thumbnail | track crop 缩略图 (bbox 裁剪) |
-| GET | /api/v1/videos/{id}/face/data | 人脸识别数据 (身份/track_id/时间戳) |
-| GET | /api/v1/videos/{id}/face/thumbnail | 人脸 crop 缩略图 |
-| GET | /api/v1/videos/{id}/plate/data | 车牌识别数据 |
-| GET | /api/v1/videos/{id}/plate/thumbnail | 车牌缩略图 |
-| POST | /api/v1/search/semantic | 语义搜索 (六路并行：frame+chunk+text+label+track+plate) |
-| POST | /api/v1/search/face | 人脸图片搜索 (multipart image → ArcFace 512d) |
-| POST | /api/v1/search/image | 通用图搜 (multipart image → Qwen3-VL-Embedding 4096-dim → frame_embeddings) |
-| POST | /api/v1/videos/{id}/export/clip | 导出视频片段 (JSON) |
-| GET | /api/v1/videos/{id}/export/clip | 导出视频片段/单帧 (query params) |
-| POST | /api/v1/videos/{id}/export/frames | 导出帧 zip (兼容) |
-| POST | /api/v1/videos/{id}/export/track/{tid} | 导出 track 分段视频 zip (JSON) |
-| GET | /api/v1/videos/{id}/export/track/{tid} | 导出 track 分段视频 zip (query params) |
-| GET | /api/v1/videos/{id}/export/track/{tid}/thumbnail | 导出 track 物体全尺寸裁剪图 |
-| POST | /api/v1/videos/{id}/export/thumbnails | 导出场景缩略图 zip (JSON) |
-| GET | /api/v1/videos/{id}/export/thumbnails | 导出场景缩略图 zip (直接下载) |
-| POST | /api/v1/maintenance/sweep | 存储孤儿清扫 (body {dry_run}, true=预览/默认, false=执行) |
-| GET | /api/v1/maintenance/storage | 存储用量概览 (各目录大小 + 可回收量) |
-| GET | /api/v1/files | 文件库列表（每 file_id 一行：根行信息 + 当前版本状态，含遗留 NULL，v0.34） |
-| GET/POST | /api/v1/groups | 案例列表 / 新建案例（name/number/owner，v0.34） |
-| PUT/DELETE | /api/v1/groups/{id} | 改案例 / 删案例（组内视频清 group_id，v0.34） |
-| GET/POST | /api/v1/groups/{id}/assets | 案例素材列表 / 上传（图片等非视频，v0.34） |
-| GET | /api/v1/videos/{id}/versions | 版本链列表（同 file_id 全部版本行，v0.34） |
-| POST | /api/v1/videos/{id}/reanalyze | 重新解析：复制文件信息建新版本行 + 版本号递增 + 入队（v0.34） |
-| POST | /api/v1/videos/analyze-batch | 批量解析：精确启动指定待处理视频（仅 pending、**不走组同步**、可选整批 params 整批应用，v0.34候选） |
-| PUT | /api/v1/files/{file_id} | 文件重命名（更新全部版本行 file_name，含遗留 NULL file_id；无后缀自动补磁盘真实扩展名，v0.34候选） |
-| PUT | /api/v1/groups/{id}/assets/{asset_id} | 案例素材重命名（仅改显示名，磁盘文件按 uid 存储不动路径，v0.34候选） |
-| GET | /api/v1/tasks | 任务中心列表（scope: all/active/history，v0.34） |
-| GET | /api/v1/tasks/{id}/log | 任务日志（task_logs 表，v0.34） |
-| POST | /api/v1/tasks/{id}/retry | 重试：清空产物 + 重置 pending + processing_started_at 置空 + 重新入队（v0.34） |
-| GET | /api/v1/tasks/{id}/report | 导出任务报告 Markdown（中文文件名 URL 编码，v0.34） |
-| POST | /api/v1/tasks/export-batch | 批量导出任务报告 zip（body {task_ids}，v0.34） |
-| POST | /internal/yunzhi/jobs | 云智平台异步任务 (根路径挂载非 /api/v1, 立即202+幂等, 进度/完成/失败回调, v0.24) |
+|---|---|---|
+| POST | `/api/v1/videos/upload` · `/upload/batch` | 上传（单个/批量建组, 不启动管道） |
+| POST | `/api/v1/videos/register-external` | 平台共享文件就地引用（source_owned=false） |
+| GET | `/api/v1/videos/external/{file_id}` | 平台文件 id 查找（自动跳转目标） |
+| PUT | `/api/v1/videos/{id}/params` | 设置参数 + 启动管道 |
+| POST | `/api/v1/videos/reuse` · `/{id}/reanalyze` · `/analyze-batch` | 复用文件新建 / 重新解析建版本行 / 批量解析 |
+| GET | `/api/v1/videos/` · `/{id}` · `/{id}/status` · `/{id}/metadata` | 列表 / 详情 / 状态 / 元数据+来源分析 |
+| GET | `/api/v1/videos/{id}/stream` · `/thumbnail/{scene}` · `/versions` | 播放(HEVC 路由) / 场景缩略图 / 版本链 |
+| DELETE | `/api/v1/videos/{id}` | 删除（级联+清盘, 处理中可删优雅中止） |
+| GET/PUT | `/api/v1/settings` · `/settings/pipeline` | 系统设置 / 生效管道配置（含档位） |
+| GET/POST/PUT/DELETE | `/api/v1/settings/presets` · `/{id}/apply` | 参数预设 CRUD + 套用 |
+| GET | `/api/v1/pipeline/operations` | 启用的操作列表 |
+| GET | `/api/v1/videos/{id}/detection/tracks` · `/detections` · `/thumbnail` | 检测轨迹 / 时间窗检测框 / 缩略图 |
+| GET | `/api/v1/videos/{id}/face/data` · `/face/thumbnail` | 人脸数据 / 缩略图 |
+| GET | `/api/v1/videos/{id}/plate/data` · `/plate/thumbnail` | 车牌数据 / 缩略图 |
+| GET | `/api/v1/videos/{id}/ocr/data` | OCR 画面文字清单（按时间戳，桌面前端「文字」标签页） |
+| GET/POST | `/api/v1/videos/{id}/export/clip` · `/frames` · `/track/{tid}` · `/thumbnails` | 导出片段/帧/轨迹/缩略图 |
+| POST | `/api/v1/search/semantic` · `/search/face` · `/search/image` | 语义（含 OCR 第 8 路 search_types=["ocr"]）/ 人脸图搜 / 通用图搜 |
+| GET/POST | `/api/v1/files` · `/files/{file_id}` | 文件库列表 / 重命名 |
+| GET/POST | `/api/v1/groups` · `/groups/{id}` · `/groups/{id}/assets` | 案例 CRUD / 素材 |
+| GET/POST | `/api/v1/tasks` · `/{id}/log` · `/{id}/retry` · `/{id}/report` · `/export-batch` | 任务中心 |
+| POST | `/api/v1/maintenance/sweep` · GET `/maintenance/storage` | 存储清扫 / 用量 |
+| POST | `/internal/yunzhi/jobs` | 云智异步任务（根路径, 202+回调+幂等） |
 
 ## Frontend Architecture
 
-**双前端共存**：服务器前端 `frontend/`（v0.28 云智嵌入 UI，本节描述）+ 桌面独立前端 `frontend-desktop/`（v0.34 浅蓝管理后台 4 页模型，见下「桌面端前端」小节）。**对接层 `frontend-shared/` 一份实现**（api/types/labels/helpers），两端 `services/api.ts`/`types`/`labels`/`helpers` 是 1 行再导出指针。后端按 `ZHIYING_FRONTEND` 切挂载（默认服务器 dist，桌面启动器传 desktop）。以下为服务器前端结构：
+**双前端共存**：服务器 `frontend/`（v0.28 云智嵌入 UI，Dashboard 主工作台 + 19 组件 + 云智 Bridge SDK）+ 桌面独立 `frontend-desktop/`（v0.34 浅蓝 4 页管理后台）——UI 层各自演进不共享；**对接层 `frontend-shared/`（api/types/labels/helpers）一份实现，双端 services/api.ts 等是再导出指针**。
 
-```
-React 19 + Vite 6 + Tailwind CSS 4
-  │
-  ├── App.tsx                ← 根组件
-  ├── Dashboard.tsx          ← 主工作台 (~430 行, 状态编排 + group 状态 + detectionVideoId + header 导航; v0.28 移除侧边栏)
-  ├── components/
-  │   ├── ParameterPanel     ← 侧滑参数面板: 四级联动 (L1场景/L2感知/L3功能/L4高级)
-  │   ├── PipelineBar        ← 动态阶段进度条 (根据开关渲染对应节点)
-  │   ├── VideoSummaryCard   ← 视频摘要展示 + 缩略图导出按钮
-  │   ├── VideoSearchCard    ← 语义/图搜/人脸搜索面板 (v0.31: 无视频工作台直接全库搜索；范围模型 current/group/all/custom 下拉常驻，自定义跨视频多选按组渲染；人脸/车牌门控按范围) + searchMode 区分图搜/语义 + confidence 显示
-  │   ├── HistoryPanelContent← 历史记录列表 (搜索+自动刷新+缩略图+参数摘要, 删除二次确认+processing禁用+释放空间提示) + 组卡片堆叠/展开
-  │   ├── SettingsPage       ← 系统设置 4 分区 (v0.22): 系统(存储/NVDEC/chunk/并发上限) + 模型参数(编码三档模板/默认档/量化 + YOLO 帧率/批/分辨率/阈值) + 参数预设(快照/套用/重命名/删除) + API 密钥(端点/模型/密钥)
-  │   ├── DetectionOverlay   ← Canvas bbox 渲染 (插值+拖尾+选中)
-  │   ├── DetectionPanel     ← 物体列表 (分类筛选下拉栏含"人脸"项 v0.29) + 人脸视图 (v0.31: 点击跳首次出现时间点/单次不展开/多次展开出现时间段含"人 #N"标签/下载按钮/点空白收起/选中丝滑定位) + 独立视频选择器 (组感知)
-  │   ├── DetectionTimeline  ← Track 时间轴 (播放头+色条+悬浮提示)
-  │   ├── VideoInfoCard      ← 视频元数据 + 来源分析
-  │   ├── ExportMenu         ← 导出菜单 (视频片段或节点)
-  │   └── icons.tsx          ← 20+ SVG 图标
-  ├── labels.ts              ← YOLO COCO 类名英→中映射 + 统一颜色表
-  ├── utils/helpers.ts       ← fmtDuration, fmtDate, formatSec
-  ├── services/api.ts        ← API 封装 + 轮询工具函数 + 下载辅助 + uploadBatch()
-  ├── types/index.ts         ← TypeScript 类型定义 (镜像 backend schemas, +VideoGroup)
-  └── services/api.ts        ← Pipeline 阶段通过 `/pipeline/operations` 动态获取
+**桌面前端（frontend-desktop/）**：App.tsx 壳 + AppContext（跨页导航/共享视频列表轮询/上传删除编排）+ 4 页组件（FileLibrary / Workbench[视频解析, SplitPane 工作台] / TaskCenter / SettingsPage）+ TitleBar（frameless 自绘标题栏, 手动拖拽, 最近更新下拉, 太阳/月亮暗色主题）+ Sidebar + SystemMonitor(psutil 真机监控)。页面卡片空隙靠 `app-main-flat` 透明 + 根容器透明透出渐变；暗色=CSS 变量调色板重映射（`html.dark`）。与服务器前端完全隔离。
 
-数据流:
-  Dashboard mount → GET /api/v1/videos/ 拉取列表
-  上传 → POST multipart → 参数面板自动展开 (不可点击外部关闭); 多文件走 uploadBatch → VideoGroup
-  POST /videos/upload/batch → group 内第一个视频自动选中, history 组卡片堆叠
-  配置参数 → PUT /videos/{id}/params → Pipeline 启动 (组内所有 pending 兄弟同步启动)
-  选择视频 → GET /api/v1/videos/{id} 每 3s 轮询, 同步更新历史列表状态
-  增切换 → Header 下拉切组内视频 / 历史卡片切视频 / 搜索结果跨视频跳转
-  增量修改 → PUT /videos/{id}/params (仅 summary/search_index) → run_incremental()
-  搜索 → POST /api/v1/search/semantic (支持 video_ids 范围过滤: 当前/组内/全部)
-  信息 → GET /videos/{id}/metadata → VideoInfoCard 弹出卡片
-  导出 → window.open(GET /videos/{id}/export/...) → 浏览器直接下载
-  删除 → DELETE /videos/{id} (v0.21 二次确认, processing 禁用, 提示释放空间; 后端 DB 级联+磁盘清盘)
-
-Vite 开发代理:
-  /api → http://localhost:8011 (dev)
-```
-
-**桌面端前端（`frontend-desktop/`，v0.34 重构）**——与服务器前端 UI 完全隔离，共用同一后端：
-
-```
-React 19 + Vite 6 + Tailwind CSS 4（浅蓝管理后台主题，teal→蓝 @theme 全局重映射）
-  │
-  ├── App.tsx                ← 应用壳：TitleBar + Sidebar + 4 页切换 + 拖拽上传遮罩
-  ├── AppContext.tsx         ← 跨页状态：page/selectedVideoId/settingsTab 导航 +
-  │                             共享视频列表轮询(4s) + 上传/删除/拖拽编排
-  ├── components/
-  │   ├── TitleBar           ← 自定义窗口标题栏（frameless 拖拽区 + 版本徽章 +
-  │   │                         最小化/最大化/关闭，经 pywebview js_api 桥接；
-  │   │                         最近更新(i 下拉 → git log) + 太阳/月亮主题切换）
-  │   ├── Sidebar            ← w-56 浅蓝渐变侧栏：业务(文件库/视频解析/任务中心) +
-  │   │                         系统设置 2 子页(系统设置/模型参数) + SystemMonitor
-  │   ├── SystemMonitor      ← 底部真机监控（等 pywebviewready 后轮询 get_system_stats，
-  │   │                         psutil CPU/内存/网络 + nvidia-smi GPU，迷你柱状图）
-  │   ├── FileLibrary        ← 文件库：左分组树 + 右表格(类型/文件名/时长/时间/状态/操作)；
-  │   │                         批量解析（勾选列+一键/批量解析+参数面板）、案例编辑/编号自动填充
-  │   │                         A-YYYY-MMDD-NN、文件与图片内联重命名、后缀展示字段（file_ext 灰色固定）；
-  │   │                         操作列 4 图标按钮（编辑/解析闪电[已完成=实心+重新配置参数解析]/预览/删除）
-  │   ├── Workbench          ← 视频解析（照智影 v2 demo 骨架：外层 SplitPane 60%
-  │   │                         左舞台播放器/时间轴 + 右栏 摘要⇄信息 toggle | 检测|搜索 42%
-  │   │                         分栏；ParameterPanel 以 Modal 打开；搜索卡案例-文件范围下拉[当前视频/
-  │   │                         案例/文件多选，未处理隐藏] + 无视频可交互 + 跨视频结果切主视频 + 单实例保留结果）
-  │   ├── TaskCenter         ← 任务中心：裂解 TaskHeader(顶部卡) + TaskBody(正文卡：
-  │   │                         筛选 Tab + 表格 任务文件/版本/所属/状态/提交时间/耗时 + 操作
-  │   │                         导出报告/日志（图标按钮）/重试[失败])；4s 轮询；无删除按钮
-  │   ├── SplitPane          ← 可拖拽分栏（自 demo SplitPane.jsx 移植）
-  │   ├── SettingsPage       ← 系统设置：4 子页收敛 2（系统设置=系统+参数预设 / 模型参数=
-  │   │                         模型参数+API密钥），各页裂解子组件（PresetSection/StorageSection/
-  │   │                         PipelineSection · EncoderSection/DetectionSection/ApiKeysSection）；
-  │   │                         内容区响应式两列卡片网格（xl:grid-cols-2，窄窗回落单列，编码卡独占整行）
-  │   └── …现有组件（VideoPlayer/DetectionTimeline/DetectionPanel/VideoSearchCard 等换肤复用）
-  4 页模型：文件库 / 视频解析 / 任务中心 / 系统设置（无 Router，AppContext state 切换）
-  页面卡片空隙：外层 app-main-flat 透明背景 + 页面根容器透明（不透明白底挡死渐变）+ space/gap 卡片间距 → 渐变透出（TaskCenter/FileLibrary/SettingsPage 一致）
-  暗色主题：标题栏太阳/月亮切换 → `<html class="dark">` → Tailwind v4 工具类走 `var(--color-*)` 重映射调色板（中性炭灰灰阶 50→900 反转为暗、靛蓝强调色 `teal-500/600/700→#7a88f5/#8f9bf7/#a3adf9`）+ index.css 硬编码结构类显式覆盖；`index.html` 内联防闪烁；亮色蓝按钮不变
-```
-
-**桌面端窗口壳（`desktop/`，v0.34 + v0.34候选）**：
-- 主窗 `create_window(..., frameless=True, shadow=True)` 去系统标题栏（Windows EdgeChromium 保留圆角阴影）
-- 前端标题栏**手动拖拽**（替代原生 drag-region）：`SplashApi.move(x,y)` 移动窗口；**最大化态先 toggle_maximize 还原再跟随光标**（桌面惯例「拖动缩小跟随」）；双击标题栏切换最大化/还原；窗口按钮置于拖拽区外（sibling）防误触
-- `webview_panel.py` SplashApi 扩展：`minimize/toggle_maximize/is_maximized/move/quit`（窗口控制）+ `get_system_stats`（psutil + nvidia-smi，GPU 缓存 5s）+ `get_recent_commits`（项目根 `git log`，TitleBar「最近更新」下拉，`CREATE_NO_WINDOW` 防闪框）；load_url 到真实前端后 js_api 仍有效；**`is_maximized` 读真实窗体状态（`window.native`=BrowserView 实例的 `WindowState`，非 `window.gui` 模块）+ toggle 直接写标志**，根治「最大化后图标不更新 / 再点无反应」；**关闭确认走前端主题化弹窗**（TitleBar Modal，不用 pywebview `confirm_close` 原生 MessageBox）
-- 启动页（`SPLASH_HTML`）：**毛玻璃启动页**（前端同款渐变背景 + 毛玻璃卡片 + 标题「视频智能快速检索平台」+ 阶段进度条，**模型加载段按后端日志 tqdm `Loading weights: X%` 实时推进 10%→90%**，亮暗自适应，就绪显示版本）；独立「启动日志」控制窗已移除（`LogApi`/`LOG_HTML` 删除，`get_logs` 迁入 `SplashApi`，日志仍落盘 `data/logs`）；前端 `index.html` 加 `#boot` 毛玻璃过渡遮罩（无进度条，React 挂载后淡出，防白屏/避免「进度回退」误解）
-- 后端生命周期：统一经 `backend_launcher.py` 拉起 uvicorn（封装模式读 `_internal/backend_pyc` 字节码包 + `ZHIYING_PROJECT_ROOT` 指向应用根；源码模式直接 import），含 **父进程句柄看门狗**（`OpenProcess(SYNCHRONIZE)` + `WaitForSingleObject`，免疫 PID 复用，父死 ~3s 内 `os._exit(3)`）；启动前 `checks.sweep_orphan_backends` 沿父链（兼容 `.venv\Scripts\python.exe` 重定向器三层）清遗留孤儿，防占端口/锁 `_internal` DLL
-- `desktop/requirements.txt` 含 `psutil`；前端 `window.pywebview` 存在才渲染窗口按钮（浏览器 dev 隐藏）
-- `build_exe.ps1 -Deploy` 加固：部署前杀运行中壳 + 遗留 backend_child、旧目录删除重试、`$src\*` 内容拷贝杜绝 `_internal\_internal` 嵌套、部署后自检 python313.dll 落地（区分「嵌套」与「真缺失」，不再一律误报杀软）
-
-**更新发布**：根目录 `install2.bat` 一键自动更新（Windows）：git pull（走 7897 代理）→ pip 装 desktop 依赖 → npm install/build（dist gitignored 必须本地建）→ `build_exe.ps1 -Deploy` 重打 exe。
+**桌面端窗口壳（desktop/）**：pywebview 主窗 `frameless=True, shadow=True`；SplashApi 窗口控制（minimize/toggle_maximize/is_maximized 读真实 WindowState/move/quit）+ 系统监控 + git 最近提交；SPLASH_HTML 毛玻璃启动页（模型加载段按日志 tqdm `Loading weights: X%` 实时推进, 高清图标 base64 内嵌, 右上角 × 终止启动=停后端+关窗）；后端生命周期 = backend_launcher.py（封装字节码/源码双模式 + 父进程句柄看门狗免疫 PID 复用）；数据库双模式 `desktop/db.py`（vendor/pg 内嵌便携 PostgreSQL 优先, start_db 幂等 pg_isready 探测复用, 无则 docker）；check_models 读 config embedding_profile 传 verify；`build_exe.ps1 -Deploy` 打纯壳 exe（部署前幂等停内嵌 postgres, 后端编译为 .pyc 字节码包藏源码）。
 
 ## Key Design Decisions
 
 | Decision | Rationale |
 |---|---|
-| **Plugin + Factory** | config.yaml 换后端零代码改动 |
-| **pgvector over 独立向量库** | 部署简单、事务一致 |
-| **本地 GPU Embedder** | 每场景/帧 4096-dim 编码，API 延迟不可接受 |
-| **双模式摘要** | 默认 vlm_llm（API 驱动）；native_video（本地 GPU + 纯 Python 聚合）已置灰退役——前端不再可选，后端保留兼容历史记录（旧视频仍正常处理），captioner 8B 不再下载 |
-| **FFmpeg pipe → 内存** | 帧不落盘，减 I/O |
-| **TransNetV2 分段** | 神经镜头边界检测优于固定间隔 |
-| **1fps 帧池 + 4 编码路径** | 帧级精度主力 + chunk/text/track 互补 |
-| **自适应 chunk 窗口** | ≤5s 跳过 / 5-60s 半时长 / >60s 30s 窗 |
-| **共享 embedder (app.state)** | 避免每视频重载 ~4GB 模型 |
-| **4 级参数 + 增量** | 场景设默认值，L3 开关可增量重跑 |
-| **单 NVDEC 流共享 + 生产者-消费者** | detection 与 search_encode 共享解码流，帧提取与推理重叠，消灭双流解码竞争 |
-| **NVDEC MJPEG pipe** | ~100KB/帧 替代 raw NV12 (3.1MB)，pipe I/O 减少 30× |
-| **三档速度预设** | fast/balanced/precise 控制分辨率 + batch |
-| **搜索/摘要路径解耦** | search_encode 独立于摘要，帧搜索不等 caption |
-| **track 回退移除** | 直接读缓存 crop（零 seek），长视频 track_encode 257s→43s |
-| **车牌模糊检索** | 字符归一化（全角→半角/去分隔符/大写） + 编辑距离≤2 + ILIKE 子串；相似度 `LEAST(dist,2)` 封顶（子串匹配不被 0.3 门槛误杀）；「牌」模式（search_types=["plate"], top_k=100）一个字列出所有相关 |
-| **上传/参数解耦** | 上传建 pending，配置后才启动管道 |
-| **两层格式兼容 + 懒代理** | remux (-c copy) 即时 + proxy (NVENC h264) 按需，HEVC 浏览器零处理 |
-| **GET+POST 双导出** | POST 供编程调用，GET 供浏览器直接下载 |
-| **三级元数据 + DB 缓存** | pymediainfo→exiftool→ffprobe；缓存后 <1ms |
-| **多视频分组 (v0.19)** | 批量上传 + 组参数同步 + 跨视频搜索 |
-| **全局 ReID 缝合 (v0.20)** | 在线 with_reid + 全局 cosine ≥0.85 合并（segments 时序检查）|
-| **来源分析规则引擎** | EXIF + 文件名 + 文件头魔数（IMKH→海康），无 ML 依赖 <10ms |
-| **人脸/车牌开关** | 三门控: config + detection_enabled + face/plate_enabled |
-| **图搜双通道** | 人脸 ArcFace 512d / 通用 Qwen3-VL 4096-dim（帧不聚类精确到秒）|
-| **存储卫生 (v0.21)** | 删除 = DB 级联 + 引用追踪清盘；孤儿清扫手动（dry-run 默认）防误删 |
-| **删除处理中 + 管道取消 (v0.22)** | 放开 PROCESSING 守卫；删除端点 `core/cancellation.mark_cancelled` 登记已删 id，管道 persist 前 `is_cancelled` 检查即中止，防写已删行 FK 异常（单进程集合, 管道结束 unmark 防膨胀） |
-| **全局 GPU 锁 (v0.22)** | 24GB 机 YOLO 卷积 + 8bit matmul 并发触发驱动硬故障 → 单进程全局锁串行所有 GPU 前向；detection 攒批 1024→128 防饿死 embedder |
-| **共享单实例 (v0.22)** | embedder + detector 预载 app.state（detector 懒加载），业务逻辑经 shared_detector 注入，禁重复 load_plugin |
-| **并发管道限制 (v0.22→v0.32 队列)** | max_concurrent_videos → PipelineQueue worker 池（0/未设=1 串行 FIFO 排队，防批量并发 OOM） |
-| **参数预设 (v0.22)** | presets.json 命名快照一键套用，运行时生效；不含机器相关（存储路径/密钥） |
-| **从零部署 + 配置统一 (v0.22)** | setup_windows.ps1 裸机一键安装；单份 config 自动降级 captioner（本地缺失→qwen_api），effective_summary_mode 兜底摘要模式 |
-| **多架构 requirements (v0.22)** | `onnxruntime-gpu` 仅 x86/Windows 有 wheel → 环境标记：win32/x86_64/AMD64 装 GPU 版，aarch64/arm64（DGX Spark/GB10）自动装 `onnxruntime` CPU 版（人脸/车牌走 CPU）；numpy 钉 `<2.4`（paddlex 3.7） |
-| **embedder 量化 (v0.22)** | none/8bit/4bit (bitsandbytes) 把 ~16GB 权重降到 ~8GB/~4GB；启动时加载，改后需重启 |
-| **平台共享文件 source_owned (v0.24)** | register-external 就地引用平台文件（不复制、不传字节），`source_owned=false` 时删除视频绝不 unlink 源文件（所有权归平台） |
-| **平台文件 id 自动跳转 (v0.26)** | 注册/任务时把平台文件库资源 ID 存入 `videos.external_file_id`；前端 Bridge connect() 后凭 `context.resource.id` 查 `GET /videos/external/{file_id}` 自动打开对应视频详情（一次性跳转；非文件入口/无匹配正常展示默认工作台） |
-| **异步任务 jobs (v0.24)** | /internal/yunzhi/jobs 根路径挂载（不经 /api/v1），202 立即返回 + 幂等（进程内 eventId/Idempotency-Key），进度经 StatusTracker.on_progress → callback.progressUrl 推送 |
-| **人脸聚类护栏式双阈值 (v0.29)** | 单一聚类阈值是"跷跷板"：0.60 拆碎同人 / 0.40 并错不同人（代表性 embedding 稀释成噪声→搜索搜不到）。改为同 track 0.30（时间连续强先验）+ 跨 track 0.58（防并错） |
-| **检索锚点最典型脸 (v0.29)** | best_face_embedding = 与均值最接近的单脸（非质量分最高——质量分高可能偏角度导致搜索漏检）；搜索用 GREATEST(最典型脸, 均值) 双锚取高 |
-| **搜索数据隔离 (v0.29)** | search/face + search/image 的 video_ids 等改 Form(...) 声明修复全库泄漏；单视频搜索严格隔离 |
+| Plugin + Factory | config.yaml 换后端零代码改动 |
+| pgvector over 独立向量库 | 部署简单、事务一致 |
+| 本地 GPU Embedder | 每帧 4096 维编码，API 延迟不可接受 |
+| 共享 embedder (app.state) | 避免每视频重载 ~4GB 模型 |
+| 单 NVDEC 流共享 + 生产者-消费者 | detection 与 search_encode 共享解码流，消灭双流解码竞争 |
+| NVDEC MJPEG pipe | ~100KB/帧 替代 raw NV12(3.1MB), pipe I/O 减 30× |
+| 三档速度预设 (fast/balanced/precise) | 控制分辨率 + 批量权衡 |
+| 搜索/摘要路径解耦 | 帧搜索不等 caption |
+| 2 层格式兼容 + 懒代理 | remux(-c copy) 即时 + proxy(NVENC h264) 按需, HEVC 浏览器零处理 |
+| 全局 GPU 锁 | 24GB 机 YOLO 卷积 + 8bit matmul 并发触发驱动硬故障 → 串行所有 GPU 前向；detection 攒批 128 防饿死 embedder |
+| 全局任务队列 (PipelineQueue) | FIFO + worker 池 + 表持久化；批量并发防 OOM；重启恢复 + 幂等 + 排队回调 |
+| 平台共享文件 source_owned | register-external 就地引用不复制；删视频绝不 unlink 源文件（所有权归平台） |
+| 人脸聚类护栏式双阈值 | 单一阈值是"跷跷板"：0.60 拆碎同人 / 0.40 并错不同人 → 同 track 0.30 宽松 + 跨 track 0.58 保守 |
+| 检索锚点最典型脸 | 与均值最接近的单脸（非质量分最高），防角度偏导致搜索漏检；GREATEST(最典型脸, 均值) 双锚 |
+| 搜索数据隔离 | search/face+image 改 Form(...) 声明修全库泄漏；单视频搜索严格过滤 |
+| embedding 档位化 (8b/2b) | 低显存机器平替：档位联动模型路径+向量维度；2b 自动套轻量编码/量化默认 |
+| 参数预设随 git 迁移 | config/presets.json 入仓库，部署/换机开箱复用 |
+| OCR 独立感知模块（v0.34） | 自抽高清帧（读具体字符需像素清晰，复用检测低分辨率帧不可逆）→ **RapidOCR(PP-OCRv3 ONNX) + DirectML EP**（中文精度第一梯队）+ 独立表 + 精确串检索（第 8 路）。**DML 隔离走独立子进程**：onnxruntime 与 onnxruntime-directml 共用 `import onnxruntime` 名，进程内只能一份——为不破坏人脸/车牌依赖的全局 onnxruntime-gpu(CUDA)，RapidOCR 放子进程前置 `vendor/ort_dml` 加载 DML。OCR 文本去重：全局合并 + 固定文字抑制 + 模糊合并 + 阅读序。「OCR 独立模式」= text_recognition 场景关 search_index + 校验器放行仅 OCR 第三态 |
 
 ## Current Status
-**核心链路全部 ✅**：Pipeline DAG(15 ops) / 4-path 编码 / 双层 ReID / 7-path 搜索+图搜 / 人脸+车牌识别 / 双模式摘要(vlm_llm 默认) / 多格式(remux+proxy) / 存储卫生 / 4级参数+增量 / 系统设置+参数预设 / 全局 GPU 锁+共享实例 / 任务队列(v0.32) / 文件库+多版本解析+任务中心(v0.34) / **批量解析+文件/素材重命名+后缀展示(v0.34候选)** / **搜索卡案例-文件范围+跨视频切主视频(v0.34候选)** / 云智嵌入 UI / 桌面端 v0.34 重构+组件裂解 / 生产部署 / Health。详见 README「Development Status」。
+**核心链路全部 ✅**：Pipeline DAG(16 ops) / 4 编码路径 / 双层 ReID / 8 路搜索+图搜 / 人脸+车牌+OCR / 双模式摘要(vlm_llm 默认) / 多格式 / 存储卫生 / 4 级参数+增量 / 设置+预设 / GPU 锁+共享实例 / 任务队列 / 文件库+多版本+任务中心 / 批量解析+重命名 / 档位感知设置 / 云智嵌入 / 桌面端重构 / 生产部署。详见 README「Development Status」。
 
-**非完全状态**：
-| Module | Status | Note |
-|---|---|---|
-| Chunk-level Encoding | ⚠️ | config 控制，默认关闭 |
-| AI Generation Detection | ❌ 已移除 | ai_detect_result 列+前端展示保留（恒 not_run） |
-| OCR | 📋 | 设计见 docs/ocr.md；实现待办（PaddleOCR 已作车牌备选后端） |
-| Grounding | 📋 | Florence-2 shell only |
-| Reindex | 🔶 | 待办 |
-
+**非完全状态**：Chunk 编码（config 控制默认关）· OCR 导出/文字框裁剪/语义增强（预留）· Grounding（Florence-2 占位）· Reindex（待办）。AI 生成检测已移除（列保留恒 not_run）。
 
 ## 版本发布
-
-见 README「版本号与发布」（`./bump` 联动 core/version.py + frontend/package.json + tag 强绑定 v<__version__>）。
+见 README「版本号与发布」（`./bump` 联动 core/version.py + frontend/package.json + tag 强绑定 v<__version__>；后端 + 服务器前端/共享层改动必须发版）。

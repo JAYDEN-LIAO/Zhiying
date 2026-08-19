@@ -150,6 +150,19 @@ class StorageSettings(BaseModel):
     artifact_dir: str | None = Field(default=None, description="制品目录")
 
 
+class OcrParams(BaseModel):
+    """OCR 参数（v0.34）— settings.json `pipeline.ocr` 覆盖 plugins.ocr.params。
+
+    数值字段为 str（对齐 PipelineSettings）：由 settings_service 钳制转换；
+    空字符串 = 删除覆盖（回退 config.yaml 默认）。
+    """
+    sample_fps: str | None = Field(default=None, description="OCR 抽帧率 0.05-5.0 帧/秒（空字符串=删除覆盖）")
+    conf_thresh: str | None = Field(default=None, description="OCR 文字置信度门槛 0.1-1.0（空字符串=删除覆盖）")
+    max_width: str | None = Field(default=None, description="OCR 分辨率上限；空/0=原分辨率（空字符串=删除覆盖）")
+    scale: str | None = Field(default=None, description="OCR 放大倍数 0.5-4.0，聊天小字可 2.0（空字符串=删除覆盖）")
+    lang: str | None = Field(default=None, description="OCR 语言 ch/en/japan/korean（空字符串=删除覆盖）")
+
+
 class PipelineSettings(BaseModel):
     """管道性能配置（settings.json 覆盖 config.yaml，运行时生效）。
 
@@ -189,6 +202,8 @@ class PipelineSettings(BaseModel):
     quantization: str | None = Field(default=None, description="Embedder 量化 none/8bit/4bit（启动时加载，改后需重启；空字符串=删除覆盖）")
     yolo_imgsz: str | None = Field(default=None, description="YOLO 推理分辨率 320-640（空字符串=删除覆盖）")
     max_concurrent_videos: str | None = Field(default=None, description="并发管道上限，0/未设=串行 1 worker（空字符串=删除覆盖）")
+    # ── OCR（v0.34）──
+    ocr: OcrParams | None = Field(default=None, description="OCR 参数覆盖（空=不处理）")
 
 
 class PresetCreate(BaseModel):

@@ -257,6 +257,23 @@ async def init_db():
             ON plate_detections (video_id, track_id)
         """))
 
+        # ── 增量迁移 v0.34: OCR 画面文字识别表 ──
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS ocr_detections (
+                id SERIAL PRIMARY KEY,
+                video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                timestamp_sec DOUBLE PRECISION NOT NULL,
+                text VARCHAR(1024) NOT NULL,
+                bbox JSONB NOT NULL,
+                confidence DOUBLE PRECISION NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_ocr_dets_video_ts
+            ON ocr_detections (video_id, timestamp_sec)
+        """))
+
         # ── 增量迁移 v0.22: frame_detections (video_id, track_id) 复合索引 ──
         # 服务 /detection/tracks 的 DISTINCT ON 每 track 最大面积 bbox 惰性计算
         await conn.execute(text("""
