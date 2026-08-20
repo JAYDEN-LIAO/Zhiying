@@ -24,7 +24,7 @@ from core.schemas import (
     FileItem, VersionInfo,
 )
 from core.config_loader import load_config
-from core.models import Video, VideoGroup, VideoStatus, PipelineTask
+from core.models import Video, VideoGroup, VideoStatus
 from core.repository import (
     create_video, get_video_with_relations, get_video_by_external_file_id,
     list_videos, delete_video,
@@ -88,7 +88,6 @@ async def upload_video(
     plate_enabled: bool = Form(False),
     summary_enabled: bool = Form(True),
     summary_mode: str = Form("vlm_llm"),
-    parse_mode: str = Form("standard"),  # v0.35 解析模式: quick(仅摘要)/standard(标准检索)
     search_index_enabled: bool = Form(True),
     sample_fps: float = Form(1.0),
     segment_threshold: float = Form(0.5),
@@ -138,7 +137,6 @@ async def upload_video(
         plate_enabled=plate_enabled,
         summary_enabled=summary_enabled,
         summary_mode=summary_mode,
-        parse_mode=parse_mode,
         search_index_enabled=search_index_enabled,
         sample_fps=sample_fps,
         segment_threshold=segment_threshold,
@@ -161,6 +159,14 @@ async def upload_video(
     await format_service.probe_and_save(video.id, dest_path)
     # 重操作异步执行
     asyncio.create_task(format_service.process_format(video.id, dest_path))
+
+    # 快速提取缩略图（异步，不阻塞上传流程）
+    from utils.thumbnail_util import extract_thumbnail_on_upload, update_video_thumbnail_path
+    async def _extract_and_save_thumb():
+        thumb_path = await extract_thumbnail_on_upload(video.id, dest_path, config)
+        if thumb_path:
+            await update_video_thumbnail_path(request.app.state.db_session_factory, video.id, thumb_path)
+    asyncio.create_task(_extract_and_save_thumb())
 
     return APIResponse(data=VideoResponse.model_validate(video))
 
@@ -224,6 +230,14 @@ async def register_external_video(
     await format_service.probe_and_save(video.id, file_path)
     asyncio.create_task(format_service.process_format(video.id, file_path))
 
+    # 快速提取缩略图（异步，不阻塞注册流程）
+    from utils.thumbnail_util import extract_thumbnail_on_upload, update_video_thumbnail_path
+    async def _extract_and_save_thumb():
+        thumb_path = await extract_thumbnail_on_upload(video.id, file_path, config)
+        if thumb_path:
+            await update_video_thumbnail_path(request.app.state.db_session_factory, video.id, thumb_path)
+    asyncio.create_task(_extract_and_save_thumb())
+
     return APIResponse(data=VideoResponse.model_validate(video))
 
 
@@ -244,7 +258,6 @@ async def upload_videos_batch(
     plate_enabled: bool = Form(False),
     summary_enabled: bool = Form(True),
     summary_mode: str = Form("vlm_llm"),
-    parse_mode: str = Form("standard"),  # v0.35 解析模式: quick(仅摘要)/standard(标准检索)
     search_index_enabled: bool = Form(True),
     sample_fps: float = Form(1.0),
     segment_threshold: float = Form(0.5),
@@ -341,6 +354,14 @@ async def upload_videos_batch(
             # 异步 remux/proxy（使用独立 session factory）
             asyncio.create_task(format_service.process_format(video.id, dest_path))
 
+            # 快速提取缩略图（异步，不阻塞上传流程）
+            from utils.thumbnail_util import extract_thumbnail_on_upload, update_video_thumbnail_path
+            async def _extract_and_save_thumb():
+                thumb_path = await extract_thumbnail_on_upload(video.id, dest_path, config)
+                if thumb_path:
+                    await update_video_thumbnail_path(db_factory, video.id, thumb_path)
+            asyncio.create_task(_extract_and_save_thumb())
+
             return VideoResponse.model_validate(video)
 
     results = await asyncio.gather(*[process_one(f) for f in files])
@@ -360,13 +381,10 @@ async def analyze_videos_batch(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
-    """批量解析：精确启动指定视频的处理，不触发组同步。
+    """批量解析：精确启动指定视频的管道（仅 pending），不触发组同步。
 
-    - pending → 启动完整管道（阶段一+二按 parse_mode）
-    - completed → v0.35 阶段二：触发精细化精析（detection/face/plate），走 incremental 不重跑阶段一
-    用于案例库「批量解析」与详情抽屉「启动智能分析」——勾选谁就启动谁，
-    同组其余 pending 兄弟保持不动（区别于 PUT /params 的组同步行为）。
-    params 可选：提供则整批应用该参数集。
+    用于案例库「批量解析」——勾选谁就启动谁，同组其余 pending 兄弟保持不动
+    （区别于 PUT /params 的组同步行为）。params 可选：提供则整批应用该参数集。
     """
     params = payload.params
     started = 0
@@ -378,27 +396,7 @@ async def analyze_videos_batch(
             skipped += 1
             continue
         status_val = video.status.value if hasattr(video.status, "value") else video.status
-        # 防重复入队：该视频已有 queued/running 任务则跳过（批量重复触发保护）
-        dup = await db.execute(
-            select(PipelineTask.id)
-            .where(
-                PipelineTask.video_id == video.id,
-                PipelineTask.status.in_(["queued", "running"]),
-            )
-            .limit(1)
-        )
-        if dup.scalar_one_or_none() is not None:
-            skipped += 1
-            continue
-        if status_val == "completed":
-            # v0.35 阶段二：已完成视频触发精细化精析（detection/face/plate），
-            # 走 incremental 不重跑阶段一；quick 完成态升级 standard 属此路径
-            task_type = "incremental"
-            task_payload = {"video_id": str(video.id), "added_modalities": ["detection"]}
-        elif status_val == "pending":
-            task_type = "pipeline"
-            task_payload = {"video_id": str(video.id)}
-        else:
+        if status_val != "pending":
             skipped += 1
             continue
         if params is not None:
@@ -415,7 +413,6 @@ async def analyze_videos_batch(
                     plate_enabled=params.plate_enabled,
                     summary_enabled=params.summary_enabled,
                     summary_mode=params.summary_mode,
-                    parse_mode=params.parse_mode,
                     search_index_enabled=params.search_index_enabled,
                     language=params.language,
                     sample_fps=params.sample_fps,
@@ -425,8 +422,8 @@ async def analyze_videos_batch(
                     encode_profile=params.encode_profile,
                 )
             )
-        await request.app.state.pipeline_queue.enqueue(task_type, task_payload)
-        await append_task_log(db, video.id, "批量解析：任务入队" if task_type == "pipeline" else "精细化分析：任务入队")
+        await request.app.state.pipeline_queue.enqueue("pipeline", {"video_id": str(video.id)})
+        await append_task_log(db, video.id, "批量解析：任务入队")
         started += 1
 
     logger.info("[AnalyzeBatch] requested=%d started=%d skipped=%d", len(payload.video_ids), started, skipped)
@@ -465,7 +462,6 @@ async def reuse_video(
         plate_enabled=payload.plate_enabled,
         summary_enabled=payload.summary_enabled,
         summary_mode=payload.summary_mode,
-        parse_mode=payload.parse_mode,
         search_index_enabled=payload.search_index_enabled,
         sample_fps=payload.sample_fps,
         segment_threshold=payload.segment_threshold,
@@ -522,7 +518,6 @@ async def update_video_params(
                 plate_enabled=payload.plate_enabled,
                 summary_enabled=payload.summary_enabled,
                 summary_mode=payload.summary_mode,
-                parse_mode=payload.parse_mode,
                 search_index_enabled=payload.search_index_enabled,
                 language=payload.language,
                 sample_fps=payload.sample_fps,
@@ -548,8 +543,8 @@ async def update_video_params(
         await append_task_log(db, video.id, "参数已提交，任务入队")
         logger.info("[Params] video=%s full pipeline starting", video_id)
 
-        # ★ 如果是组内视频，同组其他 pending 视频也应用相同参数并启动 pipeline
-        if video.group_id:
+        # ★ 如果是组内视频且 apply_to_group=true，同组其他 pending 视频也应用相同参数并启动 pipeline
+        if payload.apply_to_group and video.group_id:
             group_result = await db.execute(
                 select(Video).where(
                     Video.group_id == video.group_id,
@@ -574,7 +569,6 @@ async def update_video_params(
                         plate_enabled=payload.plate_enabled,
                         summary_enabled=payload.summary_enabled,
                         summary_mode=payload.summary_mode,
-                        parse_mode=payload.parse_mode,
                         search_index_enabled=payload.search_index_enabled,
                         language=payload.language,
                         sample_fps=payload.sample_fps,
@@ -894,7 +888,7 @@ async def get_thumbnail(
             SceneModel.scene_index == scene_index,
         )
     )
-    row = result.first()
+    row = result.one_or_none()
     if row is None or not row.keyframe_path:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
     if not os.path.exists(row.keyframe_path):
@@ -1074,6 +1068,12 @@ async def rename_file(
 async def list_files(db: AsyncSession = Depends(get_db)) -> APIResponse[list[FileItem]]:
     """文件库列表 — 每个文件一行（根行信息 + 当前版本状态/进度/摘要）。"""
     rows = await list_file_roots(db)
+    # 批量查询排队中 video_id（pipeline_tasks status='queued'）
+    from sqlalchemy import text as sa_text
+    qrows = await db.execute(sa_text(
+        "SELECT DISTINCT video_id FROM pipeline_tasks WHERE status = 'queued'"
+    ))
+    queued_ids = {r[0] for r in qrows if r[0] is not None}
     items = [FileItem(
         id=r["id"],                          # 根 videos 行 id（前端打开用，Workbench 再解析当前版本）
         name=r["file_name"],
@@ -1087,11 +1087,7 @@ async def list_files(db: AsyncSession = Depends(get_db)) -> APIResponse[list[Fil
         current_progress=float(r.get("current_progress") or 0.0),
         current_summary=r.get("current_summary"),
         versions_count=int(r.get("versions_count") or 1),
-        # v0.35 两阶段处理流 + 解析模式（当前版本行透出）
-        process_status=r.get("process_status"),
-        parse_mode=r.get("parse_mode"),
-        analysis_progress=r.get("analysis_progress"),
-        analysis_entities=r.get("analysis_entities"),
+        queued=r["id"] in queued_ids,
     ) for r in rows]
     return APIResponse(data=items)
 
@@ -1169,3 +1165,54 @@ async def delete_file(
     for v in versions:
         freed += await delete_video(db, v, storage_manager=sm)
     return APIResponse(data={"ok": True, "freed_bytes": freed})
+
+
+@router.post("/videos/suggest-params", response_model=APIResponse[dict])
+async def suggest_params(
+    payload: dict,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """智能参数推荐：基于 embedder zero-shot 视频场景分类（无需联网/新模型）。
+
+    Body: { "video_ids": [uuid, ...] }
+    Returns: { suggestions: [{ video_id, scene_key, scene_label, confidence, params|null, all_scores }] }
+    """
+    from services.smart_suggest import suggest_params_batch
+    from core.models import Video as VideoModel
+
+    video_ids = payload.get("video_ids") or []
+    if not video_ids:
+        return APIResponse(data={"suggestions": []})
+
+    # 批量取视频行（file_path + duration）
+    str_ids = [str(vid) for vid in video_ids]
+    rows = await db.execute(
+        select(VideoModel.id, VideoModel.file_path, VideoModel.duration).where(VideoModel.id.in_(str_ids))
+    )
+    items = [{"video_id": str(r[0]), "video_path": r[1] or "", "duration": r[2] or 0.0} for r in rows.all()]
+    if not items:
+        return APIResponse(data={"suggestions": []})
+
+    embedder = getattr(request.app.state, "embedder", None)
+    try:
+        # 整体超时：5 视频 × 3 帧 × 编码 + 批场景文本 ≈ 90s 富裕
+        suggestions = await asyncio.wait_for(
+            suggest_params_batch(embedder, items),
+            timeout=120.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("[SuggestParams] timeout, returning empty suggestions")
+        suggestions = [
+            {"video_id": it["video_id"], "scene_key": None, "scene_label": None,
+             "confidence": 0.0, "params": None, "all_scores": {}, "reason": "timeout"}
+            for it in items
+        ]
+    except Exception as e:
+        logger.exception("[SuggestParams] batch failed: %s", e)
+        suggestions = [
+            {"video_id": it["video_id"], "scene_key": None, "scene_label": None,
+             "confidence": 0.0, "params": None, "all_scores": {}, "reason": f"error: {e}"}
+            for it in items
+        ]
+    return APIResponse(data={"suggestions": suggestions})

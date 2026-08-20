@@ -10,6 +10,7 @@ import type {
   PipelineStage,
   SearchResults,
   PipelineParams,
+  SmartSuggestion,
   SettingsData,
   SettingsUpdate,
   PipelinePreset,
@@ -37,17 +38,29 @@ const BASE = "/api/v1";
 
 /* ── Unwrap the {code, message, data} envelope ── */
 
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, options);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `HTTP ${res.status}`);
+async function request<T>(url: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
+  const timeoutMs = options?.timeoutMs ?? 60000;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: ctrl.signal });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${res.status}`);
+    }
+    const json: APIResponse<T> = await res.json();
+    if (json.code !== 0) {
+      throw new Error(json.message || `API error (code ${json.code})`);
+    }
+    return json.data as T;
+  } catch (err) {
+    if ((err as any)?.name === "AbortError") {
+      throw new Error(`请求超时 (${Math.round(timeoutMs / 1000)}s)，请稍后重试`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  const json: APIResponse<T> = await res.json();
-  if (json.code !== 0) {
-    throw new Error(json.message || `API error (code ${json.code})`);
-  }
-  return json.data as T;
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -112,6 +125,16 @@ export const api = {
     return request<VideoResponse[]>(`${BASE}/videos/upload/batch`, {
       method: "POST",
       body: form,
+    });
+  },
+
+  /* ── 智能参数推荐：embedder zero-shot 场景分类（无需联网/新模型） ── */
+  suggestParams(videoIds: string[]) {
+    return request<{ suggestions: SmartSuggestion[] }>(`${BASE}/videos/suggest-params`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ video_ids: videoIds }),
+      timeoutMs: 150000,
     });
   },
 

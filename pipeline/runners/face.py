@@ -48,8 +48,8 @@ CROSS_TRACK_SIM = 0.58           # 跨 track 合并阈值（防并错不同人�
 IDENTITY_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 # ── 多帧采样参数 ──
-SHORT_TRACK_SEC = 5.0      # 短 track 阈值：< 此秒数只用 best 帧
-LONG_TRACK_SAMPLES = 3     # 长 track 采样帧数（含 best 帧）
+SHORT_TRACK_SEC = 8.0      # 短 track 阈值：< 此秒数只用 best 帧
+LONG_TRACK_SAMPLES = 2     # 长 track 采样帧数（含 best 帧）
 MAX_SEEK_CONCURRENCY = 4   # ffmpeg 补采并发上限
 
 

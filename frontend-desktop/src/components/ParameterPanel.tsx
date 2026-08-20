@@ -255,8 +255,6 @@ export function ParameterPanel({
   /* ── 校验 + 提交 ── */
   const validate = (): string | null => {
     if (!modules.vision && !modules.audio) return "视觉分析和音频转录至少开启一个";
-    // v0.34: OCR 是独立功能产物——文字识别模式下可关搜索索引+摘要（OCR 精确检索走独立 ILIKE 路径，不依赖向量索引）
-    if (!functions.searchIndex && !functions.summary && !modules.ocr) return "搜索索引、智能摘要和文字识别至少开启一个";
     if (!modules.vision && modules.detection) return "视觉分析已关闭，物体检测应同时关闭";
     if (!modules.vision && functions.summary) return "视觉分析已关闭，智能摘要应同时关闭";
     return null;
@@ -631,9 +629,6 @@ export function ParameterPanel({
                 </div>
               );
             })}
-            {!functions.searchIndex && !functions.summary && !modules.ocr && (
-              <p className="text-[11px] text-red-400 mt-1">搜索索引、智能摘要和文字识别至少开启一个</p>
-            )}
           </div>
 
           {/* 摘要模式选择（智能摘要关闭时置灰不隐藏，仿目标类别紧贴智能摘要） */}

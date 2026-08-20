@@ -107,7 +107,6 @@ class ReuseRequest(BaseModel):
     plate_enabled: bool = False
     summary_enabled: bool = True
     summary_mode: str = "vlm_llm"
-    parse_mode: str = "standard"
     search_index_enabled: bool = True
     sample_fps: float = Field(default=1.0, ge=0.5, le=3.0)
     segment_threshold: float = Field(default=0.5, ge=0.2, le=0.8)

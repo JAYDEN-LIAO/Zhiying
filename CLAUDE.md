@@ -17,6 +17,7 @@
 ```
 上传 → 参数 → 管道 → 搜索:
   POST /videos/upload(/upload/batch) → 存盘 → probe → 建记录(pending) → 异步 remux/proxy
+  POST /videos/suggest-params → 按画面内容推荐参数（9 场景分类, 低置信兜底默认）
   PUT /videos/{id}/params → 校验 → 入队 → PipelineEngine.run()(pending) / run_incremental()(completed)
   PipelineEngine 事件驱动 DAG(16 ops):
     duration → detection(生产者-消费者, 共享 NVDEC) → track_encode → face/plate
@@ -38,6 +39,7 @@
 - **DB 连接**: 环境变量 `POSTGRES_URI` → config.yaml `database.uri` → 兜底 5432
 - **配置模板化**: config.yaml 机器相关 gitignored；新机复制 `config.yaml.example` 自改
 - **4 级参数系统**: L1 场景 → L2 感知模块 → L3 功能开关 → L4 高级参数
+- **智能场景参数**: 场景分类与参数预设集中在 `services/smart_suggest.py`（9 类）；低置信兜底 `_DEFAULT_PARAMS`；改场景须加/改 `_scene_fingerprint()` 相关缓存（列表增改自动失效）
 - **双前端**: UI 各自演进；对接层 `frontend-shared/` 一份实现，改后端接口只改一处
 - **多格式**: remux(-c copy) + proxy(NVENC h264, 按需)；管道优先读 remuxed
 - **ReID 双层**: 在线 BoT-SORT with_reid + 全局 tracklet 缝合（cosine ≥0.85）

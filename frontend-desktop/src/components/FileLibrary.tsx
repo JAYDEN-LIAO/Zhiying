@@ -15,6 +15,7 @@ import { fmtDuration, fmtDate, fmtBytes } from "../utils/helpers";
 import { IconFolder, IconPlus, IconPlay2, IconTrash, IconPencil, IconBolt, IconBoltSolid, IconEye, IconGrid, IconList, IconDownload, IconClose, IconInfo, IconSummary, IconRetry, IconPerson, IconCar, IconText, IconError } from "./icons";
 import { useHEVCCapability } from "../hooks/useHEVCCapability";
 import { ParameterPanel } from "./ParameterPanel";
+import { SmartSuggestDialog } from "./SmartSuggestDialog";
 
 type TreeKey = "all" | "ungrouped" | `g:${string}`;
 
@@ -821,6 +822,7 @@ export function FileLibrary() {
   const creatingGroupRef = useRef(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [analyzing, setAnalyzing] = useState(false);
+  const [smartSuggestVids, setSmartSuggestVids] = useState<{ video_id: string; file_name: string }[] | null>(null);
   const [batchTargets, setBatchTargets] = useState<string[] | null>(null);
   /* 案例编辑 */
   const [editCase, setEditCase] = useState<VideoGroup | null>(null);
@@ -874,7 +876,20 @@ export function FileLibrary() {
       const vids = files.filter((f) => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name) || f.type.startsWith("video/"));
       const imgs = files.filter((f) => f.type.startsWith("image/"));
       const uploadedIds: string[] = [];
-      if (vids.length) uploadedIds.push(...(await uploadFiles(vids, gid, { stay: true })));
+      const uploadedEntries: { video_id: string; file_name: string }[] = [];
+      if (vids.length) {
+        const ids = await uploadFiles(vids, gid, { stay: true });
+        uploadedIds.push(...ids);
+        /* 用详情拉取文件名（analyzeBatch 也要文件名） */
+        for (const id of ids) {
+          try {
+            const detail = await api.getVideo(id);
+            uploadedEntries.push({ video_id: id, file_name: detail.file_name });
+          } catch {
+            uploadedEntries.push({ video_id: id, file_name: "" });
+          }
+        }
+      }
       if (imgs.length) {
         try { await api.uploadGroupAssets(gid, imgs); } catch (err) { alert(err instanceof Error ? err.message : "图片上传失败"); }
       }
@@ -884,6 +899,8 @@ export function FileLibrary() {
       } catch { /* ignore */ }
       load();
       input.value = "";
+      /* 上传视频完成后弹出智能参数推荐弹窗（仅视频 ≥ 1 个；走 stay=true 不会自动跳工作台） */
+      if (uploadedEntries.length > 0) setSmartSuggestVids(uploadedEntries);
     };
     input.click();
   };
@@ -1058,6 +1075,21 @@ export function FileLibrary() {
     }
   };
 
+  /* 智能推荐弹窗应用入口：多视频共享参数走 analyzeBatch，不确定视频走逐个 PUT /params */
+  const handleApplySmartSuggest = async (params: PipelineParams, videoIds: string[]) => {
+    setAnalyzing(true);
+    try {
+      if (videoIds.length >= 2) {
+        await api.analyzeBatch(videoIds, params);
+      } else {
+        await api.updateParams(videoIds[0], { ...params, apply_to_group: false });
+      }
+      load();
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
   return (
     <div
       ref={flContainerRef}
@@ -1131,6 +1163,17 @@ export function FileLibrary() {
           onDeleteFile={deleteFile} onDeleteImage={deleteImage}
         />
       </div>
+
+      {/* 上传后智能参数推荐弹窗 */}
+      {smartSuggestVids && (
+        <SmartSuggestDialog
+          videos={smartSuggestVids}
+          onClose={() => { setSmartSuggestVids(null); }}
+          onApply={async (params, videoIds) => {
+            await handleApplySmartSuggest(params, videoIds);
+          }}
+        />
+      )}
 
       {/* 新建案例弹窗 */}
       {showNewGroup && (

@@ -431,49 +431,6 @@ async def init_db():
             ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ
         """))
 
-        # ── 增量迁移 v0.35: 两阶段处理流 + 解析模式 ──
-        await conn.execute(text("""
-            ALTER TABLE videos
-            ADD COLUMN IF NOT EXISTS process_status VARCHAR(32)
-        """))
-        await conn.execute(text("""
-            ALTER TABLE videos
-            ADD COLUMN IF NOT EXISTS parse_mode VARCHAR(16) DEFAULT 'standard' NOT NULL
-        """))
-        await conn.execute(text("""
-            ALTER TABLE videos
-            ADD COLUMN IF NOT EXISTS analysis_progress DOUBLE PRECISION
-        """))
-        await conn.execute(text("""
-            ALTER TABLE videos
-            ADD COLUMN IF NOT EXISTS analysis_entities JSONB
-        """))
-        # 老 completed 视频回填阶段状态（词汇对齐前端 ProcessStatus 枚举）：
-        # 已有 detection/face 产物 → COMPLETED（已完成精析），否则 READY_FOR_ANALYSIS（仅摘要，可补阶段二）。
-        # 其余状态留 NULL 由前端推断。
-        await conn.execute(text("""
-            UPDATE videos v
-            SET process_status = CASE
-                WHEN EXISTS (SELECT 1 FROM frame_detections fd WHERE fd.video_id = v.id)
-                  OR EXISTS (SELECT 1 FROM face_identities fi WHERE fi.video_id = v.id)
-                  OR EXISTS (SELECT 1 FROM plate_detections pd WHERE pd.video_id = v.id)
-                THEN 'COMPLETED' ELSE 'READY_FOR_ANALYSIS'
-            END
-            WHERE v.status::text = 'COMPLETED' AND v.process_status IS NULL
-        """))
-        # 存量转换（幂等）：早期实现曾写入内部 stage 词汇，统一映射到前端 5 态枚举
-        await conn.execute(text("""
-            UPDATE videos SET process_status = CASE process_status
-                WHEN 'stage2_done'    THEN 'COMPLETED'
-                WHEN 'stage1_done'    THEN 'READY_FOR_ANALYSIS'
-                WHEN 'stage2_running' THEN 'ANALYZING'
-                WHEN 'stage1_running' THEN 'PRE_PROCESSING'
-                WHEN 'failed'         THEN 'FAILED'
-                ELSE process_status
-            END
-            WHERE process_status IN ('stage1_done','stage2_done','stage1_running','stage2_running','failed')
-        """))
-
         # ── 增量迁移: scenes (video_id, scene_index) 唯一约束 ──
         # 旧代码 bulk_insert_scenes 重跑管道不删旧行 → 同一视频累积重复场景 → thumbnail 查询报错。
         # 先按 id 保留每组最早一行去重，再建唯一约束防再犯。
@@ -498,6 +455,19 @@ async def init_db():
         """))
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS qc_result
+        """))
+        # 回退两阶段处理流（v0.35 前后端协同）字段：后端已恢复单状态机，前端改为参数面板
+        await conn.execute(text("""
+            ALTER TABLE videos DROP COLUMN IF EXISTS process_status
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos DROP COLUMN IF EXISTS parse_mode
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos DROP COLUMN IF EXISTS analysis_progress
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos DROP COLUMN IF EXISTS analysis_entities
         """))
         await conn.execute(text("""
             DROP TYPE IF EXISTS preset_mode_enum

@@ -114,7 +114,6 @@ class VideoCreate(BaseModel):
     plate_enabled: bool     = Field(default=False)
     summary_enabled: bool   = Field(default=True)
     summary_mode: str       = Field(default="vlm_llm", pattern=r"^(native_video|vlm_llm)$")
-    parse_mode: str         = Field(default="standard", pattern=r"^(quick|standard)$", description="解析模式: quick(极速概览, 仅文本摘要) / standard(标准检索, 提取人/车/字)")
 
     # ── 参数层新增 (v0.6) ──
     search_index_enabled: bool  = Field(default=True)
@@ -128,16 +127,6 @@ class VideoCreate(BaseModel):
 
     # ── 云智平台外部文件 ID (v0.25.x) ──
     external_file_id: int | None = Field(default=None, description="云智平台文件库资源 ID（Bridge files.select items[].id）")
-
-    @model_validator(mode="after")
-    def validate_quick_mode(self):
-        """quick（极速概览）→ 检测/人脸/车牌强制关，且必须有摘要（与 PipelineParams 一致）。"""
-        if self.parse_mode == "quick":
-            if self.detection_enabled or self.face_enabled or self.plate_enabled:
-                raise ValueError("极速概览模式仅生成文本摘要，检测/人脸/车牌必须关闭")
-            if not self.summary_enabled:
-                raise ValueError("极速概览模式依赖智能摘要，不能关闭摘要")
-        return self
 
 
 class PipelineParams(BaseModel):
@@ -170,7 +159,7 @@ class PipelineParams(BaseModel):
     caption_with_context: bool  = Field(default=True)
     summary_detail: str         = Field(default="standard", pattern=r"^(brief|standard|detailed)$")
     encode_profile: str | None  = Field(default=None, pattern=r"^(fast|balanced|precise)$", description="编码速度预设；None=使用全局默认")
-    parse_mode: str             = Field(default="standard", pattern=r"^(quick|standard)$", description="解析模式: quick(极速概览, 仅文本摘要, detection/face/plate 强制关) / standard(标准检索, 按开关)")
+    apply_to_group: bool = Field(default=True, description="是否同步同组 pending 视频（单视频解析传 false）")
 
     @model_validator(mode="after")
     def validate_cross_dependencies(self):
@@ -190,13 +179,6 @@ class PipelineParams(BaseModel):
         if self.plate_enabled and not self.detection_enabled:
             raise ValueError("物体检测已关闭，车牌识别必须同时关闭")
 
-        # quick（极速概览）→ 仅文本摘要，检测/人脸/车牌强制关；且必须有摘要
-        if self.parse_mode == "quick":
-            if self.detection_enabled or self.face_enabled or self.plate_enabled:
-                raise ValueError("极速概览模式仅生成文本摘要，检测/人脸/车牌必须关闭")
-            if not self.summary_enabled:
-                raise ValueError("极速概览模式依赖智能摘要，不能关闭摘要")
-
         # caption 关闭 → summary 必须为 false
         if not self.caption_enabled and self.summary_enabled:
             raise ValueError("画面描述已关闭，智能摘要必须同时关闭")
@@ -204,10 +186,6 @@ class PipelineParams(BaseModel):
         # 至少一个感知源
         if not self.vision_enabled and not self.audio_enabled:
             raise ValueError("视觉分析和音频转录至少开启一个")
-
-        # 至少一个功能（v0.34 起 OCR 独立模式是第三态：仅 OCR 提取，不建索引、不摘要）
-        if not self.search_index_enabled and not self.summary_enabled and not self.ocr_enabled:
-            raise ValueError("搜索索引、智能摘要和文字识别至少开启一个")
 
         return self
 
@@ -338,12 +316,6 @@ class VideoResponse(BaseModel):
 
     summary: VideoSummary | None   = None
 
-    # ── 两阶段处理流 + 解析模式 (v0.35) ──
-    process_status: str | None        = None
-    parse_mode: str                   = "standard"
-    analysis_progress: float | None   = None
-    analysis_entities: dict | None    = None
-
     # ── 格式信息 (v0.13) ──
     container_format: str | None        = None
     video_codec: str | None             = None
@@ -391,12 +363,6 @@ class VideoListItem(BaseModel):
     # ── 版本链 (v0.34) ──
     file_id: uuid.UUID | None      = None
     version_no: int | None         = None
-
-    # ── 两阶段处理流 + 解析模式 (v0.35) ──
-    process_status: str | None        = None
-    parse_mode: str                   = "standard"
-    analysis_progress: float | None   = None
-    analysis_entities: dict | None    = None
 
     # ── 格式信息 (v0.13) ──
     container_format: str | None        = None
@@ -461,12 +427,7 @@ class FileItem(BaseModel):
     current_progress: float = 0.0
     current_summary: dict | None = None
     versions_count: int = 0
-
-    # ── 两阶段处理流 + 解析模式 (v0.35) ──
-    process_status: str | None = None       # 当前版本行两阶段状态
-    parse_mode: str | None = None           # quick / standard（缺失时前端按产物推断）
-    analysis_progress: float | None = None  # 阶段二进度 0~1
-    analysis_entities: dict | None = None   # {face, plate, ocr} 计数
+    queued: bool = False                   # 在全局管道队列等待 worker（案例库黄徽章）
 
 
 class VersionInfo(BaseModel):

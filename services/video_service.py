@@ -117,7 +117,6 @@ class VideoService:
                 plate_enabled=params.plate_enabled,
                 summary_enabled=params.summary_enabled,
                 summary_mode=params.summary_mode,
-                parse_mode=params.parse_mode,
                 search_index_enabled=params.search_index_enabled,
                 sample_fps=params.sample_fps,
                 segment_threshold=params.segment_threshold,

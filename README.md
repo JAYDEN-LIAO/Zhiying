@@ -19,6 +19,7 @@ curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # �
 | Feature | Endpoint | Status |
 |---|---|---|
 | 上传/批量上传/参数与管道触发 | `POST /videos/upload` + `/upload/batch` + `PUT /videos/{id}/params` | ✅ |
+| 智能场景参数推荐 | `POST /videos/suggest-params`（9 场景分类 → 参数预设, 低置信兜底） | ✅ |
 | 视频详情/状态/播放(stream)/场景缩略图 | `GET /videos/{id}` · `/status` · `/stream?hevc_ok=` · `/thumbnail/{scene}` | ✅ |
 | 多格式支持 | remux(-c copy) + 惰性 H.264 proxy(NVENC) + smart routing | ✅ |
 | 语义搜索（frame/chunk/text/label/track/plate/ocr 7 路） | `POST /search/semantic` | ✅ |
@@ -98,6 +99,9 @@ zhiying/
 ## Development Status
 
 **当前状态（v0.35 候选，未发版）**：
+- **智能场景参数**：`POST /videos/suggest-params` 按画面内容推荐参数 —— 9 场景分类（交通/车辆特写/人流监控/室内人物/人物特写/文档屏幕/街景混合/室外风景/聊天录屏），每类对应一组检测/人脸/车牌/OCR 开关预设；低置信(≤0.30)回退默认参数，保证每个视频都有参数产出；场景列表增改自动失效文本缓存
+- **参数校验放宽**：废弃"搜索索引/智能摘要/文字识别至少开启一个"，可仅检测+人脸（纯人脸测试）
+- **人脸多帧补采收紧**：`SHORT_TRACK_SEC=8s`、`LONG_TRACK_SAMPLES=2`，砍 ffmpeg 补采 + 逐帧 SCRFD 次数
 - **桌面端 v0.35 UI增强**：全局搜索（4 类型 + 句式化 chip/人脸·图搜分轨/中文 token）+ 案例库正文拖拽上传 + 侧栏顺序优化 + 持久蓝色描边搜索框
 - 后端 v0.34：OCR 定版 RapidOCR(PP-OCRv3 ONNX) + DirectML 独立子进程（DML 隔离零影响人脸/车牌 CUDA）+ 文本去重/顺序整理
 - 桌面端重构（浅蓝 4 页管理后台 + frameless 窗口 + SplitPane 工作台 + 系统监控）+ 暗色主题

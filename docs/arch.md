@@ -37,7 +37,16 @@
   L3 功能开关: search_index_enabled / summary_enabled（已完成视频可增量）
   L4 高级参数: language/sample_fps/encode_profile/summary_mode(vlm_llm 默认)
 
+智能场景参数推荐（POST /videos/suggest-params）:
+  按视频画面内容分类（services/smart_suggest.py, 9 场景）
+  traffic/vehicle_focus/surveillance_people/indoor/portrait_focus/document/
+  street_mixed/outdoor_landscape/chat_screen
+  每类对应一组检测/人脸/车牌/OCR 开关预设；低置信(≤0.30)回退 _DEFAULT_PARAMS
+  批量帧向量按成功解码分组对齐（防跨视频污染）；embedder 缓存键含场景指纹（改场景自动失效）
+  例：人流监控→det+face on、plate off；文档/聊天录屏→仅 OCR、不建搜索索引
+
 校验: vision OFF→ocr/caption/detection OFF；caption OFF→summary OFF
+      （已废弃"搜索索引/智能摘要/文字识别至少开启一个"——可仅检测+人脸）
 门控: detection 双门控(config backend + per-video)；face/plate 三门控
 ```
 
@@ -104,6 +113,7 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/v1/videos/upload` · `/upload/batch` | 上传（单个/批量建组） |
+| POST | `/api/v1/videos/suggest-params` | 智能场景参数推荐（9 场景分类） |
 | POST | `/api/v1/videos/register-external` | 平台文件就地引用 |
 | PUT | `/api/v1/videos/{id}/params` | 设置参数 + 启动管道 |
 | POST | `/api/v1/videos/reuse` · `/{id}/reanalyze` · `/analyze-batch` | 新建/重解析(pending)/批量解析 |
@@ -124,7 +134,7 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 **桌面前端（v0.35 UI增强）**：
 - AppContext 全局状态（视频/任务/进度/树选/案例徽章）+ 4 页组件：
   - **FileLibrary**（案例库）：左案例树 + 右内容区；选中案例时正文支持视频/图片拖拽上传；多版本行=一次解析
-  - **Workbench**（视频解析）：SplitPane 视频播放器 + 检测栏（车/物体/人脸/车牌/OCR/画面）+ 视频搜索卡（语义/人脸/图搜/车牌/文字 toggle）
+  - **Workbench**（视频解析）：SplitPane 视频播放器 + 检测栏（车/物体/人脸/车牌/OCR/画面）+ 视频搜索卡（语义/人脸/图搜/车牌/文字 toggle）+ 智能场景参数推荐弹窗（SmartSuggestDialog，按 scene_key 计数、低置信徽标）
   - **GlobalSearch**（全局搜索，v0.35 重构）：左 34% 配置面板（文本/图像 Tab + 4 类型 chip + 句式化 token + 人脸/通用图搜分轨）+ 右 66% 结果网格
   - **TaskCenter**（任务中心）+ **SettingsPage**（系统设置，4 子 tab：系统/模型参数/参数预设/API 密钥）
 - TitleBar（frameless 暗色）+ SystemMonitor（底部系统监控）；侧栏 4 业务 + 2 设置入口（案例库/全局搜索/视频解析/任务中心 + 系统/模型参数）
@@ -153,6 +163,8 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 **核心链路全部 ✅**：DAG(16 ops) / 4 编码 / 双层 ReID / 8 路搜索+图搜 / 人脸+车牌+OCR / 摘要(vlm_llm) / 多格式 / 4 级参数 / 设置+预设 / GPU 锁 / 任务队列 / 文件库+多版本 / 云智 / 桌面端 / 生产部署。
 
 **桌面前端 v0.35 增强（候选）**：全局搜索 4 类型 + 句式化 chip + 人脸/图搜分轨；案例库正文拖拽上传；侧栏顺序优化（案例库 → 全局搜索 → 视频解析 → 任务中心）；持久蓝色描边搜索框。
+
+**后端 v0.35 候选（本次重点）**：智能场景参数推荐（`POST /videos/suggest-params`，9 场景分类 + 低置信兜底 + 批量向量对齐修复 + 场景指纹缓存失效）；废弃"搜索/摘要/OCR 至少开启一个"校验（可仅检测+人脸）；人脸多帧补采收紧（`SHORT_TRACK_SEC=8s` / `LONG_TRACK_SAMPLES=2`）。
 
 **非完全**：Chunk 编码（默认关）· OCR 导出/增强（预留）· Grounding(Florence-2 占位)。
 

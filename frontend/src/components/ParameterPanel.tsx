@@ -248,7 +248,6 @@ export function ParameterPanel({
   /* ── 校验 + 提交 ── */
   const validate = (): string | null => {
     if (!modules.vision && !modules.audio) return "视觉分析和音频转录至少开启一个";
-    if (!functions.searchIndex && !functions.summary) return "搜索索引和智能摘要至少开启一个";
     if (!modules.vision && modules.detection) return "视觉分析已关闭，物体检测应同时关闭";
     if (!modules.vision && functions.summary) return "视觉分析已关闭，智能摘要应同时关闭";
     return null;
@@ -606,9 +605,6 @@ export function ParameterPanel({
                 </div>
               );
             })}
-            {!functions.searchIndex && !functions.summary && (
-              <p className="text-[11px] text-red-400 mt-1">搜索索引和智能摘要至少开启一个</p>
-            )}
           </div>
 
           {/* 摘要模式选择（智能摘要关闭时置灰不隐藏，仿目标类别紧贴智能摘要） */}
