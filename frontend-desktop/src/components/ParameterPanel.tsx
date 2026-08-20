@@ -332,8 +332,8 @@ export function ParameterPanel({
         onParamsSet();
         onClose();
       } else {
-        // 已有视频 → 直接更新参数
-        await api.updateParams(videoId, buildParams());
+        // 已有视频 → 直接更新参数（单视频解析，不同步组内兄弟）
+        await api.updateParams(videoId, { ...buildParams(), apply_to_group: false });
         onParamsSet();
         onClose();
       }

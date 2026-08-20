@@ -18,8 +18,8 @@ interface NavItem {
 
 const BUSINESS: NavItem[] = [
   { key: "files", label: "案例库", icon: <IconFolder /> },
-  { key: "workbench", label: "视频解析", icon: <IconVideo /> },
   { key: "search", label: "全局搜索", icon: <IconSearch5 /> },
+  { key: "workbench", label: "视频解析", icon: <IconVideo /> },
   { key: "tasks", label: "任务中心", icon: <IconTask /> },
 ];
 
@@ -68,7 +68,7 @@ export function Sidebar({
                 counts?.workbench != null && counts.workbench > 0 && (
                   <span className="sb-count" title="处理中">{counts.workbench}</span>
                 )
-              ) : (
+              ) : item.key === "tasks" ? (
                 /* 任务中心三徽章，右对齐，视觉右→左 = 红(失败) 绿(新完成) 黄(排队中) */
                 <span className="sb-badges">
                   {counts?.failed != null && counts.failed > 0 && (
@@ -81,7 +81,7 @@ export function Sidebar({
                     <span className="sb-count sb-count-yellow" title="排队中">{counts.queued}</span>
                   )}
                 </span>
-              )}
+              ) : null}
             </button>
           );
         })}

@@ -33,6 +33,9 @@ interface AppCtx {
   videoGroups: VideoGroup[];
   caseGroups: VideoGroup[];
   refreshCaseGroups: () => void;
+  /* 案例库选中案例（跨页持久化） */
+  selectedTree: string;   // "all" | "ungrouped" | "g:<groupId>"
+  setSelectedTree: (t: string) => void;
   /* 侧栏徽章：案例库灰=仅上传未提交 / 视频解析蓝=处理中 / 任务中心 黄=排队中 绿=新完成 红=失败 */
   pendingFileCount: number;    // 案例库灰：仅上传未提交（pending 且未入队 且 未版本化）
   queuedTaskCount: number;     // 任务中心黄：排队中（pipeline_tasks queued 等 worker）
@@ -49,8 +52,6 @@ interface AppCtx {
   /* 删除协调 */
   removeVideoState: (id: string) => void;
   deleteVideo: (id: string) => Promise<void>;
-  /* 拖拽上传遮罩 */
-  dragActive: boolean;
 }
 
 const AppContext = createContext<AppCtx | null>(null);
@@ -71,6 +72,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [videos, setVideos] = useState<VideoListItem[]>([]);
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
   const [caseGroups, setCaseGroups] = useState<VideoGroup[]>([]);
+  const [selectedTree, setSelectedTree] = useState<string>("all");
   const [pendingFileCount, setPendingFileCount] = useState(0);   // 案例库灰：仅上传未提交
   const [queuedTaskCount, setQueuedTaskCount] = useState(0);     // 任务中心黄：排队中
   const [newCompletedCount, setNewCompletedCount] = useState(0); // 任务中心绿：新完成
@@ -87,8 +89,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   selectedVideoIdRef.current = selectedVideoId;
   const [listKey, setListKey] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
-  const [dragActive, setDragActive] = useState(false);
-  const dragDepthRef = useRef(0);
 
   const { mock: yunzhiMock, selectFiles: yunzhiSelectFiles } = useYunzhi();
 
@@ -266,42 +266,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     input.click();
   }, [yunzhiMock, yunzhiSelectFiles, registerExternalFiles, uploadFiles]);
 
-  /* ── 窗口级拖拽上传（原 Dashboard 逻辑） ── */
-  useEffect(() => {
-    const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types?.includes("Files");
-    const onDragEnter = (e: DragEvent) => { if (!hasFiles(e)) return; dragDepthRef.current += 1; setDragActive(true); };
-    const onDragOver = (e: DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"; };
-    const onDragLeave = (e: DragEvent) => { if (!hasFiles(e)) return; dragDepthRef.current = Math.max(0, dragDepthRef.current - 1); if (dragDepthRef.current === 0) setDragActive(false); };
-    const onDrop = (e: DragEvent) => {
-      e.preventDefault();
-      dragDepthRef.current = 0;
-      setDragActive(false);
-      const files = e.dataTransfer?.files;
-      if (!files || files.length === 0) return;
-      const vids = Array.from(files).filter((f) => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name) || f.type.startsWith("video/"));
-      if (vids.length > 0) void uploadFiles(vids);
-    };
-    window.addEventListener("dragenter", onDragEnter);
-    window.addEventListener("dragover", onDragOver);
-    window.addEventListener("dragleave", onDragLeave);
-    window.addEventListener("drop", onDrop);
-    return () => {
-      window.removeEventListener("dragenter", onDragEnter);
-      window.removeEventListener("dragover", onDragOver);
-      window.removeEventListener("dragleave", onDragLeave);
-      window.removeEventListener("drop", onDrop);
-    };
-  }, [uploadFiles]);
-
   const value: AppCtx = {
     page, navigate, settingsTab, navigateSettings,
     selectedVideoId, openWorkbench, initialVersionId, paramsTick, consumeParamsTick,
     reparseIntent, consumeReparseIntent,
     videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups,
+    selectedTree, setSelectedTree,
   pendingFileCount, queuedTaskCount, newCompletedCount, failedTaskCount, taskHighlightIds, runningTaskCount, refreshList,
     isUploading, uploadFiles, registerExternalFiles, handleUploadClick,
     removeVideoState, deleteVideo,
-    dragActive,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

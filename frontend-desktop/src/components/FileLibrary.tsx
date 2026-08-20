@@ -10,91 +10,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
 import { useApp } from "../AppContext";
-import type { FileItem, VideoGroup, CaseAssetItem, PipelineParams, VideoResponse, VideoMetadata, ProcessStatus, ParseMode } from "../types";
+import type { FileItem, VideoGroup, CaseAssetItem, PipelineParams, VideoResponse, VideoMetadata } from "../types";
 import { fmtDuration, fmtDate, fmtBytes } from "../utils/helpers";
-import { IconFolder, IconPlus, IconPlay2, IconTrash, IconPencil, IconBolt, IconBoltSolid, IconEye, IconGrid, IconList, IconDownload, IconClose, IconInfo, IconSummary, IconRetry, IconDoc, IconPerson, IconCar, IconText, IconError, IconSearch } from "./icons";
+import { IconFolder, IconPlus, IconPlay2, IconTrash, IconPencil, IconBolt, IconBoltSolid, IconEye, IconGrid, IconList, IconDownload, IconClose, IconInfo, IconSummary, IconRetry, IconPerson, IconCar, IconText, IconError } from "./icons";
 import { useHEVCCapability } from "../hooks/useHEVCCapability";
+import { ParameterPanel } from "./ParameterPanel";
 
 type TreeKey = "all" | "ungrouped" | `g:${string}`;
 
-const STATUS_META: Record<string, { label: string; cls: string; pulse?: boolean }> = {
-  pending: { label: "待处理", cls: "wait" },
-  processing: { label: "处理中", cls: "run", pulse: true },
-  completed: { label: "已完成", cls: "ok" },
-  failed: { label: "失败", cls: "err" },
+const STATUS_META: Record<string, { label: string; cls: string; badge: string; pulse?: boolean }> = {
+  pending: { label: "待处理", cls: "pre", badge: "wait", pulse: true },
+  queued: { label: "排队中", cls: "queued", badge: "warn", pulse: true },
+  processing: { label: "处理中", cls: "analyzing", badge: "run", pulse: true },
+  completed: { label: "已完成", cls: "completed", badge: "ok" },
+  failed: { label: "失败", cls: "failed", badge: "err" },
+  image: { label: "图片", cls: "image", badge: "image" },
 };
-
-/* ═══════════ 两阶段处理流状态（v0.36）═══════════
-   阶段一（入库预处理）：转码 / 关键帧 / 摘要，上传后自动
-   阶段二（精细化分析）：人脸 / OCR / 车牌，用户手动触发 */
-const PROCESS_STATUS_META: Record<ProcessStatus, { label: string; css: string; badge: string; pulse?: boolean }> = {
-  PRE_PROCESSING: { label: "预处理中", css: "pre", badge: "wait", pulse: true },
-  READY_FOR_ANALYSIS: { label: "待分析", css: "ready", badge: "ready" },
-  ANALYZING: { label: "分析中", css: "analyzing", badge: "run", pulse: true },
-  COMPLETED: { label: "已完成", css: "completed", badge: "ok" },
-  FAILED: { label: "失败", css: "failed", badge: "err" },
-};
-
-/* 两阶段状态推断：优先 process_status；后端未提供时从 current_status 降级 */
-function inferProcessStatus(f: FileItem): ProcessStatus {
-  if (f.process_status) return f.process_status;
-  const hasSummary = !!f.current_summary?.one_liner;
-  switch (f.current_status) {
-    case "pending": return "PRE_PROCESSING";              // 刚上传，等待转码/摘要
-    case "processing": return hasSummary ? "ANALYZING" : "PRE_PROCESSING";
-    case "completed": return "READY_FOR_ANALYSIS";        // 摘要就绪、可播放；深度识别由 process_status 标记
-    case "failed": return "FAILED";
-    default: return "PRE_PROCESSING";
-  }
-}
-
-/* ═══════════ 解析模式（v0.37）═══════════
-   quick    极速概览模式：仅文本摘要，低算力，极快
-   standard 标准检索模式：提取人 / 车 / 字结构化数据，中/高算力，较慢 */
-function inferParseMode(f: FileItem): ParseMode {
-  if (f.parse_mode === "quick" || f.parse_mode === "standard") return f.parse_mode;
-  // 后端未返回模式字段时，用实体数据反推：有结构化产出 → 标准检索
-  const ent = f.analysis_entities;
-  if (ent && (ent.face || ent.plate || ent.ocr)) return "standard";
-  return "quick";
-}
-
-const MODE_META: Record<ParseMode, { label: string; css: string }> = {
-  quick: { label: "极速概览", css: "quick" },
-  standard: { label: "标准检索", css: "standard" },
-};
-
-/* v0.37 识别项配置：仅标准检索模式下三项可独立开关；极速模式强制忽略 */
-export type RecognitionToggles = { face: boolean; plate: boolean; ocr: boolean };
-const ALL_TOGGLES: RecognitionToggles = { face: true, plate: true, ocr: true };
-
-/* 按模式构造阶段二/入库 PipelineParams：
-   极速 = 仅摘要，关闭人脸/车辆/文字/目标检测/检索索引（识别项强制全关）；
-   标准 = 识别项按用户开关独立控制，供精细化研判检索使用 */
-function buildParamsByMode(mode: ParseMode, toggles?: RecognitionToggles, video?: VideoResponse | null): PipelineParams {
-  const std = mode === "standard";
-  const t = { ...ALL_TOGGLES, ...(toggles ?? {}) };
-  const anyEntity = std && (t.face || t.plate || t.ocr);
-  return {
-    content_type: video?.content_type ?? "general",
-    vision_enabled: video?.vision_enabled ?? true,
-    audio_enabled: video?.audio_enabled ?? false,
-    ocr_enabled: std && t.ocr,
-    caption_enabled: true,
-    detection_enabled: std && (t.face || t.plate),
-    detection_classes: null,
-    face_enabled: std && t.face,
-    plate_enabled: std && t.plate,
-    search_index_enabled: anyEntity,
-    summary_enabled: true,
-    summary_mode: video?.summary_mode ?? "vlm_llm",
-    language: video?.language ?? "auto",
-    sample_fps: 1.0,
-    segment_threshold: 0.5,
-    caption_with_context: true,
-    summary_detail: video?.summary_detail ?? "standard",
-    encode_profile: null,
-  };
+function statusOf(f: FileItem): { cls: string; badge: string; pulse?: boolean; label: string } {
+  if (f.current_status === "pending" && f.queued) return STATUS_META.queued;
+  const st = f.current_status ?? "pending";
+  return STATUS_META[st] ?? STATUS_META.pending;
 }
 
 /* 生成案例编号：A-YYYY-MMDD-NN，同一天自动递增（02/03…），用户可手动改 */
@@ -306,30 +241,7 @@ function CaseContent({
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap ml-auto">
-          <input
-            className="g-input !w-[168px] !h-[30px] !text-[12px]" placeholder="搜索名称 / 摘要 / 案件编号"
-            value={search} onChange={(e) => onSearch(e.target.value)}
-          />
-          <select className="g-input !w-[110px] !h-[30px] !text-[12px]" value={statusFilter} onChange={(e) => onStatusFilter(e.target.value)}>
-            <option value="all">全部状态</option>
-            <option value="PRE_PROCESSING">预处理中</option>
-            <option value="READY_FOR_ANALYSIS">待分析</option>
-            <option value="ANALYZING">分析中</option>
-            <option value="COMPLETED">已完成</option>
-            <option value="FAILED">失败</option>
-          </select>
-          {/* 上传：白底 outline（与新建案例蓝色等大） */}
-          <button className="g-btn" onClick={onUpload} disabled={isUploading}>
-            <IconPlus />
-            {isUploading ? "上传中..." : "上传"}
-          </button>
-          {/* 解析：未勾选 → 处理当前列表全部待处理；勾选后 → 批量解析勾选的 */}
-          <button className="g-btn g-btn-primary" onClick={onAnalyze}
-            disabled={analyzing || (selected.size === 0 && allPendingIds.length === 0)} title="选择解析模式并启动待处理视频（极速概览 / 标准检索）">
-            <IconPlay2 />
-            {selected.size > 0 ? `批量解析 (${selected.size})` : `解析 (${allPendingIds.length})`}
-          </button>
-          {/* 视图切换器：网格（高亮）/ 列表 */}
+          {/* 视图切换器：网格 / 列表 —— 放最左 */}
           <div className="fl-view-toggle">
             <button className={viewMode === "grid" ? "active" : ""} onClick={() => setViewMode("grid")} title="网格视图">
               <IconGrid />
@@ -338,6 +250,30 @@ function CaseContent({
               <IconList />
             </button>
           </div>
+          <input
+            className="g-input !w-[168px] !h-[30px] !text-[12px]" placeholder="搜索名称 / 摘要 / 案件编号"
+            value={search} onChange={(e) => onSearch(e.target.value)}
+          />
+          <select className="g-input !w-[110px] !h-[30px] !text-[12px]" value={statusFilter} onChange={(e) => onStatusFilter(e.target.value)}>
+            <option value="all">全部状态</option>
+            <option value="pending">待处理</option>
+            <option value="queued">排队中</option>
+            <option value="processing">处理中</option>
+            <option value="completed">已完成</option>
+            <option value="failed">失败</option>
+            <option value="image">图片</option>
+          </select>
+          {/* 上传：白底 outline（与新建案例蓝色等大） */}
+          <button className="g-btn" onClick={onUpload} disabled={isUploading}>
+            <IconPlus />
+            {isUploading ? "上传中..." : "上传"}
+          </button>
+          {/* 解析：未勾选 → 处理当前列表全部待处理；勾选后 → 批量解析勾选的 */}
+          <button className="g-btn g-btn-primary" onClick={onAnalyze}
+            disabled={analyzing || (selected.size === 0 && allPendingIds.length === 0)} title="打开参数面板并启动待处理视频">
+            <IconPlay2 />
+            {selected.size > 0 ? `批量解析 (${selected.size})` : `解析 (${allPendingIds.length})`}
+          </button>
         </div>
       </div>
 
@@ -346,14 +282,9 @@ function CaseContent({
           <div className="fl-grid">
             {/* ── 视频卡片 ── */}
             {displayFiles.map((f) => {
-              const ps = inferProcessStatus(f);
-              const sm = PROCESS_STATUS_META[ps];
-              const mode = inferParseMode(f);
+              const sm = statusOf(f);
               const { base, ext } = splitName(f.name, f.file_ext);
-              /* 解析中文案按模式区分：极速=生成摘要 / 标准=提取特征 */
-              const statusLabel = ps === "ANALYZING"
-                ? (mode === "quick" ? "解析中 · 生成摘要" : "解析中 · 提取特征")
-                : sm.label;
+              const statusLabel = sm.label;
               return (
                 <div key={f.id} className="fl-card" onClick={() => setDetailFile(f)}>
                   <div className="fl-cover">
@@ -361,28 +292,19 @@ function CaseContent({
                     <img className="fl-thumb" src={`/api/v1/videos/${f.id}/thumbnail/0`} alt="" loading="lazy"
                       onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0"; }} />
                     {f.duration != null && <span className="fl-dur">{fmtDuration(f.duration)}</span>}
-                    <span className={"fl-status fl-status-" + sm.css}>
+                    <span className={"fl-status fl-status-" + sm.cls}>
                       {sm.pulse && <span className="pulse" />}
                       {statusLabel}
                     </span>
-                    {/* 完成态模式暗示角标：极速=文档图标 / 标准=搜索图标 */}
-                    {ps === "COMPLETED" && (
-                      <span className={"fl-mode-badge " + (mode === "quick" ? "quick" : "standard")}
-                        title={mode === "quick" ? "极速概览模式" : "标准检索模式"}>
-                        {mode === "quick" ? <IconDoc /> : <IconSearch />}
-                      </span>
-                    )}
-                    <div className="fl-actions">
-                      <button title={f.current_status === "completed" ? "查看结果" : "预览视频"}
-                        onClick={(e) => { e.stopPropagation(); onOpenFile(f, false); }}>
-                        <IconEye />
+                    <div className="fl-card-actions-sm">
+                      <button className="fl-card-action-sm" title="打开参数面板并启动分析"
+                        onClick={(e) => { e.stopPropagation(); onOpenFile(f, true, f.current_status === "completed"); }}>
+                        {f.current_status === "completed" ? <IconBoltSolid /> : <IconBolt />}
                       </button>
-                      <button title="重命名文件"
-                        onClick={(e) => { e.stopPropagation(); startEdit("file", f.id, base); }}>
+                      <button className="fl-card-action-sm" title="重命名" onClick={(e) => { e.stopPropagation(); startEdit("file", f.id, base); }}>
                         <IconPencil />
                       </button>
-                      <button title="删除文件"
-                        onClick={(e) => { e.stopPropagation(); onDeleteFile(f); }}>
+                      <button className="fl-card-action-sm fl-card-action-sm-danger" title="删除" onClick={(e) => { e.stopPropagation(); onDeleteFile(f); }}>
                         <IconTrash />
                       </button>
                     </div>
@@ -396,15 +318,24 @@ function CaseContent({
                     )}
                     <span className="fl-size">{fmtBytes(f.file_size)}</span>
                   </div>
+                  <input type="checkbox" className="fl-checkbox" title={f.current_status === "pending" ? "勾选后批量解析" : "仅待处理可批量解析"}
+                    checked={selected.has(f.id)}
+                    disabled={f.current_status !== "pending"}
+                    onChange={(e) => { e.stopPropagation(); onToggleSelect(f.id); }}
+                    onClick={(e) => e.stopPropagation()} />
                 </div>
               );
             })}
             {/* ── 图片卡片 ── */}
-            {images.filter((img) => !search.trim() || img.name.toLowerCase().includes(search.trim().toLowerCase())).map((img) => {
+            {images.filter((img) => {
+              // 状态过滤：图片状态时显示图片，其他状态时只在"全部状态"时显示
+              if (statusFilter !== "all" && statusFilter !== "image") return false;
+              // 搜索过滤
+              return !search.trim() || img.name.toLowerCase().includes(search.trim().toLowerCase());
+            }).map((img) => {
               const { base, ext } = splitName(img.name, img.file_ext);
               return (
-                <div key={img.id} className="fl-card"
-                  onClick={() => { if (tree.startsWith("g:")) setPreviewImg(img); }}>
+                <div key={img.id} className="fl-card">
                   <div className="fl-cover">
                     <div className="fl-cover-bg"><ImageIcon /></div>
                     {group && (
@@ -412,16 +343,11 @@ function CaseContent({
                         onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0"; }} />
                     )}
                     <span className="fl-status fl-status-image">图片</span>
-                    <div className="fl-actions">
-                      {tree.startsWith("g:") && (
-                        <button title="预览图片" onClick={(e) => { e.stopPropagation(); setPreviewImg(img); }}>
-                          <IconEye />
-                        </button>
-                      )}
-                      <button title="重命名图片" onClick={(e) => { e.stopPropagation(); startEdit("image", img.id, base); }}>
+                    <div className="fl-card-actions-sm">
+                      <button className="fl-card-action-sm" title="重命名" onClick={(e) => { e.stopPropagation(); startEdit("image", img.id, base); }}>
                         <IconPencil />
                       </button>
-                      <button title="删除图片" onClick={(e) => { e.stopPropagation(); onDeleteImage(img); }}>
+                      <button className="fl-card-action-sm fl-card-action-sm-danger" title="删除" onClick={(e) => { e.stopPropagation(); onDeleteImage(img); }}>
                         <IconTrash />
                       </button>
                     </div>
@@ -459,13 +385,8 @@ function CaseContent({
           </thead>
           <tbody>
             {displayFiles.map((f) => {
-              const ps = inferProcessStatus(f);
-              const sm = PROCESS_STATUS_META[ps];
-              const mode = inferParseMode(f);
-              /* 解析中文案按模式区分：极速=生成摘要 / 标准=提取特征 */
-              const statusLabel = ps === "ANALYZING"
-                ? (mode === "quick" ? "解析中 · 生成摘要" : "解析中 · 提取特征")
-                : sm.label;
+              const sm = statusOf(f);
+              const statusLabel = sm.label;
               return (
                 <tr key={f.id}>
                   <td>
@@ -492,13 +413,8 @@ function CaseContent({
                     <span className={"g-badge " + sm.badge}>
                       {sm.pulse && <span className="pulse" />}
                       {statusLabel}
-                      {ps === "COMPLETED" && (f.versions_count ?? 1) > 1 && (
+                      {f.current_status === "completed" && (f.versions_count ?? 1) > 1 && (
                         <span className="opacity-80"> · 共 {f.versions_count} 版</span>
-                      )}
-                      {ps === "COMPLETED" && (
-                        <span className={"fl-badge-sm " + mode} title={mode === "quick" ? "极速概览模式" : "标准检索模式"}>
-                          {mode === "quick" ? "极速" : "标准"}
-                        </span>
                       )}
                     </span>
                   </td>
@@ -506,7 +422,7 @@ function CaseContent({
                     <div className="inline-flex items-center gap-1.5">
                       {/* 四个操作：解析(闪电) → 预览/结果 → 重命名 → 删除（前三个灰、hover 变蓝；删除红） */}
                       <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors"
-                        title={f.current_status === "completed" ? "重新分析（可切换极速 / 标准）" : "选择模式并启动分析"}
+                        title={f.current_status === "completed" ? "重新分析" : "打开参数面板并启动分析"}
                         onClick={() => onOpenFile(f, true, f.current_status === "completed")}>
                         {f.current_status === "completed" ? <IconBoltSolid /> : <IconBolt />}
                       </button>
@@ -531,7 +447,12 @@ function CaseContent({
               );
             })}
             {/* 图片素材行 */}
-            {images.filter((img) => !search.trim() || img.name.toLowerCase().includes(search.trim().toLowerCase())).map((img) => (
+            {images.filter((img) => {
+              // 状态过滤：图片状态时显示图片，其他状态时只在"全部状态"时显示
+              if (statusFilter !== "all" && statusFilter !== "image") return false;
+              // 搜索过滤
+              return !search.trim() || img.name.toLowerCase().includes(search.trim().toLowerCase());
+            }).map((img) => (
               <tr key={img.id}>
                 <td />
                 <td><span className="inline-flex items-center justify-center w-6 h-6 rounded bg-gray-50 text-gray-500">
@@ -599,102 +520,21 @@ function CaseContent({
       )}
       {/* 视频详情抽屉 */}
       {detailFile && (
-        <FileDetailDrawer file={detailFile} onClose={() => setDetailFile(null)} onRename={onRenameFile} onOpenWorkbench={(f) => onOpenFile(f, false)} />
+        <FileDetailDrawer file={detailFile} onClose={() => setDetailFile(null)} onRename={onRenameFile} onOpenWorkbench={(f) => onOpenFile(f, false)} onDeleteFile={onDeleteFile} />
       )}
-    </div>
-  );
-}
-
-/* ═══════════════════════ ③.5 解析模式配置弹窗（双模式互斥大卡 + 识别项配置） ═══════════════════════ */
-const RECOG_ITEMS: { key: keyof RecognitionToggles; label: string }[] = [
-  { key: "face", label: "人脸识别" },
-  { key: "plate", label: "车辆识别" },
-  { key: "ocr", label: "文字识别" },
-];
-function ParseModeModal({
-  open, defaultMode, onCancel, onConfirm,
-}: {
-  open: boolean;
-  defaultMode: ParseMode;
-  onCancel: () => void;
-  onConfirm: (mode: ParseMode, toggles: RecognitionToggles) => void;
-}) {
-  const [mode, setMode] = useState<ParseMode>(defaultMode);
-  const [toggles, setToggles] = useState<RecognitionToggles>(ALL_TOGGLES);
-  useEffect(() => {
-    if (open) {
-      setMode(defaultMode);
-      setToggles(ALL_TOGGLES);
-    }
-  }, [open, defaultMode]);
-  const selectMode = (m: ParseMode) => {
-    setMode(m);
-    /* 切换回极速概览 → 识别项恢复默认全开，与「仅生成文本摘要」定位保持一致 */
-    if (m === "quick") setToggles(ALL_TOGGLES);
-  };
-  const toggleRecog = (k: keyof RecognitionToggles) => {
-    if (mode !== "standard") return;
-    setToggles((prev) => ({ ...prev, [k]: !prev[k] }));
-  };
-  if (!open) return null;
-  const cfgDisabled = mode === "quick";
-  return (
-    <div className="g-modal-overlay" onClick={onCancel}>
-      <div className="g-modal" style={{ width: 560 }} onClick={(e) => e.stopPropagation()}>
-        <div className="g-card-hd">
-          <span className="g-card-tt">启动智能分析 · 选择模式</span>
-          <button className="g-btn g-btn-sm" onClick={onCancel}>×</button>
-        </div>
-        <div className="p-5 space-y-3">
-          <p className="text-[12px] text-gray-500">选择处理模式，决定算力消耗与产出内容（均可后续重新解析切换）</p>
-          <div className="fl-mode-grid">
-            <button className={"fl-mode-card quick" + (mode === "quick" ? " active" : "")}
-              onClick={() => selectMode("quick")}>
-              <span className="fl-mode-ic"><IconBoltSolid /></span>
-              <span className="fl-mode-tt">极速概览模式</span>
-              <span className="fl-mode-desc">仅生成文本摘要，低算力、极快出结果，适合快速浏览视频内容</span>
-              <span className="fl-mode-tag">低算力·极快</span>
-            </button>
-            <button className={"fl-mode-card standard" + (mode === "standard" ? " active" : "")}
-              onClick={() => selectMode("standard")}>
-              <span className="fl-mode-ic"><IconSearch /></span>
-              <span className="fl-mode-tt">标准检索模式</span>
-              <span className="fl-mode-desc">提取人脸/车辆/文字结构化数据，支持研判检索，耗时较长</span>
-              <span className="fl-mode-tag">中/高算力·较慢</span>
-            </button>
-          </div>
-          {/* 识别项配置：极速置灰不可操作 / 标准可独立开关三项识别能力 */}
-          <div className={"fl-mode-cfg" + (cfgDisabled ? " disabled" : "")}>
-            <div className="fl-mode-cfg-tt">——— 识别项配置 ———</div>
-            <div className="fl-mode-switches">
-              {RECOG_ITEMS.map((item) => (
-                <button key={item.key} type="button" disabled={cfgDisabled}
-                  className={"fl-mode-switch" + (toggles[item.key] ? " on" : "")}
-                  onClick={() => toggleRecog(item.key)}>
-                  <span className="fl-switch-mark">{toggles[item.key] ? "☑" : "☐"}</span>
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-1">
-            <button className="g-btn" onClick={onCancel}>取消</button>
-            <button className="g-btn g-btn-primary" onClick={() => onConfirm(mode, toggles)}>确定</button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
 
 /* ═══════════════════════ ④ 视频详情抽屉 ═══════════════════════ */
 function FileDetailDrawer({
-  file, onClose, onRename, onOpenWorkbench,
+  file, onClose, onRename, onOpenWorkbench, onDeleteFile,
 }: {
   file: FileItem;
   onClose: () => void;
   onRename: (id: string, name: string) => Promise<void>;
   onOpenWorkbench: (f: FileItem) => void;
+  onDeleteFile?: (f: FileItem) => void;
 }) {
   const hevcOk = useHEVCCapability();
   const [video, setVideo] = useState<VideoResponse | null>(null);
@@ -703,11 +543,26 @@ function FileDetailDrawer({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const commitRef = useRef(false);
-  /* ── 两阶段处理流：解析模式（极速 / 标准）/ 启动中 / 实时实体 ── */
-  const [modeOpen, setModeOpen] = useState(false);
+  /* ── 单视频解析：原参数设置面板（重新解析走新版本） ── */
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelReparse, setPanelReparse] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [parseMode, setParseMode] = useState<ParseMode>(() => inferParseMode(file));
-  const [entities, setEntities] = useState<{ face?: number; plate?: number }>({});
+  const [faceCount, setFaceCount] = useState(0);
+  const [plateCount, setPlateCount] = useState(0);
+  const [ocrCount, setOcrCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      api.fetchFaceData(file.id).then((d) => d?.identities?.length ?? 0).catch(() => 0),
+      api.fetchPlateData(file.id).then((d) => d?.detections?.length ?? 0).catch(() => 0),
+      api.fetchOcrData(file.id).then((d) => d?.detections?.length ?? 0).catch(() => 0),
+    ]).then(([fc, pc, oc]) => {
+      if (cancelled) return;
+      setFaceCount(fc); setPlateCount(pc); setOcrCount(oc);
+    });
+    return () => { cancelled = true; };
+  }, [file.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -729,11 +584,6 @@ function FileDetailDrawer({
   const summary = video?.summary ?? null;
   const streamUrl = api.getVideoStreamUrl(file.id, hevcOk);
   const thumbUrl = `/api/v1/videos/${file.id}/thumbnail/0`;
-  /* 标准检索模式统计条数据：优先读后端 analysis_entities，其次用实时轮询值兜底 */
-  const entCounts = file.analysis_entities ?? null;
-  const faceCount = entCounts?.face ?? entities.face ?? 0;
-  const plateCount = entCounts?.plate ?? entities.plate ?? 0;
-  const ocrCount = entCounts?.ocr ?? 0;
   const { base, ext } = (() => {
     const e = file.file_ext?.length ? file.file_ext : "";
     const b = e && file.name.endsWith(e) ? file.name.slice(0, -e.length) : file.name;
@@ -768,47 +618,14 @@ function FileDetailDrawer({
     document.body.removeChild(a);
   };
 
-  /* ── 两阶段状态推断与精析进度 ── */
-  const ps = inferProcessStatus(file);
-  const progress = file.analysis_progress ?? file.current_progress ?? null;
+  /* ── 单状态机：后端 status（pending/processing/completed/failed）直接驱动 ── */
+  const ps = file.current_status ?? "pending";
+  const progress = file.current_progress ?? null;
 
-  /* 分析中：轮询实时发现的实体数量（人脸 / 车牌） */
-  useEffect(() => {
-    if (ps !== "ANALYZING") { setEntities({}); return; }
-    let cancelled = false;
-    const poll = async () => {
-      const [face, plate] = await Promise.all([
-        api.fetchFaceData(file.id).then((d) => d?.identities?.length ?? 0).catch(() => null),
-        api.fetchPlateData(file.id).then((d) => d?.detections?.length ?? 0).catch(() => null),
-      ]);
-      if (!cancelled) setEntities({ face: face ?? undefined, plate: plate ?? undefined });
-    };
-    poll();
-    const iv = setInterval(poll, 6000);
-    return () => { cancelled = true; clearInterval(iv); };
-  }, [ps, file.id]);
-
-  /* 启动 / 重新 智能分析：按所选模式+识别项开关构造阶段二参数（极速=仅摘要 / 标准=按开关） */
-  const runAnalysis = async (mode: ParseMode, toggles: RecognitionToggles) => {
-    setStarting(true);
-    try {
-      const params = buildParamsByMode(mode, toggles, video);
-      if (ps === "COMPLETED") await api.reanalyze(file.id, params);
-      else await api.analyzeBatch([file.id], params);
-      setParseMode(mode);
-      setModeOpen(false);
-      onClose();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "启动分析失败");
-    } finally {
-      setStarting(false);
-    }
-  };
-
-  /* 失败重试：再次弹出模式配置，可降级（标准→极速）或升级（极速→标准） */
-  const retry = () => {
-    setParseMode(inferParseMode(file));
-    setModeOpen(true);
+  /* 打开原参数设置面板：completed → 重新解析建新版本；其余 → 原地启动 */
+  const openPanel = (reparse: boolean) => {
+    setPanelReparse(reparse);
+    setPanelOpen(true);
   };
 
   /* 导出结构化数据（JSON） */
@@ -820,7 +637,7 @@ function FileDetailDrawer({
       file_size: file.file_size,
       resolution: resolution || null,
       codec: video?.video_codec ?? null,
-      process_status: ps,
+      status: ps,
       algorithms: {
         face: video?.face_enabled ?? false,
         plate: video?.plate_enabled ?? false,
@@ -881,32 +698,21 @@ function FileDetailDrawer({
           {/* 智能识别结果 */}
           <div className="fl-section">
             <div className="fl-section-title"><IconSummary /><span>智能识别结果</span></div>
-            {/* 两阶段处理流：预处理 / 精析进度 + 实时实体（按解析模式区分文案） */}
-            {(ps === "PRE_PROCESSING" || ps === "ANALYZING") && (
+            {/* 处理中：整体进度 */}
+            {ps === "processing" && (
               <div className="fl-progress-block">
                 <div className="fl-progress-row">
-                  <span className="fl-progress-label">
-                    {ps === "PRE_PROCESSING"
-                      ? "入库预处理中（转码 / 摘要）"
-                      : parseMode === "quick" ? "极速概览 · 生成摘要中" : "标准检索 · 提取特征中"}
-                  </span>
+                  <span className="fl-progress-label">视频解析中（转码 / 摘要 / 识别）</span>
                   <span className="fl-progress-pct">{progress != null ? `${progress}%` : "…"}</span>
                 </div>
                 <div className="fl-progress-bar"><div className="fl-progress-fill" style={{ width: `${progress ?? 0}%` }} /></div>
-                {ps === "ANALYZING" && parseMode === "standard" && (
-                  <div className="fl-entities">
-                    {entities.face != null || entities.plate != null
-                      ? <>已发现{entities.face != null ? ` 人脸 ${entities.face}` : ""}{entities.plate != null ? ` · 车牌 ${entities.plate}` : ""}</>
-                      : "正在提取人 / 车 / 文字…"}
-                  </div>
-                )}
               </div>
             )}
-            {ps === "FAILED" && (
+            {ps === "failed" && (
               <div className="fl-fail">
                 <p className="fl-fail-tt"><IconError />解析失败</p>
                 <p className="fl-fail-msg">{video?.error_message || "未知原因，请联系管理员检查服务日志。"}</p>
-                <p className="fl-fail-tip">可点击「重新解析」更换模式重试，或删除该文件后重新上传。</p>
+                <p className="fl-fail-tip">可点击「重新解析」更换参数重试，或删除该文件后重新上传。</p>
               </div>
             )}
             {loading ? (
@@ -914,7 +720,7 @@ function FileDetailDrawer({
             ) : summary ? (
               <>
                 {summary.one_liner && (
-                  <p className={parseMode === "quick" ? "fl-summary-text fl-summary-quick" : "fl-summary-text fl-summary-clamp"}>{summary.one_liner}</p>
+                  <p className="fl-summary-text fl-summary-clamp">{summary.one_liner}</p>
                 )}
                 {(summary.main_topics.length > 0 || summary.main_entities.length > 0) && (
                   <div className="fl-summary-kv">
@@ -931,8 +737,8 @@ function FileDetailDrawer({
                     {summary.tags.map((t, i) => <span key={t} className={"fl-tag fl-tag-" + (i % 4)}>#{t}</span>)}
                   </div>
                 )}
-                {/* 标准检索模式：人 / 车 / 文字统计条 → 点击跳转全屏研判页 */}
-                {parseMode === "standard" && ps === "COMPLETED" && (
+                {/* 人 / 车 / 文字统计条 → 点击跳转全屏研判页 */}
+                {ps === "completed" && (
                   <div className="fl-stats">
                     <button className="fl-stat" onClick={() => onOpenWorkbench(file)}><IconPerson /><span>人员</span><b>{faceCount}</b></button>
                     <button className="fl-stat" onClick={() => onOpenWorkbench(file)}><IconCar /><span>车辆</span><b>{plateCount}</b></button>
@@ -960,66 +766,72 @@ function FileDetailDrawer({
         </div>
 
         <div className="fl-drawer-ft">
-          <button className="g-btn" onClick={startRename}><IconPencil />编辑</button>
           <button className="g-btn" onClick={download}><IconDownload />下载</button>
+          <button className="g-btn text-red-500 hover:text-red-600 hover:bg-red-50" onClick={() => { if (window.confirm(`确认删除「${file.name}」？`)) { onClose(); onDeleteFile?.(file); } }}><IconTrash />删除</button>
           <span className="flex-1" />
-          {/* ── 根据两阶段状态动态渲染主按钮 ── */}
-          {ps === "READY_FOR_ANALYSIS" && (
-            <button className="g-btn g-btn-primary" onClick={() => setModeOpen(true)} disabled={starting}>
-              <IconBolt />启动智能分析
+          {/* ── 根据状态动态渲染主按钮 ── */}
+          {ps === "pending" && (
+            <button className="g-btn g-btn-primary" onClick={() => openPanel(false)} disabled={starting}>
+              <IconBolt />视频解析
             </button>
           )}
-          {ps === "PRE_PROCESSING" && (
-            <button className="g-btn g-btn-primary" disabled title="预处理完成后即可启动分析">预处理中…</button>
-          )}
-          {ps === "ANALYZING" && (
-            <button className="g-btn g-btn-primary" disabled title="分析进行中，请查看下方实时结果">
-              分析进行中… {progress != null ? `${progress}%` : ""}
+          {ps === "processing" && (
+            <button className="g-btn g-btn-primary" disabled title="解析进行中">
+              解析中… {progress != null ? `${progress}%` : ""}
             </button>
           )}
-          {ps === "COMPLETED" && (
-            <>
-              <button className="g-btn" onClick={exportStructured}><IconDownload />导出结构化数据</button>
-              <button className="g-btn g-btn-primary" onClick={() => { setParseMode(inferParseMode(file)); setModeOpen(true); }}><IconBoltSolid />重新分析</button>
-            </>
+          {ps === "completed" && (
+            <button className="g-btn g-btn-primary" onClick={() => openPanel(true)}><IconBoltSolid />重新分析</button>
           )}
-          {ps === "FAILED" && (
-            <button className="g-btn g-btn-primary" onClick={retry} disabled={starting}><IconRetry />重新解析</button>
+          {ps === "failed" && (
+            <button className="g-btn g-btn-primary" onClick={() => openPanel(false)} disabled={starting}><IconRetry />重新解析</button>
           )}
         </div>
       </div>
 
-      {/* 解析模式配置弹窗（极速概览 / 标准检索 + 识别项配置）——可升降级重选 */}
-      <ParseModeModal
-        open={modeOpen}
-        defaultMode={parseMode}
-        onCancel={() => setModeOpen(false)}
-        onConfirm={runAnalysis}
-      />
+      {/* 原参数设置面板：单视频解析（重新解析建新版本） */}
+      {panelOpen && (
+        <div className="g-modal-overlay">
+          <div className="g-modal" style={{ height: "min(620px, 82vh)" }}>
+            <ParameterPanel
+              videoId={file.id}
+              reparse={panelReparse}
+              onClose={() => setPanelOpen(false)}
+              onParamsSet={() => { setPanelOpen(false); onClose(); }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ═══════════════════════ 页面编排 ═══════════════════════ */
 export function FileLibrary() {
-  const { openWorkbench, uploadFiles, isUploading, refreshCaseGroups } = useApp();
+  const { openWorkbench, uploadFiles, isUploading, refreshCaseGroups, selectedTree, setSelectedTree } = useApp();
   const [files, setFiles] = useState<FileItem[]>([]);
   const [groups, setGroups] = useState<VideoGroup[]>([]);
   const [images, setImages] = useState<CaseAssetItem[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [tree, setTree] = useState<TreeKey>("all");
+  const tree = selectedTree as TreeKey;
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [form, setForm] = useState({ name: "", number: "", owner: "" });
   const [creatingGroup, setCreatingGroup] = useState(false);
+  const creatingGroupRef = useRef(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [analyzing, setAnalyzing] = useState(false);
-  const [modeTargets, setModeTargets] = useState<string[] | null>(null);
-  const [pendingMode, setPendingMode] = useState<ParseMode>("quick");
+  const [batchTargets, setBatchTargets] = useState<string[] | null>(null);
   /* 案例编辑 */
   const [editCase, setEditCase] = useState<VideoGroup | null>(null);
   const [editForm, setEditForm] = useState({ name: "", number: "", owner: "" });
   const [savingEdit, setSavingEdit] = useState(false);
+
+  /* 案例库正文拖拽上传：选中案例时，拖视频/图片到正文直接上传 */
+  const [flDragOver, setFlDragOver] = useState(false);
+  const flContainerRef = useRef<HTMLDivElement>(null);
+  const flDragDepthRef = useRef(0);
+  const activeGroupId = useMemo(() => (tree.startsWith("g:") ? tree.slice(2) : null), [tree]);
 
   const load = () => {
     api.listFiles().then((data) => setFiles(data ?? [])).catch(() => {});
@@ -1048,6 +860,10 @@ export function FileLibrary() {
   const handleUploadFiles = () => {
     if (!tree.startsWith("g:")) { alert("请先选择案例"); return; }
     const gid = tree.slice(2);
+    if (!gid || gid === "undefined" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gid)) {
+      alert("案例 ID 异常，请重新选择案例后重试");
+      return;
+    }
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".mp4,.mov,.avi,.mkv,.webm,image/*";
@@ -1068,11 +884,6 @@ export function FileLibrary() {
       } catch { /* ignore */ }
       load();
       input.value = "";
-      /* 上传视频成功后立即弹出解析模式配置弹窗（默认极速概览），便于直接启动分析 */
-      if (uploadedIds.length) {
-        setPendingMode("quick");
-        setModeTargets(uploadedIds);
-      }
     };
     input.click();
   };
@@ -1086,14 +897,17 @@ export function FileLibrary() {
   const createGroup = async () => {
     if (!form.name.trim()) { alert("请填写案例名称"); return; }
     setCreatingGroup(true);
+    creatingGroupRef.current = true;
     try {
       const g = await api.createGroup({ name: form.name.trim(), number: form.number.trim() || undefined, owner: form.owner.trim() || undefined });
       setShowNewGroup(false);
       setForm({ name: "", number: "", owner: "" });
-      setTree(`g:${g.groupId}`);
+      setSelectedTree(`g:${g.groupId}`);
+      await refreshCaseGroups();
       load();
-      refreshCaseGroups();
     } catch (err) { alert(err instanceof Error ? err.message : "创建失败"); }
+    // 延迟解除锁：等 load() 触发的 setGroups + re-render 全部完成后
+    setTimeout(() => { creatingGroupRef.current = false; }, 500);
     setCreatingGroup(false);
   };
 
@@ -1137,7 +951,7 @@ export function FileLibrary() {
     if (!window.confirm(`确认删除案例「${g.name}」？将删除其下全部视频与图片，不可恢复。`)) return;
     try {
       await api.deleteGroup(g.groupId);
-      if (tree === `g:${g.groupId}`) setTree("all");
+      if (tree === `g:${g.groupId}`) setSelectedTree("all");
       load();
       refreshCaseGroups();
     } catch (err) { alert(err instanceof Error ? err.message : "删除失败"); }
@@ -1157,10 +971,11 @@ export function FileLibrary() {
     } catch (err) { alert(err instanceof Error ? err.message : "删除失败"); }
   };
 
-  /* 树选中失效（组被删）→ 回退第一个案例 */
+  /* 树选中失效（组被删）→ 回退第一个案例（新建案例期间跳过） */
   useEffect(() => {
+    if (creatingGroupRef.current) return;
     if (groups.length && !groups.some((g) => tree === `g:${g.groupId}`)) {
-      setTree(`g:${groups[0].groupId}`);
+      setSelectedTree(`g:${groups[0].groupId}`);
     }
   }, [groups, tree]);
 
@@ -1173,7 +988,12 @@ export function FileLibrary() {
 
   const displayFiles = useMemo(() => {
     let list = treeFiltered;
-    if (statusFilter !== "all") list = list.filter((f) => inferProcessStatus(f) === statusFilter);
+    if (statusFilter !== "all") {
+      list = list.filter((f) => {
+        if (statusFilter === "queued") return f.current_status === "pending" && !!f.queued;
+        return (f.current_status ?? "pending") === statusFilter;
+      });
+    }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((f) => {
@@ -1216,32 +1036,78 @@ export function FileLibrary() {
     });
   }, [displayPendingIds]);
 
-  /* 点「解析」按钮 → 弹出模式配置（极速概览 / 标准检索），确认后整批启动 */
+  /* 点「解析」按钮 → 打开原参数设置面板（整批应用同一套参数），确认后整批启动 */
   const handleAnalyze = () => {
     const targets = selected.size > 0 ? Array.from(selected) : displayPendingIds;
     if (targets.length === 0) return;
-    setPendingMode("quick");
-    setModeTargets(targets);
+    setBatchTargets(targets);
   };
 
-  const handleModeConfirm = async (mode: ParseMode, toggles: RecognitionToggles) => {
-    if (!modeTargets) return;
+  const handleBatchSubmit = async (params: PipelineParams) => {
+    if (!batchTargets) return;
     setAnalyzing(true);
     try {
-      await api.analyzeBatch(modeTargets, buildParamsByMode(mode, toggles));
+      await api.analyzeBatch(batchTargets, params);
       setSelected(new Set());
-      setModeTargets(null);
+      setBatchTargets(null);
       load();  // 提交结果靠列表刷新 + 侧栏徽章自然反馈，不弹原生窗
     } catch (err) {
-      alert(err instanceof Error ? err.message : "批量解析失败");
-      setModeTargets(null);
+      throw err instanceof Error ? err : new Error("批量解析失败");
     } finally {
       setAnalyzing(false);
     }
   };
 
   return (
-    <div className="h-full flex flex-col gap-2 p-2">
+    <div
+      ref={flContainerRef}
+      className={"fl-page h-full flex flex-col gap-2 p-2 relative" + (flDragOver ? " fl-dragover" : "")}
+      onDragEnter={(e) => {
+        if (!activeGroupId) return;
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        flDragDepthRef.current += 1;
+        setFlDragOver(true);
+      }}
+      onDragOver={(e) => {
+        if (!activeGroupId) return;
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={() => {
+        flDragDepthRef.current = Math.max(0, flDragDepthRef.current - 1);
+        if (flDragDepthRef.current === 0) setFlDragOver(false);
+      }}
+      onDrop={async (e) => {
+        e.preventDefault();
+        flDragDepthRef.current = 0;
+        setFlDragOver(false);
+        if (!activeGroupId) return;
+        const files = Array.from(e.dataTransfer?.files ?? []);
+        if (!files.length) return;
+        const vids = files.filter((f) => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name) || f.type.startsWith("video/"));
+        const imgs = files.filter((f) => f.type.startsWith("image/"));
+        if (vids.length) await uploadFiles(vids, activeGroupId, { stay: true });
+        if (imgs.length) {
+          try { await api.uploadGroupAssets(activeGroupId, imgs); load(); } catch (err) { alert(err instanceof Error ? err.message : "图片上传失败"); }
+        }
+      }}
+    >
+      {flDragOver && activeGroupId && (
+        <div className="fl-drop-overlay">
+          <div className="fl-drop-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            <div className="t1">松开上传到当前案例</div>
+            <div className="t2">支持视频（MP4/MOV/AVI/MKV/WEBM）和图片（自动识别）</div>
+          </div>
+        </div>
+      )}
+
       {/* ① 顶部卡 */}
       <CaseHeader onNewCase={openNewCase} />
 
@@ -1249,7 +1115,7 @@ export function FileLibrary() {
       <div className="flex flex-1 gap-2 min-h-0">
         <CaseList
           groups={groups} files={files} tree={tree}
-          onSelect={(gid) => setTree(`g:${gid}`)}
+          onSelect={(gid) => setSelectedTree(`g:${gid}`)}
           onDeleteCase={deleteCase}
         />
         <CaseContent
@@ -1330,13 +1196,19 @@ export function FileLibrary() {
         </div>
       )}
 
-      {/* 批量解析 / 上传后：模式配置弹窗（极速概览 / 标准检索 + 识别项配置） */}
-      <ParseModeModal
-        open={!!modeTargets}
-        defaultMode={pendingMode}
-        onCancel={() => setModeTargets(null)}
-        onConfirm={handleModeConfirm}
-      />
+      {/* 批量解析参数面板：整批应用同一套参数 */}
+      {batchTargets && (
+        <div className="g-modal-overlay">
+          <div className="g-modal" style={{ height: "min(620px, 82vh)" }}>
+            <ParameterPanel
+              batchCount={batchTargets.length}
+              onBatchSubmit={handleBatchSubmit}
+              onParamsSet={() => {}}
+              onClose={() => setBatchTargets(null)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

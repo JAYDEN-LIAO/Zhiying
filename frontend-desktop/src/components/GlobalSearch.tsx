@@ -11,74 +11,97 @@ import { useApp } from "../AppContext";
 import type { SearchResultItem, VideoListItem } from "../types";
 import { formatSec, fmtFullDate } from "../utils/helpers";
 import { zh } from "../labels";
-import { IconSearch5, IconImageSearch, IconFolder, IconClock, IconClose, IconVideo, IconRetry, IconSort, IconExternal, IconImage, IconDownload } from "./icons";
+import { IconSearch5, IconImageSearch, IconFolder, IconClock, IconClose, IconVideo, IconRetry, IconSort, IconImage } from "./icons";
 
 type TabKey = "text" | "image";
-type ChipGroup = "type" | "color" | "time" | "duration";
 type SortKey = "time" | "confidence" | "name";
 
-interface ChipDef {
+interface FeatureChip {
   key: string;
   label: string;
-  token: string;
-  group: ChipGroup;
   color?: string;
 }
 
-interface ChipGroupDef {
-  id: ChipGroup;
-  label: string;
-  single?: boolean;
-  items: ChipDef[];
-}
+/* ── 4 大目标类型 + 各自专属特征 ──
+   选中某类型后专属特征面板才出现；颜色/事件为常驻通用特征。
+   文本框拼接按「预设句式」组合 token，不把类型名写入。 */
+const TYPE_CHIPS: { key: string; label: string; features: FeatureChip[]; phrase: string }[] = [
+  { key: "person", label: "人", phrase: "{color}{服饰}{年龄}{性别}{配饰}{动作}", features: [
+    { key: "short_sleeve", label: "短袖" }, { key: "long_sleeve", label: "长袖" },
+    { key: "coat", label: "外套" }, { key: "vest", label: "无袖" },
+    { key: "long_pants", label: "长裤" }, { key: "short_pants", label: "短裤" },
+    { key: "skirt", label: "裙子" },
+    { key: "young", label: "青年" }, { key: "middle", label: "中年" }, { key: "elder", label: "老年" },
+    { key: "male", label: "男子" }, { key: "female", label: "女子" },
+    { key: "hat", label: "帽子" }, { key: "glasses", label: "眼镜" }, { key: "mask", label: "口罩" },
+    { key: "backpack", label: "背包" },
+    { key: "walking", label: "行走" }, { key: "running", label: "奔跑" },
+    { key: "standing", label: "站立" }, { key: "sitting", label: "坐着" },
+    { key: "riding", label: "骑行" },
+  ]},
+  { key: "vehicle", label: "车", phrase: "{color}{车型}{车牌}", features: [
+    { key: "sedan", label: "轿车" }, { key: "suv", label: "SUV" },
+    { key: "truck", label: "卡车" }, { key: "bus", label: "公交车" },
+    { key: "van", label: "面包车" }, { key: "taxi", label: "出租车" },
+    { key: "police_car", label: "警车" }, { key: "ambulance", label: "救护车" },
+    { key: "motorcycle", label: "摩托车" }, { key: "ebike", label: "电动车" },
+    { key: "bicycle", label: "自行车" },
+    { key: "blue_plate", label: "蓝牌" }, { key: "green_plate", label: "绿牌" },
+    { key: "yellow_plate", label: "黄牌" },
+  ]},
+  { key: "plate", label: "车牌", phrase: "{省份}", features: [
+    { key: "jing", label: "京" }, { key: "jin", label: "津" },
+    { key: "ji", label: "冀" }, { key: "jin2", label: "晋" },
+    { key: "meng", label: "蒙" }, { key: "liao", label: "辽" },
+    { key: "ji2", label: "吉" }, { key: "hei", label: "黑" },
+    { key: "hu", label: "沪" }, { key: "su", label: "苏" },
+    { key: "zhe", label: "浙" }, { key: "wan", label: "皖" },
+    { key: "min", label: "闽" }, { key: "gan", label: "赣" },
+    { key: "lu", label: "鲁" }, { key: "yu", label: "豫" },
+    { key: "e", label: "鄂" }, { key: "xiang", label: "湘" },
+    { key: "yue", label: "粤" }, { key: "gui", label: "桂" },
+    { key: "qiong", label: "琼" }, { key: "yu2", label: "渝" },
+    { key: "chuan", label: "川" }, { key: "gui2", label: "贵" },
+    { key: "yun", label: "云" }, { key: "zang", label: "藏" },
+    { key: "shan", label: "陕" }, { key: "gan2", label: "甘" },
+    { key: "qing", label: "青" }, { key: "ning", label: "宁" },
+    { key: "xin", label: "新" },
+  ]},
+  { key: "text", label: "文本", phrase: "{关键词}", features: [
+    { key: "现金", label: "现金" }, { key: "见面", label: "见面" },
+    { key: "交谈", label: "交谈" }, { key: "抽烟", label: "抽烟" },
+    { key: "打电话", label: "打电话" }, { key: "拍照", label: "拍照" },
+    { key: "握手", label: "握手" }, { key: "拥抱", label: "拥抱" },
+    { key: "倒地", label: "倒地" }, { key: "逃跑", label: "逃跑" },
+    { key: "翻墙", label: "翻墙" }, { key: "戴帽", label: "戴帽" },
+    { key: "口罩", label: "口罩" }, { key: "拎包", label: "拎包" },
+    { key: "背包", label: "背包" }, { key: "拉箱", label: "拉箱" },
+  ]},
+];
 
-const CHIP_GROUPS: ChipGroupDef[] = [
-  {
-    id: "type",
-    label: "目标类型",
-    single: true,
-    items: [
-      { key: "person", label: "行人", token: "type:行人", group: "type" },
-      { key: "vehicle", label: "机动车", token: "type:机动车", group: "type" },
-      { key: "bike", label: "非机动车", token: "type:非机动车", group: "type" },
-    ],
-  },
-  {
-    id: "color",
-    label: "颜色特征",
-    items: [
-      { key: "red", label: "红色", token: "color:红色", group: "color", color: "#f04444" },
-      { key: "orange", label: "橙色", token: "color:橙色", group: "color", color: "#ff8f2b" },
-      { key: "yellow", label: "黄色", token: "color:黄色", group: "color", color: "#f7c948" },
-      { key: "green", label: "绿色", token: "color:绿色", group: "color", color: "#36b37e" },
-      { key: "blue", label: "蓝色", token: "color:蓝色", group: "color", color: "#4f6ef7" },
-      { key: "purple", label: "紫色", token: "color:紫色", group: "color", color: "#9b59d0" },
-      { key: "white", label: "白色", token: "color:白色", group: "color", color: "#e8ebf2" },
-      { key: "black", label: "黑色", token: "color:黑色", group: "color", color: "#3b4252" },
-      { key: "gray", label: "灰色", token: "color:灰色", group: "color", color: "#8a94a6" },
-    ],
-  },
-  {
-    id: "time",
-    label: "时间段",
-    single: true,
-    items: [
-      { key: "24h", label: "近24小时", token: "time:近24小时", group: "time" },
-      { key: "7d", label: "近7天", token: "time:近7天", group: "time" },
-      { key: "custom", label: "自定义", token: "time:自定义", group: "time" },
-    ],
-  },
-  {
-    id: "duration",
-    label: "文件时长",
-    single: true,
-    items: [
-      { key: "le60", label: "≤1分钟", token: "duration:≤60s", group: "duration" },
-      { key: "60_300", label: "1-5分钟", token: "duration:60-300s", group: "duration" },
-      { key: "ge300", label: "≥5分钟", token: "duration:≥300s", group: "duration" },
-      { key: "dur_custom", label: "自定义", token: "duration:自定义", group: "duration" },
-    ],
-  },
+/* 颜色（人/车/非机动车通用，常驻显示） */
+const COLOR_CHIPS: FeatureChip[] = [
+  { key: "黑色", label: "黑色", color: "#3b4252" },
+  { key: "白色", label: "白色", color: "#f0f2f5" },
+  { key: "红色", label: "红色", color: "#f04444" },
+  { key: "蓝色", label: "蓝色", color: "#4f6ef7" },
+  { key: "黄色", label: "黄色", color: "#f7c948" },
+  { key: "绿色", label: "绿色", color: "#36b37e" },
+  { key: "灰色", label: "灰色", color: "#8a94a6" },
+  { key: "银色", label: "银色", color: "#c0c8d4" },
+];
+
+/* 事件（常驻通用特征） */
+const ACTION_CHIPS: FeatureChip[] = [
+  { key: "打架", label: "打架" }, { key: "摔倒", label: "摔倒" },
+  { key: "追逐", label: "追逐" }, { key: "聚集", label: "聚集" },
+  { key: "挥手", label: "挥手" }, { key: "搬运", label: "搬运" },
+  { key: "争吵", label: "争吵" }, { key: "偷窃", label: "偷窃" },
+  { key: "拥堵", label: "拥堵" }, { key: "碰撞", label: "碰撞" },
+  { key: "违停", label: "违停" }, { key: "超速", label: "超速" },
+  { key: "逆行", label: "逆行" }, { key: "闯红灯", label: "闯红灯" },
+  { key: "火灾", label: "火灾" }, { key: "烟雾", label: "烟雾" },
+  { key: "闯入", label: "闯入" }, { key: "徘徊", label: "徘徊" },
 ];
 
 const PRECISION_LABEL: Record<string, string> = {
@@ -94,9 +117,8 @@ const PRECISION_LABEL: Record<string, string> = {
 /* 胶囊色调：按目标类型分配不同颜色背景 */
 const TAG_TONES: Record<string, string> = {
   行人: "blue",
-  机动车: "indigo",
+  车: "indigo",
   车辆: "indigo",
-  非机动车: "cyan",
   车牌: "purple",
   文字: "amber",
   物体: "teal",
@@ -121,19 +143,89 @@ const COLOR_WORDS: [string, string][] = [
 ];
 
 export function GlobalSearch() {
-  const { videos, videoGroups, openWorkbench } = useApp();
+  const { videos, caseGroups, openWorkbench, selectedTree } = useApp();
 
   const [tab, setTab] = useState<TabKey>("text");
   const [query, setQuery] = useState("");
   const [chips, setChips] = useState<Set<string>>(new Set());
-  const [timeStart, setTimeStart] = useState("");
-  const [timeEnd, setTimeEnd] = useState("");
-  const [durCustom, setDurCustom] = useState("");
-  const [folderIds, setFolderIds] = useState<Set<string>>(new Set());
+  const [activeTypeKey, setActiveTypeKey] = useState<string | null>(null);
+  /* 当前展示特征面板的目标类型定义 */
+  const activeTypeDef = useMemo(
+    () => TYPE_CHIPS.find((t) => t.key === activeTypeKey) ?? null,
+    [activeTypeKey],
+  );
+
+  /* ── 句式化搜索字符串：根据当前激活类型，按预设模板组合已选 token ── */
+  function buildPhrase(q: string): string {
+    if (!activeTypeDef) return q;
+    /* 从 q 中分出「类型自有 token」+「常驻 token（颜色/事件）」，并按类型特征 key 过滤 */
+    const allTokens = q.split(/\s+/).filter(Boolean);
+    const typeFeatKeys = new Set(activeTypeDef.features.map((f) => f.key));
+    const colorActionKeys = new Set([
+      ...COLOR_CHIPS.map((c) => c.key),
+      ...ACTION_CHIPS.map((c) => c.key),
+    ]);
+    /* 类型自有 token（必须属于当前类型的 features 集合） */
+    const typeFeats: string[] = [];
+    const others: string[] = [];
+    for (const tok of allTokens) {
+      if (typeFeatKeys.has(tok)) typeFeats.push(tok);
+      else others.push(tok);
+    }
+    /* 按类型预设句式排序 typeFeats：把颜色放最前、车型放颜色后 */
+    const phrase = activeTypeDef.phrase;
+    const sortedFeats: string[] = [];
+    const placeholders = phrase.match(/\{[^}]+\}/g) ?? [];
+    for (const ph of placeholders) {
+      const slot = ph.slice(1, -1);
+      if (slot === "color") {
+        sortedFeats.push(...typeFeats.filter((t) => colorActionKeys.has(t) && COLOR_CHIPS.some((c) => c.key === t)));
+      } else if (slot === "动作" || slot === "事件") {
+        sortedFeats.push(...typeFeats.filter((t) => colorActionKeys.has(t) && ACTION_CHIPS.some((c) => c.key === t)));
+      } else {
+        /* 其他槽位：按 token 自身在 features 中出现的顺序追加 */
+        for (const f of activeTypeDef.features) {
+          if (typeFeats.includes(f.key) && !sortedFeats.includes(f.key)) sortedFeats.push(f.key);
+        }
+      }
+    }
+    return [...sortedFeats, ...others].join(" ").trim();
+  }
+
+  function applyToken(q: string, value: string): string {
+    const parts = q.split(/\s+/).filter(Boolean);
+    const i = parts.indexOf(value);
+    if (i >= 0) parts.splice(i, 1);
+    else parts.push(value);
+    return buildPhrase(parts.join(" "));
+  }
+
+  function toggleChip(value: string, group: "type" | "feature" | "color" | "action") {
+    /* 选中目标类型本身不写入文本框（仅切换面板），其他特征 token 才进入 */
+    if (group !== "type") setQuery((q) => applyToken(q, value));
+    if (group === "type") {
+      const typeDef = TYPE_CHIPS.find((t) => t.label === value);
+      if (typeDef) setActiveTypeKey(typeDef.key);
+    }
+    setChips((prev) => {
+      const next = new Set(prev);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      return next;
+    });
+  }
+  const [folderIds, setFolderIds] = useState<Set<string> | null>(null); // null = 使用 selectedTree 默认
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  /* 图像检索：两张图分别保存（人脸 + 通用图搜），相似度阈值共享 */
+  const [faceFile, setFaceFile] = useState<File | null>(null);
+  const [facePreviewUrl, setFacePreviewUrl] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [similarity, setSimilarity] = useState(0.5);
-  const [dragOver, setDragOver] = useState(false);
+  const [dragOverFace, setDragOverFace] = useState(false);
+  const [dragOverImage, setDragOverImage] = useState(false);
+  /* 图像检索时由用户主动选择：人脸 / 通用图搜 */
+  const [imageSource, setImageSource] = useState<"face" | "image">("face");
 
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -148,83 +240,23 @@ export function GlobalSearch() {
   const [batchBusy, setBatchBusy] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
   const videoMap = useMemo(() => new Map(videos.map((v) => [v.id, v])), [videos]);
   const groupNameMap = useMemo(() => {
     const m = new Map<string, string>();
-    for (const g of videoGroups) m.set(g.groupId, g.name ?? g.number ?? "未命名文件夹");
+    for (const g of caseGroups) m.set(g.groupId, g.name ?? g.number ?? "未命名文件夹");
     return m;
-  }, [videoGroups]);
+  }, [caseGroups]);
 
-  /* ── Smart Chip：追加/移除语法 token（单选组互斥，颜色可多选）── */
-  function applyToken(q: string, def: ChipDef): string {
-    const parts = q.split(/\s+/).filter(Boolean);
-    const prefix = def.token.split(":")[0] + ":";
-    if (def.group === "color") {
-      const i = parts.indexOf(def.token);
-      if (i >= 0) parts.splice(i, 1);
-      else parts.push(def.token);
-    } else {
-      const idx = parts.findIndex((p) => p.startsWith(prefix));
-      if (idx >= 0) {
-        if (parts[idx] === def.token) parts.splice(idx, 1);
-        else parts[idx] = def.token;
-      } else parts.push(def.token);
-    }
-    return parts.join(" ");
-  }
-
-  function toggleChip(def: ChipDef) {
-    setQuery((q) => applyToken(q, def));
-    setChips((prev) => {
-      const next = new Set(prev);
-      if (def.group === "color") {
-        if (next.has(def.key)) next.delete(def.key);
-        else next.add(def.key);
-      } else {
-        for (const g of CHIP_GROUPS)
-          if (g.id === def.group) for (const i of g.items) next.delete(i.key);
-        if (!prev.has(def.key)) next.add(def.key);
-      }
-      return next;
-    });
-  }
-
-  /* ── 检索范围：文件夹多选 + 时间段 + 时长 → 视频 id 集合 ── */
+  /* ── 检索范围：案例多选 → 视频 id 集合 ── */
   function buildScopeIds(): string[] | undefined {
-    let pool = videos;
-    const hasFilter =
-      folderIds.size > 0 ||
-      chips.has("24h") ||
-      chips.has("7d") ||
-      chips.has("custom") ||
-      chips.has("le60") ||
-      chips.has("60_300") ||
-      chips.has("ge300") ||
-      chips.has("dur_custom");
-    if (!hasFilter) return undefined;
-
-    if (folderIds.size > 0) {
-      const gids = new Set(folderIds);
-      pool = pool.filter((v) => v.group_id && gids.has(v.group_id));
-    }
-    const now = Date.now();
-    let cutoff: number | null = null;
-    if (chips.has("24h")) cutoff = now - 24 * 3600 * 1000;
-    else if (chips.has("7d")) cutoff = now - 7 * 24 * 3600 * 1000;
-    else if (chips.has("custom") && timeStart) cutoff = new Date(timeStart).getTime();
-    if (cutoff != null) pool = pool.filter((v) => new Date(v.created_at).getTime() >= cutoff);
-    if (chips.has("custom") && timeEnd) {
-      const endMs = new Date(timeEnd).getTime();
-      pool = pool.filter((v) => new Date(v.created_at).getTime() <= endMs);
-    }
-    if (chips.has("le60")) pool = pool.filter((v) => v.duration != null && v.duration <= 60);
-    else if (chips.has("60_300")) pool = pool.filter((v) => v.duration != null && v.duration > 60 && v.duration <= 300);
-    else if (chips.has("ge300")) pool = pool.filter((v) => v.duration != null && v.duration > 300);
-    else if (chips.has("dur_custom")) {
-      const sec = Number(durCustom);
-      if (!Number.isNaN(sec) && sec > 0) pool = pool.filter((v) => v.duration != null && v.duration >= sec);
-    }
-    return pool.map((v) => v.id);
+    const activeIds = folderIds ?? (() => {
+      // 默认：与案例库 selectedTree 同步
+      if (selectedTree.startsWith("g:")) return new Set([selectedTree.slice(2)]);
+      return new Set<string>();
+    })();
+    if (activeIds.size === 0) return undefined;
+    return videos.filter((v) => v.group_id && activeIds.has(v.group_id)).map((v) => v.id);
   }
 
   async function runSearch() {
@@ -232,9 +264,12 @@ export function GlobalSearch() {
       setError("请输入检索描述，或点击下方快捷标签生成语法");
       return;
     }
-    if (tab === "image" && !imageFile) {
-      setError("请先选择或拖入一张参考图片");
-      return;
+    if (tab === "image") {
+      const src = imageSource === "face" ? faceFile : imageFile;
+      if (!src) {
+        setError(imageSource === "face" ? "请先选择一张人脸参考图" : "请先选择一张参考图");
+        return;
+      }
     }
     const ids = buildScopeIds();
     if (ids && ids.length === 0) {
@@ -251,18 +286,44 @@ export function GlobalSearch() {
     setSearching(true);
     setError(null);
     try {
-      const res =
-        tab === "text"
-          ? await api.searchSemantic(query.trim(), { video_ids: ids, top_k: 60, min_similarity: 0 })
-          : await api.searchImage(imageFile!, { video_ids: ids, top_k: 60, min_similarity: similarity });
-      const list = res.results ?? [];
-      setResults(list);
-      setTotal(res.total ?? list.length);
-      setElapsedMs(Math.round(res.query_time_ms ?? performance.now() - t0));
-      const gs = new Set<string>();
-      for (const r of list) gs.add(videoMap.get(r.video_id)?.group_id ?? "__ungrouped__");
-      setLibCount(gs.size);
-      setHasSearched(true);
+      if (tab === "text") {
+        const res = await api.searchSemantic(query.trim(), { video_ids: ids, top_k: 60, min_similarity: 0 });
+        const list = res.results ?? [];
+        setResults(list);
+        setTotal(res.total ?? list.length);
+        setElapsedMs(Math.round(res.query_time_ms ?? performance.now() - t0));
+        const gs = new Set<string>();
+        for (const r of list) gs.add(videoMap.get(r.video_id)?.group_id ?? "__ungrouped__");
+        setLibCount(gs.size);
+        setHasSearched(true);
+      } else if (imageSource === "face") {
+        const list = await api.searchFace(faceFile!, ids);
+        setResults([]);
+        setTotal(list.length);
+        setElapsedMs(Math.round(performance.now() - t0));
+        setLibCount(new Set(list.map((x: { video_id: string }) => x.video_id)).size);
+        setHasSearched(true);
+        /* 简化：把 face result 也灌到 results 用于渲染 */
+        setResults(list.map((x) => ({
+          video_id: x.video_id,
+          precision_level: "face" as const,
+          precise_start: x.first_seen,
+          precise_end: x.last_seen,
+          thumbnail_url: x.thumbnail_url ?? undefined,
+          similarity: x.similarity,
+          class_name: x.identity_label ?? `身份 #${x.identity_id}`,
+        })) as unknown as SearchResultItem[]);
+      } else {
+        const res = await api.searchImage(imageFile!, { video_ids: ids, top_k: 60, min_similarity: similarity });
+        const list = res.results ?? [];
+        setResults(list);
+        setTotal(res.total ?? list.length);
+        setElapsedMs(Math.round(res.query_time_ms ?? performance.now() - t0));
+        const gs = new Set<string>();
+        for (const r of list) gs.add(videoMap.get(r.video_id)?.group_id ?? "__ungrouped__");
+        setLibCount(gs.size);
+        setHasSearched(true);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "检索失败，请稍后重试");
       setResults([]);
@@ -273,20 +334,30 @@ export function GlobalSearch() {
     }
   }
 
+  function setFace(f: File | null) {
+    setFacePreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return f ? URL.createObjectURL(f) : null;
+    });
+    setFaceFile(f);
+  }
   function setImage(f: File | null) {
-    setPreviewUrl((prev) => {
+    setImagePreviewUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return f ? URL.createObjectURL(f) : null;
     });
     setImageFile(f);
   }
 
-  function onDrop(e: React.DragEvent) {
+  function onDrop(e: React.DragEvent, target: "face" | "image") {
     e.preventDefault();
-    setDragOver(false);
+    if (target === "face") setDragOverFace(false);
+    else setDragOverImage(false);
     const f = e.dataTransfer.files?.[0];
-    if (f && f.type.startsWith("image/")) setImage(f);
-    else if (f) setError("仅支持图片文件");
+    if (f && f.type.startsWith("image/")) {
+      if (target === "face") setFace(f);
+      else setImage(f);
+    } else if (f) setError("仅支持图片文件");
   }
 
   function targetTag(item: SearchResultItem): string {
@@ -388,7 +459,7 @@ export function GlobalSearch() {
     }
   }
 
-  const goDisabled = searching || (tab === "text" ? !query.trim() : !imageFile);
+  const goDisabled = searching || (tab === "text" ? !query.trim() : !(imageSource === "face" ? faceFile : imageFile));
 
   return (
     <div className="gs-page">
@@ -405,8 +476,9 @@ export function GlobalSearch() {
           </button>
         </div>
 
-        {tab === "text" ? (
-          <div className="gs-card gs-text-form">
+        <div className="gs-middle">
+          {tab === "text" ? (
+            <div className="gs-card gs-text-form">
             <textarea
               className="gs-query"
               rows={2}
@@ -421,70 +493,162 @@ export function GlobalSearch() {
               }}
             />
             {query.trim() && (
-              <button type="button" className="gs-clear" onClick={() => setQuery("")} title="清空">
+              <button
+                type="button"
+                className="gs-clear"
+                onClick={() => {
+                  setQuery("");
+                  setChips(new Set());
+                  setActiveTypeKey(null);
+                }}
+                title="清空文本与特征选择"
+              >
                 <IconClose />
               </button>
             )}
             <div className="gs-chips">
-              {CHIP_GROUPS.map((g) => (
-                <div key={g.id} className="gs-chip-group">
-                  <span className="gs-chip-tt">{g.label}</span>
+              {/* 目标类型 */}
+              <div className="gs-chip-group">
+                <span className="gs-chip-tt">目标类型</span>
+                <div className="gs-chip-row">
+                  {TYPE_CHIPS.map((t) => (
+                    <button
+                      key={t.key}
+                      type="button"
+                      className={"gs-chip" + (chips.has(t.label) ? " on" : "")}
+                      onClick={() => toggleChip(t.label, "type")}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* 当前类型专属特征：仅在选中某类型后显示 */}
+              {activeTypeDef && activeTypeDef.features.length > 0 && (
+                <div className="gs-chip-group">
+                  <span className="gs-chip-tt">{activeTypeDef.label}专属特征</span>
                   <div className="gs-chip-row">
-                    {g.items.map((c) => (
+                    {activeTypeDef.features.map((f) => (
                       <button
-                        key={c.key}
+                        key={f.key}
                         type="button"
-                        className={"gs-chip" + (chips.has(c.key) ? " on" : "")}
-                        onClick={() => toggleChip(c)}
+                        className={"gs-chip" + (chips.has(f.label) ? " on" : "")}
+                        onClick={() => toggleChip(f.label, "feature")}
                       >
-                        {c.color && <i className="gs-dot" style={{ background: c.color }} />}
-                        {c.label}
+                        {f.label}
                       </button>
                     ))}
                   </div>
-                  {g.id === "time" && chips.has("custom") && (
-                    <div className="gs-time-custom">
-                      <input type="datetime-local" step="1" value={timeStart} onChange={(e) => setTimeStart(e.target.value)} />
-                      <span>至</span>
-                      <input type="datetime-local" step="1" value={timeEnd} onChange={(e) => setTimeEnd(e.target.value)} />
-                    </div>
-                  )}
-                  {g.id === "duration" && chips.has("dur_custom") && (
-                    <div className="gs-time-custom">
-                      <input type="number" min={1} placeholder="秒" value={durCustom} onChange={(e) => setDurCustom(e.target.value)} />
-                      <span>秒以上</span>
-                    </div>
-                  )}
                 </div>
-              ))}
+              )}
+              {/* 颜色：常驻通用特征 */}
+              <div className="gs-chip-group">
+                <span className="gs-chip-tt">颜色</span>
+                <div className="gs-chip-row">
+                  {COLOR_CHIPS.map((c) => (
+                    <button
+                      key={c.key}
+                      type="button"
+                      className={"gs-chip" + (chips.has(c.label) ? " on" : "")}
+                      onClick={() => toggleChip(c.label, "color")}
+                    >
+                      {c.color && <i className="gs-dot" style={{ background: c.color }} />}
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* 事件：常驻通用特征 */}
+              <div className="gs-chip-group">
+                <span className="gs-chip-tt">事件</span>
+                <div className="gs-chip-row">
+                  {ACTION_CHIPS.map((a) => (
+                    <button
+                      key={a.key}
+                      type="button"
+                      className={"gs-chip" + (chips.has(a.label) ? " on" : "")}
+                      onClick={() => toggleChip(a.label, "action")}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         ) : (
           <div className="gs-card gs-image-form">
+            {/* 人脸搜索（ArcFace 512d） */}
             <div
-              className={"gs-drop" + (dragOver ? " over" : "")}
+              className={"gs-drop gs-drop-face" + (dragOverFace ? " over" : "")}
               onDragOver={(e) => {
                 e.preventDefault();
-                setDragOver(true);
+                setDragOverFace(true);
               }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={onDrop}
+              onDragLeave={() => setDragOverFace(false)}
+              onDrop={(e) => onDrop(e, "face")}
               onClick={() => fileRef.current?.click()}
             >
               <input
                 ref={fileRef}
                 type="file"
-                accept="image/*"
+                accept="image/jpeg,image/png,image/webp"
                 hidden
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) setImage(f);
+                  if (f) { setFace(f); setImageSource("face"); }
+                  e.target.value = "";
+                }}
+              />
+              {faceFile ? (
+                <>
+                  <img className="gs-drop-preview" src={facePreviewUrl ?? undefined} alt="face preview" />
+                  <p className="gs-drop-name">{faceFile.name}</p>
+                  <button
+                    type="button"
+                    className="gs-drop-remove"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFace(null);
+                    }}
+                  >
+                    移除
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="gs-drop-icon gs-drop-icon-face">👤</div>
+                  <p className="gs-drop-tt">人脸搜索</p>
+                  <span className="gs-drop-sub">拖拽或点击上传人脸照片（ArcFace 512d 检索）</span>
+                </>
+              )}
+            </div>
+
+            {/* 通用图搜（Qwen3-VL-Embedding） */}
+            <div
+              className={"gs-drop gs-drop-img" + (dragOverImage ? " over" : "")}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOverImage(true);
+              }}
+              onDragLeave={() => setDragOverImage(false)}
+              onDrop={(e) => onDrop(e, "image")}
+              onClick={() => imageRef.current?.click()}
+            >
+              <input
+                ref={imageRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) { setImage(f); setImageSource("image"); }
                   e.target.value = "";
                 }}
               />
               {imageFile ? (
                 <>
-                  <img className="gs-drop-preview" src={previewUrl ?? undefined} alt="preview" />
+                  <img className="gs-drop-preview" src={imagePreviewUrl ?? undefined} alt="image preview" />
                   <p className="gs-drop-name">{imageFile.name}</p>
                   <button
                     type="button"
@@ -502,57 +666,90 @@ export function GlobalSearch() {
                   <div className="gs-drop-icon">
                     <IconImageSearch />
                   </div>
-                  <p>拖拽图片到此处，或点击选择</p>
-                  <span className="gs-drop-sub">支持 JPG / PNG / WebP，用于以图搜图</span>
+                  <p className="gs-drop-tt">通用图搜</p>
+                  <span className="gs-drop-sub">拖拽或点击上传参考图（Qwen3-VL 整图检索）</span>
                 </>
               )}
             </div>
-            <div className="gs-slider-row">
-              <span className="gs-slider-tt">相似度阈值</span>
-              <input
-                className="gs-range"
-                type="range"
-                min={0.3}
-                max={0.95}
-                step={0.05}
-                value={similarity}
-                onChange={(e) => setSimilarity(Number(e.target.value))}
-              />
-              <span className="gs-slider-val">{Math.round(similarity * 100)}%</span>
-            </div>
           </div>
         )}
+        </div>
 
         <div className="gs-card gs-scope">
           <div className="gs-scope-head">
             <IconFolder />
             <span>检索范围</span>
-            <span className="gs-scope-count">{folderIds.size === 0 ? "全部文件夹" : `已选 ${folderIds.size} 个`}</span>
+            <span className="gs-scope-count">
+              {!folderIds ? (selectedTree.startsWith("g:") ? (caseGroups.find((g) => g.groupId === selectedTree.slice(2))?.name ?? "跟随案例库") : "全部案例") : folderIds.size === 0 ? "全部案例" : `已选 ${folderIds.size} 个`}
+            </span>
           </div>
           <div className="gs-scope-list">
-            <label className={"gs-scope-item" + (folderIds.size === 0 ? " on" : "")}>
-              <input type="checkbox" checked={folderIds.size === 0} onChange={() => setFolderIds(new Set())} />
-              <span>全部文件夹</span>
-              <em>{videoGroups.length}</em>
+            <label className={"gs-scope-item" + (folderIds !== null && folderIds.size === 0 ? " on" : "")}>
+              <input type="checkbox" checked={folderIds !== null && folderIds.size === 0} onChange={() => setFolderIds(new Set())} />
+              <span>全部案例</span>
+              <em>{caseGroups.length}</em>
             </label>
-            {videoGroups.map((g) => (
-              <label key={g.groupId} className={"gs-scope-item" + (folderIds.has(g.groupId) ? " on" : "")}>
-                <input
-                  type="checkbox"
-                  checked={folderIds.has(g.groupId)}
-                  onChange={() => {
-                    setFolderIds((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(g.groupId)) next.delete(g.groupId);
-                      else next.add(g.groupId);
-                      return next;
-                    });
-                  }}
-                />
-                <span>{g.name ?? g.number ?? "未命名文件夹"}</span>
-                <em>{g.file_count ?? g.videoIds.length}</em>
-              </label>
-            ))}
+            {caseGroups.map((g) => {
+              const active = folderIds !== null
+                ? folderIds.has(g.groupId)
+                : selectedTree === `g:${g.groupId}`;
+              const expanded = expandedGroups.has(g.groupId);
+              const caseVideos = videos.filter((v) => v.group_id === g.groupId);
+              return (
+                <div key={g.groupId} className="gs-scope-group">
+                  <label className={"gs-scope-item" + (active ? " on" : "")}>
+                    <input
+                      type="checkbox"
+                      checked={active}
+                      onChange={() => {
+                        setFolderIds((prev) => {
+                          const base = prev ?? (() => {
+                            if (selectedTree.startsWith("g:")) return new Set([selectedTree.slice(2)]);
+                            return new Set<string>();
+                          })();
+                          const next = new Set(base);
+                          if (next.has(g.groupId)) next.delete(g.groupId);
+                          else next.add(g.groupId);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span
+                      className="gs-scope-name"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setExpandedGroups((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(g.groupId)) next.delete(g.groupId);
+                          else next.add(g.groupId);
+                          return next;
+                        });
+                      }}
+                    >
+                      <span className="gs-scope-arrow" style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+                      {g.name ?? g.number ?? "未命名案例"}
+                    </span>
+                    <em>{g.file_count ?? caseVideos.length}</em>
+                  </label>
+                  {expanded && (
+                    <div className="gs-scope-videos">
+                      {caseVideos.length === 0 && <span className="gs-scope-empty">暂无视频</span>}
+                      {caseVideos.map((v) => (
+                        <label key={v.id} className="gs-scope-video-item">
+                          <input
+                            type="checkbox"
+                            checked={active}
+                            readOnly
+                          />
+                          <span className="gs-scope-video-name" title={v.file_name}>{v.file_name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -565,7 +762,7 @@ export function GlobalSearch() {
 
         <button type="button" className="gs-go" onClick={runSearch} disabled={goDisabled}>
           {searching ? <i className="gs-spin" /> : <IconSearch5 />}
-          {searching ? "全域检索中…" : "开始全域检索"}
+          {searching ? "搜索中…" : "开始搜索"}
         </button>
       </aside>
 
@@ -604,7 +801,7 @@ export function GlobalSearch() {
             <div className="gs-empty-icon">
               <IconSearch5 />
             </div>
-            <p>选择检索方式并点击「开始全域检索」</p>
+            <p>选择检索方式并点击「开始搜索」</p>
             <span className="gs-empty-sub">支持自然语言描述与以图搜图，跨所有文件夹匹配目标</span>
           </div>
         ) : results.length === 0 ? (
@@ -627,9 +824,6 @@ export function GlobalSearch() {
               const isSel = selected.has(r.video_id);
               return (
                 <div key={`${r.video_id}-${i}`} className={"gs-row" + (isSel ? " sel" : "")}>
-                  <label className="gs-check">
-                    <input type="checkbox" checked={isSel} onChange={() => toggleSelect(r.video_id)} />
-                  </label>
                   <div className="gs-row-media" onClick={() => openWorkbench(r.video_id)} title="点击打开对应视频">
                     {r.thumbnail_url ? (
                       <img src={r.thumbnail_url} alt="" loading="lazy" />
@@ -667,34 +861,9 @@ export function GlobalSearch() {
                       </span>
                     </div>
                   </div>
-                  <div className="gs-row-actions">
-                    <button type="button" className="gs-btn-primary" onClick={() => openWorkbench(r.video_id)}>
-                      进入分析平台
-                      <IconExternal />
-                    </button>
-                    <button type="button" className="gs-btn-ghost" onClick={() => downloadOriginal(r.video_id, v?.file_name)}>
-                      <IconDownload />
-                      下载原片
-                    </button>
-                  </div>
                 </div>
               );
             })}
-          </div>
-        )}
-
-        {selected.size > 0 && (
-          <div className="gs-select-bar">
-            <span className="gs-select-count">
-              已选 <b>{selected.size}</b> 个
-            </span>
-            <button type="button" className="gs-btn-primary" onClick={batchAnalyze} disabled={batchBusy}>
-              {batchBusy ? <i className="gs-spin" /> : null}
-              {batchBusy ? "发送中…" : "批量发送解析"}
-            </button>
-            <button type="button" className="gs-btn-ghost" onClick={() => setSelected(new Set())}>
-              取消
-            </button>
           </div>
         )}
       </section>

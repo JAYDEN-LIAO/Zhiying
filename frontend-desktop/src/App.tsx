@@ -13,7 +13,7 @@ import { TaskCenter } from "./components/TaskCenter";
 import { SettingsPage } from "./components/SettingsPage";
 
 function Shell() {
-  const { page, navigate, settingsTab, navigateSettings, pendingFileCount, queuedTaskCount, newCompletedCount, failedTaskCount, runningTaskCount, dragActive } = useApp();
+  const { page, navigate, settingsTab, navigateSettings, pendingFileCount, queuedTaskCount, newCompletedCount, failedTaskCount, runningTaskCount } = useApp();
 
   /* 侧栏徽章：案例库灰=仅上传未提交；视频解析蓝=处理中(恒1)；任务中心 黄=排队中 绿=新完成 红=失败 */
   const counts = {
@@ -40,21 +40,6 @@ function Shell() {
           {page === "settings" && <SettingsPage section={settingsTab} onSectionChange={navigateSettings} />}
         </main>
       </div>
-
-      {/* 拖拽上传遮罩（窗口级） */}
-      {dragActive && (
-        <div className="drop-overlay">
-          <div className="drop-box">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-            <div className="t1">松开以上传视频</div>
-            <div className="t2">支持单个或多个视频 · MP4 / MOV / AVI / MKV / WEBM</div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
