@@ -841,12 +841,12 @@ function FileDetailDrawer({
                     />
                     <span className="fl-alg-tt">智能摘要</span>
                   </label>
-                  {video.suggested_params ? (
+                  {video?.suggested_params ? (
                     <button
                       type="button"
                       className="fl-act col-span-2"
                       onClick={applySuggested}
-                      title={`应用「${video.suggested_scene_label ?? "智能"}」推荐参数（${((video.suggested_confidence ?? 0) * 100).toFixed(0)}% 置信度）`}
+                      title={`应用「${video?.suggested_scene_label ?? "智能"}」推荐参数（${((video?.suggested_confidence ?? 0) * 100).toFixed(0)}% 置信度）`}
                     >
                       智能推荐
                     </button>

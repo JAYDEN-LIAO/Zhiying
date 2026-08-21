@@ -1029,7 +1029,7 @@ export function GlobalSearch() {
                       )}
                       <div className="gs-row-title" title={r.class_name ? `${fileName} · ${r.class_name}` : fileName}>
                         {isTrack && r.class_name ? (
-                          <span className="gs-row-target">{zh(r.class_name, r.display_seq ?? r.track_id!)}{r.display_seq != null && r.display_seq > 1 ? ` #${r.display_seq}` : ""}</span>
+                          <span className="gs-row-target">{zh(r.class_name)}{r.display_seq != null && r.display_seq > 1 ? ` #${r.display_seq}` : ""}</span>
                         ) : (
                           <span className="gs-row-target muted">{targetTag(r)}</span>
                         )}
