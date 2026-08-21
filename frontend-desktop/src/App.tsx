@@ -13,11 +13,20 @@ import { TaskCenter } from "./components/TaskCenter";
 import { SettingsPage } from "./components/SettingsPage";
 
 function Shell() {
-  const { page, navigate, settingsTab, navigateSettings, pendingFileCount, queuedTaskCount, newCompletedCount, failedTaskCount, runningTaskCount } = useApp();
+  const { page, navigate, settingsTab, navigateSettings, queuedTaskCount, newCompletedCount, failedTaskCount, runningTaskCount, videos, caseGroups, selectedTree } = useApp();
+
+  /* 案例库灰徽章 = 当前选中案例名（超长截取前 4 字）+ 该案例待处理视频数 */
+  const selGid = selectedTree.startsWith("g:") ? selectedTree.slice(2) : null;
+  const selGroup = selGid ? caseGroups.find((g) => g.groupId === selGid) : null;
+  const selName = selGroup?.name ?? "";
+  const selPending = selGid
+    ? videos.filter((v) => v.group_id === selGid && v.status === "pending").length
+    : 0;
 
   /* 侧栏徽章：案例库灰=仅上传未提交；视频解析蓝=处理中(恒1)；任务中心 黄=排队中 绿=新完成 红=失败 */
   const counts = {
-    files: pendingFileCount,
+    files: selPending,
+    filesLabel: selName,
     workbench: runningTaskCount > 0 ? 1 : 0,
     queued: queuedTaskCount,
     newCompleted: newCompletedCount,
@@ -35,7 +44,8 @@ function Shell() {
         <main className={"app-main" + (page === "files" || page === "workbench" || page === "search" || page === "tasks" || page === "settings" ? " app-main-flat" : "")}>
           {page === "files" && <FileLibrary />}
           {page === "workbench" && <Workbench />}
-          {page === "search" && <GlobalSearch />}
+          {/* GlobalSearch 始终挂载（hide 保住搜索结果），切页回来直接恢复 */}
+          <div className={page === "search" ? "contents" : "hidden"}><GlobalSearch /></div>
           {page === "tasks" && <TaskCenter />}
           {page === "settings" && <SettingsPage section={settingsTab} onSectionChange={navigateSettings} />}
         </main>

@@ -106,8 +106,9 @@ export const api = {
     form.append("vision_enabled", String(params?.vision_enabled ?? true));
     form.append("ocr_enabled", String(params?.ocr_enabled ?? false));
     // 画面描述已并入智能摘要（v0.33 合并）：caption 默认跟随 summary
-    form.append("caption_enabled", String(params?.caption_enabled ?? params?.summary_enabled ?? true));
-    form.append("summary_enabled", String(params?.summary_enabled ?? true));
+    form.append("caption_enabled", String(params?.caption_enabled ?? params?.summary_enabled ?? false));
+    /* v0.37：摘要默认关闭（LLM 摘要耗时长且非核心，按需开启） */
+    form.append("summary_enabled", String(params?.summary_enabled ?? false));
     form.append("summary_mode", params?.summary_mode ?? "vlm_llm");
     form.append("detection_enabled", String(params?.detection_enabled ?? false));
     if (params?.detection_classes?.length) {
@@ -158,8 +159,9 @@ export const api = {
     form.append("vision_enabled", String(params?.vision_enabled ?? true));
     form.append("ocr_enabled", String(params?.ocr_enabled ?? false));
     // 画面描述已并入智能摘要（v0.33 合并）：caption 默认跟随 summary
-    form.append("caption_enabled", String(params?.caption_enabled ?? params?.summary_enabled ?? true));
-    form.append("summary_enabled", String(params?.summary_enabled ?? true));
+    form.append("caption_enabled", String(params?.caption_enabled ?? params?.summary_enabled ?? false));
+    /* v0.37：摘要默认关闭（LLM 摘要耗时长且非核心，按需开启） */
+    form.append("summary_enabled", String(params?.summary_enabled ?? false));
     form.append("summary_mode", params?.summary_mode ?? "vlm_llm");
     form.append("detection_enabled", String(params?.detection_enabled ?? false));
     if (params?.detection_classes?.length) {
@@ -204,6 +206,22 @@ export const api = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
+    });
+  },
+
+  /* ── 抽屉「处理参数设置」小面板：仅持久化核心开关，不触发管道 ── */
+  updateToggles(videoId: string, toggles: {
+    detection_enabled?: boolean;
+    face_enabled?: boolean;
+    plate_enabled?: boolean;
+    ocr_enabled?: boolean;
+    search_index_enabled?: boolean;
+    summary_enabled?: boolean;
+  }) {
+    return request<VideoResponse>(`${BASE}/videos/${videoId}/toggles`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(toggles),
     });
   },
 

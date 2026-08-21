@@ -6,7 +6,12 @@
 
 export type VideoStatus = "pending" | "processing" | "completed" | "failed";
 
-export type ContentType = "general" | "meeting" | "surveillance" | "text_recognition" | "custom";
+export type ContentType =
+  /* 旧值（兼容历史视频） */
+  | "general" | "meeting" | "surveillance" | "text_recognition" | "custom"
+  /* 9 智能推荐场景（与 services/smart_suggest.py SCENE_CLASSES.key 对齐） */
+  | "traffic" | "vehicle_focus" | "surveillance_people" | "indoor" | "portrait_focus"
+  | "document" | "street_mixed" | "outdoor_landscape" | "chat_screen";
 
 /* ── Format / Proxy status (v0.13) ── */
 
@@ -124,6 +129,11 @@ export interface VideoResponse {
   /* ── 云智平台外部文件 ID (v0.25.x) ── */
   external_file_id: number | null;
   qc_result: unknown | null;
+  /* ── 智能参数推荐 (v0.37) ── */
+  suggested_scene_key: string | null;
+  suggested_scene_label: string | null;
+  suggested_confidence: number | null;
+  suggested_params: Partial<PipelineParams> | null;
   summary: VideoSummary | null;
   /* ── Format info (v0.13) ── */
   container_format: string | null;

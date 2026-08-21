@@ -12,6 +12,8 @@ import type { SearchResultItem, VideoListItem } from "../types";
 import { formatSec, fmtFullDate } from "../utils/helpers";
 import { zh } from "../labels";
 import { IconSearch5, IconImageSearch, IconFolder, IconClock, IconClose, IconVideo, IconRetry, IconSort, IconImage } from "./icons";
+import { CaseAssetPicker } from "./CaseAssetPicker";
+import { SplitPane } from "./SplitPane";
 
 type TabKey = "text" | "image";
 type SortKey = "time" | "confidence" | "name";
@@ -216,6 +218,7 @@ export function GlobalSearch() {
   }
   const [folderIds, setFolderIds] = useState<Set<string> | null>(null); // null = 使用 selectedTree 默认
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [scopeSearch, setScopeSearch] = useState(""); // 检索范围搜索框
   /* 图像检索：两张图分别保存（人脸 + 通用图搜），相似度阈值共享 */
   const [faceFile, setFaceFile] = useState<File | null>(null);
   const [facePreviewUrl, setFacePreviewUrl] = useState<string | null>(null);
@@ -226,6 +229,8 @@ export function GlobalSearch() {
   const [dragOverImage, setDragOverImage] = useState(false);
   /* 图像检索时由用户主动选择：人脸 / 通用图搜 */
   const [imageSource, setImageSource] = useState<"face" | "image">("face");
+  /* 从案例素材选图弹窗 */
+  const [assetPicker, setAssetPicker] = useState<{ kind: "face" | "image" } | null>(null);
 
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -248,7 +253,8 @@ export function GlobalSearch() {
     return m;
   }, [caseGroups]);
 
-  /* ── 检索范围：案例多选 → 视频 id 集合 ── */
+  /* ── 检索范围：案例多选 → 视频 id 集合
+     v0.37：scopeSearch 命中时按相同规则过滤——案例名匹配的视频全收，仅视频名匹配的只收匹配项 */
   function buildScopeIds(): string[] | undefined {
     const activeIds = folderIds ?? (() => {
       // 默认：与案例库 selectedTree 同步
@@ -256,8 +262,32 @@ export function GlobalSearch() {
       return new Set<string>();
     })();
     if (activeIds.size === 0) return undefined;
-    return videos.filter((v) => v.group_id && activeIds.has(v.group_id)).map((v) => v.id);
+    const q = scopeSearch.trim().toLowerCase();
+    return videos.filter((v) => {
+      if (!v.group_id || !activeIds.has(v.group_id)) return false;
+      if (q) {
+        const g = caseGroups.find((cg) => cg.groupId === v.group_id);
+        const caseMatches = !!g && ((g.name ?? "").toLowerCase().includes(q) || (g.number ?? "").toLowerCase().includes(q));
+        if (!caseMatches && !(v.file_name?.toLowerCase().includes(q))) return false;
+      }
+      return true;
+    }).map((v) => v.id);
   }
+
+  /* 从案例素材选图的来源案例：优先当前选中案例，否则检索范围内视频所属案例 */
+  const pickerGroup = useMemo(() => {
+    if (selectedTree.startsWith("g:")) {
+      const gid = selectedTree.slice(2);
+      return { groupId: gid, groupName: groupNameMap.get(gid) };
+    }
+    const ids = buildScopeIds();
+    if (ids?.length) {
+      for (const v of videos) {
+        if (v.group_id && ids.includes(v.id)) return { groupId: v.group_id, groupName: groupNameMap.get(v.group_id) };
+      }
+    }
+    return null;
+  }, [selectedTree, groupNameMap, videos]);
 
   async function runSearch() {
     if (tab === "text" && !query.trim()) {
@@ -476,282 +506,346 @@ export function GlobalSearch() {
           </button>
         </div>
 
-        <div className="gs-middle">
-          {tab === "text" ? (
-            <div className="gs-card gs-text-form">
-            <textarea
-              className="gs-query"
-              rows={2}
-              placeholder="输入自然语言描述，如：穿黄衣服骑电动车的人"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  runSearch();
-                }
-              }}
-            />
-            {query.trim() && (
-              <button
-                type="button"
-                className="gs-clear"
-                onClick={() => {
-                  setQuery("");
-                  setChips(new Set());
-                  setActiveTypeKey(null);
+        <SplitPane direction="col" initial={55} min={20} max={80} className="gs-split-wrap">
+          {/* ── 上半：特征卡片（文本/图像 Tab + Chips） ── */}
+          <div className="gs-middle">
+            {tab === "text" ? (
+              <div className="gs-card gs-text-form">
+              <textarea
+                className="gs-query"
+                rows={2}
+                placeholder="输入自然语言描述，如：穿黄衣服骑电动车的人"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    runSearch();
+                  }
                 }}
-                title="清空文本与特征选择"
-              >
-                <IconClose />
-              </button>
-            )}
-            <div className="gs-chips">
-              {/* 目标类型 */}
-              <div className="gs-chip-group">
-                <span className="gs-chip-tt">目标类型</span>
-                <div className="gs-chip-row">
-                  {TYPE_CHIPS.map((t) => (
-                    <button
-                      key={t.key}
-                      type="button"
-                      className={"gs-chip" + (chips.has(t.label) ? " on" : "")}
-                      onClick={() => toggleChip(t.label, "type")}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* 当前类型专属特征：仅在选中某类型后显示 */}
-              {activeTypeDef && activeTypeDef.features.length > 0 && (
+              />
+              {query.trim() && (
+                <button
+                  type="button"
+                  className="gs-clear"
+                  onClick={() => {
+                    setQuery("");
+                    setChips(new Set());
+                    setActiveTypeKey(null);
+                  }}
+                  title="清空文本与特征选择"
+                >
+                  <IconClose />
+                </button>
+              )}
+              <div className="gs-chips">
+                {/* 目标类型 */}
                 <div className="gs-chip-group">
-                  <span className="gs-chip-tt">{activeTypeDef.label}专属特征</span>
+                  <span className="gs-chip-tt">目标类型</span>
                   <div className="gs-chip-row">
-                    {activeTypeDef.features.map((f) => (
+                    {TYPE_CHIPS.map((t) => (
                       <button
-                        key={f.key}
+                        key={t.key}
                         type="button"
-                        className={"gs-chip" + (chips.has(f.label) ? " on" : "")}
-                        onClick={() => toggleChip(f.label, "feature")}
+                        className={"gs-chip" + (chips.has(t.label) ? " on" : "")}
+                        onClick={() => toggleChip(t.label, "type")}
                       >
-                        {f.label}
+                        {t.label}
                       </button>
                     ))}
                   </div>
                 </div>
-              )}
-              {/* 颜色：常驻通用特征 */}
-              <div className="gs-chip-group">
-                <span className="gs-chip-tt">颜色</span>
-                <div className="gs-chip-row">
-                  {COLOR_CHIPS.map((c) => (
-                    <button
-                      key={c.key}
-                      type="button"
-                      className={"gs-chip" + (chips.has(c.label) ? " on" : "")}
-                      onClick={() => toggleChip(c.label, "color")}
-                    >
-                      {c.color && <i className="gs-dot" style={{ background: c.color }} />}
-                      {c.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* 事件：常驻通用特征 */}
-              <div className="gs-chip-group">
-                <span className="gs-chip-tt">事件</span>
-                <div className="gs-chip-row">
-                  {ACTION_CHIPS.map((a) => (
-                    <button
-                      key={a.key}
-                      type="button"
-                      className={"gs-chip" + (chips.has(a.label) ? " on" : "")}
-                      onClick={() => toggleChip(a.label, "action")}
-                    >
-                      {a.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="gs-card gs-image-form">
-            {/* 人脸搜索（ArcFace 512d） */}
-            <div
-              className={"gs-drop gs-drop-face" + (dragOverFace ? " over" : "")}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOverFace(true);
-              }}
-              onDragLeave={() => setDragOverFace(false)}
-              onDrop={(e) => onDrop(e, "face")}
-              onClick={() => fileRef.current?.click()}
-            >
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) { setFace(f); setImageSource("face"); }
-                  e.target.value = "";
-                }}
-              />
-              {faceFile ? (
-                <>
-                  <img className="gs-drop-preview" src={facePreviewUrl ?? undefined} alt="face preview" />
-                  <p className="gs-drop-name">{faceFile.name}</p>
-                  <button
-                    type="button"
-                    className="gs-drop-remove"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setFace(null);
-                    }}
-                  >
-                    移除
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div className="gs-drop-icon gs-drop-icon-face">👤</div>
-                  <p className="gs-drop-tt">人脸搜索</p>
-                  <span className="gs-drop-sub">拖拽或点击上传人脸照片（ArcFace 512d 检索）</span>
-                </>
-              )}
-            </div>
-
-            {/* 通用图搜（Qwen3-VL-Embedding） */}
-            <div
-              className={"gs-drop gs-drop-img" + (dragOverImage ? " over" : "")}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOverImage(true);
-              }}
-              onDragLeave={() => setDragOverImage(false)}
-              onDrop={(e) => onDrop(e, "image")}
-              onClick={() => imageRef.current?.click()}
-            >
-              <input
-                ref={imageRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) { setImage(f); setImageSource("image"); }
-                  e.target.value = "";
-                }}
-              />
-              {imageFile ? (
-                <>
-                  <img className="gs-drop-preview" src={imagePreviewUrl ?? undefined} alt="image preview" />
-                  <p className="gs-drop-name">{imageFile.name}</p>
-                  <button
-                    type="button"
-                    className="gs-drop-remove"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setImage(null);
-                    }}
-                  >
-                    移除
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div className="gs-drop-icon">
-                    <IconImageSearch />
-                  </div>
-                  <p className="gs-drop-tt">通用图搜</p>
-                  <span className="gs-drop-sub">拖拽或点击上传参考图（Qwen3-VL 整图检索）</span>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-        </div>
-
-        <div className="gs-card gs-scope">
-          <div className="gs-scope-head">
-            <IconFolder />
-            <span>检索范围</span>
-            <span className="gs-scope-count">
-              {!folderIds ? (selectedTree.startsWith("g:") ? (caseGroups.find((g) => g.groupId === selectedTree.slice(2))?.name ?? "跟随案例库") : "全部案例") : folderIds.size === 0 ? "全部案例" : `已选 ${folderIds.size} 个`}
-            </span>
-          </div>
-          <div className="gs-scope-list">
-            <label className={"gs-scope-item" + (folderIds !== null && folderIds.size === 0 ? " on" : "")}>
-              <input type="checkbox" checked={folderIds !== null && folderIds.size === 0} onChange={() => setFolderIds(new Set())} />
-              <span>全部案例</span>
-              <em>{caseGroups.length}</em>
-            </label>
-            {caseGroups.map((g) => {
-              const active = folderIds !== null
-                ? folderIds.has(g.groupId)
-                : selectedTree === `g:${g.groupId}`;
-              const expanded = expandedGroups.has(g.groupId);
-              const caseVideos = videos.filter((v) => v.group_id === g.groupId);
-              return (
-                <div key={g.groupId} className="gs-scope-group">
-                  <label className={"gs-scope-item" + (active ? " on" : "")}>
-                    <input
-                      type="checkbox"
-                      checked={active}
-                      onChange={() => {
-                        setFolderIds((prev) => {
-                          const base = prev ?? (() => {
-                            if (selectedTree.startsWith("g:")) return new Set([selectedTree.slice(2)]);
-                            return new Set<string>();
-                          })();
-                          const next = new Set(base);
-                          if (next.has(g.groupId)) next.delete(g.groupId);
-                          else next.add(g.groupId);
-                          return next;
-                        });
-                      }}
-                    />
-                    <span
-                      className="gs-scope-name"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setExpandedGroups((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(g.groupId)) next.delete(g.groupId);
-                          else next.add(g.groupId);
-                          return next;
-                        });
-                      }}
-                    >
-                      <span className="gs-scope-arrow" style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
-                      {g.name ?? g.number ?? "未命名案例"}
-                    </span>
-                    <em>{g.file_count ?? caseVideos.length}</em>
-                  </label>
-                  {expanded && (
-                    <div className="gs-scope-videos">
-                      {caseVideos.length === 0 && <span className="gs-scope-empty">暂无视频</span>}
-                      {caseVideos.map((v) => (
-                        <label key={v.id} className="gs-scope-video-item">
-                          <input
-                            type="checkbox"
-                            checked={active}
-                            readOnly
-                          />
-                          <span className="gs-scope-video-name" title={v.file_name}>{v.file_name}</span>
-                        </label>
+                {/* 当前类型专属特征：仅在选中某类型后显示 */}
+                {activeTypeDef && activeTypeDef.features.length > 0 && (
+                  <div className="gs-chip-group">
+                    <span className="gs-chip-tt">{activeTypeDef.label}专属特征</span>
+                    <div className="gs-chip-row">
+                      {activeTypeDef.features.map((f) => (
+                        <button
+                          key={f.key}
+                          type="button"
+                          className={"gs-chip" + (chips.has(f.label) ? " on" : "")}
+                          onClick={() => toggleChip(f.label, "feature")}
+                        >
+                          {f.label}
+                        </button>
                       ))}
                     </div>
-                  )}
+                  </div>
+                )}
+                {/* 颜色：常驻通用特征 */}
+                <div className="gs-chip-group">
+                  <span className="gs-chip-tt">颜色</span>
+                  <div className="gs-chip-row">
+                    {COLOR_CHIPS.map((c) => (
+                      <button
+                        key={c.key}
+                        type="button"
+                        className={"gs-chip" + (chips.has(c.label) ? " on" : "")}
+                        onClick={() => toggleChip(c.label, "color")}
+                      >
+                        {c.color && <i className="gs-dot" style={{ background: c.color }} />}
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              );
-            })}
+                {/* 事件：常驻通用特征 */}
+                <div className="gs-chip-group">
+                  <span className="gs-chip-tt">事件</span>
+                  <div className="gs-chip-row">
+                    {ACTION_CHIPS.map((a) => (
+                      <button
+                        key={a.key}
+                        type="button"
+                        className={"gs-chip" + (chips.has(a.label) ? " on" : "")}
+                        onClick={() => toggleChip(a.label, "action")}
+                      >
+                        {a.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="gs-card gs-image-form">
+              {/* 人脸搜索（ArcFace 512d） */}
+              <div
+                className={"gs-drop gs-drop-face" + (dragOverFace ? " over" : "")}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOverFace(true);
+                }}
+                onDragLeave={() => setDragOverFace(false)}
+                onDrop={(e) => onDrop(e, "face")}
+                onClick={() => fileRef.current?.click()}
+              >
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) { setFace(f); setImageSource("face"); }
+                    e.target.value = "";
+                  }}
+                />
+                {faceFile ? (
+                  <>
+                    <img className="gs-drop-preview" src={facePreviewUrl ?? undefined} alt="face preview" />
+                    <p className="gs-drop-name">{faceFile.name}</p>
+                    <button
+                      type="button"
+                      className="gs-drop-remove"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFace(null);
+                      }}
+                    >
+                      移除
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="gs-drop-icon gs-drop-icon-face">👤</div>
+                    <p className="gs-drop-tt">人脸搜索</p>
+                    <span className="gs-drop-sub">拖拽或点击上传人脸照片（ArcFace 512d 检索）</span>
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="gs-asset-pick"
+                  disabled={!pickerGroup}
+                  title={pickerGroup ? `从案例「${pickerGroup.groupName ?? ""}」素材选图` : "未定位到所属案例"}
+                  onClick={(e) => { e.stopPropagation(); if (pickerGroup) setAssetPicker({ kind: "face" }); }}
+                >
+                  从案例素材选图
+                </button>
+              </div>
+
+              {/* 通用图搜（Qwen3-VL-Embedding） */}
+              <div
+                className={"gs-drop gs-drop-img" + (dragOverImage ? " over" : "")}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOverImage(true);
+                }}
+                onDragLeave={() => setDragOverImage(false)}
+                onDrop={(e) => onDrop(e, "image")}
+                onClick={() => imageRef.current?.click()}
+              >
+                <input
+                  ref={imageRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) { setImage(f); setImageSource("image"); }
+                    e.target.value = "";
+                  }}
+                />
+                {imageFile ? (
+                  <>
+                    <img className="gs-drop-preview" src={imagePreviewUrl ?? undefined} alt="image preview" />
+                    <p className="gs-drop-name">{imageFile.name}</p>
+                    <button
+                      type="button"
+                      className="gs-drop-remove"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setImage(null);
+                      }}
+                    >
+                      移除
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="gs-drop-icon">
+                      <IconImageSearch />
+                    </div>
+                    <p className="gs-drop-tt">通用图搜</p>
+                    <span className="gs-drop-sub">拖拽或点击上传参考图（Qwen3-VL 整图检索）</span>
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="gs-asset-pick"
+                  disabled={!pickerGroup}
+                  title={pickerGroup ? `从案例「${pickerGroup.groupName ?? ""}」素材选图` : "未定位到所属案例"}
+                  onClick={(e) => { e.stopPropagation(); if (pickerGroup) setAssetPicker({ kind: "image" }); }}
+                >
+                  从案例素材选图
+                </button>
+              </div>
+            </div>
+          )}
           </div>
-        </div>
+
+          {/* ── 下半：检索范围卡片（可拖拽调整上下比例） ── */}
+          <div className="gs-card gs-scope">
+            <div className="gs-scope-head">
+              <IconFolder />
+              <span>检索范围</span>
+              <span className="gs-scope-count">
+                {!folderIds
+                  ? (selectedTree.startsWith("g:")
+                      ? (caseGroups.find((g) => g.groupId === selectedTree.slice(2))?.name ?? "跟随案例库")
+                      : scopeSearch.trim()
+                        ? (() => {
+                            const q = scopeSearch.trim().toLowerCase();
+                            const matched = caseGroups.filter((g) =>
+                              (g.name ?? "").toLowerCase().includes(q) ||
+                              (g.number ?? "").toLowerCase().includes(q) ||
+                              videos.some((v) => v.group_id === g.groupId && v.file_name?.toLowerCase().includes(q))
+                            ).length;
+                            return `${matched} 个匹配`;
+                          })()
+                        : "全部案例")
+                  : folderIds.size === 0 ? "全部案例" : `已选 ${folderIds.size} 个`}
+              </span>
+            </div>
+            {/* 检索范围搜索框 */}
+            <input
+              className="gs-scope-search"
+              type="text"
+              placeholder="搜索案例名或视频名…"
+              value={scopeSearch}
+              onChange={(e) => setScopeSearch(e.target.value)}
+            />
+            <div className="gs-scope-list">
+              {!scopeSearch.trim() && (
+                <label className={"gs-scope-item" + (folderIds !== null && folderIds.size === 0 ? " on" : "")}>
+                  <input type="checkbox" checked={folderIds !== null && folderIds.size === 0} onChange={() => setFolderIds(new Set())} />
+                  <span>全部案例</span>
+                  <em>{caseGroups.length}</em>
+                </label>
+              )}
+              {caseGroups
+                .filter((g) => {
+                  if (!scopeSearch.trim()) return true;
+                  const q = scopeSearch.trim().toLowerCase();
+                  // 案例名/编号匹配：返回整个案例（保留原逻辑）
+                  if ((g.name ?? "").toLowerCase().includes(q) || (g.number ?? "").toLowerCase().includes(q)) return true;
+                  // 仅视频名匹配：仍返回该案例，但下方只渲染匹配的视频（不让非匹配视频出现在可选列表里）
+                  return videos.some((v) => v.group_id === g.groupId && v.file_name?.toLowerCase().includes(q));
+                })
+                .map((g) => {
+                const active = folderIds !== null
+                  ? folderIds.has(g.groupId)
+                  : selectedTree === `g:${g.groupId}`;
+                const expanded = expandedGroups.has(g.groupId);
+                const caseVideos = videos.filter((v) => v.group_id === g.groupId);
+                /* scopeSearch 命中规则：
+                   - 案例名/编号匹配 → 显示该案例下所有视频（用户搜的就是整个案例）
+                   - 只有视频名匹配 → 只显示匹配的视频（不让用户误以为整个案例都入选）
+                   - 无搜索 → 显示所有视频 */
+                const q = scopeSearch.trim().toLowerCase();
+                const caseNameMatches = !!q && ((g.name ?? "").toLowerCase().includes(q) || (g.number ?? "").toLowerCase().includes(q));
+                const visibleVideos = q && !caseNameMatches
+                  ? caseVideos.filter((v) => v.file_name?.toLowerCase().includes(q))
+                  : caseVideos;
+                return (
+                  <div key={g.groupId} className="gs-scope-group">
+                    <label className={"gs-scope-item" + (active ? " on" : "")}>
+                      <input
+                        type="checkbox"
+                        checked={active}
+                        onChange={() => {
+                          setFolderIds((prev) => {
+                            const base = prev ?? (() => {
+                              if (selectedTree.startsWith("g:")) return new Set([selectedTree.slice(2)]);
+                              return new Set<string>();
+                            })();
+                            const next = new Set(base);
+                            if (next.has(g.groupId)) next.delete(g.groupId);
+                            else next.add(g.groupId);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span
+                        className="gs-scope-name"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setExpandedGroups((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(g.groupId)) next.delete(g.groupId);
+                            else next.add(g.groupId);
+                            return next;
+                          });
+                        }}
+                      >
+                        <span className="gs-scope-arrow" style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+                        {g.name ?? g.number ?? "未命名案例"}
+                      </span>
+                      <em>{q && !caseNameMatches ? `${visibleVideos.length}/${caseVideos.length}` : (g.file_count ?? caseVideos.length)}</em>
+                    </label>
+                    {expanded && (
+                      <div className="gs-scope-videos">
+                        {visibleVideos.length === 0 && <span className="gs-scope-empty">无匹配视频</span>}
+                        {visibleVideos.map((v) => (
+                          <label key={v.id} className="gs-scope-video-item">
+                            <input
+                              type="checkbox"
+                              checked={active}
+                              readOnly
+                            />
+                            <span className="gs-scope-video-name" title={v.file_name}>{v.file_name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </SplitPane>
 
         {error && (
           <div className="gs-error">
@@ -822,9 +916,14 @@ export function GlobalSearch() {
               const groupName = v?.group_id ? groupNameMap.get(v.group_id) ?? "未命名文件夹" : "未分组";
               const pathText = `${groupName} / ${v?.file_name ?? v?.id}`;
               const isSel = selected.has(r.video_id);
+              /* 点击跳转：带版本 id（精确定位解析版本）+ 时间戳（播放器 seek 到匹配时间） */
+              const openResult = () => openWorkbench(r.video_id, {
+                versionId: r.video_id,
+                ...(timeSec != null ? { seekTo: { start: timeSec, end: r.precise_end ?? null } } : {}),
+              });
               return (
                 <div key={`${r.video_id}-${i}`} className={"gs-row" + (isSel ? " sel" : "")}>
-                  <div className="gs-row-media" onClick={() => openWorkbench(r.video_id)} title="点击打开对应视频">
+                  <div className="gs-row-media" onClick={openResult} title="点击打开对应视频">
                     {r.thumbnail_url ? (
                       <img src={r.thumbnail_url} alt="" loading="lazy" />
                     ) : (
@@ -840,7 +939,7 @@ export function GlobalSearch() {
                       </div>
                     )}
                   </div>
-                  <div className="gs-row-info" onClick={() => openWorkbench(r.video_id)}>
+                  <div className="gs-row-info" onClick={openResult}>
                     <div className="gs-row-title" title={v?.file_name ?? r.video_id}>
                       {displayName(v)}
                     </div>
@@ -867,6 +966,20 @@ export function GlobalSearch() {
           </div>
         )}
       </section>
+
+      {/* 从案例素材选图弹窗 */}
+      {assetPicker && pickerGroup && (
+        <CaseAssetPicker
+          groupId={pickerGroup.groupId}
+          groupName={pickerGroup.groupName}
+          onClose={() => setAssetPicker(null)}
+          onSelect={(file) => {
+            setAssetPicker(null);
+            if (assetPicker.kind === "face") { setFace(file); setImageSource("face"); }
+            else { setImage(file); setImageSource("image"); }
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -39,11 +39,26 @@ class VideoStatus(str, enum.Enum):
 
 
 class ContentType(str, enum.Enum):
+    """视频内容类型 — 与 smart_suggest 的 9 个场景对齐（v0.37）
+    旧枚举值（general/meeting/surveillance/text_recognition/custom）保留兼容历史视频。
+    新视频应优先选 9 场景之一。
+    """
+    # 旧值（兼容历史数据，新流程不再写入）
     GENERAL          = "general"
     MEETING          = "meeting"
     SURVEILLANCE     = "surveillance"
     TEXT_RECOGNITION = "text_recognition"
     CUSTOM           = "custom"
+    # 9 智能推荐场景（与 services/smart_suggest.py SCENE_CLASSES.key 对齐）
+    TRAFFIC             = "traffic"               # 交通监控
+    VEHICLE_FOCUS       = "vehicle_focus"         # 车辆特写
+    SURVEILLANCE_PEOPLE = "surveillance_people"   # 人流监控
+    INDOOR              = "indoor"                # 室内人物
+    PORTRAIT_FOCUS      = "portrait_focus"        # 人物特写
+    DOCUMENT            = "document"              # 文档/屏幕
+    STREET_MIXED        = "street_mixed"          # 街景混合
+    OUTDOOR_LANDSCAPE   = "outdoor_landscape"     # 室外空旷/风景
+    CHAT_SCREEN         = "chat_screen"           # 聊天记录录屏
 
 
 # ═══════════════════════════════════════════════════════════
@@ -184,8 +199,8 @@ class Video(Base):
         comment="车牌识别开关（PaddleOCR，依赖 detection_enabled）",
     )
     summary_enabled: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False,
-        comment="摘要生成开关",
+        Boolean, default=False, nullable=False,
+        comment="摘要生成开关（v0.37 默认关闭：LLM 摘要耗时长且非核心，按需开启）",
     )
     summary_mode: Mapped[str] = mapped_column(
         String(16), default="vlm_llm", nullable=False,
@@ -311,6 +326,26 @@ class Video(Base):
     processing_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
         comment="管道真正开始处理的时间（入队/排队不计入），任务中心「耗时」数据源",
+    )
+
+    # ── 智能参数推荐 (v0.37) ──
+    # 上传完成后由 /videos/suggest-params 一次性写入，关闭弹窗也不丢。
+    # 抽屉「处理参数设置」小面板读取此 4 字段做初始值，缺则回退当前持久化开关。
+    suggested_scene_key: Mapped[str | None] = mapped_column(
+        String(64), nullable=True,
+        comment="智能推荐场景 key（9 场景之一）；NULL=低置信/未分析",
+    )
+    suggested_scene_label: Mapped[str | None] = mapped_column(
+        String(64), nullable=True,
+        comment="智能推荐场景显示名（如「交通监控」）",
+    )
+    suggested_confidence: Mapped[float | None] = mapped_column(
+        Float, nullable=True,
+        comment="智能推荐场景置信度 0.0~1.0",
+    )
+    suggested_params: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+        comment="智能推荐参数快照：{detection_enabled, face_enabled, plate_enabled, ocr_enabled, search_index_enabled, summary_enabled}",
     )
 
     # ── 关联 ──

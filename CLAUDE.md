@@ -19,6 +19,7 @@
   POST /videos/upload(/upload/batch) → 存盘 → probe → 建记录(pending) → 异步 remux/proxy
   POST /videos/suggest-params → 按画面内容推荐参数（9 场景分类, 低置信兜底默认）
   PUT /videos/{id}/params → 校验 → 入队 → PipelineEngine.run()(pending) / run_incremental()(completed)
+  PATCH /videos/{id}/toggles（v0.37）→ 仅持久化 6 核心开关，不入队管道（抽屉「参数设置」专用）
   PipelineEngine 事件驱动 DAG(16 ops):
     duration → detection(生产者-消费者, 共享 NVDEC) → track_encode → face/plate
     duration → segmentation → keyframes → caption → summary → frame/text/chunk_encode
@@ -38,8 +39,13 @@
 - **向量维度**: `EmbedVector()` 随 embedding_profile（8b=4096 / 2b=2048）；人脸 `Vector(512)`
 - **DB 连接**: 环境变量 `POSTGRES_URI` → config.yaml `database.uri` → 兜底 5432
 - **配置模板化**: config.yaml 机器相关 gitignored；新机复制 `config.yaml.example` 自改
-- **4 级参数系统**: L1 场景 → L2 感知模块 → L3 功能开关 → L4 高级参数
-- **智能场景参数**: 场景分类与参数预设集中在 `services/smart_suggest.py`（9 类）；低置信兜底 `_DEFAULT_PARAMS`；改场景须加/改 `_scene_fingerprint()` 相关缓存（列表增改自动失效）
+- **4 级参数系统**: L1 场景（9 智能推荐场景 + 5 旧值）→ L2 感知模块 → L3 功能开关 → L4 高级参数
+- **智能参数系统（v0.37）**: 场景分类与参数预设集中在 `services/smart_suggest.py`（9 类）；低置信兜底 `_DEFAULT_PARAMS`；改场景须加/改 `_scene_fingerprint()` 相关缓存（列表增改自动失效）
+  - **持久化**：suggest-params 自动落库到 `videos.suggested_scene_key/label/confidence/params(JSONB)` 4 字段；关闭弹窗不丢
+  - **抽屉轻量层**：`PATCH /videos/{id}/toggles` 仅持久化 6 核心开关，不入队管道、不动版本、不联动组
+  - **抽屉 UI**：FileDetailDrawer「参数设置」section（替代旧 ParameterPanel）+ Workbench `SingleAnalyzeDialog` + 案例库 `BatchAnalyzeDialog` 三处共用 `AnalyzeSettingsPanel` + `buildPipelineParams()`
+  - **摘要默认全关**（v0.37）：模型/上传/场景预设/智能推荐按钮都默认 `summary_enabled=false`
+  - **9 场景预设**（CONTENT_TYPE_PRESETS）：traffic/vehicle_focus/surveillance_people/indoor/portrait_focus/document/street_mixed/outdoor_landscape/chat_screen，每个场景对应一组检测/人脸/车牌/OCR 开关预设
 - **双前端**: UI 各自演进；对接层 `frontend-shared/` 一份实现，改后端接口只改一处
 - **多格式**: remux(-c copy) + proxy(NVENC h264, 按需)；管道优先读 remuxed
 - **ReID 双层**: 在线 BoT-SORT with_reid + 全局 tracklet 缝合（cosine ≥0.85）

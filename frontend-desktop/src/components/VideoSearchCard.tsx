@@ -4,9 +4,10 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api } from "../services/api";
-import type { SearchResultItem, VideoResponse, VideoListItem, FaceSearchResult, VideoGroup } from "../types";
+import type { SearchResultItem, VideoResponse, VideoListItem, FaceSearchResult, VideoGroup, CaseAssetItem } from "../types";
 import { formatSec } from "../utils/helpers";
 import { zhLabel } from "../labels";
+import { CaseAssetPicker } from "./CaseAssetPicker";
 
 /* 检索范围下拉：待处理/处理中直接不显示；仅 completed 文件列出。
    completed 且开启搜索索引 → 可选；completed 但未开索引 → 置灰标注「未索引」。 */
@@ -120,6 +121,22 @@ export function VideoSearchCard({
     return `${selectedFiles.size} 个视频`;
   }, [scope, selectedFiles, caseFileMap, caseNames]);
 
+  // 从案例素材选图（图搜/人脸搜）：当前视频所属案例优先，否则选中检索文件所属案例
+  const [assetPicker, setAssetPicker] = useState<{ kind: "image" | "face" } | null>(null);
+  const [assetMenu, setAssetMenu] = useState<{ kind: "image" | "face"; x: number; y: number } | null>(null);
+  const pickerGroup = useMemo(() => {
+    if (video?.group_id) return { groupId: video.group_id, groupName: caseNames.get(video.group_id) };
+    for (const [gid, vids] of caseFileMap) {
+      if (vids.some((v) => selectedFiles.has(v.id))) return { groupId: gid, groupName: caseNames.get(gid) };
+    }
+    return null;
+  }, [video, selectedFiles, caseFileMap, caseNames]);
+
+  const openAssetMenu = (e: React.MouseEvent, kind: "image" | "face") => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setAssetMenu({ kind, x: r.right, y: r.bottom + 4 });
+  };
+
   // 检索范围涉及的视频（用于人脸/车牌门控 —— 联合搜索时范围内有任一视频具备即可用）
   const scopeVideos = useMemo(() => {
     if (searchVideoIds == null) return allVideos ?? [];
@@ -189,8 +206,8 @@ export function VideoSearchCard({
     setScopeOpen(true);
   }, [scopeOpen]);
 
-  const handleFaceFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file) return;
+  const runFaceSearch = useCallback(async (file: File) => {
+    if (!file) return;
     // 人脸搜索：清空语义/图搜旧结果，避免新结果从旧结果上方插入
     setResults([]); setFaceResults([]); setSearching(false);
     setFaceSearching(true); setError(null); setSearchMode("face");
@@ -202,9 +219,14 @@ export function VideoSearchCard({
     finally { setFaceSearching(false); if (fileInputRef.current) fileInputRef.current.value = ""; }
   }, [searchVideoIds]);
 
-  /* ── 通用图搜 ── */
-  const handleImageSearch = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFaceFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
+    void runFaceSearch(file);
+  }, [runFaceSearch]);
+
+  /* ── 通用图搜 ── */
+  const runImageSearch = useCallback(async (file: File) => {
+    if (!file) return;
     // 图搜：与语义/人脸搜索统一，先清空旧结果
     setResults([]); setImageSearching(true); setError(null); setFaceResults([]); setSearchMode("image");
     try {
@@ -220,6 +242,11 @@ export function VideoSearchCard({
       if (imageInputRef.current) imageInputRef.current.value = "";
     }
   }, [searchVideoIds]);
+
+  const handleImageSearch = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    void runImageSearch(file);
+  }, [runImageSearch]);
 
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return;
@@ -402,8 +429,8 @@ export function VideoSearchCard({
 
           {/* Image search (inside input right) — 顺序最左 */}
           <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageSearch} className="hidden" />
-          <button onClick={() => imageInputRef.current?.click()} disabled={imageSearching}
-            className="absolute right-[76px] top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-teal-50 hover:bg-teal-100 text-teal-600 flex items-center justify-center transition-colors disabled:opacity-50" title="以图搜图">
+          <button onClick={(e) => openAssetMenu(e, "image")} disabled={imageSearching}
+            className="absolute right-[76px] top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-teal-50 hover:bg-teal-100 text-teal-600 flex items-center justify-center transition-colors disabled:opacity-50" title="以图搜图（本地选图 / 从案例素材选图）">
             {imageSearching ? <span className="inline-block w-3 h-3 border-2 border-teal-300 border-t-teal-500 rounded-full animate-spin" /> : (
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
@@ -413,11 +440,11 @@ export function VideoSearchCard({
 
           {/* Face search (inside input right)（未开人脸处理则置灰；联合搜索时范围内有任一视频开人脸即可） */}
           <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleFaceFile} className="hidden" />
-          <button onClick={() => { if (!faceDisabled) fileInputRef.current?.click(); }} disabled={faceSearching}
+          <button onClick={(e) => { if (!faceDisabled) openAssetMenu(e, "face"); }} disabled={faceSearching}
             className={`absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded flex items-center justify-center transition-colors disabled:opacity-50 ${
               faceDisabled ? "bg-gray-200 text-gray-600" : "bg-purple-50 hover:bg-purple-100 text-purple-600"
             }`}
-            title={faceDisabled ? "未开启人脸处理" : "人脸搜索"}>
+            title={faceDisabled ? "未开启人脸处理" : "人脸搜索（本地选图 / 从案例素材选图）"}>
             {faceSearching ? <span className="inline-block w-3 h-3 border-2 border-purple-300 border-t-purple-500 rounded-full animate-spin" /> : (
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="7" r="4" /><path d="M20 21v-1a8 8 0 00-16 0v1" /></svg>
             )}
@@ -622,6 +649,39 @@ export function VideoSearchCard({
           </div>
         )}
       </div>
+
+      {/* 图搜/人脸搜 选图来源菜单（本地 / 从案例素材） */}
+      {assetMenu && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setAssetMenu(null)} />
+          <div className="fixed z-40 w-40 rounded-lg border border-gray-200 bg-white shadow-xl py-1 text-xs" style={{ left: Math.max(8, assetMenu.x - 160), top: assetMenu.y }}>
+            <button className="w-full px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
+              onClick={() => { const k = assetMenu.kind; setAssetMenu(null); (k === "image" ? imageInputRef : fileInputRef).current?.click(); }}>
+              本地选择图片
+            </button>
+            <button className="w-full px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50 disabled:text-gray-300 disabled:hover:bg-white"
+              disabled={!pickerGroup}
+              title={pickerGroup ? `从案例「${pickerGroup.groupName ?? ""}」素材选图` : "未定位到所属案例"}
+              onClick={() => { setAssetMenu(null); if (pickerGroup) setAssetPicker({ kind: assetMenu.kind }); }}>
+              从案例素材选图
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* 从案例素材选图弹窗 */}
+      {assetPicker && pickerGroup && (
+        <CaseAssetPicker
+          groupId={pickerGroup.groupId}
+          groupName={pickerGroup.groupName}
+          onClose={() => setAssetPicker(null)}
+          onSelect={(file) => {
+            setAssetPicker(null);
+            if (assetPicker.kind === "image") void runImageSearch(file);
+            else void runFaceSearch(file);
+          }}
+        />
+      )}
     </div>
   );
 }

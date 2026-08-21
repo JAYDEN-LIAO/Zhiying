@@ -12,9 +12,8 @@ import { api } from "../services/api";
 import { useApp } from "../AppContext";
 import type { FileItem, VideoGroup, CaseAssetItem, PipelineParams, VideoResponse, VideoMetadata } from "../types";
 import { fmtDuration, fmtDate, fmtBytes } from "../utils/helpers";
-import { IconFolder, IconPlus, IconPlay2, IconTrash, IconPencil, IconBolt, IconBoltSolid, IconEye, IconGrid, IconList, IconDownload, IconClose, IconInfo, IconSummary, IconRetry, IconPerson, IconCar, IconText, IconError } from "./icons";
+import { IconFolder, IconPlus, IconPlay2, IconTrash, IconPencil, IconBolt, IconBoltSolid, IconEye, IconGrid, IconList, IconDownload, IconClose, IconInfo, IconRetry } from "./icons";
 import { useHEVCCapability } from "../hooks/useHEVCCapability";
-import { ParameterPanel } from "./ParameterPanel";
 import { SmartSuggestDialog } from "./SmartSuggestDialog";
 
 type TreeKey = "all" | "ungrouped" | `g:${string}`;
@@ -150,7 +149,7 @@ function CaseList({
 function CaseContent({
   group, displayFiles, images, search, statusFilter, tree, isUploading,
   selected, allPendingIds, analyzing,
-  onSearch, onStatusFilter, onUpload, onToggleSelect, onToggleSelectAll, onAnalyze,
+  onSearch, onStatusFilter, onUpload, onUploadFolder, onToggleSelect, onToggleSelectAll, onAnalyze,
   onOpenFile, onEditCase, onRenameFile, onRenameAsset, onDeleteFile, onDeleteImage,
 }: {
   group: VideoGroup | undefined;
@@ -166,6 +165,7 @@ function CaseContent({
   onSearch: (q: string) => void;
   onStatusFilter: (s: string) => void;
   onUpload: () => void;
+  onUploadFolder: () => void;
   onToggleSelect: (id: string) => void;
   onToggleSelectAll: () => void;
   onAnalyze: () => void;
@@ -269,6 +269,11 @@ function CaseContent({
             <IconPlus />
             {isUploading ? "上传中..." : "上传"}
           </button>
+          {/* 上传文件夹：递归选择文件夹内所有视频/图片（含子文件夹，完全扁平归档到本案例） */}
+          <button className="g-btn" onClick={onUploadFolder} disabled={isUploading} title="上传整个文件夹（含子文件夹内的视频/图片，扁平归档到本案例）">
+            <IconFolder />
+            上传文件夹
+          </button>
           {/* 解析：未勾选 → 处理当前列表全部待处理；勾选后 → 批量解析勾选的 */}
           <button className="g-btn g-btn-primary" onClick={onAnalyze}
             disabled={analyzing || (selected.size === 0 && allPendingIds.length === 0)} title="打开参数面板并启动待处理视频">
@@ -308,6 +313,13 @@ function CaseContent({
                       <button className="fl-card-action-sm fl-card-action-sm-danger" title="删除" onClick={(e) => { e.stopPropagation(); onDeleteFile(f); }}>
                         <IconTrash />
                       </button>
+                      {/* 处理中/已完成：预览/查看结果（与列表视图眼睛按钮一致，位于删除按钮右侧） */}
+                      {(f.current_status === "processing" || f.current_status === "completed") && (
+                        <button className="fl-card-action-sm" title={f.current_status === "completed" ? "查看结果" : "预览视频"}
+                          onClick={(e) => { e.stopPropagation(); onOpenFile(f, false); }}>
+                          <IconEye />
+                        </button>
+                      )}
                     </div>
                   </div>
                   <div className="fl-info">
@@ -336,7 +348,7 @@ function CaseContent({
             }).map((img) => {
               const { base, ext } = splitName(img.name, img.file_ext);
               return (
-                <div key={img.id} className="fl-card">
+                <div key={img.id} className="fl-card" onClick={() => setPreviewImg(img)}>
                   <div className="fl-cover">
                     <div className="fl-cover-bg"><ImageIcon /></div>
                     {group && (
@@ -544,26 +556,12 @@ function FileDetailDrawer({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const commitRef = useRef(false);
-  /* ── 单视频解析：原参数设置面板（重新解析走新版本） ── */
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [panelReparse, setPanelReparse] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [faceCount, setFaceCount] = useState(0);
-  const [plateCount, setPlateCount] = useState(0);
-  const [ocrCount, setOcrCount] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      api.fetchFaceData(file.id).then((d) => d?.identities?.length ?? 0).catch(() => 0),
-      api.fetchPlateData(file.id).then((d) => d?.detections?.length ?? 0).catch(() => 0),
-      api.fetchOcrData(file.id).then((d) => d?.detections?.length ?? 0).catch(() => 0),
-    ]).then(([fc, pc, oc]) => {
-      if (cancelled) return;
-      setFaceCount(fc); setPlateCount(pc); setOcrCount(oc);
-    });
-    return () => { cancelled = true; };
-  }, [file.id]);
+  /* ── 「参数设置」小面板：6 个核心开关本地态（点击即保存，无 dirty/saving 状态） ── */
+  const [toggles, setToggles] = useState<{
+    detection_enabled: boolean; face_enabled: boolean; plate_enabled: boolean;
+    ocr_enabled: boolean; search_index_enabled: boolean; summary_enabled: boolean;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -582,7 +580,28 @@ function FileDetailDrawer({
     return () => { cancelled = true; };
   }, [file.id]);
 
-  const summary = video?.summary ?? null;
+  /* ── 视频详情落定后初始化「参数设置」本地态：优先持久化的智能推荐，否则回退当前持久化字段
+     每个 file.id 只初始化一次（save 后 video 更新不会触发重初始化，避免把用户改完的值又覆盖回 recommended）── */
+  const initTogglesForFileRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!video) {
+      setToggles(null);
+      initTogglesForFileRef.current = null;
+      return;
+    }
+    if (initTogglesForFileRef.current === file.id) return;
+    const sp = video.suggested_params ?? null;
+    setToggles({
+      detection_enabled: sp?.detection_enabled ?? video.detection_enabled,
+      face_enabled: sp?.face_enabled ?? video.face_enabled,
+      plate_enabled: sp?.plate_enabled ?? video.plate_enabled,
+      ocr_enabled: sp?.ocr_enabled ?? video.ocr_enabled,
+      search_index_enabled: sp?.search_index_enabled ?? video.search_index_enabled,
+      summary_enabled: sp?.summary_enabled ?? video.summary_enabled,
+    });
+    initTogglesForFileRef.current = file.id;
+  }, [video, file.id]);
+
   const streamUrl = api.getVideoStreamUrl(file.id, hevcOk);
   const thumbUrl = `/api/v1/videos/${file.id}/thumbnail/0`;
   const { base, ext } = (() => {
@@ -619,50 +638,96 @@ function FileDetailDrawer({
     document.body.removeChild(a);
   };
 
+  /* ── 「参数设置」小面板辅助 ── */
+  async function persistToggles(next: NonNullable<typeof toggles>) {
+    try {
+      const updated = await api.updateToggles(file.id, next);
+      setVideo(updated as VideoResponse);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "保存失败");
+      /* 保存失败：刷新 video 把本地态重新对齐到服务端 */
+      try {
+        const fresh = await api.getVideo(file.id);
+        if (fresh) setVideo(fresh as VideoResponse);
+      } catch { /* ignore */ }
+    }
+  }
+
+  function setToggle<K extends keyof NonNullable<typeof toggles>>(k: K, v: boolean) {
+    setToggles((prev) => {
+      if (!prev) return prev;
+      // 链式：关闭 detection → 同步关闭 face / plate（与后端校验一致）
+      const next = { ...prev, [k]: v };
+      if (k === "detection_enabled" && !v) {
+        next.face_enabled = false;
+        next.plate_enabled = false;
+      }
+      // 点击即保存（乐观更新 → 后端持久化）
+      void persistToggles(next);
+      return next;
+    });
+  }
+
+  async function applySuggested() {
+    const sp = video?.suggested_params;
+    if (!sp) return;
+    /* 智能推荐场景预设（SCENE_CLASSES）全部不开启摘要——这里同步把摘要关掉，
+       保持「智能推荐 = 一键重置参数」语义，不让摘要保留用户之前勾选的状态 */
+    const next = {
+      detection_enabled: sp.detection_enabled ?? false,
+      face_enabled: sp.face_enabled ?? false,
+      plate_enabled: sp.plate_enabled ?? false,
+      ocr_enabled: sp.ocr_enabled ?? false,
+      search_index_enabled: sp.search_index_enabled ?? false,
+      summary_enabled: false,
+    };
+    setToggles(next);
+    await persistToggles(next);
+  }
+
   /* ── 单状态机：后端 status（pending/processing/completed/failed）直接驱动 ── */
   const ps = file.current_status ?? "pending";
   const progress = file.current_progress ?? null;
 
-  /* 打开原参数设置面板：completed → 重新解析建新版本；其余 → 原地启动 */
-  const openPanel = (reparse: boolean) => {
-    setPanelReparse(reparse);
-    setPanelOpen(true);
-  };
+  /* 直接启动解析：用「参数设置」本地态覆盖 video 中的开关字段
+     ─ 本地 toggles 优先（即使 PATCH 还在 in-flight 也能用用户意图启动）
+     ── reparse=false：pending 启动管道；reparse=true：completed/failed 建新版本 */
+  async function handleAnalyze(reparse: boolean) {
+    if (starting || !video) return;
+    setStarting(true);
+    try {
+      const params: PipelineParams = {
+        content_type: video.content_type,
+        vision_enabled: video.vision_enabled,
+        audio_enabled: video.audio_enabled,
+        ocr_enabled: toggles?.ocr_enabled ?? video.ocr_enabled,
+        caption_enabled: video.caption_enabled,
+        detection_enabled: toggles?.detection_enabled ?? video.detection_enabled,
+        detection_classes: video.detection_classes,
+        face_enabled: toggles?.face_enabled ?? video.face_enabled,
+        plate_enabled: toggles?.plate_enabled ?? video.plate_enabled,
+        summary_enabled: video.summary_enabled,
+        summary_mode: video.summary_mode,
+        search_index_enabled: toggles?.search_index_enabled ?? video.search_index_enabled,
+        language: video.language,
+        sample_fps: video.sample_fps,
+        segment_threshold: video.segment_threshold,
+        caption_with_context: video.caption_with_context,
+        summary_detail: video.summary_detail,
+        encode_profile: video.encode_profile,
+        apply_to_group: false,
+      };
+      await api.updateParams(file.id, params);
+      onClose();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : (reparse ? "重新分析失败" : "解析失败"));
+    } finally {
+      setStarting(false);
+    }
+  }
 
-  /* 导出结构化数据（JSON） */
-  const exportStructured = () => {
-    const data = {
-      file_name: file.name,
-      video_id: file.id,
-      duration: file.duration,
-      file_size: file.file_size,
-      resolution: resolution || null,
-      codec: video?.video_codec ?? null,
-      status: ps,
-      algorithms: {
-        face: video?.face_enabled ?? false,
-        plate: video?.plate_enabled ?? false,
-        ocr: video?.ocr_enabled ?? false,
-        detection: video?.detection_enabled ?? false,
-      },
-      summary: summary ? {
-        one_liner: summary.one_liner,
-        main_topics: summary.main_topics,
-        main_entities: summary.main_entities,
-        tags: summary.tags,
-      } : null,
-      exported_at: new Date().toISOString(),
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${base}_结构化数据.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
+  /* 导出结构化数据（JSON） —— 已废弃（智能识别结果 section 删除后此导出无引用方），保留占位可后续扩展 */
+  /* ── 已删除 exportStructured：原 export 按钮无调用方；如需重启请恢复下面代码并加按钮 ── */
 
   return (
     <div className="fl-drawer-overlay" onClick={onClose}>
@@ -696,62 +761,6 @@ function FileDetailDrawer({
             <video controls src={streamUrl} poster={thumbUrl} className="w-full h-full" />
           </div>
 
-          {/* 智能识别结果 */}
-          <div className="fl-section">
-            <div className="fl-section-title"><IconSummary /><span>智能识别结果</span></div>
-            {/* 处理中：整体进度 */}
-            {ps === "processing" && (
-              <div className="fl-progress-block">
-                <div className="fl-progress-row">
-                  <span className="fl-progress-label">视频解析中（转码 / 摘要 / 识别）</span>
-                  <span className="fl-progress-pct">{progress != null ? `${progress}%` : "…"}</span>
-                </div>
-                <div className="fl-progress-bar"><div className="fl-progress-fill" style={{ width: `${progress ?? 0}%` }} /></div>
-              </div>
-            )}
-            {ps === "failed" && (
-              <div className="fl-fail">
-                <p className="fl-fail-tt"><IconError />解析失败</p>
-                <p className="fl-fail-msg">{video?.error_message || "未知原因，请联系管理员检查服务日志。"}</p>
-                <p className="fl-fail-tip">可点击「重新解析」更换参数重试，或删除该文件后重新上传。</p>
-              </div>
-            )}
-            {loading ? (
-              <div className="text-[12px] text-gray-400 py-3">加载中…</div>
-            ) : summary ? (
-              <>
-                {summary.one_liner && (
-                  <p className="fl-summary-text fl-summary-clamp">{summary.one_liner}</p>
-                )}
-                {(summary.main_topics.length > 0 || summary.main_entities.length > 0) && (
-                  <div className="fl-summary-kv">
-                    {summary.main_topics.length > 0 && (
-                      <div className="fl-kv"><span className="fl-kv-k">主题</span><span className="fl-kv-v">{summary.main_topics.join("、")}</span></div>
-                    )}
-                    {summary.main_entities.length > 0 && (
-                      <div className="fl-kv"><span className="fl-kv-k">主体</span><span className="fl-kv-v">{summary.main_entities.join("、")}</span></div>
-                    )}
-                  </div>
-                )}
-                {summary.tags.length > 0 && (
-                  <div className="fl-tags">
-                    {summary.tags.map((t, i) => <span key={t} className={"fl-tag fl-tag-" + (i % 4)}>#{t}</span>)}
-                  </div>
-                )}
-                {/* 人 / 车 / 文字统计条 → 点击跳转全屏研判页 */}
-                {ps === "completed" && (
-                  <div className="fl-stats">
-                    <button className="fl-stat" onClick={() => onOpenWorkbench(file)}><IconPerson /><span>人员</span><b>{faceCount}</b></button>
-                    <button className="fl-stat" onClick={() => onOpenWorkbench(file)}><IconCar /><span>车辆</span><b>{plateCount}</b></button>
-                    <button className="fl-stat" onClick={() => onOpenWorkbench(file)}><IconText /><span>文字</span><b>{ocrCount}</b></button>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="text-[12px] text-gray-400 py-3">暂无摘要（视频处理完成后自动生成）</div>
-            )}
-          </div>
-
           {/* 基础元数据 */}
           <div className="fl-section">
             <div className="fl-section-title"><IconInfo /><span>基本信息</span></div>
@@ -764,6 +773,105 @@ function FileDetailDrawer({
               <div className="fl-meta-row"><span className="fl-meta-k">MD5</span><span className="fl-meta-v fl-mono">{extractMd5(meta) ?? "—"}</span></div>
             </div>
           </div>
+
+          {/* 参数设置（v0.37）：智能推荐回填 + 6 开关（点击即保存）+ 智能推荐按钮 */}
+          <div className="fl-section">
+            <div className="fl-section-title">
+              <IconBolt />
+              <span>参数设置</span>
+              {video?.suggested_scene_label && (
+                <span
+                  className="ml-auto inline-flex items-center gap-1 text-[11.5px] font-medium text-[#4f7cff] bg-[#eaf1ff] rounded px-2 py-0.5"
+                  title={`基于 embedder 场景分类（${video.suggested_scene_label}，匹配度 ${((video.suggested_confidence ?? 0) * 100).toFixed(0)}%）自动回填`}
+                >
+                  <span className="fl-pulse-dot" />
+                  智能推荐：{video.suggested_scene_label} {((video.suggested_confidence ?? 0) * 100).toFixed(0)}%
+                </span>
+              )}
+            </div>
+            {toggles ? (
+              <>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <label className="fl-alg !py-2">
+                    <input
+                      type="checkbox"
+                      checked={toggles.detection_enabled}
+                      onChange={(e) => setToggle("detection_enabled", e.target.checked)}
+                    />
+                    <span className="fl-alg-tt">物体检测</span>
+                  </label>
+                  <label className="fl-alg !py-2">
+                    <input
+                      type="checkbox"
+                      checked={toggles.face_enabled}
+                      onChange={(e) => setToggle("face_enabled", e.target.checked)}
+                      disabled={!toggles.detection_enabled}
+                      title={!toggles.detection_enabled ? "需先开启「物体检测」" : "SCRFD + ArcFace 人脸识别"}
+                    />
+                    <span className="fl-alg-tt">人脸</span>
+                  </label>
+                  <label className="fl-alg !py-2">
+                    <input
+                      type="checkbox"
+                      checked={toggles.plate_enabled}
+                      onChange={(e) => setToggle("plate_enabled", e.target.checked)}
+                      disabled={!toggles.detection_enabled}
+                      title={!toggles.detection_enabled ? "需先开启「物体检测」" : "HyperLPR3 车牌识别"}
+                    />
+                    <span className="fl-alg-tt">车牌</span>
+                  </label>
+                  <label className="fl-alg !py-2">
+                    <input
+                      type="checkbox"
+                      checked={toggles.ocr_enabled}
+                      onChange={(e) => setToggle("ocr_enabled", e.target.checked)}
+                      title="RapidOCR PP-OCRv3 画面文字提取"
+                    />
+                    <span className="fl-alg-tt">OCR 文字</span>
+                  </label>
+                  <label className="fl-alg !py-2">
+                    <input
+                      type="checkbox"
+                      checked={toggles.search_index_enabled}
+                      onChange={(e) => setToggle("search_index_enabled", e.target.checked)}
+                      title="搜索索引：4 编码路径 + 8 路召回"
+                    />
+                    <span className="fl-alg-tt">搜索索引</span>
+                  </label>
+                  <label className="fl-alg !py-2">
+                    <input
+                      type="checkbox"
+                      checked={toggles.summary_enabled}
+                      onChange={(e) => setToggle("summary_enabled", e.target.checked)}
+                      title="智能摘要：vlm_llm 默认（Qwen-VL-Max + DeepSeek）"
+                    />
+                    <span className="fl-alg-tt">智能摘要</span>
+                  </label>
+                  {video.suggested_params ? (
+                    <button
+                      type="button"
+                      className="fl-act col-span-2"
+                      onClick={applySuggested}
+                      title={`应用「${video.suggested_scene_label ?? "智能"}」推荐参数（${((video.suggested_confidence ?? 0) * 100).toFixed(0)}% 置信度）`}
+                    >
+                      智能推荐
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="fl-act col-span-2"
+                      disabled
+                      title="暂无智能推荐（需先运行 smart_suggest）"
+                    >
+                      智能推荐
+                    </button>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="text-[12px] text-gray-400 py-2">加载中…</div>
+            )}
+          </div>
         </div>
 
         <div className="fl-drawer-ft">
@@ -772,7 +880,7 @@ function FileDetailDrawer({
           <span className="flex-1" />
           {/* ── 根据状态动态渲染主按钮 ── */}
           {ps === "pending" && (
-            <button className="g-btn g-btn-primary" onClick={() => openPanel(false)} disabled={starting}>
+            <button className="g-btn g-btn-primary" onClick={() => handleAnalyze(false)} disabled={starting}>
               <IconBolt />视频解析
             </button>
           )}
@@ -782,27 +890,13 @@ function FileDetailDrawer({
             </button>
           )}
           {ps === "completed" && (
-            <button className="g-btn g-btn-primary" onClick={() => openPanel(true)}><IconBoltSolid />重新分析</button>
+            <button className="g-btn g-btn-primary" onClick={() => handleAnalyze(true)}><IconBoltSolid />重新分析</button>
           )}
           {ps === "failed" && (
-            <button className="g-btn g-btn-primary" onClick={() => openPanel(false)} disabled={starting}><IconRetry />重新解析</button>
+            <button className="g-btn g-btn-primary" onClick={() => handleAnalyze(true)} disabled={starting}><IconRetry />重新解析</button>
           )}
         </div>
       </div>
-
-      {/* 原参数设置面板：单视频解析（重新解析建新版本） */}
-      {panelOpen && (
-        <div className="g-modal-overlay">
-          <div className="g-modal" style={{ height: "min(620px, 82vh)" }}>
-            <ParameterPanel
-              videoId={file.id}
-              reparse={panelReparse}
-              onClose={() => setPanelOpen(false)}
-              onParamsSet={() => { setPanelOpen(false); onClose(); }}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -835,6 +929,33 @@ export function FileLibrary() {
   const flDragDepthRef = useRef(0);
   const activeGroupId = useMemo(() => (tree.startsWith("g:") ? tree.slice(2) : null), [tree]);
 
+  /* ── 递归读取文件夹内容（webkitGetAsEntry API） ── */
+  const readEntry = (entry: FileSystemEntry): Promise<File[]> => {
+    if (entry.isFile) {
+      return new Promise((resolve) => {
+        (entry as FileSystemFileEntry).file((f) => resolve([f]), () => resolve([]));
+      });
+    }
+    if (entry.isDirectory) {
+      const reader = (entry as FileSystemDirectoryEntry).createReader();
+      return new Promise((resolve) => {
+        const allFiles: File[] = [];
+        const readBatch = () => {
+          reader.readEntries(async (entries) => {
+            if (entries.length === 0) { resolve(allFiles); return; }
+            for (const e of entries) {
+              const files = await readEntry(e);
+              allFiles.push(...files);
+            }
+            readBatch(); // 继续读取（readEntries 每次最多返回一批）
+          }, () => resolve(allFiles));
+        };
+        readBatch();
+      });
+    }
+    return Promise.resolve([]);
+  };
+
   const load = () => {
     api.listFiles().then((data) => setFiles(data ?? [])).catch(() => {});
     api.listGroups().then((data) => setGroups(data ?? [])).catch(() => {});
@@ -859,6 +980,38 @@ export function FileLibrary() {
   /* 切换视图（全部/未分组/案例）→ 清空勾选，避免跨范围误批量 */
   useEffect(() => { setSelected(new Set()); }, [tree]);
 
+  const processFiles = async (fileList: File[], gid: string) => {
+    const files = Array.from(fileList);
+    if (!files.length) return;
+    const vids = files.filter((f) => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name) || f.type.startsWith("video/"));
+    const imgs = files.filter((f) => f.type.startsWith("image/"));
+    const uploadedIds: string[] = [];
+    const uploadedEntries: { video_id: string; file_name: string }[] = [];
+    if (vids.length) {
+      const ids = await uploadFiles(vids, gid, { stay: true });
+      uploadedIds.push(...ids);
+      /* 用详情拉取文件名（analyzeBatch 也要文件名） */
+      for (const id of ids) {
+        try {
+          const detail = await api.getVideo(id);
+          uploadedEntries.push({ video_id: id, file_name: detail.file_name });
+        } catch {
+          uploadedEntries.push({ video_id: id, file_name: "" });
+        }
+      }
+    }
+    if (imgs.length) {
+      try { await api.uploadGroupAssets(gid, imgs); } catch (err) { alert(err instanceof Error ? err.message : "图片上传失败"); }
+    }
+    try {
+      const d = await api.getGroupAssets(gid);
+      setImages(d?.images ?? []);
+    } catch { /* ignore */ }
+    load();
+    /* 上传视频完成后弹出智能参数推荐弹窗（仅视频 ≥ 1 个；走 stay=true 不会自动跳工作台） */
+    if (uploadedEntries.length > 0) setSmartSuggestVids(uploadedEntries);
+  };
+
   const handleUploadFiles = () => {
     if (!tree.startsWith("g:")) { alert("请先选择案例"); return; }
     const gid = tree.slice(2);
@@ -871,36 +1024,27 @@ export function FileLibrary() {
     input.accept = ".mp4,.mov,.avi,.mkv,.webm,image/*";
     input.multiple = true;
     input.onchange = async () => {
-      const files = Array.from(input.files ?? []);
-      if (!files.length) return;
-      const vids = files.filter((f) => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name) || f.type.startsWith("video/"));
-      const imgs = files.filter((f) => f.type.startsWith("image/"));
-      const uploadedIds: string[] = [];
-      const uploadedEntries: { video_id: string; file_name: string }[] = [];
-      if (vids.length) {
-        const ids = await uploadFiles(vids, gid, { stay: true });
-        uploadedIds.push(...ids);
-        /* 用详情拉取文件名（analyzeBatch 也要文件名） */
-        for (const id of ids) {
-          try {
-            const detail = await api.getVideo(id);
-            uploadedEntries.push({ video_id: id, file_name: detail.file_name });
-          } catch {
-            uploadedEntries.push({ video_id: id, file_name: "" });
-          }
-        }
-      }
-      if (imgs.length) {
-        try { await api.uploadGroupAssets(gid, imgs); } catch (err) { alert(err instanceof Error ? err.message : "图片上传失败"); }
-      }
-      try {
-        const d = await api.getGroupAssets(gid);
-        setImages(d?.images ?? []);
-      } catch { /* ignore */ }
-      load();
+      await processFiles(Array.from(input.files ?? []), gid);
       input.value = "";
-      /* 上传视频完成后弹出智能参数推荐弹窗（仅视频 ≥ 1 个；走 stay=true 不会自动跳工作台） */
-      if (uploadedEntries.length > 0) setSmartSuggestVids(uploadedEntries);
+    };
+    input.click();
+  };
+
+  /* 文件夹递归上传：webkitdirectory 让浏览器递归展开子文件夹，FileList 已扁平，忽略相对路径 */
+  const handleUploadFolder = () => {
+    if (!tree.startsWith("g:")) { alert("请先选择案例"); return; }
+    const gid = tree.slice(2);
+    if (!gid || gid === "undefined" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gid)) {
+      alert("案例 ID 异常，请重新选择案例后重试");
+      return;
+    }
+    const input = document.createElement("input");
+    input.type = "file";
+    input.webkitdirectory = true;
+    input.multiple = true;
+    input.onchange = async () => {
+      await processFiles(Array.from(input.files ?? []), gid);
+      input.value = "";
     };
     input.click();
   };
@@ -1060,21 +1204,6 @@ export function FileLibrary() {
     setBatchTargets(targets);
   };
 
-  const handleBatchSubmit = async (params: PipelineParams) => {
-    if (!batchTargets) return;
-    setAnalyzing(true);
-    try {
-      await api.analyzeBatch(batchTargets, params);
-      setSelected(new Set());
-      setBatchTargets(null);
-      load();  // 提交结果靠列表刷新 + 侧栏徽章自然反馈，不弹原生窗
-    } catch (err) {
-      throw err instanceof Error ? err : new Error("批量解析失败");
-    } finally {
-      setAnalyzing(false);
-    }
-  };
-
   /* 智能推荐弹窗应用入口：多视频共享参数走 analyzeBatch，不确定视频走逐个 PUT /params */
   const handleApplySmartSuggest = async (params: PipelineParams, videoIds: string[]) => {
     setAnalyzing(true);
@@ -1116,14 +1245,23 @@ export function FileLibrary() {
         flDragDepthRef.current = 0;
         setFlDragOver(false);
         if (!activeGroupId) return;
-        const files = Array.from(e.dataTransfer?.files ?? []);
-        if (!files.length) return;
-        const vids = files.filter((f) => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name) || f.type.startsWith("video/"));
-        const imgs = files.filter((f) => f.type.startsWith("image/"));
-        if (vids.length) await uploadFiles(vids, activeGroupId, { stay: true });
-        if (imgs.length) {
-          try { await api.uploadGroupAssets(activeGroupId, imgs); load(); } catch (err) { alert(err instanceof Error ? err.message : "图片上传失败"); }
+        /* 优先检测 webkitGetAsEntry：支持文件夹递归上传 */
+        const items = e.dataTransfer?.items;
+        let allFiles: File[] = [];
+        if (items && items.length > 0 && 'webkitGetAsEntry' in items[0]) {
+          for (let i = 0; i < items.length; i++) {
+            const entry = items[i].webkitGetAsEntry();
+            if (entry) {
+              const files = await readEntry(entry);
+              allFiles.push(...files);
+            }
+          }
+        } else {
+          allFiles = Array.from(e.dataTransfer?.files ?? []);
         }
+        if (!allFiles.length) return;
+        /* 与「上传」按钮同逻辑：视频上传后触发智能参数推荐 + 图片上传后立即刷新素材 */
+        await processFiles(allFiles, activeGroupId);
       }}
     >
       {flDragOver && activeGroupId && (
@@ -1135,7 +1273,7 @@ export function FileLibrary() {
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
             <div className="t1">松开上传到当前案例</div>
-            <div className="t2">支持视频（MP4/MOV/AVI/MKV/WEBM）和图片（自动识别）</div>
+            <div className="t2">支持视频（MP4/MOV/AVI/MKV/WEBM）、图片（自动识别）和文件夹（递归上传）</div>
           </div>
         </div>
       )}
@@ -1155,6 +1293,7 @@ export function FileLibrary() {
           search={search} statusFilter={statusFilter} tree={tree} isUploading={isUploading}
           selected={selected} allPendingIds={displayPendingIds} analyzing={analyzing}
           onSearch={setSearch} onStatusFilter={setStatusFilter} onUpload={handleUploadFiles}
+          onUploadFolder={handleUploadFolder}
           onToggleSelect={toggleSelect} onToggleSelectAll={toggleSelectAll} onAnalyze={handleAnalyze}
           onOpenFile={(f, openParams, reparse) => openWorkbench(f.id, { openParams, reparse })}
           onEditCase={openEditCase}
@@ -1239,19 +1378,318 @@ export function FileLibrary() {
         </div>
       )}
 
-      {/* 批量解析参数面板：整批应用同一套参数 */}
+      {/* 批量解析小弹窗（v0.37）：2 选项（按各视频设置 / 统一参数）替代旧 ParameterPanel */}
       {batchTargets && (
-        <div className="g-modal-overlay">
-          <div className="g-modal" style={{ height: "min(620px, 82vh)" }}>
-            <ParameterPanel
-              batchCount={batchTargets.length}
-              onBatchSubmit={handleBatchSubmit}
-              onParamsSet={() => {}}
-              onClose={() => setBatchTargets(null)}
-            />
-          </div>
-        </div>
+        <BatchAnalyzeDialog
+          count={batchTargets.length}
+          onClose={() => setBatchTargets(null)}
+          onSubmit={async (mode, params) => {
+            setAnalyzing(true);
+            try {
+              if (mode === "per-video") {
+                /* Option A：不传 params，每视频用其自身持久化开关（处理参数设置/智能推荐/默认） */
+                await api.analyzeBatch(batchTargets);
+              } else {
+                /* Option B：统一参数，整批应用 */
+                await api.analyzeBatch(batchTargets, params);
+              }
+              setSelected(new Set());
+              setBatchTargets(null);
+              load();
+            } catch (err) {
+              alert(err instanceof Error ? err.message : "批量解析失败");
+              throw err;
+            } finally {
+              setAnalyzing(false);
+            }
+          }}
+        />
       )}
+    </div>
+  );
+}
+
+/* ═══════════════════════ 批量解析小弹窗（v0.37） ═══════════════════════ */
+type BatchMode = "per-video" | "unified";
+
+/* 内容类型场景预设：9 智能推荐场景（v0.37，与 services/smart_suggest.py SCENE_CLASSES 一一对应）
+   ⚠️ 摘要默认全关（v0.37）：所有场景预设都不启用摘要（LLM 摘要耗时长且非核心）
+   旧值（general/meeting/surveillance/text_recognition）保留兼容历史；custom 不预设，留用户自由配 */
+export const CONTENT_TYPE_PRESETS: Record<PipelineParams["content_type"], {
+  detection_enabled: boolean; face_enabled: boolean; plate_enabled: boolean;
+  ocr_enabled: boolean; search_index_enabled: boolean; summary_enabled: boolean;
+} | null> = {
+  /* 旧值（兼容历史） */
+  general:          { detection_enabled: true,  face_enabled: false, plate_enabled: false, ocr_enabled: false, search_index_enabled: true,  summary_enabled: false },
+  meeting:          { detection_enabled: true,  face_enabled: true,  plate_enabled: false, ocr_enabled: false, search_index_enabled: true,  summary_enabled: false },
+  surveillance:     { detection_enabled: true,  face_enabled: true,  plate_enabled: true,  ocr_enabled: false, search_index_enabled: true,  summary_enabled: false },
+  text_recognition: { detection_enabled: false, face_enabled: false, plate_enabled: false, ocr_enabled: true,  search_index_enabled: false, summary_enabled: false },
+  /* 9 智能推荐场景（与 smart_suggest SCENE_CLASSES 一致） */
+  traffic:              { detection_enabled: true,  face_enabled: false, plate_enabled: true,  ocr_enabled: false, search_index_enabled: true,  summary_enabled: false },
+  vehicle_focus:        { detection_enabled: true,  face_enabled: false, plate_enabled: true,  ocr_enabled: false, search_index_enabled: true,  summary_enabled: false },
+  surveillance_people:  { detection_enabled: true,  face_enabled: true,  plate_enabled: false, ocr_enabled: false, search_index_enabled: true,  summary_enabled: false },
+  indoor:               { detection_enabled: true,  face_enabled: true,  plate_enabled: false, ocr_enabled: false, search_index_enabled: true,  summary_enabled: false },
+  portrait_focus:       { detection_enabled: true,  face_enabled: true,  plate_enabled: false, ocr_enabled: false, search_index_enabled: true,  summary_enabled: false },
+  document:             { detection_enabled: false, face_enabled: false, plate_enabled: false, ocr_enabled: true,  search_index_enabled: false, summary_enabled: false },
+  street_mixed:         { detection_enabled: true,  face_enabled: true,  plate_enabled: true,  ocr_enabled: false, search_index_enabled: true,  summary_enabled: false },
+  outdoor_landscape:    { detection_enabled: true,  face_enabled: false, plate_enabled: false, ocr_enabled: false, search_index_enabled: true,  summary_enabled: false },
+  chat_screen:          { detection_enabled: false, face_enabled: false, plate_enabled: false, ocr_enabled: true,  search_index_enabled: false, summary_enabled: false },
+  /* custom：用户自由配 */
+  custom: null,
+};
+
+/* 统一参数面板（可复用）：内容类型下拉 + 6 开关，受 disabled 控 */
+export type UnifiedParams = {
+  content_type: PipelineParams["content_type"];
+  detection_enabled: boolean; face_enabled: boolean; plate_enabled: boolean;
+  ocr_enabled: boolean; search_index_enabled: boolean; summary_enabled: boolean;
+};
+
+export function AnalyzeSettingsPanel({
+  value, onChange, disabled,
+}: {
+  value: UnifiedParams;
+  onChange: (next: UnifiedParams) => void;
+  disabled?: boolean;
+}) {
+  function changeContentType(next: PipelineParams["content_type"]) {
+    const preset = CONTENT_TYPE_PRESETS[next];
+    onChange({
+      ...value,
+      content_type: next,
+      ...(preset ?? {}),
+    });
+  }
+  function setToggle(k: "detection_enabled" | "face_enabled" | "plate_enabled" | "ocr_enabled" | "search_index_enabled" | "summary_enabled", v: boolean) {
+    const next = { ...value, [k]: v };
+    if (k === "detection_enabled" && !v) { next.face_enabled = false; next.plate_enabled = false; }
+    onChange(next);
+  }
+
+  return (
+    <div className={"border border-gray-200 rounded-lg p-3 space-y-2.5 bg-gray-50/60 transition-opacity" + (disabled ? " fl-batch-disabled" : "")}>
+      <div>
+        <label className="g-label !mb-1">内容类型</label>
+        <select
+          className="g-input w-full !h-[30px] !text-[12px]"
+          value={value.content_type}
+          disabled={disabled}
+          onChange={(e) => changeContentType(e.target.value as PipelineParams["content_type"])}
+        >
+          {/* 9 智能推荐场景（与 smart_suggest.py SCENE_CLASSES 对齐）—— 所有场景预设摘要都关 */}
+          <option value="traffic">交通监控（车流 + 车牌）</option>
+          <option value="vehicle_focus">车辆特写（车 + 车牌）</option>
+          <option value="surveillance_people">人流监控（人 + 检测）</option>
+          <option value="indoor">室内人物（多人 + 人脸）</option>
+          <option value="portrait_focus">人物特写（人脸）</option>
+          <option value="document">文档/屏幕（仅 OCR）</option>
+          <option value="street_mixed">街景混合（人 + 车 + 车牌）</option>
+          <option value="outdoor_landscape">室外空旷/风景（仅检测）</option>
+          <option value="chat_screen">聊天记录录屏（仅 OCR）</option>
+          <option value="custom">自定义（手动调）</option>
+        </select>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        <label className="fl-alg !py-2">
+          <input type="checkbox" checked={value.detection_enabled} disabled={disabled} onChange={(e) => setToggle("detection_enabled", e.target.checked)} />
+          <span className="fl-alg-tt">物体检测</span>
+        </label>
+        <label className="fl-alg !py-2">
+          <input type="checkbox" checked={value.face_enabled} disabled={disabled || !value.detection_enabled} onChange={(e) => setToggle("face_enabled", e.target.checked)} />
+          <span className="fl-alg-tt">人脸</span>
+        </label>
+        <label className="fl-alg !py-2">
+          <input type="checkbox" checked={value.plate_enabled} disabled={disabled || !value.detection_enabled} onChange={(e) => setToggle("plate_enabled", e.target.checked)} />
+          <span className="fl-alg-tt">车牌</span>
+        </label>
+        <label className="fl-alg !py-2">
+          <input type="checkbox" checked={value.ocr_enabled} disabled={disabled} onChange={(e) => setToggle("ocr_enabled", e.target.checked)} />
+          <span className="fl-alg-tt">OCR 文字</span>
+        </label>
+        <label className="fl-alg !py-2">
+          <input type="checkbox" checked={value.search_index_enabled} disabled={disabled} onChange={(e) => setToggle("search_index_enabled", e.target.checked)} />
+          <span className="fl-alg-tt">搜索索引</span>
+        </label>
+        <label className="fl-alg !py-2">
+          <input type="checkbox" checked={value.summary_enabled} disabled={disabled} onChange={(e) => setToggle("summary_enabled", e.target.checked)} />
+          <span className="fl-alg-tt">智能摘要</span>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+/* 把 UnifiedParams 翻译成完整 PipelineParams（其他字段给默认值）
+   ⚠️ 摘要默认 false（v0.37） */
+export function buildPipelineParams(u: UnifiedParams): PipelineParams {
+  return {
+    content_type: u.content_type,
+    vision_enabled: true,
+    audio_enabled: false,
+    ocr_enabled: u.ocr_enabled,
+    caption_enabled: true,
+    detection_enabled: u.detection_enabled,
+    detection_classes: null,
+    face_enabled: u.face_enabled,
+    plate_enabled: u.plate_enabled,
+    search_index_enabled: u.search_index_enabled,
+    summary_enabled: u.summary_enabled,
+    summary_mode: "vlm_llm",
+    language: "auto",
+    sample_fps: 1.0,
+    segment_threshold: 0.5,
+    caption_with_context: true,
+    summary_detail: "standard",
+    encode_profile: null,
+    apply_to_group: false,
+  };
+}
+
+function BatchAnalyzeDialog({
+  count, onClose, onSubmit,
+}: {
+  count: number;
+  onClose: () => void;
+  onSubmit: (mode: BatchMode, params?: PipelineParams) => Promise<void>;
+}) {
+  const [mode, setMode] = useState<BatchMode>("per-video");
+  const [unified, setUnified] = useState<UnifiedParams>({
+    content_type: "outdoor_landscape",
+    detection_enabled: true,
+    face_enabled: false,
+    plate_enabled: false,
+    ocr_enabled: false,
+    search_index_enabled: true,
+    summary_enabled: false,
+  });
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (mode === "per-video") {
+        await onSubmit("per-video");
+      } else {
+        await onSubmit("unified", buildPipelineParams(unified));
+      }
+      onClose();
+    } catch {
+      /* alert 已在外层处理 */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="g-modal-overlay">
+      <div className="g-modal" style={{ width: 520, maxHeight: "85vh" }}>
+        <div className="g-card-hd">
+          <span className="g-card-tt">
+            <IconBolt />
+            批量解析（{count} 个视频）
+          </span>
+          <button className="modal-x" onClick={onClose} title="关闭" aria-label="关闭">×</button>
+        </div>
+
+        <div className="p-4 space-y-3 overflow-auto">
+          {/* ── Option A：按各视频已有设置 ── */}
+          <label className={"fl-radio-card" + (mode === "per-video" ? " on" : "")}>
+            <input
+              type="radio"
+              name="batch-mode"
+              checked={mode === "per-video"}
+              onChange={() => setMode("per-video")}
+            />
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-semibold text-gray-900">按各视频已有设置处理</div>
+              <div className="text-[11.5px] text-gray-500 mt-0.5 leading-relaxed">
+                每个视频使用其「处理参数设置」中的开关；未编辑过设置的视频 = 智能推荐或默认参数
+              </div>
+            </div>
+          </label>
+
+          {/* ── Option B：统一参数处理 ── */}
+          <label className={"fl-radio-card" + (mode === "unified" ? " on" : "")}>
+            <input
+              type="radio"
+              name="batch-mode"
+              checked={mode === "unified"}
+              onChange={() => setMode("unified")}
+            />
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-semibold text-gray-900">统一参数处理</div>
+              <div className="text-[11.5px] text-gray-500 mt-0.5 leading-relaxed">
+                下方设置的同一套参数将应用到本批所有视频
+              </div>
+            </div>
+          </label>
+
+          <AnalyzeSettingsPanel value={unified} onChange={setUnified} disabled={mode === "per-video"} />
+        </div>
+
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-gray-100">
+          <button className="g-btn" onClick={onClose} disabled={busy}>取消</button>
+          <button className="g-btn g-btn-primary" onClick={handleSubmit} disabled={busy}>
+            {busy ? "启动中…" : `开始解析（${count}）`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* �══════════════════════ 单视频解析小弹窗（v0.37，Workbench 复用） ═══════════════════════ */
+export function SingleAnalyzeDialog({
+  title, initial, reparse, onClose, onSubmit,
+}: {
+  title: string;
+  initial: UnifiedParams;
+  reparse: boolean;
+  onClose: () => void;
+  onSubmit: (params: PipelineParams, reparse: boolean) => Promise<void>;
+}) {
+  const [unified, setUnified] = useState<UnifiedParams>(initial);
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onSubmit(buildPipelineParams(unified), reparse);
+      onClose();
+    } catch {
+      /* alert 由父组件处理 */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="g-modal-overlay">
+      <div className="g-modal" style={{ width: 460, maxHeight: "85vh" }}>
+        <div className="g-card-hd">
+          <span className="g-card-tt">
+            <IconBolt />
+            {title}
+          </span>
+          <button className="modal-x" onClick={onClose} title="关闭" aria-label="关闭">×</button>
+        </div>
+        <div className="p-4 space-y-3 overflow-auto">
+          <AnalyzeSettingsPanel value={unified} onChange={setUnified} />
+          {reparse && (
+            <div className="text-[11.5px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5 leading-relaxed">
+              重新解析将基于当前文件创建新版本，旧版本结果仍可查看。
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-gray-100">
+          <button className="g-btn" onClick={onClose} disabled={busy}>取消</button>
+          <button className="g-btn g-btn-primary" onClick={handleSubmit} disabled={busy}>
+            {busy ? "启动中…" : (reparse ? "开始重新解析" : "开始解析")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

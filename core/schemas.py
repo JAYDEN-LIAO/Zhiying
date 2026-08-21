@@ -190,6 +190,29 @@ class PipelineParams(BaseModel):
         return self
 
 
+class ToggleSettings(BaseModel):
+    """抽屉「处理参数设置」小面板的轻量更新体 — 持久化 6 个核心开关。
+
+    不触发管道、不动版本、不改 group/apply_to_group 语义，纯粹"先把开关落库"。
+    用户随后点底部「视频解析」按钮才走完整 PUT /params 流程。
+    """
+    detection_enabled: bool | None = Field(default=None)
+    face_enabled: bool | None = Field(default=None)
+    plate_enabled: bool | None = Field(default=None)
+    ocr_enabled: bool | None = Field(default=None)
+    search_index_enabled: bool | None = Field(default=None)
+    summary_enabled: bool | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def validate_cross_dependencies(self):
+        # face / plate → detection 必须开启（保持与 PipelineParams 一致的连锁规则）
+        if self.face_enabled and self.detection_enabled is False:
+            raise ValueError("物体检测已关闭，人脸识别必须同时关闭")
+        if self.plate_enabled and self.detection_enabled is False:
+            raise ValueError("物体检测已关闭，车牌识别必须同时关闭")
+        return self
+
+
 class ExternalVideoRegister(PipelineParams):
     """注册平台共享路径视频的请求 — 绝对路径就地引用，不上传字节。
 
@@ -313,6 +336,12 @@ class VideoResponse(BaseModel):
 
     # ── 云智平台外部文件 ID (v0.25.x) ──
     external_file_id: int | None   = None
+
+    # ── 智能参数推荐 (v0.37) ──
+    suggested_scene_key: str | None    = None
+    suggested_scene_label: str | None  = None
+    suggested_confidence: float | None = None
+    suggested_params: dict | None      = None
 
     summary: VideoSummary | None   = None
 

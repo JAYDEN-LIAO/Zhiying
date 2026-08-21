@@ -40,7 +40,7 @@ export function Sidebar({
   onNavigate: (p: Page) => void;
   onNavigateSettings: (tab: SettingsTab) => void;
   /* 案例库灰=仅上传未提交 / 视频解析蓝=处理中(恒1) / 任务中心 黄=排队中 绿=新完成 红=失败 */
-  counts?: { files?: number; workbench?: number; queued?: number; newCompleted?: number; failed?: number };
+  counts?: { files?: number; filesLabel?: string; workbench?: number; queued?: number; newCompleted?: number; failed?: number };
 }) {
   return (
     <aside className="sidebar">
@@ -59,9 +59,14 @@ export function Sidebar({
               {item.icon}
               <span>{item.label}</span>
               {isFiles ? (
-                /* 案例库：灰 = 仅上传未提交任务的文件数 */
+                /* 案例库：案例名（蓝色截断）+ 待处理视频数（灰色徽章）拆分为两个标签 */
                 counts?.files != null && counts.files > 0 && (
-                  <span className="sb-count sb-count-gray" title="仅上传未提交">{counts.files}</span>
+                  <span className="sb-count-group">
+                    {counts.filesLabel && (
+                      <span className="sb-count sb-count-name" title={counts.filesLabel}>{counts.filesLabel}</span>
+                    )}
+                    <span className="sb-count sb-count-gray" title="待处理">{counts.files}</span>
+                  </span>
                 )
               ) : isWorkbench ? (
                 /* 视频解析：蓝 = 有视频处理中 → 恒显示 1 */

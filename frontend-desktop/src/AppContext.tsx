@@ -23,11 +23,13 @@ interface AppCtx {
   /* 跨页选视频：跳工作台并（可选）自动打开参数面板 */
   selectedVideoId: string | null;
   initialVersionId: string | null;
-  openWorkbench: (videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean }) => void;
+  openWorkbench: (videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null } }) => void;
   paramsTick: number;
   consumeParamsTick: () => void; // 参数面板自动打开意图一次性消费（预览/切页不再重复弹）
   reparseIntent: boolean;        // 自动打开的参数面板是否走「重新解析」模式（已完成文件重配置参数 → reanalyze 建新版本）
   consumeReparseIntent: () => void;
+  openSeekTarget: { start: number; end: number | null } | null; // 跨页 seek：全局搜索→工作台（一次性消费）
+  consumeOpenSeek: () => void;
   /* 共享视频列表（4s 轮询 + 组重建） */
   videos: VideoListItem[];
   videoGroups: VideoGroup[];
@@ -69,6 +71,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [initialVersionId, setInitialVersionId] = useState<string | null>(null); // 跳转精确定位版本行（任务中心）
   const [paramsTick, setParamsTick] = useState(0);
   const [reparseIntent, setReparseIntent] = useState(false);
+  const [openSeekTarget, setOpenSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
   const [videos, setVideos] = useState<VideoListItem[]>([]);
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
   const [caseGroups, setCaseGroups] = useState<VideoGroup[]>([]);
@@ -101,8 +104,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } else if (pageRef.current === "tasks") {
       setTaskHighlightIds([]); // 离开任务中心清高亮（防快速折返误高亮旧行）
     }
-    if (p === "workbench" && !selectedVideoIdRef.current && processingVideoIdRef.current) {
-      // 未选中任何视频 + 有视频处理中 → 自动定位到处理中的视频
+    /* 进入视频解析页面时优先加载处理中的视频（v0.37）：
+       - 有处理中 → 切到它（覆盖之前选中的视频，避免用户看到「无选中」或「旧视频」）
+       - 没有处理中 → 保留当前选中（持续看片）或空态
+       例外：openWorkbench(videoId, ...) 走特定 videoId，不经过这里，保留用户从任务/搜索来的精确跳转 */
+    if (p === "workbench" && processingVideoIdRef.current) {
       setSelectedVideoId(processingVideoIdRef.current);
       setInitialVersionId(null);
     }
@@ -114,17 +120,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPage("settings");
   }, []);
 
-  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean }) => {
+  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null } }) => {
     setSelectedVideoId(videoId);
     setInitialVersionId(opts?.versionId ?? null); // 精确定位版本行（任务中心跳转）
     setPage("workbench");
     setReparseIntent(opts?.reparse ?? false);      // 参数面板自动打开时是否走「重新解析」（已完成文件重配参数）
     if (opts?.openParams) setParamsTick((t) => t + 1);
+    setOpenSeekTarget(opts?.seekTo ? { start: opts.seekTo.start, end: opts.seekTo.end ?? null } : null); // 跨页 seek：全局搜索→工作台定位时间
   }, []);
 
   /* 参数面板自动打开意图一次性消费：弹过一次后归零，避免预览/切页回来重复弹 */
   const consumeParamsTick = useCallback(() => setParamsTick(0), []);
   const consumeReparseIntent = useCallback(() => setReparseIntent(false), []);
+  const consumeOpenSeek = useCallback(() => setOpenSeekTarget(null), []);
 
   /* ── 视频列表 + 组重建（原 Dashboard 逻辑） ── */
   useEffect(() => {
@@ -269,7 +277,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value: AppCtx = {
     page, navigate, settingsTab, navigateSettings,
     selectedVideoId, openWorkbench, initialVersionId, paramsTick, consumeParamsTick,
-    reparseIntent, consumeReparseIntent,
+    reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek,
     videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups,
     selectedTree, setSelectedTree,
   pendingFileCount, queuedTaskCount, newCompletedCount, failedTaskCount, taskHighlightIds, runningTaskCount, refreshList,

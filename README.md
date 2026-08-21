@@ -19,7 +19,7 @@ curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # �
 | Feature | Endpoint | Status |
 |---|---|---|
 | 上传/批量上传/参数与管道触发 | `POST /videos/upload` + `/upload/batch` + `PUT /videos/{id}/params` | ✅ |
-| 智能场景参数推荐 | `POST /videos/suggest-params`（9 场景分类 → 参数预设, 低置信兜底） | ✅ |
+| **智能参数系统** | `POST /videos/suggest-params` 自动持久化场景推荐 + `PATCH /videos/{id}/toggles` 抽屉轻量持久化 + 抽屉「参数设置」小面板 + 批量解析弹窗（按各视频/统一参数 二选一） | ✅ |
 | 视频详情/状态/播放(stream)/场景缩略图 | `GET /videos/{id}` · `/status` · `/stream?hevc_ok=` · `/thumbnail/{scene}` | ✅ |
 | 多格式支持 | remux(-c copy) + 惰性 H.264 proxy(NVENC) + smart routing | ✅ |
 | 语义搜索（frame/chunk/text/label/track/plate/ocr 7 路） | `POST /search/semantic` | ✅ |
@@ -98,17 +98,28 @@ zhiying/
 
 ## Development Status
 
-**当前状态（v0.35 候选，未发版）**：
-- **智能场景参数**：`POST /videos/suggest-params` 按画面内容推荐参数 —— 9 场景分类（交通/车辆特写/人流监控/室内人物/人物特写/文档屏幕/街景混合/室外风景/聊天录屏），每类对应一组检测/人脸/车牌/OCR 开关预设；低置信(≤0.30)回退默认参数，保证每个视频都有参数产出；场景列表增改自动失效文本缓存
-- **参数校验放宽**：废弃"搜索索引/智能摘要/文字识别至少开启一个"，可仅检测+人脸（纯人脸测试）
-- **人脸多帧补采收紧**：`SHORT_TRACK_SEC=8s`、`LONG_TRACK_SAMPLES=2`，砍 ffmpeg 补采 + 逐帧 SCRFD 次数
-- **桌面端 v0.35 UI增强**：全局搜索（4 类型 + 句式化 chip/人脸·图搜分轨/中文 token）+ 案例库正文拖拽上传 + 侧栏顺序优化 + 持久蓝色描边搜索框
+**当前状态（v0.37 候选，未发版）—— 智能参数系统**：
+
+### 智能参数系统（核心改动）
+
+**持久化推荐结果**：上传完成弹智能参数推荐弹窗（`SmartSuggestDialog`）→ `POST /videos/suggest-params` 计算场景分类 → **自动落库**到 `videos.suggested_scene_key / label / confidence / suggested_params(JSONB)`。关掉弹窗也不丢，下次打开视频详情直接回填。
+
+**抽屉「参数设置」小面板**（替代旧 ParameterPanel）：网格 6 开关（物体检测/人脸/车牌/OCR/搜索/智能摘要）+ 智能推荐按钮。**点击即保存**（PATCH `/videos/{id}/toggles`，仅持久化不入队管道）+ 智能推荐按钮一键重置（自动关摘要）。摘要默认关闭（LLM 摘要耗时长且非核心）。
+
+**ContentType 9 场景枚举**（`core/models.py`）：与 `services/smart_suggest.py` SCENE_CLASSES 一一对应 —— traffic/vehicle_focus/surveillance_people/indoor/portrait_focus/document/street_mixed/outdoor_landscape/chat_screen。每个场景对应一组检测/人脸/车牌/OCR 开关预设（全部摘要关）。
+
+**批量解析弹窗**（替代旧 ParameterPanel）：2 选项单选卡片 —— 「按各视频已有设置处理」或「统一参数处理」。统一参数区用同一套 `AnalyzeSettingsPanel`（内容类型 + 6 开关），per-video 模式置灰禁用。
+
+**Workbench 视频解析弹窗**：`SingleAnalyzeDialog`（460px 紧凑弹窗）替代原 ParameterPanel 模态框 —— pending 直接启动 / completed/failed 建新版本。
+
+### 其他
+
 - 后端 v0.34：OCR 定版 RapidOCR(PP-OCRv3 ONNX) + DirectML 独立子进程（DML 隔离零影响人脸/车牌 CUDA）+ 文本去重/顺序整理
 - 桌面端重构（浅蓝 4 页管理后台 + frameless 窗口 + SplitPane 工作台 + 系统监控）+ 暗色主题
 - 文件库/多版本解析/任务中心（版本行=一次解析、日志生命周期、耗时、批量解析、文件与素材重命名）
 - 一键安装器+内嵌 PostgreSQL+后端字节码封装+部署/构建健壮性
 - 设置档位感知（2b 自动套用轻量编码/量化默认 + 设置页档位徽标）+ 参数预设随 git 迁移
 
-**里程碑摘要**：v0.34 OCR 定版 · v0.33 摘要链路根治 · v0.32 全局任务队列 · v0.31 人脸搜索+跨视频穿透 · v0.29 人脸链路重构 · v0.28 云智嵌入 UI · v0.24 云智接入+生产部署 · 更早见 git log。
+**里程碑摘要**：v0.37 智能参数系统 · v0.34 OCR 定版 · v0.33 摘要链路根治 · v0.32 全局任务队列 · v0.31 人脸搜索+跨视频穿透 · v0.29 人脸链路重构 · v0.28 云智嵌入 UI · v0.24 云智接入+生产部署 · 更早见 git log。
 
 **Planned**：Grounding(Florence-2)。

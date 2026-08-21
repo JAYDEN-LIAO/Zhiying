@@ -1,7 +1,7 @@
 # Zhiying Architecture
 
-> Version: 0.35 候选（桌面端 UI）· 后端定版 v0.34（OCR） | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
-> 核心能力：16-op DAG · 4 编码路径 · YOLO11/BoT-SORT 双层 ReID · 人脸/车牌/OCR · 8 路搜索+图搜 · 4 级参数+设置/预设 · 全局任务队列 · 云智接入 · 桌面端
+> Version: 0.37 候选（智能参数系统）· 后端定版 v0.34（OCR） | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> 核心能力：16-op DAG · 4 编码路径 · YOLO11/BoT-SORT 双层 ReID · 人脸/车牌/OCR · 8 路搜索+图搜 · **智能参数系统（持久化推荐 + 抽屉轻量面板 + 紧凑弹窗）** · 全局任务队列 · 云智接入 · 桌面端
 
 ## System Data Flow
 
@@ -32,15 +32,35 @@
 
 ```
 4 级层次控制管道执行:
-  L1 场景 (general/meeting/surveillance/text_recognition/custom)
+  L1 场景（9 智能推荐场景 + 5 旧值兼容）: traffic/vehicle_focus/surveillance_people/
+       indoor/portrait_focus/document/street_mixed/outdoor_landscape/chat_screen
+       （旧值 general/meeting/surveillance/text_recognition/custom 保留兼容历史视频）
   L2 感知模块: vision/audio/ocr/caption/detection/grounding（各开关）
   L3 功能开关: search_index_enabled / summary_enabled（已完成视频可增量）
   L4 高级参数: language/sample_fps/encode_profile/summary_mode(vlm_llm 默认)
 
+智能参数系统（v0.37 核心）:
+  ┌─ 持久化层（DB 字段）：
+  │   videos.suggested_scene_key / label / confidence / suggested_params(JSONB)
+  │   POST /videos/suggest-params 计算后自动落库，关闭弹窗不丢失
+  │
+  ├─ 抽屉轻量层（PATCH /videos/{id}/toggles）：
+  │   仅持久化 6 开关（detection/face/plate/ocr/search_index/summary），
+  │   不入队管道、不动版本、不联动组（与 PUT /params 解耦）
+  │
+  ├─ UI 层（统一 6 开关 + 内容类型场景预设）：
+  │   - 抽屉「参数设置」小面板（FileDetailDrawer 内嵌，点击即保存）
+  │   - Workbench SingleAnalyzeDialog（460px 紧凑弹窗，替代旧 ParameterPanel）
+  │   - 批量解析 BatchAnalyzeDialog（2 选项：按各视频/统一参数）
+  │   - 三个场景共用 AnalyzeSettingsPanel（内容类型 + 6 开关）+ buildPipelineParams 工具
+  │
+  └─ 智能推荐场景映射（CONTENT_TYPE_PRESETS，与 services/smart_suggest.py SCENE_CLASSES 一一对应）：
+      traffic/vehicle_focus/surveillance_people/indoor/portrait_focus/document/
+      street_mixed/outdoor_landscape/chat_screen，每个场景对应一组开关预设
+      所有场景摘要预设 = false（LLM 摘要耗时长且非核心，按需开启）
+
 智能场景参数推荐（POST /videos/suggest-params）:
   按视频画面内容分类（services/smart_suggest.py, 9 场景）
-  traffic/vehicle_focus/surveillance_people/indoor/portrait_focus/document/
-  street_mixed/outdoor_landscape/chat_screen
   每类对应一组检测/人脸/车牌/OCR 开关预设；低置信(≤0.30)回退 _DEFAULT_PARAMS
   批量帧向量按成功解码分组对齐（防跨视频污染）；embedder 缓存键含场景指纹（改场景自动失效）
   例：人流监控→det+face on、plate off；文档/聊天录屏→仅 OCR、不建搜索索引
@@ -48,7 +68,32 @@
 校验: vision OFF→ocr/caption/detection OFF；caption OFF→summary OFF
       （已废弃"搜索索引/智能摘要/文字识别至少开启一个"——可仅检测+人脸）
 门控: detection 双门控(config backend + per-video)；face/plate 三门控
+
+⚠️ 摘要默认关闭（v0.37）：摘要耗时长且非核心，新上传视频 / 4 种参数面板（抽屉/Wb/批量/智能推荐）默认全关闭
 ```
+
+## 智能参数 UI 集成
+
+```
+抽屉「参数设置」section（替代旧 ParameterPanel）:
+  ┌─ 6 开关网格 ─┐
+  │ 物体检测 / 人脸 (face→det) / 车牌 (plate→det) / OCR 文字 / 搜索索引 / 智能摘要 │
+  └──────────────┘
+  ┌─ 智能推荐按钮 (fl-act，蓝边蓝底) ─┐
+  │ 点击 → applySuggested() → 一键套用 suggested_params + 关摘要 → PATCH 持久化 │
+  └──────────────────────────────────────┘
+
+Workbench SingleAnalyzeDialog（460px 紧凑）:
+  - pending → 开始解析 → updateParams 入队管道
+  - completed/failed → 开始重新解析 → reanalyze 建新版本
+  - 初始值 = currentVideo 的 6 开关 + content_type
+
+批量解析 BatchAnalyzeDialog（520px）:
+  ┌─ 2 选项单选卡片 ─┐
+  │ ○ 按各视频已有设置处理（每视频用自身持久化开关） │
+  │ ○ 统一参数处理（用下方 6 开关 + content_type 整批） │
+  └──────────────────�
+  + AnalyzeSettingsPanel（per-video 模式置灰禁用）
 
 ## Pipeline Detail
 
@@ -113,10 +158,11 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/v1/videos/upload` · `/upload/batch` | 上传（单个/批量建组） |
-| POST | `/api/v1/videos/suggest-params` | 智能场景参数推荐（9 场景分类） |
+| POST | `/api/v1/videos/suggest-params` | 智能场景参数推荐（9 场景分类，**自动落库**到 videos.suggested_* 4 字段） |
+| PATCH | `/api/v1/videos/{id}/toggles` | **抽屉轻量持久化**：仅 6 核心开关，不入队管道（v0.37） |
 | POST | `/api/v1/videos/register-external` | 平台文件就地引用 |
-| PUT | `/api/v1/videos/{id}/params` | 设置参数 + 启动管道 |
-| POST | `/api/v1/videos/reuse` · `/{id}/reanalyze` · `/analyze-batch` | 新建/重解析(pending)/批量解析 |
+| PUT | `/api/v1/videos/{id}/params` | 设置参数 + 启动管道（pending 入队 / completed 建新版本） |
+| POST | `/api/v1/videos/reuse` · `/{id}/reanalyze` · `/analyze-batch` | 新建/重解析(pending)/批量解析（参数可省略=各视频用自身） |
 | GET | `/api/v1/videos/{id}` · `/status` · `/stream` · `/thumbnail` | 详情/状态/播放/缩略图 |
 | DELETE | `/api/v1/videos/{id}` | 删除（级联+清盘） |
 | GET/PUT | `/api/v1/settings` · `/settings/pipeline` | 系统设置 |
@@ -160,11 +206,19 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 
 ## Current Status
 
-**核心链路全部 ✅**：DAG(16 ops) / 4 编码 / 双层 ReID / 8 路搜索+图搜 / 人脸+车牌+OCR / 摘要(vlm_llm) / 多格式 / 4 级参数 / 设置+预设 / GPU 锁 / 任务队列 / 文件库+多版本 / 云智 / 桌面端 / 生产部署。
+**核心链路全部 ✅**：DAG(16 ops) / 4 编码 / 双层 ReID / 8 路搜索+图搜 / 人脸+车牌+OCR / 摘要(vlm_llm, 默认关) / 多格式 / **智能参数系统（持久化推荐+抽屉轻量面板+紧凑弹窗）** / 设置+预设 / GPU 锁 / 任务队列 / 文件库+多版本 / 云智 / 桌面端 / 生产部署。
 
-**桌面前端 v0.35 增强（候选）**：全局搜索 4 类型 + 句式化 chip + 人脸/图搜分轨；案例库正文拖拽上传；侧栏顺序优化（案例库 → 全局搜索 → 视频解析 → 任务中心）；持久蓝色描边搜索框。
+**v0.37 智能参数系统（本次重点，候选）**：
+- 持久化：`POST /videos/suggest-params` 自动落库 4 字段（scene_key/label/confidence/params）；关闭弹窗也不丢
+- 抽屉轻量面板：FileDetailDrawer「参数设置」section 替代旧 ParameterPanel，6 开关（detection/face/plate/ocr/search_index/summary）点击即保存（`PATCH /videos/{id}/toggles`，仅持久化不入队管道）
+- 智能推荐按钮：一键重置 6 开关 + 强制关摘要（场景预设本就关摘要）
+- ContentType 9 场景枚举 + CONTENT_TYPE_PRESETS（与 smart_suggest SCENE_CLASSES 对齐）
+- Workbench SingleAnalyzeDialog（460px 紧凑弹窗）替代旧 ParameterPanel 模态框
+- 批量解析 BatchAnalyzeDialog（520px）：2 选项单选（按各视频已有设置 / 统一参数）+ AnalyzeSettingsPanel 共享组件
+- 摘要默认全关闭：模型 / 上传表单 / 所有场景预设 / 智能推荐按钮联动 → 都关
+- Workbench 导航自动加载处理中视频（覆盖之前选择，避免空态）
 
-**后端 v0.35 候选（本次重点）**：智能场景参数推荐（`POST /videos/suggest-params`，9 场景分类 + 低置信兜底 + 批量向量对齐修复 + 场景指纹缓存失效）；废弃"搜索/摘要/OCR 至少开启一个"校验（可仅检测+人脸）；人脸多帧补采收紧（`SHORT_TRACK_SEC=8s` / `LONG_TRACK_SAMPLES=2`）。
+**桌面前端 v0.35 增强（候选）**：全局搜索 4 类型 + 句式化 chip + 人脸/图搜分轨；案例库正文拖拽上传；侧栏顺序优化（案例库 → 全局搜索 → 视频解析 → 任务中心）；持久蓝色描边搜索框；检索范围过滤按案例名/视频名区分命中（只匹配视频时只显示该视频）。
 
 **非完全**：Chunk 编码（默认关）· OCR 导出/增强（预留）· Grounding(Florence-2 占位)。
 

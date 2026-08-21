@@ -20,7 +20,7 @@ from api.deps import get_db
 from api.schemas import APIResponse, VideoStatusResponse, ReuseRequest, AnalyzeBatchRequest, RenameFileRequest
 from core.schemas import (
     VideoCreate, VideoResponse, VideoListItem, VideoGroupResponse,
-    PipelineParams, ExternalVideoRegister, ContentType,
+    PipelineParams, ExternalVideoRegister, ContentType, ToggleSettings,
     FileItem, VersionInfo,
 )
 from core.config_loader import load_config
@@ -86,7 +86,7 @@ async def upload_video(
     detection_classes: str | None = Form(None),
     face_enabled: bool = Form(False),
     plate_enabled: bool = Form(False),
-    summary_enabled: bool = Form(True),
+    summary_enabled: bool = Form(False),
     summary_mode: str = Form("vlm_llm"),
     search_index_enabled: bool = Form(True),
     sample_fps: float = Form(1.0),
@@ -256,7 +256,7 @@ async def upload_videos_batch(
     detection_classes: str | None = Form(None),
     face_enabled: bool = Form(False),
     plate_enabled: bool = Form(False),
-    summary_enabled: bool = Form(True),
+    summary_enabled: bool = Form(False),
     summary_mode: str = Form("vlm_llm"),
     search_index_enabled: bool = Form(True),
     sample_fps: float = Form(1.0),
@@ -674,6 +674,54 @@ async def update_video_params(
 
     else:
         raise HTTPException(status_code=400, detail=f"视频状态为 {status_val}，无法修改参数")
+
+
+@router.patch("/videos/{video_id}/toggles")
+async def patch_video_toggles(
+    video_id: uuid.UUID,
+    payload: ToggleSettings,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[VideoResponse]:
+    """抽屉「处理参数设置」小面板的轻量持久化端点（v0.37）。
+
+    仅写入传入的非 None 字段，**不入队管道、不动版本、不联动组**，纯粹把 5 个
+    核心开关落到 video 行；用户随后点底部「视频解析」按钮才走完整 PUT /params 流程。
+    """
+    updates: dict = {}
+    if payload.detection_enabled is not None:
+        updates["detection_enabled"] = payload.detection_enabled
+    if payload.face_enabled is not None:
+        updates["face_enabled"] = payload.face_enabled
+    if payload.plate_enabled is not None:
+        updates["plate_enabled"] = payload.plate_enabled
+    if payload.ocr_enabled is not None:
+        updates["ocr_enabled"] = payload.ocr_enabled
+    if payload.search_index_enabled is not None:
+        updates["search_index_enabled"] = payload.search_index_enabled
+    if payload.summary_enabled is not None:
+        updates["summary_enabled"] = payload.summary_enabled
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="至少传入一个开关字段")
+
+    cur = (await db.execute(select(Video).where(Video.id == video_id))).scalar_one_or_none()
+    if cur is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # 链式校验：detection 关闭 → face/plate 强制关闭（保证 DB 不会出现非法组合）
+    effective_detection = updates.get("detection_enabled", cur.detection_enabled)
+    if updates.get("face_enabled", cur.face_enabled) and not effective_detection:
+        updates["face_enabled"] = False
+    if updates.get("plate_enabled", cur.plate_enabled) and not effective_detection:
+        updates["plate_enabled"] = False
+
+    # ORM-level 写入：走 session identity map，commit 后强制 expire → refresh 取到最新行
+    for key, value in updates.items():
+        setattr(cur, key, value)
+    await db.commit()
+    await db.refresh(cur)
+    logger.info("[Toggles] video=%s updated: %s", video_id, updates)
+    return APIResponse(data=VideoResponse.model_validate(cur))
 
 
 @router.get("/videos/{video_id}")
@@ -1215,4 +1263,27 @@ async def suggest_params(
              "confidence": 0.0, "params": None, "all_scores": {}, "reason": f"error: {e}"}
             for it in items
         ]
+
+    # ── 持久化推荐结果到 video 行（v0.37）：关闭弹窗也不丢，抽屉小面板回填用 ──
+    try:
+        for s in suggestions:
+            vid = s.get("video_id")
+            if not vid:
+                continue
+            params_snapshot = s.get("params") if isinstance(s.get("params"), dict) else None
+            await db.execute(
+                update(VideoModel)
+                .where(VideoModel.id == uuid.UUID(vid))
+                .values(
+                    suggested_scene_key=s.get("scene_key"),
+                    suggested_scene_label=s.get("scene_label"),
+                    suggested_confidence=float(s.get("confidence") or 0.0),
+                    suggested_params=params_snapshot,
+                )
+            )
+        await db.commit()
+    except Exception as e:
+        logger.warning("[SuggestParams] persist suggestions failed: %s", e)
+        await db.rollback()
+
     return APIResponse(data={"suggestions": suggestions})

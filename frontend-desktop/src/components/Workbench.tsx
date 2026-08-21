@@ -16,7 +16,6 @@ import type { VideoResponse, PipelineStage } from "../types";
 import { fmtDuration, fmtDate, versionName } from "../utils/helpers";
 import { IconDownload, IconBolt, IconBoltSolid } from "./icons";
 import { ExportMenu } from "./ExportMenu";
-import { ParameterPanel } from "./ParameterPanel";
 import { VideoPlayer } from "./VideoPlayer";
 import { DetectionTimeline } from "./DetectionTimeline";
 import { PipelineBar } from "./PipelineBar";
@@ -25,6 +24,7 @@ import { VideoInfoCard } from "./VideoInfoCard";
 import { DetectionPanel } from "./DetectionPanel";
 import { VideoSearchCard } from "./VideoSearchCard";
 import { SplitPane } from "./SplitPane";
+import { SingleAnalyzeDialog, type UnifiedParams } from "./FileLibrary";
 import { useApp } from "../AppContext";
 import { useHEVCCapability } from "../hooks/useHEVCCapability";
 import { useVideoPolling } from "../hooks/useVideoPolling";
@@ -129,7 +129,7 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
 }
 
 export function Workbench() {
-  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
+  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
   const currentVideoId = selectedVideoId;
 
   /* ── 版本切换（v0.34）：打开文件 → 拉取版本链 → 默认当前版本 ── */
@@ -224,6 +224,27 @@ export function Workbench() {
       consumeReparseIntent();
     }
   }, [paramsTick, currentVideoId, consumeParamsTick, consumeReparseIntent, reparseIntent]);
+
+  /* ── 跨页 seek（全局搜索→工作台）：等视频就绪后定位到目标时间，一次性消费 ── */
+  useEffect(() => {
+    if (!openSeekTarget || !vid) return;
+    let cancelled = false;
+    let attempts = 0;
+    const apply = () => {
+      const video = videoRef.current;
+      if (!video || video.readyState < 1) return false;
+      video.currentTime = openSeekTarget.start;
+      if (openSeekTarget.end != null) video.play().catch(() => {});
+      return true;
+    };
+    if (apply()) { consumeOpenSeek(); return; }
+    const iv = setInterval(() => {
+      if (cancelled) { clearInterval(iv); return; }
+      if (apply()) { clearInterval(iv); consumeOpenSeek(); return; }
+      if (++attempts >= 40) { clearInterval(iv); consumeOpenSeek(); }
+    }, 150);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [openSeekTarget, vid, consumeOpenSeek]);
 
   /* ── 派生布尔 ── */
   const isPending = currentVideo?.status === "pending";
@@ -419,38 +440,6 @@ export function Workbench() {
     setDeleting(false);
   }, [vid, currentVideoId, navigate]);
 
-  /* ── 重解析（v0.34）：以当前版本参数建新版本并入队 ── */
-  const handleReanalyze = useCallback(async () => {
-    if (!vid) return;
-    try {
-      const params = {
-        content_type: currentVideo?.content_type ?? "general",
-        vision_enabled: currentVideo?.vision_enabled ?? true,
-        audio_enabled: currentVideo?.audio_enabled ?? false,
-        ocr_enabled: currentVideo?.ocr_enabled ?? false,
-        caption_enabled: currentVideo?.caption_enabled ?? true,
-        detection_enabled: currentVideo?.detection_enabled ?? false,
-        detection_classes: currentVideo?.detection_classes ?? null,
-        face_enabled: currentVideo?.face_enabled ?? false,
-        plate_enabled: currentVideo?.plate_enabled ?? false,
-        summary_enabled: currentVideo?.summary_enabled ?? true,
-        summary_mode: currentVideo?.summary_mode ?? "vlm_llm",
-        search_index_enabled: currentVideo?.search_index_enabled ?? true,
-        language: currentVideo?.language ?? "auto",
-        sample_fps: currentVideo?.sample_fps ?? 1.0,
-        segment_threshold: currentVideo?.segment_threshold ?? 0.5,
-        caption_with_context: true,
-        summary_detail: currentVideo?.summary_detail ?? "standard",
-        encode_profile: currentVideo?.encode_profile ?? null,
-      };
-      await api.reanalyze(vid, params);
-      const vs = await api.listVersions(currentVideoId ?? vid);
-      if (vs?.length) setVersions(vs);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "重解析失败");
-    }
-  }, [vid, currentVideo, currentVideoId]);
-
   const groupName = currentVideo?.group_id
     ? (caseGroups.find((g) => g.groupId === currentVideo.group_id)?.name ?? null)
     : null;
@@ -636,30 +625,37 @@ export function Workbench() {
         </SplitPane>
       </div>
 
-      {/* ── 参数面板 Modal ── */}
-      {paramsOpen && (
-        <div className="g-modal-overlay">
-          <div className="g-modal" style={{ height: "min(620px, 82vh)" }}>
-            <ParameterPanel
-              videoId={vid!}
-              reparse={reparseMode}
-              onClose={() => { setParamsOpen(false); setReparseMode(false); }}
-              onParamsSet={() => {
-                setParamsOpen(false);
-                setReparseMode(false);
-                // 重新解析后刷新版本列表，并切到最新版本（轮询新版本 → 状态实时刷新，不再卡 pending）
-                if (currentVideoId) {
-                  api.listVersions(currentVideoId).then((vs) => {
-                    if (!vs?.length) return;
-                    setVersions(vs);
-                    const latest = [...vs].sort((a, b) => (b.version_no ?? 0) - (a.version_no ?? 0))[0];
-                    if (latest) setActiveVersionId(latest.id);
-                  }).catch(() => {});
-                }
-              }}
-            />
-          </div>
-        </div>
+      {/* ── 参数面板 Modal（新紧凑面板 v0.37） ── */}
+      {paramsOpen && currentVideo && (
+        <SingleAnalyzeDialog
+          title={reparseMode ? "重新解析" : (currentVideo.status === "completed" ? "重新分析" : "视频解析")}
+          reparse={reparseMode}
+          initial={{
+            content_type: currentVideo.content_type,
+            detection_enabled: currentVideo.detection_enabled,
+            face_enabled: currentVideo.face_enabled,
+            plate_enabled: currentVideo.plate_enabled,
+            ocr_enabled: currentVideo.ocr_enabled,
+            search_index_enabled: currentVideo.search_index_enabled,
+            summary_enabled: currentVideo.summary_enabled,
+          }}
+          onClose={() => { setParamsOpen(false); setReparseMode(false); }}
+          onSubmit={async (params, reparse) => {
+            try {
+              if (reparse) {
+                await api.reanalyze(vid!, params);
+                const vs = await api.listVersions(currentVideoId ?? vid!);
+                if (vs?.length) setVersions(vs);
+              } else {
+                await api.updateParams(vid!, params);
+              }
+              setParamsOpen(false);
+              setReparseMode(false);
+            } catch (err) {
+              alert(err instanceof Error ? err.message : "解析失败");
+            }
+          }}
+        />
       )}
     </div>
   );

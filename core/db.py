@@ -431,6 +431,24 @@ async def init_db():
             ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ
         """))
 
+        # ── 增量迁移 v0.37: 智能参数推荐持久化（抽屉小面板回填用） ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS suggested_scene_key VARCHAR(64)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS suggested_scene_label VARCHAR(64)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS suggested_confidence DOUBLE PRECISION
+        """))
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS suggested_params JSONB
+        """))
+
         # ── 增量迁移: scenes (video_id, scene_index) 唯一约束 ──
         # 旧代码 bulk_insert_scenes 重跑管道不删旧行 → 同一视频累积重复场景 → thumbnail 查询报错。
         # 先按 id 保留每组最早一行去重，再建唯一约束防再犯。
