@@ -363,6 +363,7 @@ stub.mkdir(parents=True, exist_ok=True)
 (stub / "METADATA").write_text("Metadata-Version: 2.1\nName: onnxruntime\nVersion: 99.0.0\n", encoding="utf-8")
 print("[onnx] stub ready:", stub.name)
 "@
+New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot "vendor") | Out-Null
 $onnxTmp = Join-Path $ProjectRoot "vendor\.fix-onnx.py"
 Set-Content -Path $onnxTmp -Value $onnxStubPy -Encoding UTF8
 $rc = Invoke-Native @($VenvPython, $onnxTmp)
