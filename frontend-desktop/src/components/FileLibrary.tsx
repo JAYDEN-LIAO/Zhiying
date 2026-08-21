@@ -303,9 +303,10 @@ function CaseContent({
                       {statusLabel}
                     </span>
                     <div className="fl-card-actions-sm">
-                      <button className="fl-card-action-sm" title="打开参数面板并启动分析"
-                        onClick={(e) => { e.stopPropagation(); onOpenFile(f, true, f.current_status === "completed"); }}>
-                        {f.current_status === "completed" ? <IconBoltSolid /> : <IconBolt />}
+                      {/* 统一 3 操作（v0.37）：查看 | 编辑 | 删除；视觉从右到左依次为 删除 / 编辑 / 查看 */}
+                      <button className="fl-card-action-sm" title="查看（跳转到视频解析页面，不自动打开参数设置）"
+                        onClick={(e) => { e.stopPropagation(); onOpenFile(f, false); }}>
+                        <IconEye />
                       </button>
                       <button className="fl-card-action-sm" title="重命名" onClick={(e) => { e.stopPropagation(); startEdit("file", f.id, base); }}>
                         <IconPencil />
@@ -313,13 +314,6 @@ function CaseContent({
                       <button className="fl-card-action-sm fl-card-action-sm-danger" title="删除" onClick={(e) => { e.stopPropagation(); onDeleteFile(f); }}>
                         <IconTrash />
                       </button>
-                      {/* 处理中/已完成：预览/查看结果（与列表视图眼睛按钮一致，位于删除按钮右侧） */}
-                      {(f.current_status === "processing" || f.current_status === "completed") && (
-                        <button className="fl-card-action-sm" title={f.current_status === "completed" ? "查看结果" : "预览视频"}
-                          onClick={(e) => { e.stopPropagation(); onOpenFile(f, false); }}>
-                          <IconEye />
-                        </button>
-                      )}
                     </div>
                   </div>
                   <div className="fl-info">
@@ -903,7 +897,7 @@ function FileDetailDrawer({
 
 /* ═══════════════════════ 页面编排 ═══════════════════════ */
 export function FileLibrary() {
-  const { openWorkbench, uploadFiles, isUploading, refreshCaseGroups, selectedTree, setSelectedTree } = useApp();
+  const { openWorkbench, uploadFiles, isUploading, refreshCaseGroups, selectedTree, setSelectedTree, videos } = useApp();
   const [files, setFiles] = useState<FileItem[]>([]);
   const [groups, setGroups] = useState<VideoGroup[]>([]);
   const [images, setImages] = useState<CaseAssetItem[]>([]);
@@ -1387,7 +1381,9 @@ export function FileLibrary() {
             setAnalyzing(true);
             try {
               if (mode === "per-video") {
-                /* Option A：不传 params，每视频用其自身持久化开关（处理参数设置/智能推荐/默认） */
+                /* Option A：每视频用其自身持久化开关
+                   智能推荐上传时已自动落库 6 开关列（confidence ≥ 0.30），
+                   所以这里直接走就行 —— 不需要额外 PATCH。 */
                 await api.analyzeBatch(batchTargets);
               } else {
                 /* Option B：统一参数，整批应用 */
@@ -1438,7 +1434,8 @@ export const CONTENT_TYPE_PRESETS: Record<PipelineParams["content_type"], {
   custom: null,
 };
 
-/* 统一参数面板（可复用）：内容类型下拉 + 6 开关，受 disabled 控 */
+/* ═══════════════════════ 统一参数面板（可复用） ═══════════════════════ */
+/* 内容类型下拉 + 6 开关，受 disabled 控 */
 export type UnifiedParams = {
   content_type: PipelineParams["content_type"];
   detection_enabled: boolean; face_enabled: boolean; plate_enabled: boolean;
@@ -1602,9 +1599,9 @@ function BatchAnalyzeDialog({
               onChange={() => setMode("per-video")}
             />
             <div className="flex-1 min-w-0">
-              <div className="text-[13px] font-semibold text-gray-900">按各视频已有设置处理</div>
+              <div className="text-[13px] font-semibold text-gray-900">按各视频设置</div>
               <div className="text-[11.5px] text-gray-500 mt-0.5 leading-relaxed">
-                每个视频使用其「处理参数设置」中的开关；未编辑过设置的视频 = 智能推荐或默认参数
+                用每个视频自己保存的参数
               </div>
             </div>
           </label>
@@ -1618,9 +1615,9 @@ function BatchAnalyzeDialog({
               onChange={() => setMode("unified")}
             />
             <div className="flex-1 min-w-0">
-              <div className="text-[13px] font-semibold text-gray-900">统一参数处理</div>
+              <div className="text-[13px] font-semibold text-gray-900">统一参数</div>
               <div className="text-[11.5px] text-gray-500 mt-0.5 leading-relaxed">
-                下方设置的同一套参数将应用到本批所有视频
+                用下方一套应用到本批所有视频
               </div>
             </div>
           </label>

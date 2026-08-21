@@ -129,7 +129,7 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
 }
 
 export function Workbench() {
-  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
+  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek, pendingTrackSelect, consumePendingTrackSelect, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
   const currentVideoId = selectedVideoId;
 
   /* ── 版本切换（v0.34）：打开文件 → 拉取版本链 → 默认当前版本 ── */
@@ -245,6 +245,15 @@ export function Workbench() {
     }, 150);
     return () => { cancelled = true; clearInterval(iv); };
   }, [openSeekTarget, vid, consumeOpenSeek]);
+
+  /* ── 跨页 track 选中（全局搜索 track 结果→工作台）：等 vid 切到目标后再 setSelectedTrackId，
+     让检测栏 bbox 高亮 + 时间轴高亮，与 Workbench VideoSearchCard.onTrackResult 一致 ── */
+  useEffect(() => {
+    if (!pendingTrackSelect) return;
+    if (!vid || vid !== pendingTrackSelect.videoId) return;  // 跨视频：等 vid 落到目标再触发
+    setSelectedTrackId(pendingTrackSelect.trackId);
+    consumePendingTrackSelect();
+  }, [pendingTrackSelect, vid, consumePendingTrackSelect]);
 
   /* ── 派生布尔 ── */
   const isPending = currentVideo?.status === "pending";

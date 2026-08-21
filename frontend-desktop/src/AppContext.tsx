@@ -23,13 +23,16 @@ interface AppCtx {
   /* 跨页选视频：跳工作台并（可选）自动打开参数面板 */
   selectedVideoId: string | null;
   initialVersionId: string | null;
-  openWorkbench: (videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null } }) => void;
+  openWorkbench: (videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null }; selectTrack?: { trackId: number; className: string; start: number } }) => void;
   paramsTick: number;
   consumeParamsTick: () => void; // 参数面板自动打开意图一次性消费（预览/切页不再重复弹）
   reparseIntent: boolean;        // 自动打开的参数面板是否走「重新解析」模式（已完成文件重配置参数 → reanalyze 建新版本）
   consumeReparseIntent: () => void;
   openSeekTarget: { start: number; end: number | null } | null; // 跨页 seek：全局搜索→工作台（一次性消费）
   consumeOpenSeek: () => void;
+  /* 跨页 track 选中：全局搜索 track 结果点击 → 工作台选中 track（bbox+时间轴高亮，一次性消费） */
+  pendingTrackSelect: { videoId: string; trackId: number; className: string; start: number } | null;
+  consumePendingTrackSelect: () => void;
   /* 共享视频列表（4s 轮询 + 组重建） */
   videos: VideoListItem[];
   videoGroups: VideoGroup[];
@@ -72,6 +75,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [paramsTick, setParamsTick] = useState(0);
   const [reparseIntent, setReparseIntent] = useState(false);
   const [openSeekTarget, setOpenSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
+  const [pendingTrackSelect, setPendingTrackSelect] = useState<{ videoId: string; trackId: number; className: string; start: number } | null>(null);
   const [videos, setVideos] = useState<VideoListItem[]>([]);
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
   const [caseGroups, setCaseGroups] = useState<VideoGroup[]>([]);
@@ -120,19 +124,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPage("settings");
   }, []);
 
-  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null } }) => {
+  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null }; selectTrack?: { trackId: number; className: string; start: number } }) => {
     setSelectedVideoId(videoId);
     setInitialVersionId(opts?.versionId ?? null); // 精确定位版本行（任务中心跳转）
     setPage("workbench");
     setReparseIntent(opts?.reparse ?? false);      // 参数面板自动打开时是否走「重新解析」（已完成文件重配参数）
     if (opts?.openParams) setParamsTick((t) => t + 1);
     setOpenSeekTarget(opts?.seekTo ? { start: opts.seekTo.start, end: opts.seekTo.end ?? null } : null); // 跨页 seek：全局搜索→工作台定位时间
+    /* track 选中意图：全局搜索 track 结果点击 → 工作台高亮 bbox+时间轴。
+       若未传 selectTrack，主动清空旧意图（避免上一轮残留导致新打开仍带高亮） */
+    setPendingTrackSelect(opts?.selectTrack ? { videoId, ...opts.selectTrack } : null);
   }, []);
 
   /* 参数面板自动打开意图一次性消费：弹过一次后归零，避免预览/切页回来重复弹 */
   const consumeParamsTick = useCallback(() => setParamsTick(0), []);
   const consumeReparseIntent = useCallback(() => setReparseIntent(false), []);
   const consumeOpenSeek = useCallback(() => setOpenSeekTarget(null), []);
+  const consumePendingTrackSelect = useCallback(() => setPendingTrackSelect(null), []);
 
   /* ── 视频列表 + 组重建（原 Dashboard 逻辑） ── */
   useEffect(() => {
@@ -278,6 +286,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     page, navigate, settingsTab, navigateSettings,
     selectedVideoId, openWorkbench, initialVersionId, paramsTick, consumeParamsTick,
     reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek,
+    pendingTrackSelect, consumePendingTrackSelect,
     videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups,
     selectedTree, setSelectedTree,
   pendingFileCount, queuedTaskCount, newCompletedCount, failedTaskCount, taskHighlightIds, runningTaskCount, refreshList,

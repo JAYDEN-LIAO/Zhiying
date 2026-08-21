@@ -5,7 +5,7 @@
      右 66% 结果展示（状态栏 + 自适应卡片网格）
    ════════════════════════════════════════════════════════════ */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
 import { useApp } from "../AppContext";
 import type { SearchResultItem, VideoListItem } from "../types";
@@ -204,14 +204,16 @@ export function GlobalSearch() {
 
   function toggleChip(value: string, group: "type" | "feature" | "color" | "action") {
     /* 选中目标类型本身不写入文本框（仅切换面板），其他特征 token 才进入 */
+    const wasOn = chips.has(value);
     if (group !== "type") setQuery((q) => applyToken(q, value));
     if (group === "type") {
       const typeDef = TYPE_CHIPS.find((t) => t.label === value);
-      if (typeDef) setActiveTypeKey(typeDef.key);
+      /* 取消选中时把专属特征面板一起收回（之前漏写，导致面板残留） */
+      if (typeDef) setActiveTypeKey(wasOn ? null : typeDef.key);
     }
     setChips((prev) => {
       const next = new Set(prev);
-      if (next.has(value)) next.delete(value);
+      if (wasOn) next.delete(value);
       else next.add(value);
       return next;
     });
@@ -243,6 +245,8 @@ export function GlobalSearch() {
   const [sortKey, setSortKey] = useState<SortKey>("confidence");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
+  /* 搜索结果按视频分组（默认全展开，v0.37+）—— 与作用域列表的 expandedGroups 区分 */
+  const [resultGroupsOpen, setResultGroupsOpen] = useState<Set<string>>(new Set());
 
   const fileRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
@@ -317,7 +321,10 @@ export function GlobalSearch() {
     setError(null);
     try {
       if (tab === "text") {
-        const res = await api.searchSemantic(query.trim(), { video_ids: ids, top_k: 60, min_similarity: 0 });
+        // 与 Workbench VideoSearchCard.handleSearch 完全一致：不传 top_k / min_similarity，
+        // 后端默认 0.3 门槛 + top_k 20 + 7 路并行召回。原先写死 top_k=60 / min_similarity=0
+        // 导致跨视频场景下 frame 路径低分噪声冲榜（v0.37）。
+        const res = await api.searchSemantic(query.trim(), { video_ids: ids });
         const list = res.results ?? [];
         setResults(list);
         setTotal(res.total ?? list.length);
@@ -421,6 +428,51 @@ export function GlobalSearch() {
     }
     return arr;
   }, [results, sortKey, videoMap]);
+
+  /* ── 按 video_id 分组（保留 sortedResults 顺序：组顺序 = 首个命中在排序列表里的位置） ── */
+  const groupedResults = useMemo(() => {
+    const map = new Map<string, SearchResultItem[]>();
+    for (const r of sortedResults) {
+      const arr = map.get(r.video_id);
+      if (arr) arr.push(r);
+      else map.set(r.video_id, [r]);
+    }
+    return Array.from(map, ([videoId, items]) => ({ videoId, items }));
+  }, [sortedResults]);
+
+  /* 默认全展开：仅在新搜索完成时重置，不能跟 groupedResults —— 否则 videos 4s 轮询刷新
+     （videos → videoMap → sortedResults → groupedResults 整链重算）会每 4s 自动展开一次 */
+  useEffect(() => {
+    setResultGroupsOpen(new Set(groupedResults.filter((g) => g.items.length >= 2).map((g) => g.videoId)));
+  }, [results]);
+
+  /* 可折叠组（≥2 个结果）+ 工具条状态：单结果组不参与折叠，工具条统计只看可折叠组 */
+  const collapsibleGroups = useMemo(() => groupedResults.filter((g) => g.items.length >= 2), [groupedResults]);
+  const openCollapsibleCount = useMemo(
+    () => collapsibleGroups.filter((g) => resultGroupsOpen.has(g.videoId)).length,
+    [collapsibleGroups, resultGroupsOpen],
+  );
+  const allCollapsibleOpen = collapsibleGroups.length > 0 && openCollapsibleCount === collapsibleGroups.length;
+
+  function toggleGroup(videoId: string) {
+    setResultGroupsOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(videoId)) next.delete(videoId);
+      else next.add(videoId);
+      return next;
+    });
+  }
+  function setAllGroups(open: boolean) {
+    /* 只对可折叠组生效；单结果组不参与（永远展开） */
+    setResultGroupsOpen((prev) => {
+      const next = new Set(prev);
+      for (const g of collapsibleGroups) {
+        if (open) next.add(g.videoId);
+        else next.delete(g.videoId);
+      }
+      return next;
+    });
+  }
 
   function tagTone(tag: string): string {
     return TAG_TONES[tag] ?? "blue";
@@ -908,58 +960,129 @@ export function GlobalSearch() {
           </div>
         ) : (
           <div className="gs-list">
-            {sortedResults.map((r, i) => {
-              const v = videoMap.get(r.video_id);
-              const processing = v != null && (v.status === "processing" || v.status === "pending");
-              const pct = v?.progress != null ? Math.round(v.progress * 100) : null;
-              const timeSec = r.precise_start ?? r.scene_range_start;
+            {/* 分组工具条：仅当 ≥1 个可折叠组（≥2 结果）时显示，单结果组不参与 */}
+            {collapsibleGroups.length >= 1 && (
+              <div className="gs-group-toolbar">
+                <button
+                  type="button"
+                  className="gs-group-tool"
+                  onClick={() => setAllGroups(!allCollapsibleOpen)}
+                >
+                  {allCollapsibleOpen ? "全部收起" : "全部展开"}
+                </button>
+                <span className="gs-group-tool-stat">
+                  共 {groupedResults.length} 个视频 · {sortedResults.length} 个结果
+                </span>
+              </div>
+            )}
+            {groupedResults.map(({ videoId, items }) => {
+              const v = videoMap.get(videoId);
+              const isExpanded = resultGroupsOpen.has(videoId);
               const groupName = v?.group_id ? groupNameMap.get(v.group_id) ?? "未命名文件夹" : "未分组";
-              const pathText = `${groupName} / ${v?.file_name ?? v?.id}`;
-              const isSel = selected.has(r.video_id);
-              /* 点击跳转：带版本 id（精确定位解析版本）+ 时间戳（播放器 seek 到匹配时间） */
-              const openResult = () => openWorkbench(r.video_id, {
-                versionId: r.video_id,
-                ...(timeSec != null ? { seekTo: { start: timeSec, end: r.precise_end ?? null } } : {}),
-              });
-              return (
-                <div key={`${r.video_id}-${i}`} className={"gs-row" + (isSel ? " sel" : "")}>
-                  <div className="gs-row-media" onClick={openResult} title="点击打开对应视频">
-                    {r.thumbnail_url ? (
-                      <img src={r.thumbnail_url} alt="" loading="lazy" />
-                    ) : (
-                      <div className="gs-thumb-fallback">
-                        <IconVideo />
-                      </div>
-                    )}
-                    <span className="gs-row-badge">{timeSec != null ? formatSec(timeSec) : <IconImage />}</span>
-                    {processing && (
-                      <div className="gs-row-mask">
-                        <i className="gs-spin" />
-                        <span>{pct != null ? `解析中 ${pct}%` : "解析中…"}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="gs-row-info" onClick={openResult}>
-                    <div className="gs-row-title" title={v?.file_name ?? r.video_id}>
-                      {displayName(v)}
+              const fileName = displayName(v);
+              const topSim = Math.round(((items[0]?.confidence ?? items[0]?.similarity) ?? 0) * 100);
+
+              /* 渲染单条结果行（单结果无外框：行顶自带「来源视频 · 置信度」；组内不重复） */
+              const renderRow = (r: SearchResultItem, i: number, showSrc: boolean) => {
+                const processing = v != null && (v.status === "processing" || v.status === "pending");
+                const pct = v?.progress != null ? Math.round(v.progress * 100) : null;
+                const timeSec = r.precise_start ?? r.scene_range_start;
+                const isSel = selected.has(r.video_id);
+                const isTrack = r.precision_level === "track";
+                const openResult = () => {
+                  const seekTo = timeSec != null ? { start: timeSec, end: r.precise_end ?? null } : undefined;
+                  if (isTrack && r.track_id != null && timeSec != null) {
+                    openWorkbench(r.video_id, {
+                      versionId: r.video_id,
+                      seekTo,
+                      selectTrack: { trackId: r.track_id, className: r.class_name ?? "", start: timeSec },
+                    });
+                  } else {
+                    openWorkbench(r.video_id, { versionId: r.video_id, ...(seekTo ? { seekTo } : {}) });
+                  }
+                };
+                return (
+                  <div key={`${r.video_id}-${i}`} className={"gs-row" + (isSel ? " sel" : "")}>
+                    <div className="gs-row-media" onClick={openResult} title="点击打开对应视频">
+                      {r.thumbnail_url ? (
+                        <img src={r.thumbnail_url} alt="" loading="lazy" />
+                      ) : (
+                        <div className="gs-thumb-fallback">
+                          <IconVideo />
+                        </div>
+                      )}
+                      <span className="gs-row-badge">{timeSec != null ? formatSec(timeSec) : <IconImage />}</span>
+                      {processing && (
+                        <div className="gs-row-mask">
+                          <i className="gs-spin" />
+                          <span>{pct != null ? `解析中 ${pct}%` : "解析中…"}</span>
+                        </div>
+                      )}
                     </div>
-                    <div className="gs-row-tags">
-                      {buildPills(r).map((p, j) => (
-                        <span key={j} className={"gs-pill " + p.tone}>
-                          {p.text}
+                    <div className="gs-row-info" onClick={openResult}>
+                      {showSrc && (
+                        <div className="gs-row-src">
+                          <IconVideo />
+                          <span className="gs-row-src-name" title={fileName}>{fileName}</span>
+                          {topSim > 0 && <span className="gs-row-src-conf">{topSim}%</span>}
+                        </div>
+                      )}
+                      <div className="gs-row-title" title={r.class_name ? `${fileName} · ${r.class_name}` : fileName}>
+                        {isTrack && r.class_name ? (
+                          <span className="gs-row-target">{zh(r.class_name, r.display_seq ?? r.track_id!)}{r.display_seq != null && r.display_seq > 1 ? ` #${r.display_seq}` : ""}</span>
+                        ) : (
+                          <span className="gs-row-target muted">{targetTag(r)}</span>
+                        )}
+                        <span className="gs-row-time">{timeSec != null ? formatSec(timeSec) : ""}{r.precise_end != null && r.precise_end !== timeSec ? ` – ${formatSec(r.precise_end)}` : ""}</span>
+                      </div>
+                      <div className="gs-row-tags">
+                        {buildPills(r).map((p, j) => (
+                          <span key={j} className={"gs-pill " + p.tone}>
+                            {p.text}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="gs-row-meta">
+                        <span className="gs-meta-time">
+                          <IconClock />
+                          {v?.created_at ? fmtFullDate(v.created_at) : "--"}
                         </span>
-                      ))}
-                    </div>
-                    <div className="gs-row-meta">
-                      <span className="gs-meta-time">
-                        <IconClock />
-                        {v?.created_at ? fmtFullDate(v.created_at) : "--"}
-                      </span>
-                      <span className="gs-meta-path" title={pathText}>
-                        {pathText}
-                      </span>
+                      </div>
                     </div>
                   </div>
+                );
+              };
+
+              /* 单结果：不套 .gs-group 外框，行内自带头部（视频名+置信度） */
+              if (items.length === 1) {
+                return (
+                  <div key={videoId} className="gs-solo">
+                    {renderRow(items[0], 0, true)}
+                  </div>
+                );
+              }
+
+              /* 多结果：组 body 高度 = min(items.length, 3) * 行高，超出部分组内独立滚动 */
+              const visibleRows = Math.min(items.length, 3);
+              return (
+                <div key={videoId} className="gs-group">
+                  <div className={"gs-group-hd" + (isExpanded ? " open" : "")} onClick={() => toggleGroup(videoId)}>
+                    <span className="gs-group-arrow">▶</span>
+                    <span className="gs-group-name" title={fileName}>{fileName}</span>
+                    <span className="gs-group-count">{items.length} 个结果</span>
+                    {topSim > 0 && <span className="gs-group-top">{topSim}%</span>}
+                    <span className="gs-group-path" title={`${groupName} / ${fileName}`}>{groupName}</span>
+                  </div>
+                  {isExpanded && (
+                    <div
+                      className="gs-group-bd"
+                      style={{
+                        maxHeight: `calc(150px * ${visibleRows} + 8px * ${visibleRows - 1} + 20px)`,
+                      }}
+                    >
+                      {items.map((r, i) => renderRow(r, i, false))}
+                    </div>
+                  )}
                 </div>
               );
             })}

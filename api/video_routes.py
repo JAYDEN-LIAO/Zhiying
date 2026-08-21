@@ -1265,21 +1265,37 @@ async def suggest_params(
         ]
 
     # ── 持久化推荐结果到 video 行（v0.37）：关闭弹窗也不丢，抽屉小面板回填用 ──
+    # 同时把推荐参数直接落库到 6 开关列（confidence ≥ 0.30）—— 让抽屉「智能推荐」按钮语义自动生效，
+    # 后续「按各视频参数」批量解析 / Workbench 直接使用这些参数而不用再弹确认。
     try:
+        LOW_CONF_FOR_APPLY = 0.30
         for s in suggestions:
             vid = s.get("video_id")
             if not vid:
                 continue
             params_snapshot = s.get("params") if isinstance(s.get("params"), dict) else None
+            confidence = float(s.get("confidence") or 0.0)
+            update_values: dict = {
+                "suggested_scene_key": s.get("scene_key"),
+                "suggested_scene_label": s.get("scene_label"),
+                "suggested_confidence": confidence,
+                "suggested_params": params_snapshot,
+            }
+            # 高置信度推荐：直接把 6 开关列落库（用户可在抽屉手动覆盖）
+            if params_snapshot and confidence >= LOW_CONF_FOR_APPLY:
+                update_values.update({
+                    "detection_enabled": bool(params_snapshot.get("detection_enabled", False)),
+                    "face_enabled":      bool(params_snapshot.get("face_enabled", False)),
+                    "plate_enabled":     bool(params_snapshot.get("plate_enabled", False)),
+                    "ocr_enabled":       bool(params_snapshot.get("ocr_enabled", False)),
+                    "search_index_enabled": bool(params_snapshot.get("search_index_enabled", True)),
+                    # 摘要默认关（v0.37，与 presets 对齐；smart_suggest 也始终不推荐开启）
+                    "summary_enabled":   False,
+                })
             await db.execute(
                 update(VideoModel)
                 .where(VideoModel.id == uuid.UUID(vid))
-                .values(
-                    suggested_scene_key=s.get("scene_key"),
-                    suggested_scene_label=s.get("scene_label"),
-                    suggested_confidence=float(s.get("confidence") or 0.0),
-                    suggested_params=params_snapshot,
-                )
+                .values(**update_values)
             )
         await db.commit()
     except Exception as e:

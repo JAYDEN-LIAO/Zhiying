@@ -211,8 +211,7 @@ export function SmartSuggestDialog({ videos, onClose, onApply }: SmartSuggestDia
         <div className="ss-ft">
           <button className="g-btn" onClick={onClose} disabled={applying}>关闭</button>
           <button className="g-btn g-btn-primary" onClick={applyRecommended} disabled={loading || applying || videos.length === 0}>
-            <IconBolt />
-            {applying ? "启动中…" : `应用推荐并启动 (${videos.length})`}
+            {applying ? "启动中…" : `快速解析 (${videos.length})`}
           </button>
         </div>
       </div>

@@ -1610,7 +1610,9 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
 .gs-scope-item:hover { background: #f4f8ff; }
 .gs-scope-item.on { background: #eef3ff; color: #4f6ef7; font-weight: 600; }
 .gs-scope-item input[type="checkbox"] { accent-color: #4f6ef7; width: 14px; height: 14px; cursor: pointer; margin: 0; flex-shrink: 0; }
-.gs-scope-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ⚠️ 必须用 > 直接子选择器：`.gs-scope-arrow` 是 `.gs-scope-name` 里的内嵌 span，
+   命中后 flex:1 会在 inline-flex 容器内抢走大部分空间，把「案例名」挤到右侧（v0.37 修复） */
+.gs-scope-item > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gs-scope-item em { font-style: normal; font-size: 11px; color: #94a3b8; }
 .gs-scope-name { display: inline-flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .gs-scope-arrow { display: inline-block; font-size: 9px; color: #94a3b8; transition: transform .15s ease; flex-shrink: 0; }
@@ -1676,9 +1678,142 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
   animation: gsspin .7s linear infinite;
 }
 .gs-list {
-  flex: 1; overflow-y: auto; padding-right: 4px;
+  flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px;
   display: flex; flex-direction: column; gap: 10px;
+  /* 隐藏滚动条但保留滚动能力（v0.37） */
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* IE/Edge legacy */
 }
+.gs-list::-webkit-scrollbar { display: none; }   /* Chrome/Safari/Edge */
+
+/* ── 结果按视频分组（v0.37+）── */
+.gs-group-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 4px 2px; gap: 10px;
+  flex-shrink: 0;
+}
+.gs-group-tool {
+  font-size: 11.5px; font-weight: 500; color: #4f6ef7;
+  background: transparent; border: none; padding: 2px 6px;
+  border-radius: 5px; cursor: pointer; transition: background .12s;
+}
+.gs-group-tool:hover { background: #eef3ff; }
+.gs-group-tool-stat { font-size: 11.5px; color: #94a3b8; }
+
+.gs-group {
+  background: #fff; border: 1px solid #e8edf6; border-radius: 14px; overflow: hidden;
+  transition: border-color .2s;
+  /* 阻止在 .gs-list（flex column）里被兄弟挤压，否则多组展开时上一组的 body
+     max-height 上限会被父级反推下来，原本 3 行的窗口可能只显 2 行（v0.37 修复） */
+  flex-shrink: 0;
+}
+.gs-group:hover { border-color: #d7e0f4; }
+
+.gs-group-hd {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 14px; cursor: pointer;
+  background: linear-gradient(180deg, #fafbff 0%, #ffffff 100%);
+  border-bottom: 1px solid transparent;
+  transition: background .15s, border-color .15s;
+}
+.gs-group-hd:hover { background: linear-gradient(180deg, #f4f8ff 0%, #fafbff 100%); }
+.gs-group-hd.open { border-bottom-color: #eef1f8; }
+
+.gs-group-arrow {
+  display: inline-block; width: 14px; font-size: 10px; color: #94a3b8;
+  transition: transform .15s ease; flex-shrink: 0;
+}
+.gs-group-hd.open .gs-group-arrow { transform: rotate(90deg); color: #4f6ef7; }
+
+.gs-group-name {
+  font-size: 13px; font-weight: 600; color: #1e293b;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex-shrink: 1; min-width: 0;
+}
+.gs-group-count {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; font-weight: 500; color: #4f6ef7;
+  background: #eef3ff; border-radius: 10px; padding: 1px 8px; flex-shrink: 0;
+}
+.gs-group-top {
+  font-size: 11px; font-weight: 600; color: #2f5adf;
+  background: #eaf1ff; border-radius: 10px; padding: 1px 7px; flex-shrink: 0;
+}
+.gs-group-path {
+  font-size: 11px; color: #94a3b8;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex-shrink: 1; min-width: 0; max-width: 40%;
+  text-align: right;
+}
+
+.gs-group-bd {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px;
+  background: #f8fafd;
+  /* max-height 由内联按 visibleRows 动态算（v0.37） */
+  overflow-y: auto;
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+.gs-group-bd::-webkit-scrollbar { display: none; }
+
+/* ── 单结果（不套 .gs-group 外框）── */
+.gs-solo { background: transparent; flex-shrink: 0; }
+.gs-solo .gs-row { border-radius: 14px; }
+
+/* 行内来源行：单结果专用，显示视频名 + 置信度，避免无外框后失去来源信息 */
+.gs-row-src {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; color: #64748b;
+  margin-bottom: 2px;
+}
+.gs-row-src svg { width: 11px; height: 11px; color: #94a3b8; flex-shrink: 0; }
+.gs-row-src-name {
+  font-weight: 500; color: #475569;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0;
+}
+.gs-row-src-conf {
+  font-weight: 600; color: #2f5adf; background: #eaf1ff;
+  border-radius: 10px; padding: 1px 7px; flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.dark .gs-row-src { color: #93a1ff; }
+.dark .gs-row-src svg { color: #6b7688; }
+.dark .gs-row-src-name { color: #b4bbc9; }
+.dark .gs-row-src-conf { color: #93a1ff; background: #1d2a4d; }
+
+/* 分组内的行：缩进感（左边距小一点）、背景用半透明白以区分外层 group */
+.gs-group-bd .gs-row {
+  background: #ffffff;
+  border-color: #e8edf6;
+}
+.gs-group-bd .gs-row:hover {
+  background: #f7faff; border-color: #d7e0f4;
+}
+
+/* dark mode */
+.dark .gs-group { background: #1f2733; border-color: #2c3542; }
+.dark .gs-group:hover { border-color: #3a4553; }
+.dark .gs-group-hd { background: linear-gradient(180deg, #232b36 0%, #1f2733 100%); }
+.dark .gs-group-hd:hover { background: linear-gradient(180deg, #1d2a4d 0%, #232b36 100%); }
+.dark .gs-group-hd.open { border-bottom-color: #2c3542; }
+.dark .gs-group-name { color: #e1e5ec; }
+.dark .gs-group-count { color: #93a1ff; background: #1d2a4d; }
+.dark .gs-group-top { color: #93a1ff; background: #1d2a4d; }
+.dark .gs-group-path { color: #6b7688; }
+.dark .gs-group-tool { color: #93a1ff; }
+.dark .gs-group-tool:hover { background: #1d2a4d; }
+.dark .gs-group-tool-stat { color: #6b7688; }
+.dark .gs-group-bd { background: #1a212b; }
+.dark .gs-group-bd .gs-row { background: #1f2733; border-color: #2c3542; }
+
+/* 行内新增：track 类型显示「物体名 + #序号」+ 时间戳 */
+.gs-row-target { font-weight: 600; color: #1e293b; }
+.gs-row-target.muted { font-weight: 400; color: #64748b; }
+.gs-row-time { margin-left: 8px; font-size: 11.5px; color: #94a3b8; font-variant-numeric: tabular-nums; }
+.dark .gs-row-target { color: #e1e5ec; }
+.dark .gs-row-target.muted { color: #93a1ff; }
+.dark .gs-row-time { color: #6b7688; }
 .gs-row {
   display: flex; align-items: stretch; gap: 12px;
   padding: 12px; background: #fff; border: 1px solid #e8edf6; border-radius: 14px;
