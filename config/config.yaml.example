@@ -173,3 +173,32 @@ pipeline:
       encode_width: 672
       encode_height: 448
       encode_batch_size: 256
+
+# ─────────────────────────────────────────────────────────
+# LLM 增强子系统（v0.37+，Qwen2.5-3B + LoRA）
+# ─────────────────────────────────────────────────────────
+# 详细设计见 docs/llm-deep-work.md
+# 默认全部关闭（不影响现有检索），需要时按需开启。
+llm:
+  # 共享单例：Qwen2.5-3B + LoRA adapter
+  # 部署在 16GB 客户机时需把 embedder 切到 2B 档位以腾显存
+  runtime:
+    base_model: "models/Qwen/Qwen2.5-3B-Instruct"        # 底座模型路径
+    adapter_path: "models/Qwen2.5-3B-Instruct-zhiying-lora"  # LoRA adapter（不训练时此目录可不存在）
+    device: "cuda"
+    torch_dtype: "bfloat16"
+
+# Query 改写（v0.37 LLM 增强子系统核心功能）
+# 把用户自然语言 query 改写为 3-5 个等价检索表达式，联合 7 路召回提升召回率
+query_rewrite:
+  enabled: false                       # 默认关闭（需训练完 LoRA 后开启）
+  min_rewrites: 1                      # 改写最少数量，少于此值回退到原 query
+  max_new_tokens: 256                  # 推理最大 token 数
+
+# Reranker（v0.37 LLM 增强子系统）
+# 对 7 路召回 top-20 重排序，nDCG@10 提升
+rerank:
+  enabled: false                       # 默认关闭
+  model_path: "BAAI/bge-reranker-v2-m3"  # 模型路径（也可下到 models/BAAI/ 本地）
+  top_k: 10                           # 重排后返回数量
+  max_length: 512                     # 输入最大长度

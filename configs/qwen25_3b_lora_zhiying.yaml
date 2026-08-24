@@ -1,0 +1,72 @@
+# configs/qwen25_3b_lora_zhiying.yaml
+# ═══════════════════════════════════════════════════════════
+# LLaMA-Factory Qwen2.5-3B QLoRA 训练配置
+#
+# 数据集：data/query_rewrite_dataset/train.jsonl（1500 条 SFT 多轮对话）
+# 底座：models/Qwen/Qwen2.5-3B-Instruct
+# 产物：models/Qwen2.5-3B-Instruct-zhiying-lora/
+#
+# 训练命令：
+#   # 冒烟测试（10% 数据 + 1 epoch）
+#   llamafactory-cli train configs/qwen25_3b_lora_zhiying.yaml \
+#     --max_samples 100 --num_train_epochs 1
+#
+#   # 完整训练
+#   llamafactory-cli train configs/qwen25_3b_lora_zhiying.yaml
+
+# ─── 模型 ──────────────────────────────────────────
+model_name_or_path: models/Qwen/Qwen2.5-3B-Instruct
+template: qwen
+
+# ─── 数据集 ─────────────────────────────────────────
+dataset_dir: data/query_rewrite_dataset
+dataset: train_jsonl
+
+# ─── 输出 ───────────────────────────────────────────
+output_dir: models/Qwen2.5-3B-Instruct-zhiying-lora
+overwrite_cache: true
+overwrite_output_dir: true
+
+# ─── LoRA 设置 ──────────────────────────────────────
+finetuning_type: lora
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target: q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj
+
+# ─── 量化（QLoRA）───────────────────────────────────
+# LLaMA-Factory 0.9.x: 用 double_quantization（不是 double_quant）
+quantization_bit: 4
+quantization_type: nf4
+double_quantization: true
+
+# ─── 训练超参 ──────────────────────────────────────
+per_device_train_batch_size: 2           # 3B 显存翻倍
+gradient_accumulation_steps: 8           # 有效 batch = 16
+learning_rate: 1.5e-4
+num_train_epochs: 3.0
+max_grad_norm: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+weight_decay: 0.01
+
+# ─── 显存优化 ──────────────────────────────────────
+bf16: true
+flash_attn: auto
+gradient_checkpointing: true
+
+# ─── 验证集 ──────────────────────────────────────────
+# LLaMA-Factory 0.9.x: 用 eval_strategy（不是 evaluation_strategy）
+# 必须有 val_size（自动从 train 划）或显式 eval_dataset
+do_train: true                   # 必须显式开启训练（LF 0.9.x 默认 false）
+do_eval: true
+eval_strategy: epoch
+val_size: 0.05                  # 自动从 train.jsonl 划 5% 做 eval
+save_strategy: epoch
+save_total_limit: 2
+logging_steps: 20
+report_to: none                 # 不上报 wandb
+
+# ─── 验证集分割 ────────────────────────────────────
+# LLaMA-Factory 自动从 train.jsonl 划 5% 做 eval
+# 这里通过 max_samples 控制（冒烟测试用）
