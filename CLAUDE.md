@@ -2,7 +2,7 @@
 
 ## Overview
 
-智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。当前状态 **v0.35 候选**（桌面端 UI 增强）；后端定版 v0.34（OCR RapidOCR+DirectML 子进程）。
+智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。当前版本 **v0.37 候选**（智能参数系统）；后端定版 v0.34（OCR RapidOCR+DirectML 子进程）。
 
 **关键锚点**：
 - **生产部署**：10.0.0.176（systemd `zhiying.service`，8011）；发版 `./bump` → 服务器 `bash deploy.sh v<tag>`
@@ -43,9 +43,9 @@
 - **智能参数系统（v0.37）**: 场景分类与参数预设集中在 `services/smart_suggest.py`（9 类）；低置信兜底 `_DEFAULT_PARAMS`；改场景须加/改 `_scene_fingerprint()` 相关缓存（列表增改自动失效）
   - **持久化**：suggest-params 自动落库到 `videos.suggested_scene_key/label/confidence/params(JSONB)` 4 字段；关闭弹窗不丢
   - **抽屉轻量层**：`PATCH /videos/{id}/toggles` 仅持久化 6 核心开关，不入队管道、不动版本、不联动组
-  - **抽屉 UI**：FileDetailDrawer「参数设置」section（替代旧 ParameterPanel）+ Workbench `SingleAnalyzeDialog` + 案例库 `BatchAnalyzeDialog` 三处共用 `AnalyzeSettingsPanel` + `buildPipelineParams()`
-  - **摘要默认全关**（v0.37）：模型/上传/场景预设/智能推荐按钮都默认 `summary_enabled=false`
-  - **9 场景预设**（CONTENT_TYPE_PRESETS）：traffic/vehicle_focus/surveillance_people/indoor/portrait_focus/document/street_mixed/outdoor_landscape/chat_screen，每个场景对应一组检测/人脸/车牌/OCR 开关预设
+  - **抽屉 UI**：FileDetailDrawer「参数设置」section + Workbench `SingleAnalyzeDialog` + 案例库 `BatchAnalyzeDialog` 三处共用 `AnalyzeSettingsPanel` + `buildPipelineParams()`
+  - **摘要默认全关**（v0.37）：模型/上传/场景预设/智能推荐按钮联动 → 都关
+  - **9 场景预设**：traffic/vehicle_focus/surveillance_people/indoor/portrait_focus/document/street_mixed/outdoor_landscape/chat_screen，每个场景对应一组检测/人脸/车牌/OCR 开关预设
 - **双前端**: UI 各自演进；对接层 `frontend-shared/` 一份实现，改后端接口只改一处
 - **多格式**: remux(-c copy) + proxy(NVENC h264, 按需)；管道优先读 remuxed
 - **ReID 双层**: 在线 BoT-SORT with_reid + 全局 tracklet 缝合（cosine ≥0.85）
@@ -54,12 +54,12 @@
 - **版本号**: `core/version.py` `__version__` 唯一来源；后端+服务器前端改动必须 `./bump`
 - **存储卫生**: 删除必须 `repository.delete_video`；新落盘路径登记进 `storage_manager.py`
 
-## Database (15 tables)
+## Database (16 tables)
 
 | Table | Purpose |
 |---|---|
-| `video_groups` | 批量上传自动分组 |
-| `videos` | 主表：status/progress/summary/开关/参数/格式/source_owned/file_id+version_no/processing_started_at |
+| `video_groups` | 批量上传自动分组（案例） |
+| `videos` | 主表：status/progress/summary/开关/参数/格式/source_owned/file_id+version_no/processing_started_at/suggested_* |
 | `scenes` | 搜索主粒度：text_embedding/caption/ocr_text/transcript/entities |
 | `transcripts` | 完整字幕 + words |
 | `frame_embeddings` / `chunks` | 1fps 帧向量 / 滑动窗口向量 |
@@ -67,6 +67,7 @@
 | `face_identities` / `face_detections` | 聚类身份(512d) + 逐帧人脸 |
 | `plate_detections` | HyperLPR3 车牌 |
 | `ocr_detections` | 画面文字（第 8 路精确检索） |
+| `case_assets` | 案例素材（图片等非视频归档素材，不参与管道） |
 | `pipeline_tasks` | 全局任务队列持久化 |
 | `task_logs` | 任务生命周期日志 |
 
