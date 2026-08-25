@@ -271,3 +271,52 @@ async def face_identity_search(
         stmt = stmt.where(FaceIdentity.video_id.in_(video_ids))
     result = await session.execute(stmt)
     return [(row.FaceIdentity, row.sim) for row in result]
+
+
+# ═══════════════════════════════════════════════════════════
+# 4. 素材库检索（v0.6，分轨）
+# person → face_embedding Vector(512)  ;  other → other_embedding EmbedVector()
+# ═══════════════════════════════════════════════════════════
+
+async def subject_embedding_search(
+    session: AsyncSession,
+    face_vec: list[float] | None,
+    other_vec: list[float] | None,
+    kind: str,
+    limit: int = 20,
+    min_similarity: float = 0.3,
+    kind_filter: str | None = None,
+) -> list[tuple["SubjectPhoto", float]]:
+    """素材库底库照片检索 — 按 kind 选用匹配的向量列做跨模态检索。
+
+    - kind="person"：用 face_embedding(512)，face_vec 必须传 512 维
+    - kind="other" ：用 other_embedding(EmbedVector)，other_vec 必须传对应维度
+    kind_filter 用于请求侧若想限定某类目标时收紧（可选）。
+    返回携照片记录及其相似度（0,1]。
+    """
+    from core.models import SubjectPhotoEmbedding, SubjectPhoto
+
+    if kind == "person":
+        if face_vec is None:
+            return []
+        col = SubjectPhotoEmbedding.face_embedding
+        query_vec = face_vec
+    else:  # other
+        if other_vec is None:
+            return []
+        col = SubjectPhotoEmbedding.other_embedding
+        query_vec = other_vec
+
+    similarity = (1.0 - col.cosine_distance(query_vec)).label("sim")
+    stmt = (
+        select(SubjectPhoto, similarity)
+        .join(SubjectPhotoEmbedding, SubjectPhoto.id == SubjectPhotoEmbedding.photo_id)
+        .where(col.isnot(None))
+        .where(similarity >= min_similarity)
+        .order_by(similarity.desc())
+        .limit(limit)
+    )
+    if kind_filter is not None:
+        stmt = stmt.where(SubjectPhotoEmbedding.kind == kind_filter)
+    result = await session.execute(stmt)
+    return [(row.SubjectPhoto, row.sim) for row in result]

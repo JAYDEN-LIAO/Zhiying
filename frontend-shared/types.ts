@@ -193,6 +193,8 @@ export interface SearchResultItem {
   plate_text?: string;
   plate_type?: string;
   char_confidences?: number[];
+  /* ── v0.6 素材库检索：命中底库目标时携带（全局搜索「关注素材」模式） ── */
+  matched_subject?: SubjectSearchMatch | null;
 }
 
 /* ── Face search result (POST /api/v1/search/face) ── */
@@ -222,6 +224,13 @@ export interface SearchResults {
   results: SearchResultItem[];
   total: number;
   query_time_ms: number;
+}
+
+/* ── 素材库命中（v0.6：关注素材检索时结果关联的底库目标） ── */
+export interface SubjectSearchMatch {
+  subject_id: string;
+  subject_name: string;
+  subject_kind: ImageSubjectKind;
 }
 
 /* ── Upload response ── */
@@ -686,4 +695,65 @@ export interface CaseAssetItem {
   file_ext?: string | null;         // 真实扩展名（后缀展示用）
   file_size: number;
   created_at: string | null;
+}
+
+/* ═══ v0.6 图片素材库（ImageLibrary） ═══ */
+
+/* 目标种类收敛为两态：person(人，检索走人脸) / other(车等其余，检索走通用图搜)。
+   v0.6 曾有 vehicle 单列，v0.6 并入 other。 */
+export type ImageSubjectKind = "person" | "other";
+
+/** 底库照片（素材库内单张图） */
+export interface SubjectPhoto {
+  id: string;
+  subject_id: string;
+  file_path: string;                    // 相对路径，前端经 api.getSubjectPhotoUrl 拼完整地址
+  /** 归一化裁剪（0~1 相对坐标，对齐人脸/车牌区域），null = 整图 */
+  crop: { x1: number; y1: number; x2: number; y2: number } | null;
+  is_primary: boolean;                  // 是否主图（列表头像）
+  /** 来源：本地上传 / 案例库转存 / 检测沉淀 / 图搜沉淀 */
+  source: "upload" | "case" | "track" | "search" | null;
+  /** 沉淀来源视频（溯源用，非 null 时详情可跳工作台） */
+  source_video_id?: string | null;
+  created_at: string | null;
+}
+
+/** 关注目标（人 / 车），底库维护完全人工，无任何自动去重 */
+export interface ImageSubject {
+  id: string;
+  kind: ImageSubjectKind;
+  name: string;                         // 如 "张三" / "套牌车·京A12345"
+  tags: string[];                       // 如 ["在逃"] / ["套牌车"]
+  photo_count: number;                  // 底库照片数量
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/** 告警命中记录（详情「告警历史」Tab，点击可溯源到工作台） */
+export interface SubjectAlert {
+  id: string;
+  subject_id: string;
+  subject_name: string;
+  case_id: string;
+  case_name: string;
+  video_id: string;
+  video_name: string;
+  version_id: string | null;
+  seek_time: number;                    // 命中时间点（秒）
+  track_id: number | null;              // 命中 track（工作台时间轴/检测面板高亮）
+  class_name: string | null;
+  similarity: number;                   // 0~1
+  created_at: string | null;
+}
+
+/** 手动合并：把 source 的底库追加到 target，并删除 source（替代智能去重，纯人工操作） */
+export interface MergeSubjectsRequest {
+  target_subject_id: string;
+  source_subject_id: string;
+}
+
+export interface MergeSubjectsResult {
+  ok: boolean;
+  target_subject_id: string;
+  merged_photos: number;
 }

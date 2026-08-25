@@ -7,7 +7,7 @@ import { api } from "../services/api";
 import type { SearchResultItem, VideoResponse, VideoListItem, FaceSearchResult, VideoGroup, CaseAssetItem } from "../types";
 import { formatSec } from "../utils/helpers";
 import { zhLabel } from "../labels";
-import { CaseAssetPicker } from "./CaseAssetPicker";
+import { SubjectPhotoPicker } from "./SubjectPhotoPicker";
 
 /* 检索范围下拉：待处理/处理中直接不显示；仅 completed 文件列出。
    completed 且开启搜索索引 → 可选；completed 但未开索引 → 置灰标注「未索引」。 */
@@ -41,6 +41,9 @@ export function VideoSearchCard({
   allVideos,
   caseGroups,
   onGroupVideoSwitch,
+  initialQuery,
+  initialFaceFile,
+  initialImageFile,
 }: {
   video: VideoResponse | null;
   videoId: string | null;
@@ -52,6 +55,10 @@ export function VideoSearchCard({
   allVideos?: VideoListItem[];
   caseGroups?: VideoGroup[];
   onGroupVideoSwitch?: (videoId: string) => void;
+  /* ── 跨页搜索关键词同步：全局搜索→本卡片自动填充并搜索（一次性） ── */
+  initialQuery?: string | null;
+  initialFaceFile?: File | null;
+  initialImageFile?: File | null;
 }) {
   // 用 Dashboard 的 currentVideoId（跨视频切换时 video 对象会先置 null，若从 video?.id 派生
   // currentVideoId 会经历 旧→null→新 两次变化 → 重置 effect 跑两次，suppress flag 被第一次消费掉）
@@ -121,16 +128,9 @@ export function VideoSearchCard({
     return `${selectedFiles.size} 个视频`;
   }, [scope, selectedFiles, caseFileMap, caseNames]);
 
-  // 从案例素材选图（图搜/人脸搜）：当前视频所属案例优先，否则选中检索文件所属案例
+  // 图搜/人脸搜选图来源菜单（本地 / 从素材库）
   const [assetPicker, setAssetPicker] = useState<{ kind: "image" | "face" } | null>(null);
   const [assetMenu, setAssetMenu] = useState<{ kind: "image" | "face"; x: number; y: number } | null>(null);
-  const pickerGroup = useMemo(() => {
-    if (video?.group_id) return { groupId: video.group_id, groupName: caseNames.get(video.group_id) };
-    for (const [gid, vids] of caseFileMap) {
-      if (vids.some((v) => selectedFiles.has(v.id))) return { groupId: gid, groupName: caseNames.get(gid) };
-    }
-    return null;
-  }, [video, selectedFiles, caseFileMap, caseNames]);
 
   const openAssetMenu = (e: React.MouseEvent, kind: "image" | "face") => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -149,11 +149,45 @@ export function VideoSearchCard({
   const ocrDisabled = !detInScope || !scopeVideos.some(v => v.ocr_enabled);
   // 语义/图搜可用性：全库（null）恒可用；具体范围需范围内有视频开搜索索引
   const semanticReady = searchVideoIds == null || scopeVideos.some(v => v.search_index_enabled);
+  const initialQueryRef = useRef<string | null>(null);
 
   // 视频切换：手动切换（header/历史）→ 重置搜索上下文；搜索结果自己发起的切换 → 抑制（保留结果与范围）
+  // 若有 initialQuery/initialFaceFile/initialImageFile（全局搜索同步），跳过重置并自动搜索
   useEffect(() => {
     if (suppressResetRef.current) {
-      suppressResetRef.current = false;  // 消费 flag：搜索结果自己发起的切换 → 跳过本次重置（无 setTimeout 竞态）
+      suppressResetRef.current = false;
+      return;
+    }
+    // 全局搜索关键词同步：跳过重置，直接填充并搜索
+    if (initialQuery && currentVideoId && initialQuery !== initialQueryRef.current) {
+      initialQueryRef.current = initialQuery;
+      setQuery(initialQuery);
+      setResults([]); setSearching(true); setError(null); setFaceResults([]);
+      setSearchMode("semantic");
+      api.searchSemantic(initialQuery, { video_ids: [currentVideoId] })
+        .then((data) => { setResults(data.results ?? []); setHasSearched(true); })
+        .catch((err) => { setError(err instanceof Error ? err.message : "搜索失败"); })
+        .finally(() => { setSearching(false); });
+      if (currentVideoId) {
+        const target = allVideosRef.current?.find((v) => v.id === currentVideoId);
+        if (target?.group_id) {
+          setSelectedFiles(new Set((allVideosRef.current ?? []).filter((v) => v.group_id === target.group_id && isSearchable(v)).map((v) => v.id)));
+        } else {
+          setSelectedFiles(target && isSearchable(target) ? new Set([currentVideoId]) : new Set());
+        }
+        setScope("custom");
+      }
+      return;
+    }
+    // 全局搜索人脸/图搜同步
+    if (initialFaceFile && currentVideoId) {
+      setResults([]); setFaceResults([]); setError(null);
+      void runFaceSearch(initialFaceFile);
+      return;
+    }
+    if (initialImageFile && currentVideoId) {
+      setResults([]); setFaceResults([]); setError(null);
+      void runImageSearch(initialImageFile);
       return;
     }
     setQuery(""); setResults([]); setSearching(false); setHasSearched(false); setError(null); setFaceResults([]);
@@ -170,7 +204,8 @@ export function VideoSearchCard({
       setSelectedFiles(new Set());
       setScope("custom");
     }
-  }, [currentVideoId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentVideoId, initialQuery, initialFaceFile, initialImageFile]);
 
   const toggleFile = useCallback((id: string) => {
     setSelectedFiles((prev) => {
@@ -430,7 +465,7 @@ export function VideoSearchCard({
           {/* Image search (inside input right) — 顺序最左 */}
           <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageSearch} className="hidden" />
           <button onClick={(e) => openAssetMenu(e, "image")} disabled={imageSearching}
-            className="absolute right-[76px] top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-teal-50 hover:bg-teal-100 text-teal-600 flex items-center justify-center transition-colors disabled:opacity-50" title="以图搜图（本地选图 / 从案例素材选图）">
+            className="absolute right-[76px] top-1/2 -translate-y-1/2 w-6 h-6 rounded bg-teal-50 hover:bg-teal-100 text-teal-600 flex items-center justify-center transition-colors disabled:opacity-50" title="以图搜图（本地选图 / 从素材库选图）">
             {imageSearching ? <span className="inline-block w-3 h-3 border-2 border-teal-300 border-t-teal-500 rounded-full animate-spin" /> : (
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
@@ -444,7 +479,7 @@ export function VideoSearchCard({
             className={`absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded flex items-center justify-center transition-colors disabled:opacity-50 ${
               faceDisabled ? "bg-gray-200 text-gray-600" : "bg-purple-50 hover:bg-purple-100 text-purple-600"
             }`}
-            title={faceDisabled ? "未开启人脸处理" : "人脸搜索（本地选图 / 从案例素材选图）"}>
+            title={faceDisabled ? "未开启人脸处理" : "人脸搜索（本地选图 / 从素材库选图）"}>
             {faceSearching ? <span className="inline-block w-3 h-3 border-2 border-purple-300 border-t-purple-500 rounded-full animate-spin" /> : (
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="7" r="4" /><path d="M20 21v-1a8 8 0 00-16 0v1" /></svg>
             )}
@@ -650,7 +685,7 @@ export function VideoSearchCard({
         )}
       </div>
 
-      {/* 图搜/人脸搜 选图来源菜单（本地 / 从案例素材） */}
+      {/* 图搜/人脸搜 选图来源菜单（本地 / 从素材库） */}
       {assetMenu && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setAssetMenu(null)} />
@@ -659,21 +694,17 @@ export function VideoSearchCard({
               onClick={() => { const k = assetMenu.kind; setAssetMenu(null); (k === "image" ? imageInputRef : fileInputRef).current?.click(); }}>
               本地选择图片
             </button>
-            <button className="w-full px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50 disabled:text-gray-300 disabled:hover:bg-white"
-              disabled={!pickerGroup}
-              title={pickerGroup ? `从案例「${pickerGroup.groupName ?? ""}」素材选图` : "未定位到所属案例"}
-              onClick={() => { setAssetMenu(null); if (pickerGroup) setAssetPicker({ kind: assetMenu.kind }); }}>
-              从案例素材选图
+            <button className="w-full px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
+              onClick={() => { setAssetMenu(null); setAssetPicker({ kind: assetMenu.kind }); }}>
+              从素材库选图
             </button>
           </div>
         </>
       )}
 
-      {/* 从案例素材选图弹窗 */}
-      {assetPicker && pickerGroup && (
-        <CaseAssetPicker
-          groupId={pickerGroup.groupId}
-          groupName={pickerGroup.groupName}
+      {/* 从素材库选图弹窗 */}
+      {assetPicker && (
+        <SubjectPhotoPicker
           onClose={() => setAssetPicker(null)}
           onSelect={(file) => {
             setAssetPicker(null);

@@ -32,6 +32,12 @@ import type {
   VersionInfo,
   TaskItem,
   CaseAssetItem,
+  ImageSubject,
+  ImageSubjectKind,
+  SubjectPhoto,
+  SubjectAlert,
+  MergeSubjectsRequest,
+  MergeSubjectsResult,
 } from "./types";
 
 const BASE = "/api/v1";
@@ -521,6 +527,111 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
+  },
+
+  /* ═══ 图片素材库（ImageLibrary v0.6） ═══ */
+
+  /* ── 关注目标 CRUD ── */
+  listImageSubjects(params?: { kind?: ImageSubjectKind; tag?: string; search?: string }) {
+    const q = new URLSearchParams();
+    if (params?.kind) q.set("kind", params.kind);
+    if (params?.tag) q.set("tag", params.tag);
+    if (params?.search) q.set("search", params.search);
+    const qs = q.toString();
+    return request<ImageSubject[]>(`${BASE}/subjects${qs ? `?${qs}` : ""}`);
+  },
+  getImageSubject(subjectId: string) {
+    return request<ImageSubject>(`${BASE}/subjects/${subjectId}`);
+  },
+  createImageSubject(body: { kind: ImageSubjectKind; name: string; tags?: string[] }) {
+    return request<ImageSubject>(`${BASE}/subjects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+  updateImageSubject(subjectId: string, body: { name?: string; tags?: string[] }) {
+    return request<ImageSubject>(`${BASE}/subjects/${subjectId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+  deleteImageSubject(subjectId: string) {
+    return request<{ ok: boolean }>(`${BASE}/subjects/${subjectId}`, { method: "DELETE" });
+  },
+  /* 全库标签集合（筛选下拉用） */
+  listSubjectTags() {
+    return request<string[]>(`${BASE}/subjects/tags`);
+  },
+
+  /* ── 底库照片 ── */
+  listSubjectPhotos(subjectId: string) {
+    return request<SubjectPhoto[]>(`${BASE}/subjects/${subjectId}/photos`);
+  },
+  /** 上传一张或多张底图（拖拽/文件选择） */
+  uploadSubjectPhoto(subjectId: string, files: File[], source?: SubjectPhoto["source"]) {
+    const form = new FormData();
+    for (const f of files) form.append("files", f);
+    if (source) form.append("source", source);
+    return request<SubjectPhoto[]>(`${BASE}/subjects/${subjectId}/photos`, {
+      method: "POST",
+      body: form,
+    });
+  },
+  /** 从案例库图片转存为底图（后端按 assetId 引用转存） */
+  importCaseAssetPhoto(subjectId: string, groupId: string, assetId: string) {
+    return request<SubjectPhoto>(`${BASE}/subjects/${subjectId}/photos/import-case-asset`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ group_id: groupId, asset_id: assetId }),
+    });
+  },
+  /** 保存裁剪（归一化坐标）/ 设为主图 */
+  updateSubjectPhoto(subjectId: string, photoId: string, body: {
+    crop?: { x1: number; y1: number; x2: number; y2: number } | null;
+    is_primary?: boolean;
+  }) {
+    return request<SubjectPhoto>(`${BASE}/subjects/${subjectId}/photos/${photoId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+  deleteSubjectPhoto(subjectId: string, photoId: string) {
+    return request<{ ok: boolean }>(`${BASE}/subjects/${subjectId}/photos/${photoId}`, { method: "DELETE" });
+  },
+
+  /* ── 手动合并（替代智能去重，纯人工） ── */
+  mergeSubjects(body: MergeSubjectsRequest) {
+    return request<MergeSubjectsResult>(`${BASE}/subjects/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+
+  /* ── 告警历史（命中记录溯源） ── */
+  listSubjectAlerts(subjectId: string) {
+    return request<SubjectAlert[]>(`${BASE}/subjects/${subjectId}/alerts`);
+  },
+
+  /* ── 素材库检索（v0.6：上传一张照片，person 走人脸模型 / other 走通用图搜，返回命中的底库目标） ── */
+  searchSubjects(file: File, options?: { kind?: ImageSubjectKind; top_k?: number; min_similarity?: number }) {
+    const form = new FormData();
+    form.append("file", file);
+    if (options?.kind) form.append("kind", options.kind);
+    if (options?.top_k != null) form.append("top_k", String(options.top_k));
+    if (options?.min_similarity != null) form.append("min_similarity", String(options.min_similarity));
+    return request<SearchResults>(`${BASE}/search/subjects`, { method: "POST", body: form });
+  },
+
+  /* ── 图片 URL helpers ── */
+  getSubjectPrimaryPhotoUrl(subjectId: string): string {
+    return `${BASE}/subjects/${subjectId}/primary-photo`;
+  },
+  getSubjectPhotoUrl(subjectId: string, photoId: string): string {
+    return `${BASE}/subjects/${subjectId}/photos/${photoId}/file`;
   },
 };
 

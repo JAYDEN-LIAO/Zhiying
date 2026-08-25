@@ -4,11 +4,11 @@
    系统/模型参数/参数预设/API 密钥，照 demo Layout 二级菜单拆出）
    ════════════════════════════════════════════════════════════ */
 
-import { IconFolder, IconVideo, IconSearch5, IconTask, IconGear, IconSliders } from "./icons";
+import { IconFolder, IconVideo, IconSearch5, IconTask, IconGear, IconSliders, IconImage } from "./icons";
 import { SystemMonitor } from "./SystemMonitor";
 import type { SettingsTab } from "../AppContext";
 
-export type Page = "files" | "workbench" | "search" | "tasks" | "settings";
+export type Page = "files" | "workbench" | "search" | "tasks" | "settings" | "imagelib";
 
 interface NavItem {
   key: string;
@@ -18,6 +18,7 @@ interface NavItem {
 
 const BUSINESS: NavItem[] = [
   { key: "files", label: "案例库", icon: <IconFolder /> },
+  { key: "imagelib", label: "素材库", icon: <IconImage /> },
   { key: "search", label: "全局搜索", icon: <IconSearch5 /> },
   { key: "workbench", label: "视频解析", icon: <IconVideo /> },
   { key: "tasks", label: "任务中心", icon: <IconTask /> },
@@ -39,8 +40,8 @@ export function Sidebar({
   settingsTab: SettingsTab;
   onNavigate: (p: Page) => void;
   onNavigateSettings: (tab: SettingsTab) => void;
-  /* 案例库灰=仅上传未提交 / 视频解析蓝=处理中(恒1) / 任务中心 黄=排队中 绿=新完成 红=失败 */
-  counts?: { files?: number; filesLabel?: string; workbench?: number; queued?: number; newCompleted?: number; failed?: number };
+  /* 案例库灰=仅上传未提交 / 视频解析蓝=处理中(恒1) / 任务中心 黄=排队中 绿=新完成 红=失败 / 素材库=高优告警红点 */
+  counts?: { files?: number; filesLabel?: string; workbench?: number; queued?: number; newCompleted?: number; failed?: number; imageLibAlert?: number };
 }) {
   return (
     <aside className="sidebar">
@@ -86,6 +87,14 @@ export function Sidebar({
                     <span className="sb-count sb-count-yellow" title="排队中">{counts.queued}</span>
                   )}
                 </span>
+              ) : item.key === "imagelib" ? (
+                /* 图片素材库：高优告警（如"在逃命中"）红点徽章 */
+                counts?.imageLibAlert != null && counts.imageLibAlert > 0 && (
+                  <span className="sb-dot-alert" title={`${counts.imageLibAlert} 条新高优告警`}>
+                    <span className="pulse" />
+                    {counts.imageLibAlert > 99 ? "99+" : counts.imageLibAlert}
+                  </span>
+                )
               ) : null}
             </button>
           );

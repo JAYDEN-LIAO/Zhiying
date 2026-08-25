@@ -1156,3 +1156,140 @@ class CaseAsset(Base):
     __table_args__ = (
         {"comment": "案例素材表 — 图片等非视频归档素材"},
     )
+
+
+# ═══════════════════════════════════════════════════════════
+# ImageSubject / SubjectPhoto / SubjectPhotoEmbedding — 图片素材库（v0.6）
+# 关注目标（人/其他）底库照片归档，纯人工维护，无自动去重。
+#   person → 检索走 ArcFace 512（face_embedding 列）
+#   other  → 检索走 Qwen3-VL（other_embedding 列，维度随 embedding_profile）
+# 告警（subject_alerts）本期不做（v0.6 决策 E，下一阶段）。
+# ═══════════════════════════════════════════════════════════
+
+class ImageSubject(Base):
+    """关注目标（人 / 其他）— 素材库主实体。
+
+    kind 两态（v0.6）：person=人（检索重人脸）/ other=车等其余（检索走通用图搜）。
+    tags 存 JSONB 标签数组。photo_count 由照片数派生维护（非权威值）。
+    """
+
+    __tablename__ = "image_subjects"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="other",
+        comment="person / other（v0.6 两态）",
+    )
+    name: Mapped[str] = mapped_column(
+        String(256), nullable=False, comment="目标名称，如 张三 / 套牌车·京A12345",
+    )
+    tags: Mapped[list | None] = mapped_column(
+        JSONB, nullable=True, default=list, comment="标签数组，如 [在逃, 重点]",
+    )
+    photo_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, comment="底库照片数（派生维护）",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+
+    photos: Mapped[list["SubjectPhoto"]] = relationship(
+        back_populates="subject",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    __table_args__ = (
+        Index("ix_image_subjects_kind", "kind"),
+        {"comment": "图片素材库 — 关注目标（人/其他）"},
+    )
+
+
+class SubjectPhoto(Base):
+    """底库照片 — 一个目标下的单张图（上传 / 案例转存 / 检测沉淀 / 图搜沉淀）。
+
+    crop 为归一化裁剪（0~1 相对坐标，对齐人脸/车牌区域），null=整图。
+    is_primary 主图（列表头像）。source 标记来源供溯源。
+    source_video_id 非空时详情可跳工作台溯源。
+    """
+
+    __tablename__ = "subject_photos"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    subject_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("image_subjects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+        comment="所属目标",
+    )
+    file_path: Mapped[str] = mapped_column(
+        String(1024), nullable=False, comment="绝对路径",
+    )
+    crop: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, comment="归一化裁剪 x1/y1/x2/y2，null=整图",
+    )
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False,
+    )
+    source: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, default="upload",
+        comment="upload / case / track / search",
+    )
+    source_video_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, comment="沉淀来源视频（溯源跳工作台）",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+
+    subject: Mapped["ImageSubject"] = relationship(back_populates="photos")
+
+    __table_args__ = (
+        Index("ix_subject_photos_subject", "subject_id"),
+        {"comment": "图片素材库 — 底库照片"},
+    )
+
+
+class SubjectPhotoEmbedding(Base):
+    """底库照片向量 — 检索分轨存储（v0.6 决策 C，法 A 分表/分轨）。
+
+    kind=person → face_embedding Vector(512)（ArcFace 人脸）
+    kind=other  → other_embedding EmbedVector()（Qwen3-VL 通用图搜，维度随档位）
+    按 kind 只写对应列、只查对应列，避免维度不匹配。
+    """
+
+    __tablename__ = "subject_photo_embedding"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    photo_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("subject_photos.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+        comment="底库照片（一照片一向量）",
+    )
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="other",
+        comment="person / other，决定用哪列向量",
+    )
+    face_embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(512), nullable=True, comment="ArcFace 512d（kind=person）",
+    )
+    other_embedding: Mapped[list[float] | None] = mapped_column(
+        EmbedVector(), nullable=True, comment="Qwen3-VL 通用图搜（kind=other）",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_subject_photo_emb_kind", "kind"),
+        {"comment": "图片素材库 — 底库照片检索向量（分轨）"},
+    )

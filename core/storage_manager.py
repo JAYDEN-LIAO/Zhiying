@@ -84,6 +84,10 @@ class StorageManager:
     def export_dir(self) -> str:
         return os.path.join(self.artifact_dir(), "exports")
 
+    def subject_photo_dir(self, subject_id: uuid.UUID) -> str:
+        """素材库底库照片目录（v0.6，图片素材库）— 按目标一人一目录。"""
+        return os.path.join(self.artifact_dir(), "subject_photos", str(subject_id))
+
     # ──────────────────────────────────────────────
     # 引用追踪（派生自 videos 表，不加新表）
     # ──────────────────────────────────────────────

@@ -262,7 +262,6 @@ function CaseContent({
             <option value="processing">处理中</option>
             <option value="completed">已完成</option>
             <option value="failed">失败</option>
-            <option value="image">图片</option>
           </select>
           {/* 上传：白底 outline（与新建案例蓝色等大） */}
           <button className="g-btn" onClick={onUpload} disabled={isUploading}>
@@ -270,7 +269,7 @@ function CaseContent({
             {isUploading ? "上传中..." : "上传"}
           </button>
           {/* 上传文件夹：递归选择文件夹内所有视频/图片（含子文件夹，完全扁平归档到本案例） */}
-          <button className="g-btn" onClick={onUploadFolder} disabled={isUploading} title="上传整个文件夹（含子文件夹内的视频/图片，扁平归档到本案例）">
+          <button className="g-btn" onClick={onUploadFolder} disabled={isUploading} title="上传整个文件夹（含子文件夹内的视频，扁平归档到本案例）">
             <IconFolder />
             上传文件夹
           </button>
@@ -342,7 +341,14 @@ function CaseContent({
             }).map((img) => {
               const { base, ext } = splitName(img.name, img.file_ext);
               return (
-                <div key={img.id} className="fl-card" onClick={() => setPreviewImg(img)}>
+                <div key={img.id} className="fl-card" onClick={() => setPreviewImg(img)}
+                  draggable
+                  onDragStart={(e) => {
+                    /* v0.6 素材库扩充：携带案例素材信息，ImageLibrary 详情页可拖入 */
+                    if (!group) return;
+                    e.dataTransfer.setData("application/x-zhiying-asset", JSON.stringify({ groupId: group.groupId, assetId: img.id, name: img.name }));
+                    e.dataTransfer.effectAllowed = "copy";
+                  }}>
                   <div className="fl-cover">
                     <div className="fl-cover-bg"><ImageIcon /></div>
                     {group && (
@@ -460,7 +466,13 @@ function CaseContent({
               // 搜索过滤
               return !search.trim() || img.name.toLowerCase().includes(search.trim().toLowerCase());
             }).map((img) => (
-              <tr key={img.id}>
+              <tr key={img.id} draggable
+                onDragStart={(e) => {
+                  /* v0.6 素材库扩充：携带案例素材信息，ImageLibrary 详情页可拖入 */
+                  if (!group) return;
+                  e.dataTransfer.setData("application/x-zhiying-asset", JSON.stringify({ groupId: group.groupId, assetId: img.id, name: img.name }));
+                  e.dataTransfer.effectAllowed = "copy";
+                }}>
                 <td />
                 <td><span className="inline-flex items-center justify-center w-6 h-6 rounded bg-gray-50 text-gray-500">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path strokeLinecap="round" strokeLinejoin="round" d="M21 15l-5-5L5 21" /></svg>
@@ -650,8 +662,8 @@ function FileDetailDrawer({
   function setToggle<K extends keyof NonNullable<typeof toggles>>(k: K, v: boolean) {
     setToggles((prev) => {
       if (!prev) return prev;
-      // 链式：关闭 detection → 同步关闭 face / plate（与后端校验一致）
       const next = { ...prev, [k]: v };
+      // 链式：关闭 detection → 同步关闭 face / plate（与后端校验一致）
       if (k === "detection_enabled" && !v) {
         next.face_enabled = false;
         next.plate_enabled = false;
@@ -695,12 +707,12 @@ function FileDetailDrawer({
         vision_enabled: video.vision_enabled,
         audio_enabled: video.audio_enabled,
         ocr_enabled: toggles?.ocr_enabled ?? video.ocr_enabled,
-        caption_enabled: video.caption_enabled,
+        caption_enabled: (toggles?.summary_enabled ?? video.summary_enabled) ? true : video.caption_enabled,
         detection_enabled: toggles?.detection_enabled ?? video.detection_enabled,
         detection_classes: video.detection_classes,
         face_enabled: toggles?.face_enabled ?? video.face_enabled,
         plate_enabled: toggles?.plate_enabled ?? video.plate_enabled,
-        summary_enabled: video.summary_enabled,
+        summary_enabled: toggles?.summary_enabled ?? video.summary_enabled,
         summary_mode: video.summary_mode,
         search_index_enabled: toggles?.search_index_enabled ?? video.search_index_enabled,
         language: video.language,
@@ -900,7 +912,8 @@ export function FileLibrary() {
   const { openWorkbench, uploadFiles, isUploading, refreshCaseGroups, selectedTree, setSelectedTree, videos } = useApp();
   const [files, setFiles] = useState<FileItem[]>([]);
   const [groups, setGroups] = useState<VideoGroup[]>([]);
-  const [images, setImages] = useState<CaseAssetItem[]>([]);
+  /* 案例图片素材已退役（v0.6）：案例库不再支持图片，images 恒空 */
+  const [images] = useState<CaseAssetItem[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const tree = selectedTree as TreeKey;
@@ -960,17 +973,6 @@ export function FileLibrary() {
     return () => clearInterval(iv);
   }, []);
 
-  /* 选中案例 → 拉取该案例图片素材 */
-  useEffect(() => {
-    setImages([]);
-    if (!tree.startsWith("g:")) return;
-    let cancelled = false;
-    api.getGroupAssets(tree.slice(2)).then((d) => {
-      if (!cancelled) setImages(d?.images ?? []);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [tree]);
-
   /* 切换视图（全部/未分组/案例）→ 清空勾选，避免跨范围误批量 */
   useEffect(() => { setSelected(new Set()); }, [tree]);
 
@@ -978,7 +980,6 @@ export function FileLibrary() {
     const files = Array.from(fileList);
     if (!files.length) return;
     const vids = files.filter((f) => /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name) || f.type.startsWith("video/"));
-    const imgs = files.filter((f) => f.type.startsWith("image/"));
     const uploadedIds: string[] = [];
     const uploadedEntries: { video_id: string; file_name: string }[] = [];
     if (vids.length) {
@@ -994,13 +995,6 @@ export function FileLibrary() {
         }
       }
     }
-    if (imgs.length) {
-      try { await api.uploadGroupAssets(gid, imgs); } catch (err) { alert(err instanceof Error ? err.message : "图片上传失败"); }
-    }
-    try {
-      const d = await api.getGroupAssets(gid);
-      setImages(d?.images ?? []);
-    } catch { /* ignore */ }
     load();
     /* 上传视频完成后弹出智能参数推荐弹窗（仅视频 ≥ 1 个；走 stay=true 不会自动跳工作台） */
     if (uploadedEntries.length > 0) setSmartSuggestVids(uploadedEntries);
@@ -1015,7 +1009,7 @@ export function FileLibrary() {
     }
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".mp4,.mov,.avi,.mkv,.webm,image/*";
+    input.accept = ".mp4,.mov,.avi,.mkv,.webm";
     input.multiple = true;
     input.onchange = async () => {
       await processFiles(Array.from(input.files ?? []), gid);
@@ -1122,7 +1116,6 @@ export function FileLibrary() {
     if (!window.confirm(`确认删除图片「${img.name}」？`)) return;
     try {
       await api.deleteGroupAsset(tree.slice(2), img.id);
-      setImages((prev) => prev.filter((x) => x.id !== img.id));
     } catch (err) { alert(err instanceof Error ? err.message : "删除失败"); }
   };
 

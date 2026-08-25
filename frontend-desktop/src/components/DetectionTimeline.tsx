@@ -193,7 +193,7 @@ export const DetectionTimeline = memo(function DetectionTimeline({ videoId, vide
     if (en - s < 1) en = s + 1;
     setView({ start: s, end: en });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTrackId]);
+  }, [selectedTrackId, data]);
 
   /* ── 选中人脸身份 → 时间轴联动：垂直滚动到其 lane + 水平 pan（v0.30） ── */
   useLayoutEffect(() => {

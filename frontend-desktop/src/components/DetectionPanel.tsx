@@ -10,6 +10,7 @@ import type { DetectionData, VideoResponse, VideoListItem, Track, PlateDetection
 import { api } from "../services/api";
 import { colorOf, zh, zhLabel } from "../labels";
 import { formatSec } from "../utils/helpers";
+import { IconPlus } from "./icons";
 
 const SELECTED = "#FFD700";  // 金色，与视频框(DetectionOverlay)/时间轴(DetectionTimeline)选中色统一
 
@@ -39,6 +40,8 @@ interface Props {
   videos?: VideoListItem[];
   detectionVideoId?: string | null;
   onDetectionVideoChange?: (videoId: string | null) => void;
+  /* ── v0.6 沉淀到图片素材库：track 行「+ 加入素材库」 ── */
+  onAddToLibrary?: (track: Track, thumbnailUrl?: string | null) => void;
 }
 
 function thumbUrl(videoId: string, ts: number, bbox: { x1: number; y1: number; x2: number; y2: number }) {
@@ -67,13 +70,14 @@ interface TrackRowProps {
   onHoverThumb: (th: { videoId: string; ts: number; bbox: { x1: number; y1: number; x2: number; y2: number }; x: number; y: number } | null) => void;
   onDownloadThumb: (trackId: number, displayId: number) => void;
   onDownloadTrack: (trackId: number, displayId: number) => void;
+  onAddToLibrary?: (track: Track, thumbnailUrl?: string | null) => void;
 }
 
 const TrackRow = memo(function TrackRow({
   track, isSel, video, color, hasFace, identityLabel, plate, tUrl, thumbTs, bbox,
   displayId, maxDuration, isDropdownOpen,
   onTrackSelect, onToggleDropdown, onCloseDropdown, onHoverThumb,
-  onDownloadThumb, onDownloadTrack,
+  onDownloadThumb, onDownloadTrack, onAddToLibrary,
 }: TrackRowProps) {
   return (
     <div
@@ -121,6 +125,16 @@ const TrackRow = memo(function TrackRow({
       <div className="dtc-bar">
         <div className="dtc-bar-fill" style={{ width: `${Math.min(100, ((track.last_seen - track.first_seen) / (maxDuration || 1)) * 100)}%`, background: isSel ? SELECTED : color }} />
       </div>
+      {/* 加入图片素材库（v0.6）：自动携带 track 缩略图/当前帧为底图 */}
+      {onAddToLibrary && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onAddToLibrary(track, tUrl); }}
+          className="w-6 h-6 rounded-md flex items-center justify-center text-gray-300 hover:text-[#4f7cff] hover:bg-blue-50 transition-all cursor-pointer"
+          title="加入图片素材库"
+        >
+          <IconPlus />
+        </button>
+      )}
       {/* Export dropdown */}
       <div className="relative shrink-0">
         <button
@@ -152,7 +166,7 @@ const TrackRow = memo(function TrackRow({
   );
 });
 
-export function DetectionPanel({ video, data, selectedTrackId, classFilter, onClassFilterChange, onTrackSelect, faceData, plateData, groupVideos, videos, detectionVideoId, onDetectionVideoChange, faceViewOpen, expandedFaceId, onFaceViewChange, onExpandedFaceChange, onSeekTo }: Props) {
+export function DetectionPanel({ video, data, selectedTrackId, classFilter, onClassFilterChange, onTrackSelect, faceData, plateData, groupVideos, videos, detectionVideoId, onDetectionVideoChange, faceViewOpen, expandedFaceId, onFaceViewChange, onExpandedFaceChange, onSeekTo, onAddToLibrary }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [trackDropdown, setTrackDropdown] = useState<number | null>(null);
   const [faceDropdownId, setFaceDropdownId] = useState<number | null>(null);
@@ -166,6 +180,9 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
   const [viewportH, setViewportH] = useState(400);
   const listRef = useRef<HTMLDivElement>(null);
   const scrollRaf = useRef(0);
+  // 检测数据版本计数器：data 变化时递增，scroll effect 依赖它触发（不用 data 本身，避免与回顶 effect 冲突）
+  const [dataVersion, setDataVersion] = useState(0);
+  useEffect(() => { setDataVersion((v) => v + 1); }, [data]);
 
   const showFaceBtn = !!(video?.face_enabled && faceData?.has_face);
 
@@ -303,13 +320,15 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
       }
     }, 500);
     return () => window.clearTimeout(t);
-  }, [selectedTrackId, faceViewOpen]);
+  }, [selectedTrackId, faceViewOpen, dataVersion, listVisible]);
 
-  /* ── 筛选/切 tab/切视频 → 回顶（同时复位 state 与 DOM，消除陈旧滚动位置）── */
+  /* ── 筛选/切 tab/切视频 → 回顶（同时复位 state 与 DOM，消除陈旧滚动位置）──
+     有选中 track 时跳过（scroll effect 会定位到选中项） */
   useEffect(() => {
+    if (selectedTrackId != null) return;
     setScrollTop(0);
     if (!faceViewOpen && listRef.current) listRef.current.scrollTop = 0;
-  }, [classFilter, faceViewOpen, data?.tracks]);
+  }, [classFilter, faceViewOpen, data?.tracks, selectedTrackId]);
 
   /* ── 稳定 handlers（memo 生效前提：除 isSel/isDropdownOpen 外全部引用稳定）── */
   const toggleDropdown = useCallback((tid: number) => {
@@ -528,6 +547,7 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                       onHoverThumb={onHoverThumb}
                       onDownloadThumb={downloadThumb}
                       onDownloadTrack={downloadTrack}
+                      onAddToLibrary={onAddToLibrary}
                     />
                   </div>
                 );

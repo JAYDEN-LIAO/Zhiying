@@ -535,3 +535,80 @@ class CaseAssetItem(BaseModel):
     def file_ext(self) -> str:
         """真实扩展名（磁盘路径）；后缀展示用，重命名不影响。"""
         return os.path.splitext(self.path or "")[1]
+
+
+# ═══════════════════════════════════════════════════════════
+# 图片素材库（v0.6）— 关注目标 / 底库照片 / 检索 DTO
+# kind 两态：person / other（v0.6，原 vehicle 并入 other）
+# ═══════════════════════════════════════════════════════════
+
+IMAGE_SUBJECT_KINDS = ("person", "other")
+
+
+class ImageSubjectCreate(BaseModel):
+    """新建关注目标。"""
+    kind: str = "other"
+    name: str = Field(..., min_length=1, description="目标名称")
+    tags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.kind not in IMAGE_SUBJECT_KINDS:
+            self.kind = "other" if self.kind in ("vehicle",) else "person"
+        if not self.name.strip():
+            raise ValueError("请填写目标名称")
+        return self
+
+
+class ImageSubjectUpdate(BaseModel):
+    """更新目标（名称/标签）。"""
+    name: str | None = None
+    tags: list[str] | None = None
+
+
+class ImageSubjectItem(BaseModel):
+    """关注目标响应 DTO。"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    kind: str
+    name: str
+    tags: list[str] = Field(default_factory=list)
+    photo_count: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class SubjectPhotoItem(BaseModel):
+    """底库照片响应 DTO。"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    subject_id: uuid.UUID
+    file_path: str
+    crop: dict | None = None
+    is_primary: bool = False
+    source: str | None = None
+    source_video_id: uuid.UUID | None = None
+    created_at: datetime | None = None
+
+
+class SubjectPhotoUpdate(BaseModel):
+    """更新底库照片（裁剪 / 设主图）。"""
+    crop: dict | None = None
+    is_primary: bool | None = None
+
+
+class MergeSubjectsRequest(BaseModel):
+    """手动合并：把 source 的底图并入 target，并删 source。"""
+    target_subject_id: uuid.UUID
+    source_subject_id: uuid.UUID
+
+
+class SubjectSearchRequest(BaseModel):
+    """素材库检索请求 — query 文本 + 分轨 kind 筛选。"""
+    query: str = Field(..., min_length=1)
+    video_ids: list[str] | None = None
+    top_k: int = Field(default=20, ge=1, le=100)
+    min_similarity: float = Field(default=0.3, ge=0.0, le=1.0)
+    kind: str | None = None        # person / other，缺省=全查

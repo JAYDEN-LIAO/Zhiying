@@ -11,8 +11,14 @@ import type { VideoListItem, VideoGroup, VideoResponse } from "./types";
 import { useYunzhi } from "./platform/YunzhiProvider";
 import type { YunzhiResource } from "./platform/yunzhi-bridge";
 
-export type Page = "files" | "workbench" | "search" | "tasks" | "settings";
+export type Page = "files" | "workbench" | "search" | "tasks" | "settings" | "imagelib";
 export type SettingsTab = "system" | "model";
+
+/* 图片素材库跨页跳转意图：打开页面并可（可选）定位到指定目标/切到告警历史 Tab */
+export interface ImageLibraryIntent {
+  subjectId?: string;
+  openAlerts?: boolean;   // 打开详情时直接切到「告警历史」Tab（全局搜索/Toast 跳转用）
+}
 
 interface AppCtx {
   page: Page;
@@ -23,7 +29,7 @@ interface AppCtx {
   /* 跨页选视频：跳工作台并（可选）自动打开参数面板 */
   selectedVideoId: string | null;
   initialVersionId: string | null;
-  openWorkbench: (videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null }; selectTrack?: { trackId: number; className: string; start: number } }) => void;
+  openWorkbench: (videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null }; selectTrack?: { trackId: number; className: string; start: number }; searchQuery?: string; faceFile?: File; imageFile?: File }) => void;
   paramsTick: number;
   consumeParamsTick: () => void; // 参数面板自动打开意图一次性消费（预览/切页不再重复弹）
   reparseIntent: boolean;        // 自动打开的参数面板是否走「重新解析」模式（已完成文件重配置参数 → reanalyze 建新版本）
@@ -33,6 +39,12 @@ interface AppCtx {
   /* 跨页 track 选中：全局搜索 track 结果点击 → 工作台选中 track（bbox+时间轴高亮，一次性消费） */
   pendingTrackSelect: { videoId: string; trackId: number; className: string; start: number } | null;
   consumePendingTrackSelect: () => void;
+  /* 跨页搜索关键词同步：全局搜索→工作台视频搜索卡片（一次性消费） */
+  pendingSearchQuery: string | null;
+  consumePendingSearchQuery: () => void;
+  pendingFaceFile: File | null;
+  pendingImageFile: File | null;
+  consumePendingSearchFiles: () => void;
   /* 共享视频列表（4s 轮询 + 组重建） */
   videos: VideoListItem[];
   videoGroups: VideoGroup[];
@@ -49,6 +61,12 @@ interface AppCtx {
   taskHighlightIds: string[];  // 进入任务中心时待高亮的「新完成」行 id（表格淡绿高亮）
   runningTaskCount: number;  // 处理中数：视频解析蓝色「1」徽章 + 退出确认（仅 status=processing）
   refreshList: () => void;
+  /* ═══ v0.6 图片素材库：跨页跳转意图 + 高优告警红点（下一阶段接轮询） ═══ */
+  imageLibIntent: ImageLibraryIntent | null;
+  consumeImageLibIntent: () => void;
+  openImageLibrary: (opts?: ImageLibraryIntent) => void;
+  imageLibAlertCount: number;   // 新高优告警数（如"在逃命中"）→ 侧栏红点；告警阶段接入
+  clearImageLibAlerts: () => void;
   /* 上传：统一入口，上传后跳工作台 + 打开参数 */
   isUploading: boolean;
   uploadFiles: (files: FileList | File[], groupId?: string, opts?: { stay?: boolean }) => Promise<string[]>;
@@ -76,6 +94,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [reparseIntent, setReparseIntent] = useState(false);
   const [openSeekTarget, setOpenSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
   const [pendingTrackSelect, setPendingTrackSelect] = useState<{ videoId: string; trackId: number; className: string; start: number } | null>(null);
+  const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
+  const [pendingFaceFile, setPendingFaceFile] = useState<File | null>(null);
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [videos, setVideos] = useState<VideoListItem[]>([]);
   const [videoGroups, setVideoGroups] = useState<VideoGroup[]>([]);
   const [caseGroups, setCaseGroups] = useState<VideoGroup[]>([]);
@@ -96,6 +117,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   selectedVideoIdRef.current = selectedVideoId;
   const [listKey, setListKey] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  /* ═══ v0.6 图片素材库：跨页跳转意图（一次性消费）+ 高优告警红点（告警阶段接轮询） ═══ */
+  const [imageLibIntent, setImageLibIntent] = useState<ImageLibraryIntent | null>(null);
+  const [imageLibAlertCount, setImageLibAlertCount] = useState(0);
 
   const { mock: yunzhiMock, selectFiles: yunzhiSelectFiles } = useYunzhi();
 
@@ -108,6 +132,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } else if (pageRef.current === "tasks") {
       setTaskHighlightIds([]); // 离开任务中心清高亮（防快速折返误高亮旧行）
     }
+    /* 进入图片素材库：高优告警红点视为已读清零（与 openImageLibrary 一致） */
+    if (p === "imagelib") setImageLibAlertCount(0);
     /* 进入视频解析页面时优先加载处理中的视频（v0.37）：
        - 有处理中 → 切到它（覆盖之前选中的视频，避免用户看到「无选中」或「旧视频」）
        - 没有处理中 → 保留当前选中（持续看片）或空态
@@ -124,7 +150,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPage("settings");
   }, []);
 
-  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null }; selectTrack?: { trackId: number; className: string; start: number } }) => {
+  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null }; selectTrack?: { trackId: number; className: string; start: number }; searchQuery?: string; faceFile?: File; imageFile?: File }) => {
     setSelectedVideoId(videoId);
     setInitialVersionId(opts?.versionId ?? null); // 精确定位版本行（任务中心跳转）
     setPage("workbench");
@@ -134,6 +160,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     /* track 选中意图：全局搜索 track 结果点击 → 工作台高亮 bbox+时间轴。
        若未传 selectTrack，主动清空旧意图（避免上一轮残留导致新打开仍带高亮） */
     setPendingTrackSelect(opts?.selectTrack ? { videoId, ...opts.selectTrack } : null);
+    /* 搜索关键词同步：全局搜索→工作台视频搜索卡片自动填充并搜索 */
+    setPendingSearchQuery(opts?.searchQuery ?? null);
+    setPendingFaceFile(opts?.faceFile ?? null);
+    setPendingImageFile(opts?.imageFile ?? null);
   }, []);
 
   /* 参数面板自动打开意图一次性消费：弹过一次后归零，避免预览/切页回来重复弹 */
@@ -141,6 +171,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const consumeReparseIntent = useCallback(() => setReparseIntent(false), []);
   const consumeOpenSeek = useCallback(() => setOpenSeekTarget(null), []);
   const consumePendingTrackSelect = useCallback(() => setPendingTrackSelect(null), []);
+  const consumePendingSearchQuery = useCallback(() => setPendingSearchQuery(null), []);
+  const consumePendingSearchFiles = useCallback(() => { setPendingFaceFile(null); setPendingImageFile(null); }, []);
+
+  /* ═══ v0.6 图片素材库：打开页面并（可选）携带定位意图；意图一次性消费，切页回来不重复弹 ═══ */
+  const openImageLibrary = useCallback((opts?: ImageLibraryIntent) => {
+    setImageLibIntent(opts && (opts.subjectId || opts.openAlerts) ? opts : null);
+    setPage("imagelib");
+  }, []);
+  const consumeImageLibIntent = useCallback(() => setImageLibIntent(null), []);
+  const clearImageLibAlerts = useCallback(() => setImageLibAlertCount(0), []);
 
   /* ── 视频列表 + 组重建（原 Dashboard 逻辑） ── */
   useEffect(() => {
@@ -287,9 +327,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectedVideoId, openWorkbench, initialVersionId, paramsTick, consumeParamsTick,
     reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek,
     pendingTrackSelect, consumePendingTrackSelect,
+    pendingSearchQuery, consumePendingSearchQuery,
+    pendingFaceFile, pendingImageFile, consumePendingSearchFiles,
     videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups,
     selectedTree, setSelectedTree,
   pendingFileCount, queuedTaskCount, newCompletedCount, failedTaskCount, taskHighlightIds, runningTaskCount, refreshList,
+    imageLibIntent, consumeImageLibIntent, openImageLibrary, imageLibAlertCount, clearImageLibAlerts,
     isUploading, uploadFiles, registerExternalFiles, handleUploadClick,
     removeVideoState, deleteVideo,
   };

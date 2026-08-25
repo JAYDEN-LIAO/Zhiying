@@ -11,9 +11,10 @@ import { useApp } from "../AppContext";
 import type { SearchResultItem, VideoListItem } from "../types";
 import { formatSec, fmtFullDate } from "../utils/helpers";
 import { zh } from "../labels";
-import { IconSearch5, IconImageSearch, IconFolder, IconClock, IconClose, IconVideo, IconRetry, IconSort, IconImage } from "./icons";
-import { CaseAssetPicker } from "./CaseAssetPicker";
+import { IconSearch5, IconImageSearch, IconFolder, IconClock, IconClose, IconVideo, IconRetry, IconSort, IconImage, IconPlus } from "./icons";
+import { SubjectPhotoPicker } from "./SubjectPhotoPicker";
 import { SplitPane } from "./SplitPane";
+import { AddSubjectDrawer, type AddSubjectDrawerData } from "./AddSubjectDrawer";
 
 type TabKey = "text" | "image";
 type SortKey = "time" | "confidence" | "name";
@@ -231,8 +232,9 @@ export function GlobalSearch() {
   const [dragOverImage, setDragOverImage] = useState(false);
   /* 图像检索时由用户主动选择：人脸 / 通用图搜 */
   const [imageSource, setImageSource] = useState<"face" | "image">("face");
-  /* 从案例素材选图弹窗 */
+  /* 从素材库选图弹窗 */
   const [assetPicker, setAssetPicker] = useState<{ kind: "face" | "image" } | null>(null);
+  const [addSubjectDrawer, setAddSubjectDrawer] = useState<AddSubjectDrawerData | null>(null);
 
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -277,21 +279,6 @@ export function GlobalSearch() {
       return true;
     }).map((v) => v.id);
   }
-
-  /* 从案例素材选图的来源案例：优先当前选中案例，否则检索范围内视频所属案例 */
-  const pickerGroup = useMemo(() => {
-    if (selectedTree.startsWith("g:")) {
-      const gid = selectedTree.slice(2);
-      return { groupId: gid, groupName: groupNameMap.get(gid) };
-    }
-    const ids = buildScopeIds();
-    if (ids?.length) {
-      for (const v of videos) {
-        if (v.group_id && ids.includes(v.id)) return { groupId: v.group_id, groupName: groupNameMap.get(v.group_id) };
-      }
-    }
-    return null;
-  }, [selectedTree, groupNameMap, videos]);
 
   async function runSearch() {
     if (tab === "text" && !query.trim()) {
@@ -484,9 +471,13 @@ export function GlobalSearch() {
     return null;
   }
 
-  /* 每行标签胶囊：[目标类型] [颜色特征/车牌] [置信度] */
+  /* 每行标签胶囊：[命中素材库?] [目标类型] [颜色特征/车牌] [置信度] */
   function buildPills(item: SearchResultItem): { text: string; tone: string }[] {
     const pills: { text: string; tone: string }[] = [];
+    /* v0.6：素材库命中 — 醒目标签 [命中: 目标名] */
+    if (item.matched_subject) {
+      pills.push({ text: `命中: ${item.matched_subject.subject_name}`, tone: "red" });
+    }
     const tag = targetTag(item);
     pills.push({ text: tag, tone: tagTone(tag) });
     if (item.precision_level === "plate" && item.plate_text) {
@@ -516,6 +507,26 @@ export function GlobalSearch() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+  }
+
+  /* ── v0.6 沉淀：搜索结果 → 图片素材库（取缩略图为底图，kind 由目标类型推断） ── */
+  async function addResultToLibrary(r: SearchResultItem) {
+    let blob: Blob | null = null;
+    if (r.thumbnail_url) {
+      try {
+        const res = await fetch(r.thumbnail_url);
+        if (res.ok) blob = await res.blob();
+      } catch { /* 忽略 */ }
+    }
+    /* 种类两态（v0.6）：person=人；其余（车/车牌/其他物）统一归 other */
+    const kind = r.class_name === "person" ? "person" : "other";
+    setAddSubjectDrawer({
+      kind,
+      presetName: r.plate_text ?? (r.class_name ? zh(r.class_name) : undefined),
+      image: blob ? { blob } : null,
+      source: "search",
+      sourceVideoId: r.video_id,
+    });
   }
 
   function toggleSelect(id: string) {
@@ -709,11 +720,9 @@ export function GlobalSearch() {
                 <button
                   type="button"
                   className="gs-asset-pick"
-                  disabled={!pickerGroup}
-                  title={pickerGroup ? `从案例「${pickerGroup.groupName ?? ""}」素材选图` : "未定位到所属案例"}
-                  onClick={(e) => { e.stopPropagation(); if (pickerGroup) setAssetPicker({ kind: "face" }); }}
+                  onClick={(e) => { e.stopPropagation(); setAssetPicker({ kind: "face" }); }}
                 >
-                  从案例素材选图
+                  从素材库选图
                 </button>
               </div>
 
@@ -766,11 +775,9 @@ export function GlobalSearch() {
                 <button
                   type="button"
                   className="gs-asset-pick"
-                  disabled={!pickerGroup}
-                  title={pickerGroup ? `从案例「${pickerGroup.groupName ?? ""}」素材选图` : "未定位到所属案例"}
-                  onClick={(e) => { e.stopPropagation(); if (pickerGroup) setAssetPicker({ kind: "image" }); }}
+                  onClick={(e) => { e.stopPropagation(); setAssetPicker({ kind: "image" }); }}
                 >
-                  从案例素材选图
+                  从素材库选图
                 </button>
               </div>
             </div>
@@ -991,14 +998,17 @@ export function GlobalSearch() {
                 const isTrack = r.precision_level === "track";
                 const openResult = () => {
                   const seekTo = timeSec != null ? { start: timeSec, end: r.precise_end ?? null } : undefined;
+                  const syncFiles = tab === "image" ? { faceFile: imageSource === "face" ? faceFile ?? undefined : undefined, imageFile: imageSource === "image" ? imageFile ?? undefined : undefined } : {};
                   if (isTrack && r.track_id != null && timeSec != null) {
                     openWorkbench(r.video_id, {
                       versionId: r.video_id,
                       seekTo,
                       selectTrack: { trackId: r.track_id, className: r.class_name ?? "", start: timeSec },
+                      searchQuery: tab === "text" ? query.trim() : undefined,
+                      ...syncFiles,
                     });
                   } else {
-                    openWorkbench(r.video_id, { versionId: r.video_id, ...(seekTo ? { seekTo } : {}) });
+                    openWorkbench(r.video_id, { versionId: r.video_id, ...(seekTo ? { seekTo } : {}), searchQuery: tab === "text" ? query.trim() : undefined, ...syncFiles });
                   }
                 };
                 return (
@@ -1012,6 +1022,14 @@ export function GlobalSearch() {
                         </div>
                       )}
                       <span className="gs-row-badge">{timeSec != null ? formatSec(timeSec) : <IconImage />}</span>
+                      {/* v0.6 沉淀：常驻「+ 加入素材库」 */}
+                      <button
+                        className="gs-row-add"
+                        title="加入图片素材库"
+                        onClick={(e) => { e.stopPropagation(); void addResultToLibrary(r); }}
+                      >
+                        <IconPlus />
+                      </button>
                       {processing && (
                         <div className="gs-row-mask">
                           <i className="gs-spin" />
@@ -1090,11 +1108,9 @@ export function GlobalSearch() {
         )}
       </section>
 
-      {/* 从案例素材选图弹窗 */}
-      {assetPicker && pickerGroup && (
-        <CaseAssetPicker
-          groupId={pickerGroup.groupId}
-          groupName={pickerGroup.groupName}
+      {/* 从素材库选图弹窗 */}
+      {assetPicker && (
+        <SubjectPhotoPicker
           onClose={() => setAssetPicker(null)}
           onSelect={(file) => {
             setAssetPicker(null);
@@ -1103,6 +1119,9 @@ export function GlobalSearch() {
           }}
         />
       )}
+
+      {/* v0.6 沉淀：搜索结果 → 加入图片素材库 Drawer */}
+      <AddSubjectDrawer data={addSubjectDrawer} onClose={() => setAddSubjectDrawer(null)} />
     </div>
   );
 }

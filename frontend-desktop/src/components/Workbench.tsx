@@ -12,9 +12,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
-import type { VideoResponse, PipelineStage } from "../types";
+import type { VideoResponse, PipelineStage, Track, VersionInfo } from "../types";
 import { fmtDuration, fmtDate, versionName } from "../utils/helpers";
+import { zhLabel } from "../labels";
 import { IconDownload, IconBolt, IconBoltSolid } from "./icons";
+import { AddSubjectDrawer, type AddSubjectDrawerData } from "./AddSubjectDrawer";
 import { ExportMenu } from "./ExportMenu";
 import { VideoPlayer } from "./VideoPlayer";
 import { DetectionTimeline } from "./DetectionTimeline";
@@ -31,10 +33,25 @@ import { useVideoPolling } from "../hooks/useVideoPolling";
 import { useProxyStatus } from "../hooks/useProxyStatus";
 import { useDetectionData } from "../hooks/useDetectionData";
 import { useStreamReady } from "../hooks/useStreamReady";
-import type { VersionInfo } from "../types";
 
 const ctLabel: Record<string, string> = { general: "通用", meeting: "会议", surveillance: "监控", text_recognition: "文字识别", custom: "自定义" };
 const langLabel: Record<string, string> = { auto: "自动", zh: "中文", en: "English", ja: "日本語", ko: "한국어" };
+
+/* ── v0.6 沉淀底图：截取 <video> 当前帧为 JPEG Blob（同源 stream 可 canvas 绘制） ── */
+async function captureVideoFrame(video: HTMLVideoElement | null): Promise<Blob | null> {
+  if (!video || !video.videoWidth || !video.videoHeight) return null;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0);
+    return await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b ?? null), "image/jpeg", 0.9));
+  } catch {
+    return null;
+  }
+}
 
 /* ═══════════════ ① 顶部卡 ═══════════════ */
 function WbHeader({
@@ -88,25 +105,47 @@ function WbStage({ player, timeline }: { player: React.ReactNode; timeline: Reac
   );
 }
 
-/* ═══════════════ ③ 右摘要卡（摘要 ⇄ 历史） ═══════════════ */
+/* ═══════════════ ③ 右摘要卡（摘要 ⇄ 文字识别，外框标题切换） ═══════════════ */
 function WbSummary({ currentVideo, onSeekTo }: { currentVideo: VideoResponse | null; onSeekTo: (start: number, end: number | null) => void }) {
+  const [tab, setTab] = useState<"summary" | "ocr">("summary");
+  // 切换视频 → 根据开启状态自动选中（OCR 开启且摘要未开 → 文字识别；否则 → 摘要）
+  useEffect(() => {
+    if (!currentVideo) return;
+    setTab(currentVideo.ocr_enabled && !currentVideo.summary_enabled ? "ocr" : "summary");
+  }, [currentVideo?.id, currentVideo?.ocr_enabled, currentVideo?.summary_enabled]);
+
+  const ocrEnabled = !!currentVideo?.ocr_enabled;
+  const title = tab === "ocr" ? "文字识别" : "视频摘要";
+
   return (
     <div className="case-card h-full flex flex-col min-h-0 overflow-hidden">
       <div className="g-card-title">
         <div className="flex items-center gap-1.5">
           <svg className="w-4 h-4 text-[#4f7cff]" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6M9 8h6M5 19V5a2 2 0 012-2h10a2 2 0 012 2v14l-3-2-2 2-2-2-2 2-2-2-3 2z" /></svg>
-          <span className="text-[13px] font-semibold text-gray-800">视频摘要</span>
+          <span className="text-[13px] font-semibold text-gray-800">{title}</span>
         </div>
-        {currentVideo?.summary?.tags != null && currentVideo.summary.tags.length > 0 && (
-          <div className="sum-tags !mt-0 flex-1 justify-end overflow-hidden">
-            {currentVideo.summary.tags.slice(0, 4).map((tag) => (
-              <span key={tag} className="sum-tag">{tag}</span>
-            ))}
-          </div>
-        )}
+        <div className="flex items-center gap-1">
+          {ocrEnabled && (
+            <button
+              className={"text-[11px] px-2 py-0.5 rounded-full transition-colors " + (tab === "ocr" ? "bg-[#4f7cff] text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}
+              onClick={() => setTab("ocr")}
+            >文字识别</button>
+          )}
+          <button
+            className={"text-[11px] px-2 py-0.5 rounded-full transition-colors " + (tab === "summary" ? "bg-[#4f7cff] text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}
+            onClick={() => setTab("summary")}
+          >摘要</button>
+          {currentVideo?.summary?.tags != null && currentVideo.summary.tags.length > 0 && tab === "summary" && (
+            <div className="sum-tags !mt-0 ml-1 overflow-hidden">
+              {currentVideo.summary.tags.slice(0, 4).map((tag) => (
+                <span key={tag} className="sum-tag">{tag}</span>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <div className="flex-1 min-h-0 overflow-auto p-2">
-        <VideoSummaryCard video={currentVideo} onSeekTo={(ts) => onSeekTo(ts, null)} />
+        <VideoSummaryCard video={currentVideo} onSeekTo={(ts) => onSeekTo(ts, null)} tab={tab} />
       </div>
     </div>
   );
@@ -129,7 +168,7 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
 }
 
 export function Workbench() {
-  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek, pendingTrackSelect, consumePendingTrackSelect, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
+  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek, pendingTrackSelect, consumePendingTrackSelect, pendingSearchQuery, consumePendingSearchQuery, pendingFaceFile, pendingImageFile, consumePendingSearchFiles, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
   const currentVideoId = selectedVideoId;
 
   /* ── 版本切换（v0.34）：打开文件 → 拉取版本链 → 默认当前版本 ── */
@@ -175,6 +214,7 @@ export function Workbench() {
   const [reparseMode, setReparseMode] = useState(false); // 重新解析：参数窗提交时建新版本
   const [deleting, setDeleting] = useState(false);
   const [showStageInfo, setShowStageInfo] = useState(false); // 播放器信息浮层
+  const [addSubjectDrawer, setAddSubjectDrawer] = useState<AddSubjectDrawerData | null>(null); // v0.6 沉淀素材库
   const videoRef = useRef<HTMLVideoElement>(null);
   // 搜索结果发起的跨视频切换 → 重置 effect 跳过（保留结果/定位，由 handler 精确控制状态）
   const suppressWorkbenchResetRef = useRef(false);
@@ -254,6 +294,13 @@ export function Workbench() {
     setSelectedTrackId(pendingTrackSelect.trackId);
     consumePendingTrackSelect();
   }, [pendingTrackSelect, vid, consumePendingTrackSelect]);
+
+  /* ── 跨页搜索关键词同步：全局搜索→视频搜索卡片（一次性消费，不依赖 track 选中） ── */
+  useEffect(() => {
+    if ((!pendingSearchQuery && !pendingFaceFile && !pendingImageFile) || !vid) return;
+    consumePendingSearchQuery();
+    consumePendingSearchFiles();
+  }, [pendingSearchQuery, pendingFaceFile, pendingImageFile, vid, consumePendingSearchQuery, consumePendingSearchFiles]);
 
   /* ── 派生布尔 ── */
   const isPending = currentVideo?.status === "pending";
@@ -335,6 +382,27 @@ export function Workbench() {
     setSelectedTrackId(trackId);
     if (seekTo !== undefined && videoRef.current) videoRef.current.currentTime = seekTo;
   }, []);
+
+  /* ── v0.6 沉淀：选中 track → 图片素材库（优先 track 缩略图，其次截当前帧为底图） ── */
+  const handleAddTrackToLibrary = useCallback(async (track: Track, thumbnailUrl?: string | null) => {
+    const kind: "person" | "other" = track.class_name === "person" ? "person" : "other";
+    let blob: Blob | null = null;
+    if (thumbnailUrl) {
+      try {
+        const res = await fetch(thumbnailUrl);
+        if (res.ok) blob = await res.blob();
+      } catch { /* 缩略图加载失败 → 回退截当前帧 */ }
+    }
+    if (!blob) blob = await captureVideoFrame(videoRef.current);
+    setAddSubjectDrawer({
+      kind,
+      presetName: zhLabel(track.class_name, track.display_seq ?? track.track_id),
+      image: blob ? { blob } : null,
+      source: "track",
+      sourceVideoId: vid,
+      videoName: currentVideo?.file_name ?? null,
+    });
+  }, [vid, currentVideo?.file_name]);
 
   /* ── Seek（跨视频可靠定位） ── */
   useEffect(() => {
@@ -613,6 +681,7 @@ export function Workbench() {
                     videos={videos}
                     detectionVideoId={detectionVideoId}
                     onDetectionVideoChange={setDetectionVideoId}
+                    onAddToLibrary={handleAddTrackToLibrary}
                   />
                 }
                 search={
@@ -626,6 +695,9 @@ export function Workbench() {
                     allVideos={videos}
                     caseGroups={caseGroups}
                     onGroupVideoSwitch={handleGroupVideoSwitch}
+                    initialQuery={pendingSearchQuery}
+                    initialFaceFile={pendingFaceFile}
+                    initialImageFile={pendingImageFile}
                   />
                 }
               />
@@ -666,6 +738,9 @@ export function Workbench() {
           }}
         />
       )}
+
+      {/* ── v0.6 沉淀：选中 track → 加入图片素材库 Drawer ── */}
+      <AddSubjectDrawer data={addSubjectDrawer} onClose={() => setAddSubjectDrawer(null)} />
     </div>
   );
 }

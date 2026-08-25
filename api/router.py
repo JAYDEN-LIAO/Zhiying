@@ -17,6 +17,7 @@ from api.ocr_routes import router as ocr_router
 from api.maintenance_routes import router as maintenance_router
 from api.groups_routes import router as groups_router
 from api.tasks_routes import router as tasks_router
+from api.subjects_routes import router as subjects_router
 
 router = APIRouter(prefix="/api/v1")
 
@@ -31,3 +32,4 @@ router.include_router(ocr_router, prefix="/videos")
 router.include_router(maintenance_router)
 router.include_router(groups_router)
 router.include_router(tasks_router)
+router.include_router(subjects_router)

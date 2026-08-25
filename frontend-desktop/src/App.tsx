@@ -11,9 +11,10 @@ import { FileLibrary } from "./components/FileLibrary";
 import { GlobalSearch } from "./components/GlobalSearch";
 import { TaskCenter } from "./components/TaskCenter";
 import { SettingsPage } from "./components/SettingsPage";
+import { ImageLibrary } from "./components/ImageLibrary";
 
 function Shell() {
-  const { page, navigate, settingsTab, navigateSettings, queuedTaskCount, newCompletedCount, failedTaskCount, runningTaskCount, videos, caseGroups, selectedTree } = useApp();
+  const { page, navigate, settingsTab, navigateSettings, queuedTaskCount, newCompletedCount, failedTaskCount, runningTaskCount, videos, caseGroups, selectedTree, imageLibAlertCount } = useApp();
 
   /* 案例库灰徽章 = 当前选中案例名（超长截取前 4 字）+ 该案例待处理视频数 */
   const selGid = selectedTree.startsWith("g:") ? selectedTree.slice(2) : null;
@@ -23,7 +24,7 @@ function Shell() {
     ? videos.filter((v) => v.group_id === selGid && v.status === "pending").length
     : 0;
 
-  /* 侧栏徽章：案例库灰=仅上传未提交；视频解析蓝=处理中(恒1)；任务中心 黄=排队中 绿=新完成 红=失败 */
+  /* 侧栏徽章：案例库灰=仅上传未提交；视频解析蓝=处理中(恒1)；任务中心 黄=排队中 绿=新完成 红=失败；素材库=高优告警红点 */
   const counts = {
     files: selPending,
     filesLabel: selName,
@@ -31,6 +32,7 @@ function Shell() {
     queued: queuedTaskCount,
     newCompleted: newCompletedCount,
     failed: failedTaskCount,
+    imageLibAlert: imageLibAlertCount,
   };
 
   return (
@@ -41,13 +43,14 @@ function Shell() {
       <div className="app-body">
         <Sidebar page={page} settingsTab={settingsTab} onNavigate={navigate} onNavigateSettings={navigateSettings} counts={counts} />
 
-        <main className={"app-main" + (page === "files" || page === "workbench" || page === "search" || page === "tasks" || page === "settings" ? " app-main-flat" : "")}>
+        <main className={"app-main" + (page === "files" || page === "workbench" || page === "search" || page === "tasks" || page === "settings" || page === "imagelib" ? " app-main-flat" : "")}>
           {page === "files" && <FileLibrary />}
           {page === "workbench" && <Workbench />}
           {/* GlobalSearch 始终挂载（hide 保住搜索结果），切页回来直接恢复 */}
           <div className={page === "search" ? "contents" : "hidden"}><GlobalSearch /></div>
           {page === "tasks" && <TaskCenter />}
           {page === "settings" && <SettingsPage section={settingsTab} onSectionChange={navigateSettings} />}
+          {page === "imagelib" && <ImageLibrary />}
         </main>
       </div>
     </div>

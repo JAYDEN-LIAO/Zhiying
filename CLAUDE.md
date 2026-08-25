@@ -2,12 +2,12 @@
 
 ## Overview
 
-智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 → FastAPI + PostgreSQL/pgvector 对外服务。当前版本 **v0.37 候选**（智能参数系统）；后端定版 v0.34（OCR RapidOCR+DirectML 子进程）。
+智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 + 图片素材库（人脸/通用图搜分轨检索）→ FastAPI + PostgreSQL/pgvector 对外服务。当前版本 **v0.6**（图片素材库 + 搜索统一 + 摘要 UI 重构）；后端定版 v0.34（OCR RapidOCR+DirectML 子进程）。
 
 **关键锚点**：
 - **生产部署**：10.0.0.176（systemd `zhiying.service`，8011）；发版 `./bump` → 服务器 `bash deploy.sh v<tag>`
 - **配置**：`config/config.yaml` 机器相关 gitignored；运行时覆盖走 `data/settings.json`（保存即生效）+ 共享预设 `config/presets.json`（入 git）
-- **双前端**：服务器 `frontend/` + 桌面 `frontend-desktop/`（4 页管理后台，pywebview 壳）；对接层 `frontend-shared/` 一份实现
+- **双前端**：服务器 `frontend/` + 桌面 `frontend-desktop/`（5 页管理后台，pywebview 壳）；对接层 `frontend-shared/` 一份实现
 - **模型档位**：`embedding_profile` 8b=4096 维（默认）/ 2b=2048 维（低显存平替）；人脸固定 512（ArcFace）
 - **摘要**：vlm_llm（API，默认）；native_video 已退役
 - 架构细节见 `docs/arch.md`
@@ -25,6 +25,8 @@
     duration → segmentation → keyframes → caption → summary → frame/text/chunk_encode
     duration → ocr(RapidOCR+DirectML 独立子进程) → ocr_detections
   搜索 7 路并行 + 图搜：frame/chunk/text/label/track/plate/ocr
+  素材库检索（v0.6）：/search/subjects 上传图片 → person 走 ArcFace 512 / other 走 Qwen3-VL → 命中底库目标
+  沉淀：检测 track「+」/ 图搜「+」→ AddSubjectDrawer → 底库照片 + 编码入库
 ```
 
 ## Key Conventions
@@ -45,7 +47,16 @@
   - **抽屉轻量层**：`PATCH /videos/{id}/toggles` 仅持久化 6 核心开关，不入队管道、不动版本、不联动组
   - **抽屉 UI**：FileDetailDrawer「参数设置」section + Workbench `SingleAnalyzeDialog` + 案例库 `BatchAnalyzeDialog` 三处共用 `AnalyzeSettingsPanel` + `buildPipelineParams()`
   - **摘要默认全关**（v0.37）：模型/上传/场景预设/智能推荐按钮联动 → 都关
+  - **caption-summary 联动**（v0.6）：开摘要自动开画面描述（后端校验 caption OFF → summary OFF）
   - **9 场景预设**：traffic/vehicle_focus/surveillance_people/indoor/portrait_focus/document/street_mixed/outdoor_landscape/chat_screen，每个场景对应一组检测/人脸/车牌/OCR 开关预设
+- **图片素材库（v0.6）**：关注目标（人/其他）底库照片管理 + 检索分轨
+  - **3 表**：`image_subjects`（目标）/ `subject_photos`（底图）/ `subject_photo_embedding`（分轨向量：person→Vector(512) / other→EmbedVector）
+  - **15 个 API**：`/subjects` CRUD + 照片 + 合并 + 文件 + `/search/subjects` 图片检索
+  - **检索分轨**：person→`face_recognizer.extract_best_embedding`（ArcFace 512）/ other→`embedder.encode_image`（Qwen3-VL）；落盘即编码入库
+  - **桌面端第 5 页**：`ImageLibrary`（左列表+右详情+裁剪+拖拽扩充）+ `SubjectPhotoPicker`（替代已退役的 `CaseAssetPicker`，全局搜索/视频搜索卡统一选图来源）+ `AddSubjectDrawer`（检测/图搜一键沉淀，支持新建/已有目标两种模式）
+  - **搜索同步**：全局搜索文字/人脸/图搜 → 点击结果跳工作台 → 视频搜索卡片自动填充并搜索
+  - **告警红点**：前端空壳保留（`imageLibAlertCount`/侧栏红点），后端本期不做（下一阶段）
+  - **案例图片退役**：案例库不再支持图片上传，`images` 恒空；`CaseAssetPicker` 已被 `SubjectPhotoPicker` 替代
 - **双前端**: UI 各自演进；对接层 `frontend-shared/` 一份实现，改后端接口只改一处
 - **多格式**: remux(-c copy) + proxy(NVENC h264, 按需)；管道优先读 remuxed
 - **ReID 双层**: 在线 BoT-SORT with_reid + 全局 tracklet 缝合（cosine ≥0.85）
@@ -54,7 +65,7 @@
 - **版本号**: `core/version.py` `__version__` 唯一来源；后端+服务器前端改动必须 `./bump`
 - **存储卫生**: 删除必须 `repository.delete_video`；新落盘路径登记进 `storage_manager.py`
 
-## Database (16 tables)
+## Database (19 tables)
 
 | Table | Purpose |
 |---|---|
@@ -68,6 +79,9 @@
 | `plate_detections` | HyperLPR3 车牌 |
 | `ocr_detections` | 画面文字（第 8 路精确检索） |
 | `case_assets` | 案例素材（图片等非视频归档素材，不参与管道） |
+| `image_subjects` | 素材库关注目标（人/其他，kind 两态） |
+| `subject_photos` | 素材库底库照片（crop/source/source_video_id） |
+| `subject_photo_embedding` | 素材库检索向量（分轨：person→Vector(512) / other→EmbedVector） |
 | `pipeline_tasks` | 全局任务队列持久化 |
 | `task_logs` | 任务生命周期日志 |
 

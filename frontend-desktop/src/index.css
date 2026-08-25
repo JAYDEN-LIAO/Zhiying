@@ -2013,3 +2013,33 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
 .dark .ss-item-head { color: #cbd2de; }
 .dark .ss-scene { background: #1d2a4d; color: #7d9bff; }
 .dark .ss-scene-none { background: #332b1a; color: #fbbf24; }
+
+/* ═══════════════════════════════════════════════════
+   v0.6 图片素材库（ImageLibrary）样式
+   ═══════════════════════════════════════════════════ */
+
+/* ── 侧栏高优告警红点徽章（在逃命中提醒） ── */
+.sb-dot-alert {
+  margin-left: auto; flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 7px; border-radius: 999px; background: #ef4444; color: #fff;
+  font-size: 10px; font-weight: 700; line-height: 1.5; box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+.sb-dot-alert .pulse { width: 5px; height: 5px; border-radius: 50%; background: #fff; animation: pulse-soft 1.2s ease-in-out infinite; }
+.dark .sb-dot-alert { background: #dc2626; }
+
+/* ── 全局搜索：结果卡片「+ 加入素材库」按钮（缩略图右上角常驻） ── */
+.gs-row-add {
+  position: absolute; top: 4px; right: 4px; z-index: 5;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px;
+  background: rgba(79, 124, 255, 0.92); color: #fff;
+  transition: background .12s, transform .12s; cursor: pointer;
+}
+.gs-row-add svg { width: 13px; height: 13px; }
+.gs-row-add:hover { background: #4f7cff; transform: scale(1.08); }
+.dark .gs-row-add { background: rgba(79, 124, 255, 0.85); }
+
+/* ── 素材库：裁剪/合并/新建弹窗内部细节 ── */
+.il-crop-box { user-select: none; }
+.dark .g-card-hd { border-bottom-color: #2c3542; }
+.dark .g-card-hd .g-card-tt { color: #e1e5ec; }

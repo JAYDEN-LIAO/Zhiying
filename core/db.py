@@ -464,6 +464,53 @@ async def init_db():
             ON scenes (video_id, scene_index)
         """))
 
+        # ── 增量迁移 v0.6: 图片素材库（关注目标 + 底库照片 + 分轨检索向量） ──
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS image_subjects (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                kind VARCHAR(16) NOT NULL DEFAULT 'other',
+                name VARCHAR(256) NOT NULL,
+                tags JSONB,
+                photo_count INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_image_subjects_kind
+            ON image_subjects (kind)
+        """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS subject_photos (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                subject_id UUID NOT NULL REFERENCES image_subjects(id) ON DELETE CASCADE,
+                file_path VARCHAR(1024) NOT NULL,
+                crop JSONB,
+                is_primary BOOLEAN NOT NULL DEFAULT false,
+                source VARCHAR(16) NOT NULL DEFAULT 'upload',
+                source_video_id UUID,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_subject_photos_subject
+            ON subject_photos (subject_id)
+        """))
+        await conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS subject_photo_embedding (
+                id SERIAL PRIMARY KEY,
+                photo_id UUID NOT NULL REFERENCES subject_photos(id) ON DELETE CASCADE UNIQUE,
+                kind VARCHAR(16) NOT NULL DEFAULT 'other',
+                face_embedding vector(512),
+                other_embedding vector({get_embed_dim()}),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_subject_photo_emb_kind
+            ON subject_photo_embedding (kind)
+        """))
+
         # ── 清理：删除废弃的列、枚举类型、触发器 ──
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS ai_detect_enabled
