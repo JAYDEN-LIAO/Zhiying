@@ -55,6 +55,7 @@
   - **检索分轨**：person→`face_recognizer.extract_best_embedding`（ArcFace 512）/ other→`embedder.encode_image`（Qwen3-VL）；落盘即编码入库
   - **桌面端第 5 页**：`ImageLibrary`（左列表+右详情+裁剪+拖拽扩充）+ `SubjectPhotoPicker`（替代已退役的 `CaseAssetPicker`，全局搜索/视频搜索卡统一选图来源）+ `AddSubjectDrawer`（检测/图搜一键沉淀，支持新建/已有目标两种模式）
   - **搜索同步**：全局搜索文字/人脸/图搜 → 点击结果跳工作台 → 视频搜索卡片自动填充并搜索
+  - **视频搜索卡智能筛选推荐**：`POST /search/suggest-filter` 文本相似度预判——事件/动作/语义类（求婚、打架、两车相撞…）自动画面定位（frame）；单物体类（黑色车辆、戴口罩的人…）自动物体定位（track）；手动选择优先（`autoFilterActive` 状态，用户手动切下拉后置 false）；车牌/文字模式不参与；`skipFilterReseachRef` 抑制自动改筛选触发的重复搜索
   - **告警红点**：前端空壳保留（`imageLibAlertCount`/侧栏红点），后端本期不做（下一阶段）
   - **案例图片退役**：案例库不再支持图片上传，`images` 恒空；`CaseAssetPicker` 已被 `SubjectPhotoPicker` 替代
 - **双前端**: UI 各自演进；对接层 `frontend-shared/` 一份实现，改后端接口只改一处；桌面壳 `load_url` 必须带版本号（`desktop/app.py _cache_bust_url`）击穿 WebView2 持久化缓存（`private_mode=False` 跨版本复用旧缓存会显示旧 UI）

@@ -23,6 +23,7 @@ curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # �
 | 视频详情/状态/播放(stream)/场景缩略图 | `GET /videos/{id}` · `/status` · `/stream` · `/thumbnail/{scene}` · `/metadata` · `/proxy-status` | ✅ |
 | 多格式支持 | remux(-c copy) + 惰性 H.264 proxy(NVENC) + smart routing | ✅ |
 | 语义搜索（frame/chunk/text/label/track/plate/ocr 7 路） | `POST /search/semantic` | ✅ |
+| **搜索结果智能筛选推荐** | `POST /search/suggest-filter` 事件/动作类→画面定位、单物体类→物体定位，手动选择优先 | ✅ |
 | 人脸识别（SCRFD + ArcFace 512d 聚类, 双锚检索） | `GET /videos/{id}/face/data` · `POST /search/face` | ✅ |
 | 车牌识别（HyperLPR3） | `GET /videos/{id}/plate/data` + 模糊搜索 | ✅ |
 | OCR 画面文字提取（RapidOCR PP-OCRv3 + DirectML, 独立子进程） | `GET /videos/{id}/ocr/data` · `POST /search/semantic` (search_types=["ocr"]) | ✅ |
@@ -107,6 +108,7 @@ zhiying/
 - **摘要/文字识别 UI**：`VideoSummaryCard` 标题随内容自动切换（视频摘要/文字识别），无 tab 按钮；去掉 `minor-card` 嵌套容器
 - **caption-summary 联动**：开摘要自动开画面描述（后端校验 caption OFF → summary OFF）
 - **视频搜索卡优化**：退役范围下拉，严格限定当前视频检索（与全局搜索划清边界）+ 结果类型筛选下拉（全部/画面定位/物体定位）+ 搜索框固定不随结果滚动 + 搜索结果时间范围自动暂停
+- **视频搜索卡智能筛选推荐**：`POST /search/suggest-filter` 文本相似度预判——事件/动作/语义类（求婚、打架、两车相撞…）自动画面定位；单物体类（黑色车辆、戴口罩的人…）自动物体定位；手动选择优先，不打扰
 - **全局搜索类型互斥**：人/车/车牌/文本 chip 选中互斥，切换自动清除前一个
 - **智能参数系统**（v0.37）：持久化推荐 + 抽屉轻量面板 + AnalyzeSettingsPanel 三处共用 + 摘要默认全关
 - **案例素材管理**：`case_assets` 表 + 案例库拖拽上传图片素材（图片上传已退役，仅保留视频）

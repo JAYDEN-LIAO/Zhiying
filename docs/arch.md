@@ -108,6 +108,7 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 合并去重: 帧簇(≤4s)优先; confidence = 相似度 × 路径权重
 范围过滤: video_ids 空→空; None=全库; face/image 参数必须 Form(...) 声明
 视频搜索卡: 严格限定当前视频（video_ids=[currentVideoId]）；支持 search_types 结果类型筛选（全部/画面/物体）
+智能筛选推荐: POST /search/suggest-filter 文本相似度预判——事件/动作类→画面定位(frame)、单物体类→物体定位(track)；手动选择优先（autoFilterActive）；车牌/文字模式不参与
 搜索结果时间范围: 点击结果自动播放到 end 时间后暂停（autoPauseEndRef + timeupdate 监听）
 ```
 
@@ -152,6 +153,7 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 | GET/POST/PUT/DELETE | `/api/v1/settings/presets` · `/{id}/apply` | 参数预设 CRUD |
 | GET | `/api/v1/videos/{id}/face/data` · `/plate/data` · `/ocr/data` | 人脸/车牌/OCR 数据 |
 | POST | `/api/v1/search/semantic` · `/search/face` · `/search/image` | 语义/人脸/图搜 |
+| POST | `/api/v1/search/suggest-filter` | **搜索结果智能筛选推荐**（文本相似度预判画面定位/物体定位） |
 | POST | `/api/v1/search/subjects` | **素材库图片检索**（上传图片, person→ArcFace / other→Qwen3-VL） |
 | GET | `/api/v1/pipeline/operations` | 当前视频已启用管道操作+进度区间（PipelineBar） |
 | GET/POST | `/api/v1/files` · `/groups` · `/tasks` | 文件库/案例/任务中心 |
@@ -206,7 +208,7 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 
 **v0.6 图片素材库 + 搜索统一**：3 表(image_subjects/subject_photos/subject_photo_embedding) + 15 个 /subjects API + 桌面端第 5 页 ImageLibrary + SubjectPhotoPicker（替代 CaseAssetPicker）+ AddSubjectDrawer（检测/图搜沉淀，新建/已有目标双模式）+ 检索分轨(person→ArcFace 512 / other→Qwen3-VL) + 全局搜索关键词/人脸/图搜同步到视频搜索卡片 + 案例图片退役 + VideoSummaryCard 外框标题切换 + caption-summary 联动 + DetectionPanel 跨页自动滚动修复。
 
-**桌面端 UI 优化**：视频搜索卡仅限当前视频检索（退役范围下拉，与全局搜索划清边界）+ 结果类型筛选下拉（全部/画面定位/物体定位，search_types API 过滤）+ 搜索框固定不随结果滚动 + 搜索结果时间范围自动暂停（timeupdate 监听）+ 摘要卡 tab 按钮删除（标题随内容自动切换）+ 摘要卡嵌套容器精简 + 全局搜索类型 chip 互斥选中 + 物体检测栏进度条删除 + 案例库添加下拉图标尺寸统一。
+**桌面端 UI 优化**：视频搜索卡仅限当前视频检索（退役范围下拉，与全局搜索划清边界）+ 结果类型筛选下拉（全部/画面定位/物体定位，search_types API 过滤）+ **智能筛选推荐**（`POST /search/suggest-filter` 文本相似度预判，事件/动作类→画面定位、单物体类→物体定位，手动选择优先）+ 搜索框固定不随结果滚动 + 搜索结果时间范围自动暂停（timeupdate 监听）+ 摘要卡 tab 按钮删除（标题随内容自动切换）+ 摘要卡嵌套容器精简 + 全局搜索类型 chip 互斥选中 + 物体检测栏进度条删除 + 案例库添加下拉图标尺寸统一。
 
 **v0.37 智能参数系统**：持久化推荐(suggest-params 自动落库 4 字段) + 抽屉轻量面板(PATCH toggles 点击即保存) + AnalyzeSettingsPanel 三处共用 + ContentType 9 场景枚举 + 摘要默认全关 + Workbench 紧凑弹窗 + 批量解析双模式(按各视频/统一参数)。
 
