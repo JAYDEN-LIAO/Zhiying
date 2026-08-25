@@ -268,6 +268,16 @@ export const api = {
     });
   },
 
+  /* ── 搜索结果筛选类别智能推荐（桌面端视频搜索卡：全部/画面定位/物体定位 自动预设） ── */
+  suggestSearchFilter(query: string): Promise<{ filter: "all" | "frame" | "track"; scores: Record<string, number> }> {
+    return request(`${BASE}/search/suggest-filter`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+      timeoutMs: 30000,
+    });
+  },
+
   /* ── Get video stream URL (v0.13: hevc_ok for browser capability) ── */
   getVideoStreamUrl(videoId: string, hevcOk: boolean = false): string {
     return `${BASE}/videos/${videoId}/stream?hevc_ok=${hevcOk}`;

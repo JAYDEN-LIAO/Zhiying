@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db
-from api.schemas import APIResponse, SemanticSearchRequest, SearchResultItem, SearchResults
+from api.schemas import APIResponse, SemanticSearchRequest, SearchResultItem, SearchResults, SuggestFilterRequest, SuggestFilterResponse
 from core.models import Video
 from core.config_loader import load_config
 from core.search import face_identity_search
@@ -89,6 +89,36 @@ async def search_semantic(
     ]
 
     return APIResponse(data=SearchResults(results=items, total=len(items), query_time_ms=elapsed))
+
+
+# ═══════════════════════════════════════════════════════════
+# 搜索结果筛选类别智能推荐
+# ═══════════════════════════════════════════════════════════
+
+@router.post("/search/suggest-filter")
+async def suggest_search_filter(
+    payload: SuggestFilterRequest,
+    request: Request,
+) -> APIResponse[SuggestFilterResponse]:
+    """根据搜索词智能判断默认结果筛选（全部/画面定位/物体定位）。
+
+    - 事件/动作/场景/语义类搜索词（如"求婚""打架""两车相撞"）→ frame 画面定位
+    - 单个物体类搜索词（如"黑色车辆""戴口罩的人"）→ track 物体定位
+    - 无法明确判断 → all（保持用户当前选择，不打扰）
+
+    复用常驻 embedder 做文本-文本相似度，纯文本单次前向，毫秒级。
+    """
+    if getattr(request.app.state, "embedder", None) is None:
+        raise HTTPException(status_code=400, detail="语义搜索未启用：本部署未安装 Embedding 模型（searchless 模式）")
+
+    svc = getattr(request.app.state, "_suggest_filter", None)
+    if svc is None:
+        from services.suggest_filter import SuggestFilterService
+        svc = SuggestFilterService()
+        request.app.state._suggest_filter = svc
+
+    result = await svc.suggest(request.app.state.embedder, payload.query)
+    return APIResponse(data=SuggestFilterResponse(**result))
 
 
 # ═══════════════════════════════════════════════════════════

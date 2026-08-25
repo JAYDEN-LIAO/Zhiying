@@ -77,6 +77,17 @@ class SearchResults(BaseModel):
     query_time_ms: float
 
 
+class SuggestFilterRequest(BaseModel):
+    """搜索结果筛选类别智能推荐 — 给定搜索词，判断默认结果筛选（画面定位/物体定位）。"""
+    query: str = Field(..., min_length=1, description="用户输入的搜索词")
+
+
+class SuggestFilterResponse(BaseModel):
+    """筛选类别推荐结果。"""
+    filter: str = Field(..., description="all=全部 / frame=画面定位 / track=物体定位")
+    scores: dict[str, float] = Field(default_factory=dict, description="frame / track 两组相似度")
+
+
 # ═══════════════════════════════════════════════════════════
 # 视频管理 DTO
 # ═══════════════════════════════════════════════════════════

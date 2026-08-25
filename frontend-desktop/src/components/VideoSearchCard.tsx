@@ -43,6 +43,10 @@ export function VideoSearchCard({
   const [ocrMode, setOcrMode] = useState(false);
   const [resultFilter, setResultFilter] = useState<"all" | "frame" | "track">("all");
   const [filterOpen, setFilterOpen] = useState(false);
+  // 智能推荐筛选（画面定位/物体定位）：用户手动切换后置 false 尊重其选择；auto 兜底展示
+  const [autoFilterActive, setAutoFilterActive] = useState(true);
+  // 自动推荐触发的 resultFilter 变更 → 抑制下方 effect 的重复搜索（已在本轮搜索中带上新筛选）
+  const skipFilterReseachRef = useRef(false);
   // 搜索结果自己发起的视频切换 → 抑制重置（本帧 effect 读到 true 跳过；setTimeout 清理，StrictMode 安全）
   const suppressResetRef = useRef(false);
   const [faceSearching, setFaceSearching] = useState(false);
@@ -78,6 +82,8 @@ export function VideoSearchCard({
   // 切换过滤器时重新搜索（已有查询才触发）
   useEffect(() => {
     if (!query.trim() || !hasSearched) return;
+    // 自动推荐触发的结果筛选变更 → 本次搜索已带新筛选，跳过重复搜索
+    if (skipFilterReseachRef.current) { skipFilterReseachRef.current = false; return; }
     void handleSearch();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resultFilter]);
@@ -89,16 +95,11 @@ export function VideoSearchCard({
       suppressResetRef.current = false;
       return;
     }
-    // 全局搜索关键词同步：跳过重置，直接填充并搜索
+    // 全局搜索关键词同步：跳过重置，直接填充并搜索（含智能结果筛选推荐）
     if (initialQuery && currentVideoId && initialQuery !== initialQueryRef.current) {
       initialQueryRef.current = initialQuery;
       setQuery(initialQuery);
-      setResults([]); setSearching(true); setError(null); setFaceResults([]);
-      setSearchMode("semantic");
-      api.searchSemantic(initialQuery, { video_ids: [currentVideoId] })
-        .then((data) => { setResults(data.results ?? []); setHasSearched(true); })
-        .catch((err) => { setError(err instanceof Error ? err.message : "搜索失败"); })
-        .finally(() => { setSearching(false); });
+      void runSemanticSearch(initialQuery);
       return;
     }
     // 全局搜索人脸/图搜同步
@@ -158,22 +159,43 @@ export function VideoSearchCard({
     void runImageSearch(file);
   }, [runImageSearch]);
 
-  const handleSearch = useCallback(async () => {
-    if (!query.trim()) return;
+  // 语义搜索 + 智能推荐结果筛选（画面/物体定位），供搜索框 Enter 与全局搜索关键词同步共用
+  const runSemanticSearch = useCallback(async (text: string) => {
+    const q = text.trim();
     setResults([]); setSearching(true); setError(null); setFaceResults([]);
     setSearchMode("semantic"); // 语义搜索（含帧/物体/车牌）
+    // 智能推荐结果筛选：仅当用户未手动覆盖时才自动判断；
+    // 车牌/文字模式不参与（它们有各自的精确检索路径）
+    let effectiveFilter: "all" | "frame" | "track" = resultFilter;
+    if (autoFilterActive && !plateMode && !ocrMode) {
+      try {
+        const sug = await api.suggestSearchFilter(q);
+        if (sug.filter === "frame" || sug.filter === "track") {
+          effectiveFilter = sug.filter;
+          if (effectiveFilter !== resultFilter) {
+            skipFilterReseachRef.current = true; // 本次已带新筛选，抑制 effect 重复搜索
+            setResultFilter(effectiveFilter);
+          }
+        }
+      } catch { /* 推荐失败保持原筛选，不阻断搜索 */ }
+    }
     try {
-      const data = await api.searchSemantic(query.trim(), {
+      const data = await api.searchSemantic(q, {
         video_ids: searchVideoIds ?? undefined,
         ...(plateMode ? { search_types: ["plate"], top_k: 100 } : {}),
         ...(ocrMode ? { search_types: ["ocr"], top_k: 100 } : {}),
-        ...(resultFilter === "frame" && !plateMode && !ocrMode ? { search_types: ["frame"] } : {}),
-        ...(resultFilter === "track" && !plateMode && !ocrMode ? { search_types: ["track"] } : {}),
+        ...(effectiveFilter === "frame" && !plateMode && !ocrMode ? { search_types: ["frame"] } : {}),
+        ...(effectiveFilter === "track" && !plateMode && !ocrMode ? { search_types: ["track"] } : {}),
       });
       setResults(data.results ?? []); setHasSearched(true);
     } catch (err) { setError(err instanceof Error ? err.message : "搜索失败"); }
     finally { setSearching(false); }
-  }, [query, searchVideoIds, plateMode, ocrMode, resultFilter]);
+  }, [resultFilter, autoFilterActive, plateMode, ocrMode, searchVideoIds]);
+
+  const handleSearch = useCallback(() => {
+    if (!query.trim()) return;
+    void runSemanticSearch(query);
+  }, [query, runSemanticSearch]);
 
   const resultCount = results.length;
 
@@ -237,7 +259,7 @@ export function VideoSearchCard({
                     <button
                       key={key}
                       className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${resultFilter === key ? "bg-teal-50 text-teal-700 font-medium" : "text-gray-600 hover:bg-gray-50"}`}
-                      onClick={() => { setResultFilter(key); setFilterOpen(false); }}
+                      onClick={() => { setAutoFilterActive(false); setResultFilter(key); setFilterOpen(false); }}
                     >
                       {label}
                     </button>
