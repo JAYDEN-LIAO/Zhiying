@@ -39,7 +39,7 @@
 - **共享单实例**: embedder + detector 启动预载 app.state（detector 懒加载），禁用 `load_plugin` 重复实例化
 - **全局任务队列**: PipelineQueue FIFO + N worker + `pipeline_tasks` 表持久化；重启恢复；幂等
 - **向量维度**: `EmbedVector()` 随 embedding_profile（8b=4096 / 2b=2048）；人脸 `Vector(512)`
-- **DB 连接**: 环境变量 `POSTGRES_URI` → config.yaml `database.uri` → 兜底 5432
+- **DB 连接**: 环境变量 `POSTGRES_URI` → config.yaml `database.uri` → 兜底 5432；`python run.py` 自动自举数据库（端口已通→直接复用 / 内嵌 vendor/pg / docker compose 回退），与桌面启动器 `desktop/db.py` 同优先级
 - **配置模板化**: config.yaml 机器相关 gitignored；新机复制 `config.yaml.example` 自改
 - **4 级参数系统**: L1 场景（9 智能推荐场景 + 5 旧值）→ L2 感知模块 → L3 功能开关 → L4 高级参数
 - **智能参数系统（v0.37）**: 场景分类与参数预设集中在 `services/smart_suggest.py`（9 类）；低置信兜底 `_DEFAULT_PARAMS`；改场景须加/改 `_scene_fingerprint()` 相关缓存（列表增改自动失效）

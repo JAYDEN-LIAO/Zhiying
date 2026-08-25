@@ -5,9 +5,9 @@
 ## Quick Start
 
 ```bash
-docker compose up -d db                        # 启动数据库
+docker compose up -d db                        # 可选：预起数据库（python run.py 会自动自举）
 set DASHSCOPE_API_KEY=sk-xxx                   # 设置 API key（vlm_llm 摘要模式）
-python run.py                                  # 启动后端（默认 8011）
+python run.py                                  # 启动后端（默认 8011；DB 自举：端口已通→复用 / 内嵌 vendor/pg / docker 回退）
 cd frontend && npm install && npm run dev       # 启动前端开发服务器
 curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # 上传视频
 ```
