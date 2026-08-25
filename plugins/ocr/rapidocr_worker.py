@@ -16,6 +16,7 @@ onnxruntime-gpu；故 OCR 单独放一个子进程，startup 时把独立 vendor
         or pickle.dumps({"error": str})    # 该帧失败
 """
 
+import os
 import pickle
 import struct
 import sys
@@ -25,9 +26,12 @@ def _bootstrap() -> bool:
     """把 vendored DML onnxruntime 前置到 sys.path（须早于一切 onnxruntime import）。
 
     返回是否成功定位到 vendor 目录并准备就绪（DML 可用性由后续 ORT 探测决定）。
+    封装模式（backend_pyc）下 __file__ 在 _internal 里，项目根须经 backend_launcher
+    注入的 ZHIYING_PROJECT_ROOT 取（源码模式未设 → __file__ 推导）。
     """
     from pathlib import Path
-    project_root = Path(__file__).resolve().parent.parent.parent
+    root = os.environ.get("ZHIYING_PROJECT_ROOT")
+    project_root = Path(root) if root else Path(__file__).resolve().parent.parent.parent
     ort_dml = project_root / "vendor" / "ort_dml"
     if not ort_dml.is_dir():
         return False

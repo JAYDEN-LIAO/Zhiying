@@ -20,6 +20,7 @@ v0.34 定版选型：PaddleOCR GPU(DLL 死路)/EasyOCR(精度弱) 均不达生�
 
 import asyncio
 import logging
+import os
 import pickle
 import struct
 import subprocess
@@ -30,8 +31,16 @@ from core.interfaces import BaseOCR
 
 logger = logging.getLogger(__name__)
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# 封装模式（PyInstaller 字节码包）下 __file__ 指向 _internal/backend_pyc，
+# 项目根经 backend_launcher 注入 ZHIYING_PROJECT_ROOT（源码模式为空 → __file__ 推导）。
+_PACKAGED_ROOT = os.environ.get("ZHIYING_PROJECT_ROOT")
+_PROJECT_ROOT = Path(_PACKAGED_ROOT) if _PACKAGED_ROOT else Path(__file__).resolve().parent.parent.parent
+# build_backend_pyc 把 .py 源码删成 .pyc：子进程入口脚本需兼容两种形态（Python 可直接执行 legacy .pyc）。
 _WORKER_SCRIPT = Path(__file__).resolve().parent / "rapidocr_worker.py"
+if not _WORKER_SCRIPT.is_file():
+    _pyc = _WORKER_SCRIPT.with_suffix(".pyc")
+    if _pyc.is_file():
+        _WORKER_SCRIPT = _pyc
 
 
 class RapidOCRExtractor(BaseOCR):
