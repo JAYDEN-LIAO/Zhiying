@@ -10,7 +10,7 @@ echo   %date% %time%
 echo ==================================================
 echo.
 
-echo [1/6] git pull（读取 install1 保存的代理，缺失则手动输入）...
+echo [1/7] git pull（读取 install1 保存的代理，缺失则手动输入）...
 set "PROXY="
 if exist "data\proxy.txt" set /p PROXY=<data\proxy.txt
 if "%PROXY%"=="" (
@@ -47,7 +47,7 @@ if not "%PROXY%"=="" (
 )
 
 echo.
-echo [2/6] 安装后端依赖（requirements.txt，新增依赖会装上，已装秒过）...
+echo [2/7] 安装后端依赖（requirements.txt，新增依赖会装上，已装秒过）...
 .venv\Scripts\pip.exe install -r requirements.txt
 if errorlevel 1 (
     echo.
@@ -73,12 +73,12 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/6] 安装桌面壳依赖（desktop\requirements.txt，含 psutil）...
+echo [3/7] 安装桌面壳依赖（desktop\requirements.txt，含 psutil）...
 .venv\Scripts\pip.exe install -r desktop\requirements.txt
 if errorlevel 1 echo [警告] pip 依赖安装失败，继续后续步骤
 
 echo.
-echo [4/6] npm install（frontend-desktop）...
+echo [4/7] npm install（frontend-desktop）...
 pushd frontend-desktop
 call npm install
 if errorlevel 1 (
@@ -90,7 +90,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [5/6] npm run build（重建桌面前端 dist，gitignore 不入库必须本地构建）...
+echo [5/7] npm run build（重建桌面前端 dist，gitignore 不入库必须本地构建）...
 call npm run build
 if errorlevel 1 (
     echo.
@@ -102,7 +102,18 @@ if errorlevel 1 (
 popd
 
 echo.
-echo [6/6] 重打桌面壳 exe（desktop\build_exe.ps1 -Deploy）...
+echo [6/7] 清理 WebView2 持久化缓存（%APPDATA%\pywebview）...
+if exist "%APPDATA%\pywebview" (
+    rmdir /s /q "%APPDATA%\pywebview" >nul 2>&1
+)
+if errorlevel 1 (
+    echo   [警告] 缓存清理失败（请先关闭窗口），可手动删除 %APPDATA%\pywebview
+) else (
+    echo   WebView2 持久化缓存已清理
+)
+
+echo.
+echo [7/7] 重打桌面壳 exe（desktop\build_exe.ps1 -Deploy）...
 powershell -ExecutionPolicy Bypass -File desktop\build_exe.ps1 -Deploy
 if errorlevel 1 (
     echo.

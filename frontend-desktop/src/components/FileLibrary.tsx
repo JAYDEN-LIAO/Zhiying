@@ -180,6 +180,8 @@ function CaseContent({
   /* ── 视图模式（网格/列表）与视频详情抽屉 ── */
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [detailFile, setDetailFile] = useState<FileItem | null>(null);
+  /* ── 添加下拉：合并「选择视频文件 / 上传文件夹」 ── */
+  const [addOpen, setAddOpen] = useState(false);
 
   /* ── 文件名/图片名 内联编辑（点铅笔直接在单元格编辑） ── */
   const [editing, setEditing] = useState<{ kind: "file" | "image"; id: string } | null>(null);
@@ -263,16 +265,36 @@ function CaseContent({
             <option value="completed">已完成</option>
             <option value="failed">失败</option>
           </select>
-          {/* 上传：白底 outline（与新建案例蓝色等大） */}
-          <button className="g-btn" onClick={onUpload} disabled={isUploading}>
-            <IconPlus />
-            {isUploading ? "上传中..." : "上传"}
-          </button>
-          {/* 上传文件夹：递归选择文件夹内所有视频/图片（含子文件夹，完全扁平归档到本案例） */}
-          <button className="g-btn" onClick={onUploadFolder} disabled={isUploading} title="上传整个文件夹（含子文件夹内的视频，扁平归档到本案例）">
-            <IconFolder />
-            上传文件夹
-          </button>
+          {/* 添加：合并「选择视频文件 / 上传文件夹」一键下拉（自动识别并上传） */}
+          <div className="relative">
+            <button className="g-btn" onClick={() => setAddOpen((o) => !o)} disabled={isUploading}>
+              <IconPlus />
+              {isUploading ? "上传中..." : "添加"}
+            </button>
+            {addOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setAddOpen(false)} />
+                <div className="absolute top-full right-0 mt-1 bg-white rounded-lg shadow-xl border border-gray-200 z-20 overflow-hidden min-w-[160px] py-0.5">
+                  <button
+                    className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                    onClick={() => { setAddOpen(false); onUpload(); }}
+                    title="选择视频文件上传到当前案例"
+                  >
+                    <VideoIcon />
+                    选择视频文件
+                  </button>
+                  <button
+                    className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 text-gray-700"
+                    onClick={() => { setAddOpen(false); onUploadFolder(); }}
+                    title="上传整个文件夹（含子文件夹内的视频，扁平归档到本案例）"
+                  >
+                    <IconFolder />
+                    上传文件夹
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           {/* 解析：未勾选 → 处理当前列表全部待处理；勾选后 → 批量解析勾选的 */}
           <button className="g-btn g-btn-primary" onClick={onAnalyze}
             disabled={analyzing || (selected.size === 0 && allPendingIds.length === 0)} title="打开参数面板并启动待处理视频">
