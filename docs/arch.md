@@ -107,6 +107,8 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 素材库检索: /search/subjects（上传图片, person→ArcFace 512 / other→Qwen3-VL, 分轨比对底库向量）
 合并去重: 帧簇(≤4s)优先; confidence = 相似度 × 路径权重
 范围过滤: video_ids 空→空; None=全库; face/image 参数必须 Form(...) 声明
+视频搜索卡: 严格限定当前视频（video_ids=[currentVideoId]）；支持 search_types 结果类型筛选（全部/画面/物体）
+搜索结果时间范围: 点击结果自动播放到 end 时间后暂停（autoPauseEndRef + timeupdate 监听）
 ```
 
 ## Database Schema
@@ -172,9 +174,9 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 **桌面前端**：
 - AppContext 全局状态（视频/任务/进度/树选/案例徽章/素材库跨页跳转）+ 5 页组件：
   - **FileLibrary**（案例库）：左案例树 + 右内容区；选中案例时正文支持视频拖拽上传（图片上传已退役）；多版本行=一次解析
-  - **Workbench**（视频解析）：SplitPane 视频播放器 + 检测栏 + 视频搜索卡（语义/人脸/图搜/车牌/文字 toggle）+ `SingleAnalyzeDialog` 紧凑弹窗；搜索卡支持全局搜索关键词/人脸/图搜自动同步
+  - **Workbench**（视频解析）：SplitPane 视频播放器 + 检测栏 + 视频搜索卡（结果类型筛选下拉：全部/画面定位/物体定位 + 语义/人脸/图搜/车牌/文字 toggle + 搜索框固定 + 搜索结果时间范围自动暂停）+ `SingleAnalyzeDialog` 紧凑弹窗；搜索卡仅限当前视频检索（与全局搜索划清边界）；摘要卡标题随内容自动切换（视频摘要/文字识别），无 tab 按钮
   - **ImageLibrary**（素材库，v0.6 新增）：左目标列表 + 右底库照片详情（裁剪/拖拽扩充/溯源）+ 新建目标弹窗 + `AddSubjectDrawer`（检测/图搜一键沉淀）
-  - **GlobalSearch**（全局搜索）：左 34% 配置面板（文本/图像 Tab + 4 类型 chip + 句式化 token + 人脸/通用图搜分轨）+ 右 66% 结果网格；选图来源统一走 `SubjectPhotoPicker`（素材库底图）
+  - **GlobalSearch**（全局搜索）：左 34% 配置面板（文本/图像 Tab + 4 类型 chip 互斥选中 + 句式化 token + 人脸/通用图搜分轨）+ 右 66% 结果网格；选图来源统一走 `SubjectPhotoPicker`（素材库底图）
   - **TaskCenter**（任务中心）+ **SettingsPage**（系统设置，4 子 tab）
 - TitleBar（frameless 暗色）+ SystemMonitor（底部系统监控）；侧栏 5 业务 + 2 设置入口
 
@@ -203,6 +205,8 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 **核心链路全部 ✅**：DAG(16 ops) / 4 编码 / 双层 ReID / 8 路搜索+图搜 / 人脸+车牌+OCR / 摘要(vlm_llm, 默认关) / 多格式 / 智能参数系统 / 设置+预设 / GPU 锁 / 任务队列 / 文件库+多版本 / 案例素材 / 任务报告 / 云智 / 桌面端 / 生产部署 / **图片素材库**。
 
 **v0.6 图片素材库 + 搜索统一**：3 表(image_subjects/subject_photos/subject_photo_embedding) + 15 个 /subjects API + 桌面端第 5 页 ImageLibrary + SubjectPhotoPicker（替代 CaseAssetPicker）+ AddSubjectDrawer（检测/图搜沉淀，新建/已有目标双模式）+ 检索分轨(person→ArcFace 512 / other→Qwen3-VL) + 全局搜索关键词/人脸/图搜同步到视频搜索卡片 + 案例图片退役 + VideoSummaryCard 外框标题切换 + caption-summary 联动 + DetectionPanel 跨页自动滚动修复。
+
+**桌面端 UI 优化**：视频搜索卡仅限当前视频检索（退役范围下拉，与全局搜索划清边界）+ 结果类型筛选下拉（全部/画面定位/物体定位，search_types API 过滤）+ 搜索框固定不随结果滚动 + 搜索结果时间范围自动暂停（timeupdate 监听）+ 摘要卡 tab 按钮删除（标题随内容自动切换）+ 摘要卡嵌套容器精简 + 全局搜索类型 chip 互斥选中 + 物体检测栏进度条删除 + 案例库添加下拉图标尺寸统一。
 
 **v0.37 智能参数系统**：持久化推荐(suggest-params 自动落库 4 字段) + 抽屉轻量面板(PATCH toggles 点击即保存) + AnalyzeSettingsPanel 三处共用 + ContentType 9 场景枚举 + 摘要默认全关 + Workbench 紧凑弹窗 + 批量解析双模式(按各视频/统一参数)。
 

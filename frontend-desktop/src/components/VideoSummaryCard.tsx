@@ -15,22 +15,18 @@ export function VideoSummaryCard({ video, onSeekTo, tab }: {
   /* ── No video ── */
   if (!video) {
     return (
-      <div className="minor-card">
-        <div className="minor-card-bd flex items-center justify-center">
-          <span className="text-gray-400 text-sm">选择视频后查看摘要 / 文字</span>
-        </div>
+      <div className="flex items-center justify-center h-full">
+        <span className="text-gray-400 text-sm">选择视频后查看摘要 / 文字</span>
       </div>
     );
   }
 
   return (
-    <div className="minor-card">
-      <div className="minor-card-bd">
-        {tab === "ocr"
-          ? <OcrBody video={video} onSeekTo={onSeekTo} />
-          : <SummaryBody video={video} />}
-      </div>
-    </div>
+    <>
+      {tab === "ocr"
+        ? <OcrBody video={video} onSeekTo={onSeekTo} />
+        : <SummaryBody video={video} />}
+    </>
   );
 }
 

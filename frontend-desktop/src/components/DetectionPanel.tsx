@@ -62,7 +62,6 @@ interface TrackRowProps {
   thumbTs: number;
   bbox: { x1: number; y1: number; x2: number; y2: number } | null;
   displayId: number;
-  maxDuration: number;
   isDropdownOpen: boolean;
   onTrackSelect: (trackId: number, className: string, seekTo: number) => void;
   onToggleDropdown: (trackId: number) => void;
@@ -75,7 +74,7 @@ interface TrackRowProps {
 
 const TrackRow = memo(function TrackRow({
   track, isSel, video, color, hasFace, identityLabel, plate, tUrl, thumbTs, bbox,
-  displayId, maxDuration, isDropdownOpen,
+  displayId, isDropdownOpen,
   onTrackSelect, onToggleDropdown, onCloseDropdown, onHoverThumb,
   onDownloadThumb, onDownloadTrack, onAddToLibrary,
 }: TrackRowProps) {
@@ -121,9 +120,6 @@ const TrackRow = memo(function TrackRow({
           )}
         </div>
         <div className="dtc-time">{track.first_seen.toFixed(1)}s - {track.last_seen.toFixed(1)}s</div>
-      </div>
-      <div className="dtc-bar">
-        <div className="dtc-bar-fill" style={{ width: `${Math.min(100, ((track.last_seen - track.first_seen) / (maxDuration || 1)) * 100)}%`, background: isSel ? SELECTED : color }} />
       </div>
       {/* 加入图片素材库（v0.6）：自动携带 track 缩略图/当前帧为底图 */}
       {onAddToLibrary && (
@@ -425,7 +421,6 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
   }
 
   // 取所有 track 的最大 last_seen 作分母（tracks 按 first_seen 排序，末尾 track ≠ 最长 track）
-  const maxDuration = tracks.reduce((m, t) => Math.max(m, t.last_seen), 0) || 1;
 
   return (
     <div className="major-card">
@@ -539,7 +534,6 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                       thumbTs={thumbTs}
                       bbox={bbox}
                       displayId={t.display_seq ?? t.track_id}
-                      maxDuration={maxDuration}
                       isDropdownOpen={trackDropdown === t.track_id}
                       onTrackSelect={onTrackSelect}
                       onToggleDropdown={toggleDropdown}

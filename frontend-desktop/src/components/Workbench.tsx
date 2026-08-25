@@ -105,44 +105,25 @@ function WbStage({ player, timeline }: { player: React.ReactNode; timeline: Reac
   );
 }
 
-/* ═══════════════ ③ 右摘要卡（摘要 ⇄ 文字识别，外框标题切换） ═══════════════ */
+/* ═══════════════ ③ 右摘要卡（摘要 / 文字识别，按状态自动切换） ═══════════════ */
 function WbSummary({ currentVideo, onSeekTo }: { currentVideo: VideoResponse | null; onSeekTo: (start: number, end: number | null) => void }) {
-  const [tab, setTab] = useState<"summary" | "ocr">("summary");
-  // 切换视频 → 根据开启状态自动选中（OCR 开启且摘要未开 → 文字识别；否则 → 摘要）
-  useEffect(() => {
-    if (!currentVideo) return;
-    setTab(currentVideo.ocr_enabled && !currentVideo.summary_enabled ? "ocr" : "summary");
-  }, [currentVideo?.id, currentVideo?.ocr_enabled, currentVideo?.summary_enabled]);
-
-  const ocrEnabled = !!currentVideo?.ocr_enabled;
-  const title = tab === "ocr" ? "文字识别" : "视频摘要";
+  // OCR 开启且摘要未开 → 文字识别；否则 → 摘要
+  const tab = currentVideo?.ocr_enabled && !currentVideo?.summary_enabled ? "ocr" as const : "summary" as const;
 
   return (
     <div className="case-card h-full flex flex-col min-h-0 overflow-hidden">
       <div className="g-card-title">
         <div className="flex items-center gap-1.5">
           <svg className="w-4 h-4 text-[#4f7cff]" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6M9 8h6M5 19V5a2 2 0 012-2h10a2 2 0 012 2v14l-3-2-2 2-2-2-2 2-2-2-3 2z" /></svg>
-          <span className="text-[13px] font-semibold text-gray-800">{title}</span>
+          <span className="text-[13px] font-semibold text-gray-800">{tab === "ocr" ? "文字识别" : "视频摘要"}</span>
         </div>
-        <div className="flex items-center gap-1">
-          {ocrEnabled && (
-            <button
-              className={"text-[11px] px-2 py-0.5 rounded-full transition-colors " + (tab === "ocr" ? "bg-[#4f7cff] text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}
-              onClick={() => setTab("ocr")}
-            >文字识别</button>
-          )}
-          <button
-            className={"text-[11px] px-2 py-0.5 rounded-full transition-colors " + (tab === "summary" ? "bg-[#4f7cff] text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}
-            onClick={() => setTab("summary")}
-          >摘要</button>
-          {currentVideo?.summary?.tags != null && currentVideo.summary.tags.length > 0 && tab === "summary" && (
-            <div className="sum-tags !mt-0 ml-1 overflow-hidden">
-              {currentVideo.summary.tags.slice(0, 4).map((tag) => (
-                <span key={tag} className="sum-tag">{tag}</span>
-              ))}
-            </div>
-          )}
-        </div>
+        {currentVideo?.summary?.tags != null && currentVideo.summary.tags.length > 0 && tab === "summary" && (
+          <div className="sum-tags !mt-0 overflow-hidden">
+            {currentVideo.summary.tags.slice(0, 4).map((tag) => (
+              <span key={tag} className="sum-tag">{tag}</span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex-1 min-h-0 overflow-auto p-2">
         <VideoSummaryCard video={currentVideo} onSeekTo={(ts) => onSeekTo(ts, null)} tab={tab} />
@@ -216,6 +197,8 @@ export function Workbench() {
   const [showStageInfo, setShowStageInfo] = useState(false); // 播放器信息浮层
   const [addSubjectDrawer, setAddSubjectDrawer] = useState<AddSubjectDrawerData | null>(null); // v0.6 沉淀素材库
   const videoRef = useRef<HTMLVideoElement>(null);
+  // 搜索结果自动暂停：记录 end 时间，timeupdate 到达时暂停
+  const autoPauseEndRef = useRef<number | null>(null);
   // 搜索结果发起的跨视频切换 → 重置 effect 跳过（保留结果/定位，由 handler 精确控制状态）
   const suppressWorkbenchResetRef = useRef(false);
   // 跨视频切换刚发生时标记目标视频，供 seek 类 handler 决定走 pendingSeek 而非立即 seek
@@ -407,6 +390,7 @@ export function Workbench() {
   /* ── Seek（跨视频可靠定位） ── */
   useEffect(() => {
     if (!seekTarget) return;
+    autoPauseEndRef.current = seekTarget.end;
     const applySeek = () => {
       const video = videoRef.current;
       if (!video || video.readyState < 1) return false;
@@ -423,6 +407,21 @@ export function Workbench() {
     return () => clearInterval(iv);
   }, [seekTarget]);
 
+  /* ── 搜索结果自动暂停：播放到 end 时间时暂停 ── */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onTimeUpdate = () => {
+      const end = autoPauseEndRef.current;
+      if (end != null && video.currentTime >= end) {
+        video.pause();
+        autoPauseEndRef.current = null;
+      }
+    };
+    video.addEventListener("timeupdate", onTimeUpdate);
+    return () => video.removeEventListener("timeupdate", onTimeUpdate);
+  }, [vid, streamReady]);
+
   /* ── 跨视频 pending seek：等主视频切到目标版本（vid/currentVideo 落到目标）且元素就绪后再定位，
      避免首击 seek 作用到旧 <video> 元素、随后 src 切换被重置 ── */
   useEffect(() => {
@@ -433,6 +432,7 @@ export function Workbench() {
       const video = videoRef.current;
       if (!video || video.readyState < 1) return false;
       video.currentTime = pendingSeek.start;
+      autoPauseEndRef.current = pendingSeek.end;
       if (pendingSeek.end != null) video.play().catch(() => {});
       return true;
     };
@@ -464,14 +464,14 @@ export function Workbench() {
   }, [currentVideoId, videoGroups, openWorkbench, suppressWorkbenchReset]);
 
   /* ── 搜索 track 结果点击 ── */
-  const handleSearchTrackResult = useCallback((videoId: string, trackId: number, className: string, start: number) => {
+  const handleSearchTrackResult = useCallback((videoId: string, trackId: number, className: string, start: number, end?: number | null) => {
     if (videoId && videoId !== currentVideoId) handleGroupVideoSwitch(videoId);
     const target = justSwitchedToRef.current;
     if (target) {
       justSwitchedToRef.current = null;
-      setPendingSeek({ videoId: target, start, end: null });  // 跨视频：等新视频就绪再定位
+      setPendingSeek({ videoId: target, start, end: end ?? null });  // 跨视频：等新视频就绪再定位
     } else {
-      setSeekTarget({ start, end: null });
+      setSeekTarget({ start, end: end ?? null });
     }
     setDetectionVideoId(null);
     setSelectedTrackId(trackId);
@@ -692,9 +692,6 @@ export function Workbench() {
                     onSeekTo={handleSeekTo}
                     onTrackResult={handleSearchTrackResult}
                     onFaceResult={handleFaceResult}
-                    allVideos={videos}
-                    caseGroups={caseGroups}
-                    onGroupVideoSwitch={handleGroupVideoSwitch}
                     initialQuery={pendingSearchQuery}
                     initialFaceFile={pendingFaceFile}
                     initialImageFile={pendingImageFile}

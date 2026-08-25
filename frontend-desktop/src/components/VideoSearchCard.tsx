@@ -2,35 +2,12 @@
    VideoSearchCard — v2.0 major-card style + face search
    ════════════════════════════════════════════════════════════ */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../services/api";
-import type { SearchResultItem, VideoResponse, VideoListItem, FaceSearchResult, VideoGroup, CaseAssetItem } from "../types";
+import type { SearchResultItem, VideoResponse, FaceSearchResult } from "../types";
 import { formatSec } from "../utils/helpers";
 import { zhLabel } from "../labels";
 import { SubjectPhotoPicker } from "./SubjectPhotoPicker";
-
-/* 检索范围下拉：待处理/处理中直接不显示；仅 completed 文件列出。
-   completed 且开启搜索索引 → 可选；completed 但未开索引 → 置灰标注「未索引」。 */
-const isSearchable = (v: VideoListItem) => v.status === "completed" && v.search_index_enabled;
-const isShownInScope = (v: VideoListItem) => v.status === "completed";
-
-const fileStatusTag = (v: VideoListItem): string | null => {
-  if (v.status === "completed" && !v.search_index_enabled) return "未索引";
-  return null;
-};
-
-/* 范围下拉里的单个文件行：未索引的置灰 + 标签 */
-function ScopeFileRow({ v, checked, onToggle }: { v: VideoListItem; checked: boolean; onToggle: (id: string) => void }) {
-  const tag = fileStatusTag(v);
-  const disabled = tag != null;
-  return (
-    <label className={`flex items-center gap-2 px-7 py-1.5 text-xs rounded cursor-pointer ${disabled ? "text-gray-300 cursor-not-allowed" : "text-gray-600 hover:bg-gray-50"}`}>
-      <input type="checkbox" checked={checked} disabled={disabled} onChange={() => onToggle(v.id)} className="w-3 h-3 accent-teal-500" />
-      <span className="truncate flex-1">{v.file_name}</span>
-      {tag && <span className="text-[9px] text-gray-300 shrink-0">{tag}</span>}
-    </label>
-  );
-}
 
 export function VideoSearchCard({
   video,
@@ -38,9 +15,6 @@ export function VideoSearchCard({
   onSeekTo,
   onTrackResult,
   onFaceResult,
-  allVideos,
-  caseGroups,
-  onGroupVideoSwitch,
   initialQuery,
   initialFaceFile,
   initialImageFile,
@@ -48,13 +22,9 @@ export function VideoSearchCard({
   video: VideoResponse | null;
   videoId: string | null;
   onSeekTo?: (start: number, end: number | null) => void;
-  onTrackResult?: (videoId: string, trackId: number, className: string, start: number) => void;
+  onTrackResult?: (videoId: string, trackId: number, className: string, start: number, end?: number | null) => void;
   /* v0.30: 人脸结果点击 → 定位检测栏"人脸"视图（identityId + 时间戳） */
   onFaceResult?: (videoId: string, identityId: number, timestamp: number) => void;
-  /* ── 案例-文件 检索范围（v0.35） ── */
-  allVideos?: VideoListItem[];
-  caseGroups?: VideoGroup[];
-  onGroupVideoSwitch?: (videoId: string) => void;
   /* ── 跨页搜索关键词同步：全局搜索→本卡片自动填充并搜索（一次性） ── */
   initialQuery?: string | null;
   initialFaceFile?: File | null;
@@ -69,15 +39,10 @@ export function VideoSearchCard({
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [scopeOpen, setScopeOpen] = useState(false);
   const [plateMode, setPlateMode] = useState(false);
   const [ocrMode, setOcrMode] = useState(false);
-  // 检索范围（案例-文件）：current=当前视频 / custom=选中文件集
-  const [scope, setScope] = useState<"current" | "custom">("custom");
-  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
-  // 下拉固定定位（position:fixed 测量按钮位置，避免撑出卡片滚动条）
-  const scopeBtnRef = useRef<HTMLButtonElement>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ left: number; top: number } | null>(null);
+  const [resultFilter, setResultFilter] = useState<"all" | "frame" | "track">("all");
+  const [filterOpen, setFilterOpen] = useState(false);
   // 搜索结果自己发起的视频切换 → 抑制重置（本帧 effect 读到 true 跳过；setTimeout 清理，StrictMode 安全）
   const suppressResetRef = useRef(false);
   const [faceSearching, setFaceSearching] = useState(false);
@@ -90,43 +55,8 @@ export function VideoSearchCard({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
-  // 案例-文件 结构：按 group_id 归组 + 未分组 + 案例名（列表 4s 轮询刷新，用 ref 快照防重置效应误触）
-  const allVideosRef = useRef(allVideos);
-  allVideosRef.current = allVideos;
-  const caseFileMap = useMemo(() => {
-    const m = new Map<string, VideoListItem[]>();
-    for (const v of allVideos ?? []) {
-      if (!v.group_id) continue;
-      const arr = m.get(v.group_id) ?? [];
-      arr.push(v);
-      m.set(v.group_id, arr);
-    }
-    return m;
-  }, [allVideos]);
-  const ungroupedFiles = useMemo(() => (allVideos ?? []).filter((v) => !v.group_id), [allVideos]);
-  const caseNames = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const g of caseGroups ?? []) if (g.name) m.set(g.groupId, g.name);
-    return m;
-  }, [caseGroups]);
-
-  // 检索 video_ids：current=当前视频 / custom 未选中 → null（后端 None = 全库）；custom → 选中文件集
-  const searchVideoIds: string[] | null = scope === "current"
-    ? (video?.id ? [video.id] : null)
-    : (selectedFiles.size > 0 ? Array.from(selectedFiles) : null);
-
-  // 范围按钮文案：当前 / 全部(空选) / 单案例名 / N 个视频（只统计可搜索文件）
-  const scopeLabel = useMemo(() => {
-    if (scope === "current") return "当前";
-    if (selectedFiles.size === 0) return "全部";
-    for (const [gid, vids] of caseFileMap) {
-      const ids = vids.filter(isSearchable).map((v) => v.id);
-      if (ids.length > 0 && ids.every((id) => selectedFiles.has(id)) && selectedFiles.size === ids.length) {
-        return caseNames.get(gid) ?? "案例";
-      }
-    }
-    return `${selectedFiles.size} 个视频`;
-  }, [scope, selectedFiles, caseFileMap, caseNames]);
+  // 严格限定当前视频
+  const searchVideoIds: string[] | null = currentVideoId ? [currentVideoId] : null;
 
   // 图搜/人脸搜选图来源菜单（本地 / 从素材库）
   const [assetPicker, setAssetPicker] = useState<{ kind: "image" | "face" } | null>(null);
@@ -137,21 +67,22 @@ export function VideoSearchCard({
     setAssetMenu({ kind, x: r.right, y: r.bottom + 4 });
   };
 
-  // 检索范围涉及的视频（用于人脸/车牌门控 —— 联合搜索时范围内有任一视频具备即可用）
-  const scopeVideos = useMemo(() => {
-    if (searchVideoIds == null) return allVideos ?? [];
-    const ids = new Set(searchVideoIds);
-    return (allVideos ?? []).filter(v => ids.has(v.id));
-  }, [searchVideoIds, allVideos]);
-  const detInScope = scopeVideos.some(v => v.detection_enabled);
-  const faceDisabled = !detInScope || !scopeVideos.some(v => v.face_enabled);
-  const plateDisabled = !detInScope || !scopeVideos.some(v => v.plate_enabled);
-  const ocrDisabled = !detInScope || !scopeVideos.some(v => v.ocr_enabled);
-  // 语义/图搜可用性：全库（null）恒可用；具体范围需范围内有视频开搜索索引
-  const semanticReady = searchVideoIds == null || scopeVideos.some(v => v.search_index_enabled);
+  // 功能门控：仅看当前视频
+  const detEnabled = !!video?.detection_enabled;
+  const faceDisabled = !detEnabled || !video?.face_enabled;
+  const plateDisabled = !detEnabled || !video?.plate_enabled;
+  const ocrDisabled = !detEnabled || !video?.ocr_enabled;
+  const semanticReady = !!video?.search_index_enabled;
   const initialQueryRef = useRef<string | null>(null);
 
-  // 视频切换：手动切换（header/历史）→ 重置搜索上下文；搜索结果自己发起的切换 → 抑制（保留结果与范围）
+  // 切换过滤器时重新搜索（已有查询才触发）
+  useEffect(() => {
+    if (!query.trim() || !hasSearched) return;
+    void handleSearch();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultFilter]);
+
+  // 视频切换：手动切换（header/历史）→ 重置搜索上下文；搜索结果自己发起的切换 → 抑制（保留结果）
   // 若有 initialQuery/initialFaceFile/initialImageFile（全局搜索同步），跳过重置并自动搜索
   useEffect(() => {
     if (suppressResetRef.current) {
@@ -168,15 +99,6 @@ export function VideoSearchCard({
         .then((data) => { setResults(data.results ?? []); setHasSearched(true); })
         .catch((err) => { setError(err instanceof Error ? err.message : "搜索失败"); })
         .finally(() => { setSearching(false); });
-      if (currentVideoId) {
-        const target = allVideosRef.current?.find((v) => v.id === currentVideoId);
-        if (target?.group_id) {
-          setSelectedFiles(new Set((allVideosRef.current ?? []).filter((v) => v.group_id === target.group_id && isSearchable(v)).map((v) => v.id)));
-        } else {
-          setSelectedFiles(target && isSearchable(target) ? new Set([currentVideoId]) : new Set());
-        }
-        setScope("custom");
-      }
       return;
     }
     // 全局搜索人脸/图搜同步
@@ -191,55 +113,8 @@ export function VideoSearchCard({
       return;
     }
     setQuery(""); setResults([]); setSearching(false); setHasSearched(false); setError(null); setFaceResults([]);
-    // 默认范围：选中视频 → 其所在案例的可搜索文件（未分组 → 仅该文件）；无视频 → 空选（=全库）
-    if (currentVideoId) {
-      const target = allVideosRef.current?.find((v) => v.id === currentVideoId);
-      if (target?.group_id) {
-        setSelectedFiles(new Set((allVideosRef.current ?? []).filter((v) => v.group_id === target.group_id && isSearchable(v)).map((v) => v.id)));
-      } else {
-        setSelectedFiles(target && isSearchable(target) ? new Set([currentVideoId]) : new Set());
-      }
-      setScope("custom");
-    } else {
-      setSelectedFiles(new Set());
-      setScope("custom");
-    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentVideoId, initialQuery, initialFaceFile, initialImageFile]);
-
-  const toggleFile = useCallback((id: string) => {
-    setSelectedFiles((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-    setScope("custom");
-  }, []);
-
-  const toggleCase = useCallback((gid: string, ids: string[]) => {
-    setSelectedFiles((prev) => {
-      const next = new Set(prev);
-      const allOn = ids.length > 0 && ids.every((id) => next.has(id));
-      if (allOn) ids.forEach((id) => next.delete(id));
-      else ids.forEach((id) => next.add(id));
-      return next;
-    });
-    setScope("custom");
-  }, []);
-
-  const selectCurrent = useCallback(() => {
-    setSelectedFiles(new Set());  // 当前视频范围 = 仅当前视频，清空案例/文件勾选
-    setScope("current");
-    setScopeOpen(false);
-  }, []);
-
-  /* ── 下拉固定定位：测量按钮位置 → position:fixed，不撑出卡片滚动条 ── */
-  const toggleScope = useCallback(() => {
-    if (scopeOpen) { setScopeOpen(false); return; }
-    const rect = scopeBtnRef.current?.getBoundingClientRect();
-    if (rect) setDropdownPos({ left: rect.left, top: rect.bottom + 4 });
-    setScopeOpen(true);
-  }, [scopeOpen]);
 
   const runFaceSearch = useCallback(async (file: File) => {
     if (!file) return;
@@ -290,15 +165,15 @@ export function VideoSearchCard({
     try {
       const data = await api.searchSemantic(query.trim(), {
         video_ids: searchVideoIds ?? undefined,
-        // 车牌模式：只跑车牌路 + 提高上限（「一个字列出所有相关」）
         ...(plateMode ? { search_types: ["plate"], top_k: 100 } : {}),
-        // OCR 文字模式：只跑文字路，精确串匹配聊天/字幕原文
         ...(ocrMode ? { search_types: ["ocr"], top_k: 100 } : {}),
+        ...(resultFilter === "frame" && !plateMode && !ocrMode ? { search_types: ["frame"] } : {}),
+        ...(resultFilter === "track" && !plateMode && !ocrMode ? { search_types: ["track"] } : {}),
       });
       setResults(data.results ?? []); setHasSearched(true);
     } catch (err) { setError(err instanceof Error ? err.message : "搜索失败"); }
     finally { setSearching(false); }
-  }, [query, searchVideoIds, plateMode, ocrMode]);
+  }, [query, searchVideoIds, plateMode, ocrMode, resultFilter]);
 
   const resultCount = results.length;
 
@@ -338,92 +213,39 @@ export function VideoSearchCard({
         </div>
       </div>
 
-      <div className="major-card-bd" style={{ scrollbarGutter: "stable", paddingRight: 8 }}>
-        {/* Search: scope dropdown + input + icons in one row */}
-        {/* Search: scope button（同高左侧）+ input + icons in one row */}
-        <div className="flex items-stretch w-full min-w-0 h-[34px] gap-1">
-          {/* Scope button（同高左侧；点击打开案例-文件检索范围下拉） */}
+      <div className="major-card-bd flex flex-col p-0">
+        {/* 搜索框固定不滚动 */}
+        <div className="flex items-stretch w-full min-w-0 h-[34px] gap-1 shrink-0 px-3.5 pb-1">
+          {/* 结果类型筛选下拉 */}
           <div className="relative shrink-0">
             <button
-              ref={scopeBtnRef}
-              onClick={toggleScope}
-              className={`flex h-full items-center justify-between gap-0.5 px-1.5 text-[11px] font-medium rounded-lg border transition-all min-w-[58px] max-w-[120px] ${
-                scopeOpen
-                  ? "border-teal-400 bg-teal-50 text-teal-700 shadow-sm"
-                  : "border-gray-300 bg-gray-50 text-gray-600 hover:border-teal-300 hover:bg-teal-50/60 hover:text-teal-700"
+              onClick={() => setFilterOpen((o) => !o)}
+              className={`flex h-full items-center gap-0.5 px-1.5 text-[11px] font-medium rounded-lg border transition-all min-w-[58px] ${
+                filterOpen
+                  ? "border-teal-400 bg-teal-50 text-teal-700"
+                  : "border-gray-300 bg-gray-50 text-gray-600 hover:border-teal-300 hover:text-teal-700"
               }`}
             >
-              <span className="truncate">{scopeLabel}</span>
-              <svg className={`w-3 h-3 shrink-0 transition-transform ${scopeOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M6 9l6 6 6-6" /></svg>
+              <span className="truncate">{resultFilter === "all" ? "全部" : resultFilter === "frame" ? "画面" : "物体"}</span>
+              <svg className={`w-3 h-3 shrink-0 transition-transform ${filterOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M6 9l6 6 6-6" /></svg>
             </button>
-            {scopeOpen && dropdownPos && (
+            {filterOpen && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setScopeOpen(false)} />
-                {/* position:fixed —— 锚定按钮位置，不再撑出卡片滚动条（与卡片标题同级固定） */}
-                <div className="fixed z-50 bg-white rounded-xl shadow-xl border border-gray-300 overflow-hidden"
-                  style={{ left: dropdownPos.left, top: dropdownPos.top, width: 240 }}>
-                  <div className="py-1.5">
-                    {/* 当前视频 */}
+                <div className="fixed inset-0 z-40" onClick={() => setFilterOpen(false)} />
+                <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-xl border border-gray-200 z-50 overflow-hidden min-w-[80px] py-0.5">
+                  {([["all", "全部"], ["frame", "画面定位"], ["track", "物体定位"]] as const).map(([key, label]) => (
                     <button
-                      onClick={selectCurrent}
-                      disabled={!currentVideoId}
-                      className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${!currentVideoId ? "text-gray-300 cursor-not-allowed" : (scope === "current" ? "bg-teal-50 text-teal-700 font-medium" : "text-gray-600 hover:bg-gray-50")}`}
+                      key={key}
+                      className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${resultFilter === key ? "bg-teal-50 text-teal-700 font-medium" : "text-gray-600 hover:bg-gray-50"}`}
+                      onClick={() => { setResultFilter(key); setFilterOpen(false); }}
                     >
-                      <svg className={`w-3 h-3 shrink-0 ${scope === "current" ? "text-teal-500" : "text-gray-300"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3"><path d="M20 6L9 17l-5-5" /></svg>
-                      当前视频
+                      {label}
                     </button>
-                    <div className="h-px bg-gray-100 mx-2 my-1" />
-                    {/* 案例 → 文件（待处理/处理中直接不显示，仅 completed） */}
-                    {(() => {
-                      const hasShown = Array.from(caseFileMap.values()).some((vids) => vids.some(isShownInScope))
-                        || ungroupedFiles.some(isShownInScope);
-                      return hasShown ? (
-                        <div className="max-h-[260px] overflow-y-auto px-1.5 pb-1.5">
-                          {Array.from(caseFileMap.entries()).map(([gid, vids]) => {
-                            const shown = vids.filter(isShownInScope);
-                            if (shown.length === 0) return null;
-                            const ids = shown.filter(isSearchable).map((v) => v.id);
-                            const allOn = ids.length > 0 && ids.every((id) => selectedFiles.has(id));
-                            const someOn = ids.some((id) => selectedFiles.has(id));
-                            return (
-                              <div key={gid} className="mb-0.5">
-                                <button
-                                  onClick={() => toggleCase(gid, ids)}
-                                  className="w-full flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 transition-colors"
-                                  title={ids.length === 0 ? "该案例无已开启搜索索引的视频" : (allOn ? "取消全选该案例" : "全选该案例")}
-                                >
-                                  <span className={`inline-flex items-center justify-center w-3.5 h-3.5 rounded border shrink-0 ${allOn ? "bg-teal-500 border-teal-500" : someOn ? "bg-teal-100 border-teal-400" : "border-gray-300"}`}>
-                                    {allOn && <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3.5"><path d="M20 6L9 17l-5-5" /></svg>}
-                                  </span>
-                                  <span className="text-xs font-medium text-gray-700 truncate flex-1">{caseNames.get(gid) ?? "未命名案例"}</span>
-                                  <span className="text-[10px] text-gray-400 shrink-0">{shown.length} 个</span>
-                                </button>
-                                {shown.map((v) => (
-                                  <ScopeFileRow key={v.id} v={v} checked={selectedFiles.has(v.id)} onToggle={toggleFile} />
-                                ))}
-                              </div>
-                            );
-                          })}
-                          {/* 未分组文件 */}
-                          {ungroupedFiles.some(isShownInScope) && (
-                            <div>
-                              <div className="px-2 pt-1.5 pb-0.5 text-[10px] font-semibold text-gray-400 tracking-widest">未分组</div>
-                              {ungroupedFiles.filter(isShownInScope).map((v) => (
-                                <ScopeFileRow key={v.id} v={v} checked={selectedFiles.has(v.id)} onToggle={toggleFile} />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="px-2 py-4 text-center text-[10px] text-gray-400">暂无已处理视频</div>
-                      );
-                    })()}
-                  </div>
+                  ))}
                 </div>
               </>
             )}
           </div>
-
           {/* Search input + 右侧图标 */}
           <div className="relative flex-1 min-w-0 h-full">
             <input
@@ -492,6 +314,8 @@ export function VideoSearchCard({
           </div>
         </div>
 
+        {/* 结果区域独立滚动 */}
+        <div className="flex-1 min-h-0 overflow-auto px-3.5" style={{ scrollbarGutter: "stable" }}>
         {/* Error */}
         {error && <div className="mb-2 p-2 rounded-lg bg-red-50 border border-red-100 text-[10px] text-red-600">{error}</div>}
 
@@ -594,15 +418,10 @@ export function VideoSearchCard({
               <div key={isTrack ? `track-${item.video_id}-${item.track_id}` : isPlate ? `plate-${item.video_id}-${item.track_id}-${idx}` : isOcr ? `ocr-${item.video_id}-${item.precise_start}-${idx}` : (item.scene_id || idx)}
                 className="sr-item"
                 onClick={() => {
-                  // v0.19: 跨视频跳转（搜索结果自己发起的切换 → 抑制搜索卡重置，保留结果与范围）
-                  if (item.video_id !== currentVideoId && onGroupVideoSwitch) {
-                    suppressResetRef.current = true;  // 由重置 effect 消费
-                    onGroupVideoSwitch(item.video_id);
-                  }
                   if (isTrack && item.track_id != null && item.precise_start != null) {
-                    onTrackResult?.(item.video_id, item.track_id, item.class_name ?? "", item.precise_start);
+                    onTrackResult?.(item.video_id, item.track_id, item.class_name ?? "", item.precise_start, item.precise_end);
                   } else if (isPlate && item.precise_start != null) {
-                    if (item.track_id != null) onTrackResult?.(item.video_id, item.track_id, item.class_name ?? "", item.precise_start);
+                    if (item.track_id != null) onTrackResult?.(item.video_id, item.track_id, item.class_name ?? "", item.precise_start, item.precise_end);
                     else onSeekTo?.(item.precise_start, null);
                   } else {
                     const ts = item.precise_start ?? item.scene_range_start;
@@ -683,6 +502,7 @@ export function VideoSearchCard({
             <p className="text-xs">{plateMode ? "输入车牌任意字符，列出所有相关车牌" : ocrMode ? "输入聊天/字幕原话，精确匹配画面文字" : "输入关键词搜索视频画面"}</p>
           </div>
         )}
+        </div>
       </div>
 
       {/* 图搜/人脸搜 选图来源菜单（本地 / 从素材库） */}

@@ -209,13 +209,18 @@ export function GlobalSearch() {
     if (group !== "type") setQuery((q) => applyToken(q, value));
     if (group === "type") {
       const typeDef = TYPE_CHIPS.find((t) => t.label === value);
-      /* 取消选中时把专属特征面板一起收回（之前漏写，导致面板残留） */
       if (typeDef) setActiveTypeKey(wasOn ? null : typeDef.key);
     }
     setChips((prev) => {
       const next = new Set(prev);
-      if (wasOn) next.delete(value);
-      else next.add(value);
+      if (group === "type") {
+        // 类型互斥：先移除所有类型 chip，再决定是否添加当前
+        for (const t of TYPE_CHIPS) next.delete(t.label);
+        if (!wasOn) next.add(value);
+      } else {
+        if (wasOn) next.delete(value);
+        else next.add(value);
+      }
       return next;
     });
   }

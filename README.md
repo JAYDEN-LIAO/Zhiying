@@ -104,8 +104,10 @@ zhiying/
 
 - **图片素材库**（v0.6 核心）：`image_subjects` / `subject_photos` / `subject_photo_embedding` 三表 + 15 个 `/subjects` API + 桌面端第 5 页 `ImageLibrary`（左列表+右详情+裁剪+拖拽扩充）+ `SubjectPhotoPicker`（全局搜索/视频搜索卡统一选图来源）+ `AddSubjectDrawer`（检测/图搜一键沉淀）；检索分轨：person→ArcFace 512 / other→Qwen3-VL
 - **搜索统一**：退役 `CaseAssetPicker`（案例图片选图），所有图搜/人脸搜入口统一走素材库 `SubjectPhotoPicker`；全局搜索关键词/人脸/图搜自动同步到视频搜索卡片
-- **摘要/文字识别 UI**：`VideoSummaryCard` 外框标题动态切换（「视频摘要」⇄「文字识别」），去掉内部嵌套 tabbar；OCR 开启时自动选中文字识别
+- **摘要/文字识别 UI**：`VideoSummaryCard` 标题随内容自动切换（视频摘要/文字识别），无 tab 按钮；去掉 `minor-card` 嵌套容器
 - **caption-summary 联动**：开摘要自动开画面描述（后端校验 caption OFF → summary OFF）
+- **视频搜索卡优化**：退役范围下拉，严格限定当前视频检索（与全局搜索划清边界）+ 结果类型筛选下拉（全部/画面定位/物体定位）+ 搜索框固定不随结果滚动 + 搜索结果时间范围自动暂停
+- **全局搜索类型互斥**：人/车/车牌/文本 chip 选中互斥，切换自动清除前一个
 - **智能参数系统**（v0.37）：持久化推荐 + 抽屉轻量面板 + AnalyzeSettingsPanel 三处共用 + 摘要默认全关
 - **案例素材管理**：`case_assets` 表 + 案例库拖拽上传图片素材（图片上传已退役，仅保留视频）
 - **Planned**：Grounding(Florence-2)。

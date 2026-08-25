@@ -288,7 +288,7 @@ function CaseContent({
                     onClick={() => { setAddOpen(false); onUploadFolder(); }}
                     title="上传整个文件夹（含子文件夹内的视频，扁平归档到本案例）"
                   >
-                    <IconFolder />
+                    <span className="[&_svg]:w-3.5 [&_svg]:h-3.5"><IconFolder /></span>
                     上传文件夹
                   </button>
                 </div>
