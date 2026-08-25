@@ -93,6 +93,8 @@ plugins/factory.py: load_plugin(config, category) → import + 实例化; null b
       summarizer(DeepSeek) · detector(yolo) · face(insightface) · plate(hyperlpr)
       ocr(rapidocr=PP-OCRv3 ONNX via DirectML 独立子进程) · grounding(null) 占位
 约定: 插件接口异步; 同步模型推理 MUST asyncio.to_thread(); 禁用重复实例化（共享单实例）
+     OCR worker 是按路径 spawn 的子进程脚本：封装态（backend_pyc 只留 .pyc）须 `.pyc` 回退（Python 可直接执行 legacy .pyc），
+     worker 内项目根定位走 ZHIYING_PROJECT_ROOT（backend_launcher 注入；源码态 __file__ 推导）
 ```
 
 ## Search Architecture
@@ -176,7 +178,7 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
   - **TaskCenter**（任务中心）+ **SettingsPage**（系统设置，4 子 tab）
 - TitleBar（frameless 暗色）+ SystemMonitor（底部系统监控）；侧栏 5 业务 + 2 设置入口
 
-**桌面端窗口壳**：pywebview 主窗（frameless, shadow）；SplashApi 窗口控制/系统监控；后端 backend_launcher.py（字节码/源码双模式 + 看门狗）。
+**桌面端窗口壳**：pywebview 主窗（frameless, shadow）；SplashApi 窗口控制/系统监控；后端 backend_launcher.py（字节码/源码双模式 + 看门狗）。壳 `load_url` 追加 `?v=<version>` 击穿 WebView2 持久化 HTTP 缓存（`private_mode=False`，跨版本复用会显示旧 UI，如素材库消失）。
 
 ## Key Design Decisions
 
@@ -192,8 +194,9 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 | 平台共享文件 source_owned | 就地引用不复制；删视频不删源文件 |
 | 人脸聚类双阈值 | 同 track 0.30 宽松 + 跨 track 0.58 保守 |
 | 搜索数据隔离 | Form(...) 声明防全库泄漏 |
-| OCR 独立子进程 | DML 隔离不破坏人脸/车牌 CUDA |
+| OCR 独立子进程 | DML 隔离不破坏人脸/车牌 CUDA；封装态 worker 仅 .pyc，插件 .pyc 回退 + ZHIYING_PROJECT_ROOT 定位 vendor |
 | 参数预设随 git | config/presets.json 部署/换机开箱复用 |
+| 桌面壳 URL 版本缓存击穿 | WebView2 持久化缓存（private_mode=False）跨版本复用旧 UI，load_url 带 `?v=<version>` 强制取新 |
 
 ## Current Status
 

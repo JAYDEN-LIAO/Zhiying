@@ -34,8 +34,8 @@
 - **异步规则**: 所有接口 async；同步模型推理/cv2 MUST `asyncio.to_thread()`
 - **Config-driven**: 插件后端由 `config.yaml` `plugins.{name}.backend` 选，null=禁用；API key 只在 `.env`
 - **设置运行时生效**: 上传/FormatService/VideoService 用新鲜 `load_config()`（勿用 app.state.config 快照）
-- **全局 GPU 锁**: 所有 embedder/detect 前向必须 `async with gpu_lock`（并发会蓝屏/卡死）；detection 攒批用 **128**
-- **OCR DML 隔离**: RapidOCR 必须走**独立子进程**（`plugins/ocr/rapidocr_worker.py`），**绝不**在主进程改全局 onnxruntime
+- **全局 GPU 锁**: 所有 embedder/detect 前向必须 `async with gpu_lock`（并发会蓝屏/卡死）；detection 攒批用 **128**；实测 RTX 5090 笔记本 + embedder bnb 8bit 在重 GPU 负载下偶发整机硬冻结（供电瞬变，Event 41 无 bugcheck）——24GB+ 机器建议 embedder `quantization=none`（fp16）规避 bnb 8bit matmul 功耗尖峰
+- **OCR DML 隔离**: RapidOCR 必须走**独立子进程**（`plugins/ocr/rapidocr_worker.py`），**绝不**在主进程改全局 onnxruntime；封装态（backend_pyc 只留 .pyc）worker 入口已做 `.pyc` 回退，worker 定位 vendor/ort_dml 走 `ZHIYING_PROJECT_ROOT`（源码态 `__file__` 推导）
 - **共享单实例**: embedder + detector 启动预载 app.state（detector 懒加载），禁用 `load_plugin` 重复实例化
 - **全局任务队列**: PipelineQueue FIFO + N worker + `pipeline_tasks` 表持久化；重启恢复；幂等
 - **向量维度**: `EmbedVector()` 随 embedding_profile（8b=4096 / 2b=2048）；人脸 `Vector(512)`
@@ -57,7 +57,7 @@
   - **搜索同步**：全局搜索文字/人脸/图搜 → 点击结果跳工作台 → 视频搜索卡片自动填充并搜索
   - **告警红点**：前端空壳保留（`imageLibAlertCount`/侧栏红点），后端本期不做（下一阶段）
   - **案例图片退役**：案例库不再支持图片上传，`images` 恒空；`CaseAssetPicker` 已被 `SubjectPhotoPicker` 替代
-- **双前端**: UI 各自演进；对接层 `frontend-shared/` 一份实现，改后端接口只改一处
+- **双前端**: UI 各自演进；对接层 `frontend-shared/` 一份实现，改后端接口只改一处；桌面壳 `load_url` 必须带版本号（`desktop/app.py _cache_bust_url`）击穿 WebView2 持久化缓存（`private_mode=False` 跨版本复用旧缓存会显示旧 UI）
 - **多格式**: remux(-c copy) + proxy(NVENC h264, 按需)；管道优先读 remuxed
 - **ReID 双层**: 在线 BoT-SORT with_reid + 全局 tracklet 缝合（cosine ≥0.85）
 - **人脸双阈值**: 同 track 0.30 宽松合并，跨 track 0.58 保守合并；检索锚点最典型脸
