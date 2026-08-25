@@ -51,6 +51,16 @@ def _log_path(args) -> Path:
     return d / "desktop.log"
 
 
+def _cache_bust_url(url: str, version: str | None) -> str:
+    """首页 URL 追加版本号查询参数，击穿 WebView2 持久化 HTTP 缓存。
+
+    桌面壳 private_mode=False 使用持久化 WebView2 配置（%APPDATA%\\pywebview），
+    跨版本复用会缓存旧 index.html + 旧 JS → 发版后窗口仍显示旧 UI（如素材库消失）。
+    每次发版 version 变化 → index.html 强制重新拉取 → 内容哈希资产自然取新。"""
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}v={version or ''}"
+
+
 # ────────────────────────────────────────────────────────────
 # --check：只做检查，不打 GUI
 # ────────────────────────────────────────────────────────────
@@ -261,7 +271,7 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
                           version=body.get("version"))
             log.write(f"已有 Zhiying 在运行，直接打开 {ctx.url}")
             time.sleep(1.5)  # 让启动页把进度平滑推满 100% 并展示「正在进入」过渡后再切前端
-            main_window.load_url(ctx.url)
+            main_window.load_url(_cache_bust_url(ctx.url, body.get("version")))
             runtime["done"].wait()
             return
 
@@ -282,7 +292,7 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
         app_state.set(State.READY, "后端就绪", port=cfg["port"], version=health.get("version"))
         log.write(f"后端就绪 {ctx.url} (version {health.get('version')})")
         time.sleep(1.5)  # 让启动页把进度平滑推满 100% 并展示「正在进入」过渡后再切前端
-        main_window.load_url(ctx.url)
+        main_window.load_url(_cache_bust_url(ctx.url, health.get("version")))
 
     except RuntimeError as e:
         detail = e.args[1] if len(e.args) > 1 else str(e)
