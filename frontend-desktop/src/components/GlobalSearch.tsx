@@ -680,7 +680,7 @@ export function GlobalSearch() {
             <div className="gs-card gs-image-form">
               {/* 人脸搜索（ArcFace 512d） */}
               <div
-                className={"gs-drop gs-drop-face" + (dragOverFace ? " over" : "")}
+                className={"gs-drop gs-drop-face" + (dragOverFace ? " over" : "") + (faceFile ? " has-preview" : "")}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setDragOverFace(true);
@@ -703,16 +703,17 @@ export function GlobalSearch() {
                 {faceFile ? (
                   <>
                     <img className="gs-drop-preview" src={facePreviewUrl ?? undefined} alt="face preview" />
-                    <p className="gs-drop-name">{faceFile.name}</p>
                     <button
                       type="button"
                       className="gs-drop-remove"
+                      title="移除图片"
+                      aria-label="移除图片"
                       onClick={(e) => {
                         e.stopPropagation();
                         setFace(null);
                       }}
                     >
-                      移除
+                      ✕
                     </button>
                   </>
                 ) : (
@@ -720,20 +721,20 @@ export function GlobalSearch() {
                     <div className="gs-drop-icon gs-drop-icon-face">👤</div>
                     <p className="gs-drop-tt">人脸搜索</p>
                     <span className="gs-drop-sub">拖拽或点击上传人脸照片（ArcFace 512d 检索）</span>
+                    <button
+                      type="button"
+                      className="gs-asset-pick"
+                      onClick={(e) => { e.stopPropagation(); setAssetPicker({ kind: "face" }); }}
+                    >
+                      从素材库选图
+                    </button>
                   </>
                 )}
-                <button
-                  type="button"
-                  className="gs-asset-pick"
-                  onClick={(e) => { e.stopPropagation(); setAssetPicker({ kind: "face" }); }}
-                >
-                  从素材库选图
-                </button>
               </div>
 
               {/* 通用图搜（Qwen3-VL-Embedding） */}
               <div
-                className={"gs-drop gs-drop-img" + (dragOverImage ? " over" : "")}
+                className={"gs-drop gs-drop-img" + (dragOverImage ? " over" : "") + (imageFile ? " has-preview" : "")}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setDragOverImage(true);
@@ -756,16 +757,17 @@ export function GlobalSearch() {
                 {imageFile ? (
                   <>
                     <img className="gs-drop-preview" src={imagePreviewUrl ?? undefined} alt="image preview" />
-                    <p className="gs-drop-name">{imageFile.name}</p>
                     <button
                       type="button"
                       className="gs-drop-remove"
+                      title="移除图片"
+                      aria-label="移除图片"
                       onClick={(e) => {
                         e.stopPropagation();
                         setImage(null);
                       }}
                     >
-                      移除
+                      ✕
                     </button>
                   </>
                 ) : (
@@ -775,15 +777,15 @@ export function GlobalSearch() {
                     </div>
                     <p className="gs-drop-tt">通用图搜</p>
                     <span className="gs-drop-sub">拖拽或点击上传参考图（Qwen3-VL 整图检索）</span>
+                    <button
+                      type="button"
+                      className="gs-asset-pick"
+                      onClick={(e) => { e.stopPropagation(); setAssetPicker({ kind: "image" }); }}
+                    >
+                      从素材库选图
+                    </button>
                   </>
                 )}
-                <button
-                  type="button"
-                  className="gs-asset-pick"
-                  onClick={(e) => { e.stopPropagation(); setAssetPicker({ kind: "image" }); }}
-                >
-                  从素材库选图
-                </button>
               </div>
             </div>
           )}

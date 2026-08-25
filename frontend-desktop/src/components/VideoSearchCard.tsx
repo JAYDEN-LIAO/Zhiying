@@ -248,14 +248,14 @@ export function VideoSearchCard({
                   : "border-gray-300 bg-gray-50 text-gray-600 hover:border-teal-300 hover:text-teal-700"
               }`}
             >
-              <span className="truncate">{resultFilter === "all" ? "全部" : resultFilter === "frame" ? "画面" : "物体"}</span>
+              <span className="truncate">{resultFilter === "all" ? "全部" : resultFilter === "frame" ? "事件" : "目标"}</span>
               <svg className={`w-3 h-3 shrink-0 transition-transform ${filterOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M6 9l6 6 6-6" /></svg>
             </button>
             {filterOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setFilterOpen(false)} />
                 <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-xl border border-gray-200 z-50 overflow-hidden min-w-[80px] py-0.5">
-                  {([["all", "全部"], ["frame", "画面定位"], ["track", "物体定位"]] as const).map(([key, label]) => (
+                  {([["all", "全部"], ["frame", "事件检索"], ["track", "目标检索"]] as const).map(([key, label]) => (
                     <button
                       key={key}
                       className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${resultFilter === key ? "bg-teal-50 text-teal-700 font-medium" : "text-gray-600 hover:bg-gray-50"}`}
