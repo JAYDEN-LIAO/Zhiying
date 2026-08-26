@@ -15,7 +15,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.models import Scene, FrameEmbedding, Chunk, TrackEmbedding, PlateDetection, FaceIdentity, OCRDetection
+from core.models import Scene, FrameEmbedding, Chunk, TrackEmbedding, PlateDetection, FaceIdentity, OCRDetection, Video
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +171,7 @@ async def plate_text_search(
     相似度 = 1 / (1 + min(编辑距离, 2)) 封顶 0.33，保证候选都能跨过 0.3 门槛。
     支持：一个字（省份/数字/字母）→ 列出所有相关；部分牌号 → 子串匹配；
     近拼写（错 ≤2 位）→ 编辑距离容错。全角/分隔符/大小写由归一化统一处理。
+    只搜索开启了车牌识别的视频（plate_enabled=true）。
     """
     from sqlalchemy import func as sa_func, or_, case
 
@@ -180,10 +181,12 @@ async def plate_text_search(
     similarity = (1.0 / (1.0 + sa_func.least(dist, 2))).label("sim")
     stmt = (
         select(PlateDetection, similarity)
+        .join(Video, PlateDetection.video_id == Video.id)
         .where(or_(
             plate_norm.ilike(f"%{q}%"),
             dist <= 2,
         ))
+        .where(Video.plate_enabled == True)
         .order_by(dist.asc())
         .limit(limit)
     )
@@ -207,6 +210,7 @@ async def ocr_text_search(
 
     复用 _normalize_plate 的归一化规则（全角→半角 / 去分隔符 / 统一大写）——聊天文本同样适用。
     聊天场景核心价值：引原话 / 搜人名 / 数字 / 链接，逐字节定位到那一帧。
+    只搜索开启了 OCR 的视频（ocr_enabled=true）。
     """
     from sqlalchemy import func as sa_func, or_
 
@@ -216,10 +220,12 @@ async def ocr_text_search(
     similarity = (1.0 / (1.0 + sa_func.least(dist, 2))).label("sim")
     stmt = (
         select(OCRDetection, similarity)
+        .join(Video, OCRDetection.video_id == Video.id)
         .where(or_(
             ocr_norm.ilike(f"%{q}%"),
             dist <= 2,
         ))
+        .where(Video.ocr_enabled == True)
         .order_by(dist.asc())
         .limit(limit)
     )

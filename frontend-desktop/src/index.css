@@ -1673,16 +1673,6 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
   color: #4f6ef7; font-weight: 600; font-size: 12px;
   display: flex; align-items: center; gap: 6px;
 }
-.gs-sort {
-  display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0;
-  padding: 7px 10px; background: #f1f4fb; border: 1px solid #e3e9f5; border-radius: 10px;
-  color: #64748b;
-}
-.gs-sort svg { width: 15px; height: 15px; color: #4f6ef7; flex-shrink: 0; }
-.gs-sort select {
-  font: inherit; font-size: 12.5px; font-weight: 600; color: #334155;
-  background: transparent; border: none; outline: none; cursor: pointer; padding-right: 2px;
-}
 .gs-searching-tip::before {
   content: ""; width: 12px; height: 12px;
   border: 2px solid rgba(79, 110, 247, .25); border-top-color: #4f6ef7; border-radius: 50%;
@@ -1698,27 +1688,14 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
 .gs-list::-webkit-scrollbar { display: none; }   /* Chrome/Safari/Edge */
 
 /* ── 结果按视频分组（v0.37+）── */
-.gs-group-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 4px 2px; gap: 10px;
-  flex-shrink: 0;
-}
-.gs-group-tool {
-  font-size: 11.5px; font-weight: 500; color: #4f6ef7;
-  background: transparent; border: none; padding: 2px 6px;
-  border-radius: 5px; cursor: pointer; transition: background .12s;
-}
-.gs-group-tool:hover { background: #eef3ff; }
-.gs-group-tool-stat { font-size: 11.5px; color: #94a3b8; }
-
 .gs-group {
-  background: #fff; border: 1px solid #e8edf6; border-radius: 14px; overflow: hidden;
+  background: #fff; border: 1.5px solid #c7d7f8; border-radius: 14px; overflow: hidden;
   transition: border-color .2s;
   /* 阻止在 .gs-list（flex column）里被兄弟挤压，否则多组展开时上一组的 body
      max-height 上限会被父级反推下来，原本 3 行的窗口可能只显 2 行（v0.37 修复） */
   flex-shrink: 0;
 }
-.gs-group:hover { border-color: #d7e0f4; }
+.gs-group:hover { border-color: #93b0f5; }
 
 .gs-group-hd {
   display: flex; align-items: center; gap: 8px;
@@ -1757,41 +1734,28 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
   text-align: right;
 }
 
+.gs-single .gs-group-hd {
+  cursor: default;
+  background: linear-gradient(180deg, #fafbff 0%, #ffffff 100%);
+}
+.gs-single .gs-group-hd:hover {
+  background: linear-gradient(180deg, #fafbff 0%, #ffffff 100%);
+}
+
 .gs-group-bd {
   display: flex; flex-direction: column; gap: 8px;
   padding: 10px;
   background: #f8fafd;
-  /* max-height 由内联按 visibleRows 动态算（v0.37） */
+  overflow: hidden;
+}
+.gs-group-bd.expanded {
   overflow-y: auto;
   scrollbar-width: none; -ms-overflow-style: none;
 }
-.gs-group-bd::-webkit-scrollbar { display: none; }
-
-/* ── 单结果（不套 .gs-group 外框）── */
-.gs-solo { background: transparent; flex-shrink: 0; }
-.gs-solo .gs-row { border-radius: 14px; }
-
-/* 行内来源行：单结果专用，显示视频名 + 置信度，避免无外框后失去来源信息 */
-.gs-row-src {
-  display: flex; align-items: center; gap: 5px;
-  font-size: 11px; color: #64748b;
-  margin-bottom: 2px;
+.gs-group-bd.expanded::-webkit-scrollbar { display: none; }
+.gs-group-bd:not(.expanded) .gs-row {
+  border-bottom: none;
 }
-.gs-row-src svg { width: 11px; height: 11px; color: #94a3b8; flex-shrink: 0; }
-.gs-row-src-name {
-  font-weight: 500; color: #475569;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  flex: 1; min-width: 0;
-}
-.gs-row-src-conf {
-  font-weight: 600; color: #2f5adf; background: #eaf1ff;
-  border-radius: 10px; padding: 1px 7px; flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
-.dark .gs-row-src { color: #93a1ff; }
-.dark .gs-row-src svg { color: #6b7688; }
-.dark .gs-row-src-name { color: #b4bbc9; }
-.dark .gs-row-src-conf { color: #93a1ff; background: #1d2a4d; }
 
 /* 分组内的行：缩进感（左边距小一点）、背景用半透明白以区分外层 group */
 .gs-group-bd .gs-row {
@@ -1803,8 +1767,8 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
 }
 
 /* dark mode */
-.dark .gs-group { background: #1f2733; border-color: #2c3542; }
-.dark .gs-group:hover { border-color: #3a4553; }
+.dark .gs-group { background: #1f2733; border-color: #3a4f7a; }
+.dark .gs-group:hover { border-color: #5a7abf; }
 .dark .gs-group-hd { background: linear-gradient(180deg, #232b36 0%, #1f2733 100%); }
 .dark .gs-group-hd:hover { background: linear-gradient(180deg, #1d2a4d 0%, #232b36 100%); }
 .dark .gs-group-hd.open { border-bottom-color: #2c3542; }
@@ -1812,9 +1776,12 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
 .dark .gs-group-count { color: #93a1ff; background: #1d2a4d; }
 .dark .gs-group-top { color: #93a1ff; background: #1d2a4d; }
 .dark .gs-group-path { color: #6b7688; }
-.dark .gs-group-tool { color: #93a1ff; }
-.dark .gs-group-tool:hover { background: #1d2a4d; }
-.dark .gs-group-tool-stat { color: #6b7688; }
+.dark .gs-single .gs-group-hd {
+  background: linear-gradient(180deg, #232b36 0%, #1f2733 100%);
+}
+.dark .gs-single .gs-group-hd:hover {
+  background: linear-gradient(180deg, #232b36 0%, #1f2733 100%);
+}
 .dark .gs-group-bd { background: #1a212b; }
 .dark .gs-group-bd .gs-row { background: #1f2733; border-color: #2c3542; }
 
@@ -1938,9 +1905,6 @@ input[type='range'].t-scrub::-webkit-slider-thumb {
 .dark .gs-toolbar { background: #1f2733; border-color: #2c3542; box-shadow: none; }
 .dark .gs-stat-main { color: #cbd2de; }
 .dark .gs-stat-sub { color: #6b7688; }
-.dark .gs-sort { background: #232b36; border-color: #39414f; color: #98a0af; }
-.dark .gs-sort svg { color: #7d9bff; }
-.dark .gs-sort select { color: #cbd2de; }
 .dark .gs-row { background: #1f2733; border-color: #2c3542; }
 .dark .gs-row:hover { background: #232b36; border-color: #3a4553; }
 .dark .gs-row.sel { border-color: #4f6ef7; background: #1a2238; }

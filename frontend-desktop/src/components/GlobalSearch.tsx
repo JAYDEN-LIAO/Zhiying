@@ -11,13 +11,12 @@ import { useApp } from "../AppContext";
 import type { SearchResultItem, VideoListItem } from "../types";
 import { formatSec, fmtFullDate } from "../utils/helpers";
 import { zh } from "../labels";
-import { IconSearch5, IconImageSearch, IconFolder, IconClock, IconClose, IconVideo, IconRetry, IconSort, IconImage, IconPlus } from "./icons";
+import { IconSearch5, IconImageSearch, IconFolder, IconClock, IconClose, IconVideo, IconRetry, IconImage, IconPlus } from "./icons";
 import { SubjectPhotoPicker } from "./SubjectPhotoPicker";
 import { SplitPane } from "./SplitPane";
 import { AddSubjectDrawer, type AddSubjectDrawerData } from "./AddSubjectDrawer";
 
 type TabKey = "text" | "image";
-type SortKey = "time" | "confidence" | "name";
 
 interface FeatureChip {
   key: string;
@@ -249,7 +248,7 @@ export function GlobalSearch() {
   const [libCount, setLibCount] = useState(0);
   const [hasSearched, setHasSearched] = useState(false);
 
-  const [sortKey, setSortKey] = useState<SortKey>("confidence");
+  const [sortKey] = useState("confidence");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
   /* 搜索结果按视频分组（默认全展开，v0.37+）—— 与作用域列表的 expandedGroups 区分 */
@@ -266,14 +265,23 @@ export function GlobalSearch() {
 
   /* ── 检索范围：案例多选 → 视频 id 集合
      v0.37：scopeSearch 命中时按相同规则过滤——案例名匹配的视频全收，仅视频名匹配的只收匹配项 */
-  function buildScopeIds(): string[] | undefined {
+  function buildScopeIds(): string[] {
     const activeIds = folderIds ?? (() => {
-      // 默认：与案例库 selectedTree 同步
       if (selectedTree.startsWith("g:")) return new Set([selectedTree.slice(2)]);
       return new Set<string>();
     })();
-    if (activeIds.size === 0) return undefined;
     const q = scopeSearch.trim().toLowerCase();
+    /* 始终从 videos（list_videos 只返回根文件/最新版本）取 id，避免搜到历史版本 */
+    if (activeIds.size === 0) {
+      return videos.filter((v) => {
+        if (q) {
+          const g = caseGroups.find((cg) => cg.groupId === v.group_id);
+          const caseMatches = !!g && ((g.name ?? "").toLowerCase().includes(q) || (g.number ?? "").toLowerCase().includes(q));
+          if (!caseMatches && !(v.file_name?.toLowerCase().includes(q))) return false;
+        }
+        return true;
+      }).map((v) => v.id);
+    }
     return videos.filter((v) => {
       if (!v.group_id || !activeIds.has(v.group_id)) return false;
       if (q) {
@@ -316,7 +324,11 @@ export function GlobalSearch() {
         // 与 Workbench VideoSearchCard.handleSearch 完全一致：不传 top_k / min_similarity，
         // 后端默认 0.3 门槛 + top_k 20 + 7 路并行召回。原先写死 top_k=60 / min_similarity=0
         // 导致跨视频场景下 frame 路径低分噪声冲榜（v0.37）。
-        const res = await api.searchSemantic(query.trim(), { video_ids: ids });
+        // v0.6：车牌/文本类型选中时走专搜，不走通用语义搜索
+        const searchTypes = activeTypeKey === "plate" ? ["plate"]
+          : activeTypeKey === "text" ? ["ocr"]
+          : undefined;
+        const res = await api.searchSemantic(query.trim(), { video_ids: ids, search_types: searchTypes });
         const list = res.results ?? [];
         setResults(list);
         setTotal(res.total ?? list.length);
@@ -400,28 +412,14 @@ export function GlobalSearch() {
     return s == null ? -1 : Math.round(s * 100);
   }
 
-  /* ── 排序：按置信度 / 时间 / 文件名 ── */
+  /* ── 排序：按置信度 ── */
   const sortedResults = useMemo(() => {
     const arr = [...results];
-    if (sortKey === "confidence") {
-      arr.sort((a, b) => simValue(b) - simValue(a));
-    } else if (sortKey === "name") {
-      arr.sort((a, b) => {
-        const na = videoMap.get(a.video_id)?.file_name ?? "";
-        const nb = videoMap.get(b.video_id)?.file_name ?? "";
-        return na.localeCompare(nb, "zh-Hans-CN");
-      });
-    } else {
-      arr.sort((a, b) => {
-        const ta = videoMap.get(a.video_id)?.created_at ?? "";
-        const tb = videoMap.get(b.video_id)?.created_at ?? "";
-        return tb.localeCompare(ta);
-      });
-    }
+    arr.sort((a, b) => simValue(b) - simValue(a));
     return arr;
-  }, [results, sortKey, videoMap]);
+  }, [results]);
 
-  /* ── 按 video_id 分组（保留 sortedResults 顺序：组顺序 = 首个命中在排序列表里的位置） ── */
+  /* ── 按 video_id 分组，按每条视频的最高置信度排序 ── */
   const groupedResults = useMemo(() => {
     const map = new Map<string, SearchResultItem[]>();
     for (const r of sortedResults) {
@@ -429,39 +427,26 @@ export function GlobalSearch() {
       if (arr) arr.push(r);
       else map.set(r.video_id, [r]);
     }
-    return Array.from(map, ([videoId, items]) => ({ videoId, items }));
+    const groups = Array.from(map, ([videoId, items]) => ({ videoId, items }));
+    // 按每条视频的最高置信度降序排序
+    groups.sort((a, b) => {
+      const maxA = Math.max(...a.items.map(r => simValue(r)));
+      const maxB = Math.max(...b.items.map(r => simValue(r)));
+      return maxB - maxA;
+    });
+    return groups;
   }, [sortedResults]);
 
-  /* 默认全展开：仅在新搜索完成时重置，不能跟 groupedResults —— 否则 videos 4s 轮询刷新
-     （videos → videoMap → sortedResults → groupedResults 整链重算）会每 4s 自动展开一次 */
+  /* 默认折叠：多结果视频默认折叠（显示第一条），单结果视频不参与折叠 */
   useEffect(() => {
-    setResultGroupsOpen(new Set(groupedResults.filter((g) => g.items.length >= 2).map((g) => g.videoId)));
+    setResultGroupsOpen(new Set());
   }, [results]);
-
-  /* 可折叠组（≥2 个结果）+ 工具条状态：单结果组不参与折叠，工具条统计只看可折叠组 */
-  const collapsibleGroups = useMemo(() => groupedResults.filter((g) => g.items.length >= 2), [groupedResults]);
-  const openCollapsibleCount = useMemo(
-    () => collapsibleGroups.filter((g) => resultGroupsOpen.has(g.videoId)).length,
-    [collapsibleGroups, resultGroupsOpen],
-  );
-  const allCollapsibleOpen = collapsibleGroups.length > 0 && openCollapsibleCount === collapsibleGroups.length;
 
   function toggleGroup(videoId: string) {
     setResultGroupsOpen((prev) => {
       const next = new Set(prev);
       if (next.has(videoId)) next.delete(videoId);
       else next.add(videoId);
-      return next;
-    });
-  }
-  function setAllGroups(open: boolean) {
-    /* 只对可折叠组生效；单结果组不参与（永远展开） */
-    setResultGroupsOpen((prev) => {
-      const next = new Set(prev);
-      for (const g of collapsibleGroups) {
-        if (open) next.add(g.videoId);
-        else next.delete(g.videoId);
-      }
       return next;
     });
   }
@@ -933,7 +918,7 @@ export function GlobalSearch() {
             <span className="gs-stat-main">
               {hasSearched ? (
                 <>
-                  共检索到 <b>{total}</b> 个相关视频片段
+                  共 <b>{groupedResults.length}</b> 个视频 · <b>{sortedResults.length}</b> 个结果
                 </>
               ) : (
                 "尚未检索"
@@ -946,14 +931,6 @@ export function GlobalSearch() {
             )}
             {searching && <span className="gs-searching-tip">检索中，请稍候…</span>}
           </div>
-          <label className="gs-sort">
-            <IconSort />
-            <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
-              <option value="confidence">按置信度</option>
-              <option value="time">按时间</option>
-              <option value="name">按文件名</option>
-            </select>
-          </label>
         </div>
 
         {!hasSearched ? (
@@ -974,21 +951,6 @@ export function GlobalSearch() {
           </div>
         ) : (
           <div className="gs-list">
-            {/* 分组工具条：仅当 ≥1 个可折叠组（≥2 结果）时显示，单结果组不参与 */}
-            {collapsibleGroups.length >= 1 && (
-              <div className="gs-group-toolbar">
-                <button
-                  type="button"
-                  className="gs-group-tool"
-                  onClick={() => setAllGroups(!allCollapsibleOpen)}
-                >
-                  {allCollapsibleOpen ? "全部收起" : "全部展开"}
-                </button>
-                <span className="gs-group-tool-stat">
-                  共 {groupedResults.length} 个视频 · {sortedResults.length} 个结果
-                </span>
-              </div>
-            )}
             {groupedResults.map(({ videoId, items }) => {
               const v = videoMap.get(videoId);
               const isExpanded = resultGroupsOpen.has(videoId);
@@ -996,8 +958,8 @@ export function GlobalSearch() {
               const fileName = displayName(v);
               const topSim = Math.round(((items[0]?.confidence ?? items[0]?.similarity) ?? 0) * 100);
 
-              /* 渲染单条结果行（单结果无外框：行顶自带「来源视频 · 置信度」；组内不重复） */
-              const renderRow = (r: SearchResultItem, i: number, showSrc: boolean) => {
+              /* 渲染单条结果行 */
+              const renderRow = (r: SearchResultItem, i: number) => {
                 const processing = v != null && (v.status === "processing" || v.status === "pending");
                 const pct = v?.progress != null ? Math.round(v.progress * 100) : null;
                 const timeSec = r.precise_start ?? r.scene_range_start;
@@ -1029,7 +991,6 @@ export function GlobalSearch() {
                         </div>
                       )}
                       <span className="gs-row-badge">{timeSec != null ? formatSec(timeSec) : <IconImage />}</span>
-                      {/* v0.6 沉淀：常驻「+ 加入素材库」 */}
                       <button
                         className="gs-row-add"
                         title="加入图片素材库"
@@ -1045,13 +1006,6 @@ export function GlobalSearch() {
                       )}
                     </div>
                     <div className="gs-row-info" onClick={openResult}>
-                      {showSrc && (
-                        <div className="gs-row-src">
-                          <IconVideo />
-                          <span className="gs-row-src-name" title={fileName}>{fileName}</span>
-                          {topSim > 0 && <span className="gs-row-src-conf">{topSim}%</span>}
-                        </div>
-                      )}
                       <div className="gs-row-title" title={r.class_name ? `${fileName} · ${r.class_name}` : fileName}>
                         {isTrack && r.class_name ? (
                           <span className="gs-row-target">{zh(r.class_name)}{r.display_seq != null && r.display_seq > 1 ? ` #${r.display_seq}` : ""}</span>
@@ -1078,16 +1032,23 @@ export function GlobalSearch() {
                 );
               };
 
-              /* 单结果：不套 .gs-group 外框，行内自带头部（视频名+置信度） */
+              /* 单结果：不折叠，直接显示 */
               if (items.length === 1) {
                 return (
-                  <div key={videoId} className="gs-solo">
-                    {renderRow(items[0], 0, true)}
+                  <div key={videoId} className="gs-group gs-single">
+                    <div className="gs-group-hd">
+                      <span className="gs-group-name" title={fileName}>{fileName}</span>
+                      {topSim > 0 && <span className="gs-group-top">{topSim}%</span>}
+                      <span className="gs-group-path" title={`${groupName} / ${fileName}`}>{groupName}</span>
+                    </div>
+                    <div className="gs-group-bd">
+                      {renderRow(items[0], 0)}
+                    </div>
                   </div>
                 );
               }
 
-              /* 多结果：组 body 高度 = min(items.length, 3) * 行高，超出部分组内独立滚动 */
+              /* 多结果：折叠时显示第一条，展开时显示全部 */
               const visibleRows = Math.min(items.length, 3);
               return (
                 <div key={videoId} className="gs-group">
@@ -1098,16 +1059,14 @@ export function GlobalSearch() {
                     {topSim > 0 && <span className="gs-group-top">{topSim}%</span>}
                     <span className="gs-group-path" title={`${groupName} / ${fileName}`}>{groupName}</span>
                   </div>
-                  {isExpanded && (
-                    <div
-                      className="gs-group-bd"
-                      style={{
-                        maxHeight: `calc(150px * ${visibleRows} + 8px * ${visibleRows - 1} + 20px)`,
-                      }}
-                    >
-                      {items.map((r, i) => renderRow(r, i, false))}
-                    </div>
-                  )}
+                  <div
+                    className={"gs-group-bd" + (isExpanded ? " expanded" : "")}
+                    style={{
+                      maxHeight: isExpanded ? `calc(180px * ${visibleRows} + 8px * ${visibleRows - 1} + 20px)` : "none",
+                    }}
+                  >
+                    {isExpanded ? items.map((r, i) => renderRow(r, i)) : renderRow(items[0], 0)}
+                  </div>
                 </div>
               );
             })}
