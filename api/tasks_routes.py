@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_db
 from api.schemas import APIResponse
 from core.models import (
-    Video, TaskLog, VideoStatus,
+    Video, TaskLog, VideoStatus, PipelineTask,
     Scene, Transcript, FrameEmbedding, Chunk, FrameDetection, Track,
     TrackEmbedding, FaceIdentity, FaceDetection, PlateDetection,
 )
@@ -93,7 +93,7 @@ async def list_tasks(
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[list[TaskItem]]:
     """任务列表 — scope: all(全部) / active(处理中+待参数) / history(已完成+失败)。"""
-    stmt = select(Video).order_by(Video.created_at.desc())
+    stmt = select(Video).where(Video.task_hidden == False).order_by(Video.created_at.desc())
     if scope == "active":
         stmt = stmt.where(
             Video.status.in_([VideoStatus.PROCESSING, VideoStatus.PENDING])
@@ -175,6 +175,32 @@ async def retry_task(
         from services.video_service import _build_service
         import asyncio
         asyncio.create_task(_build_service(request.app).process_video(v.id))
+    return APIResponse(data={"ok": True, "id": str(v.id)})
+
+
+@router.delete("/tasks/{task_id}", response_model=APIResponse[dict])
+async def delete_task(
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> APIResponse[dict]:
+    """删除任务（仅从任务中心隐藏，不删除视频及其文件）。
+
+    - 仅允许删除 failed 状态的任务
+    - 清空 pipeline_tasks 和 task_logs
+    - videos.task_hidden = true（列表过滤）
+    """
+    v = await db.get(Video, task_id)
+    if v is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if v.status != VideoStatus.FAILED:
+        raise HTTPException(status_code=400, detail="仅支持删除失败的任务")
+
+    # 清空队列记录和日志
+    await db.execute(sa_delete(PipelineTask).where(PipelineTask.video_id == v.id))
+    await db.execute(sa_delete(TaskLog).where(TaskLog.task_id == v.id))
+    # 标记隐藏（不删视频、不删文件）
+    v.task_hidden = True
+    await db.commit()
     return APIResponse(data={"ok": True, "id": str(v.id)})
 
 

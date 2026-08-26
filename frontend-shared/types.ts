@@ -203,6 +203,8 @@ export interface FaceAppearance {
   timestamp_sec: number;
   bbox: { x1: number; y1: number; x2: number; y2: number } | null;
   track_id: number | null;
+  track_start?: number;  // 该 track 的真实起始时间（后端 v0.34+ 返回）
+  track_end?: number;    // 该 track 的真实结束时间
 }
 
 export interface FaceSearchResult {

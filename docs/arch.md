@@ -77,6 +77,7 @@ GPU 串行: 所有 embedder/detect 前向持 gpu_lock（并发触发驱动故障
 Keyframe 4 消费链: frame_encode/text_encode/chunk_encode/caption
 摘要: vlm_llm 默认（Qwen-VL-Max + DeepSeek）; native_video 已退役
 人脸路: SCRFD + ArcFace 512d → 护栏式双阈值聚类（同 track 0.30 / 跨 track 0.58）
+       出现段 = 该身份主 person track 的 [first_seen, last_seen]（track_to_identity 同源，非采样点）
 任务队列: PipelineQueue FIFO + N worker + pipeline_tasks 表持久化
 文件库: videos.file_id+version_no 版本链；批量解析仅处理 pending 视频
 案例素材: case_assets 表（图片等归档素材，不参与管道；图片上传已退役，仅保留视频）
@@ -117,7 +118,7 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 | Table | 关键列 | 用途 |
 |---|---|---|
 | `video_groups` | id, name, number/owner | 视频分组/案例 |
-| `videos` | status/progress, summary, 开关/参数, source_owned, file_id+version_no, suggested_* | 主表 |
+| `videos` | status/progress, summary, 开关/参数, source_owned, file_id+version_no, suggested_*, task_hidden(任务删除隐藏) | 主表 |
 | `scenes` | text_embedding(EmbedVector), caption, ocr_text, entities | 搜索主粒度 |
 | `frame_embeddings` / `chunks` | embedding(EmbedVector) | 1fps 帧向量 / 滑窗向量 |
 | `frame_detections` / `tracks` | track_id, class_name, bbox | YOLO 检测 / BoT-SORT 轨迹 |
@@ -165,6 +166,7 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 | POST | `/api/v1/subjects/merge` | **手动合并两目标** |
 | GET | `/api/v1/subjects/{id}/primary-photo` · `/{photoId}/file` | **素材库图片文件服务** |
 | GET | `/api/v1/tasks/{id}/log` · `POST /{id}/retry` | 任务日志/重试 |
+| DELETE | `/api/v1/tasks/{id}` | 删除任务（仅失败；清 pipeline_tasks/task_logs，task_hidden=true 隐藏，不删视频/文件） |
 | GET | `/api/v1/tasks/{id}/report` · `POST /tasks/export-batch` | 任务报告导出/批量导出 |
 | GET/POST | `/api/v1/maintenance/storage` · `/maintenance/sweep` | 存储用量/清扫 |
 | POST | `/internal/yunzhi/jobs` | 云智异步任务（202+回调+幂等） |
@@ -209,6 +211,8 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 **v0.6 图片素材库 + 搜索统一**：3 表(image_subjects/subject_photos/subject_photo_embedding) + 15 个 /subjects API + 桌面端第 5 页 ImageLibrary + SubjectPhotoPicker（替代 CaseAssetPicker）+ AddSubjectDrawer（检测/图搜沉淀，新建/已有目标双模式）+ 检索分轨(person→ArcFace 512 / other→Qwen3-VL) + 全局搜索关键词/人脸/图搜同步到视频搜索卡片 + 案例图片退役 + VideoSummaryCard 外框标题切换 + caption-summary 联动 + DetectionPanel 跨页自动滚动修复。
 
 **桌面端 UI 优化**：视频搜索卡仅限当前视频检索（退役范围下拉，与全局搜索划清边界）+ 结果类型筛选下拉（全部/画面定位/物体定位，search_types API 过滤）+ **智能筛选推荐**（`POST /search/suggest-filter` 文本相似度预判，事件/动作类→画面定位、单物体类→物体定位，手动选择优先）+ 搜索框固定不随结果滚动 + 搜索结果时间范围自动暂停（timeupdate 监听）+ 摘要卡 tab 按钮删除（标题随内容自动切换）+ 摘要卡嵌套容器精简 + 全局搜索类型 chip 互斥选中 + 物体检测栏进度条删除 + 案例库添加下拉图标尺寸统一。
+
+**杂项修复**：**人脸出现段修复**（检测栏出现段=主 person track 起止，排除搭车长 track；人脸搜索结果/时间列表自动播放逐段跳过 + 当前段黄框高亮）· **任务中心删除**（`DELETE /tasks/{id}` 仅失败任务，`videos.task_hidden` 隐藏不删视频/文件）· **弹窗/抽屉 portal 统一**（`createPortal(document.body)` + `onMouseDown` 遮罩关闭 + `DetectionOverlay` 真实事件目标 containment 防穿透）。
 
 **v0.37 智能参数系统**：持久化推荐(suggest-params 自动落库 4 字段) + 抽屉轻量面板(PATCH toggles 点击即保存) + AnalyzeSettingsPanel 三处共用 + ContentType 9 场景枚举 + 摘要默认全关 + Workbench 紧凑弹窗 + 批量解析双模式(按各视频/统一参数)。
 

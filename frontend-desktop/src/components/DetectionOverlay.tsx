@@ -255,7 +255,14 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
       if (!container) return;
       const rect = container.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
-      // 只在视频容器内的点击处理（document capture 会收到全页面 click，需坐标过滤）
+      // ★ 关键：只用「真实事件目标」判断点击是否落在视频容器内部。
+      //   不能只用几何坐标——弹窗（portal 到 body）盖在视频上方时，弹窗内按钮的
+      //   屏幕坐标落在视频矩形内，但目标是弹窗（不在容器内）。若按坐标处理，
+      //   document-capture 会拦截弹窗点击：命中 bbox 时 stopPropagation 使弹窗按钮
+      //   收不到 click（关不掉），空白时触发 video.play/pause（表现成「穿透到背景视频」）。
+      const t = e.target as Node | null;
+      if (!t || !container.contains(t)) return;
+      // 兜底几何过滤：视频容器内的点击（原生控件 shadow DOM 目标可能是 video 本身）
       if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
       const video = videoRef.current;
       const currentTime = video?.currentTime ?? 0;

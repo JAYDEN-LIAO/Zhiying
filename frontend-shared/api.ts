@@ -502,6 +502,9 @@ export const api = {
   retryTask(taskId: string) {
     return request<{ ok: boolean }>(`${BASE}/tasks/${taskId}/retry`, { method: "POST" });
   },
+  deleteTask(taskId: string) {
+    return request<{ ok: boolean }>(`${BASE}/tasks/${taskId}`, { method: "DELETE" });
+  },
   /* ═══ 任务导出报告（v0.34） ═══ */
   async exportTaskReport(taskId: string, fileName: string): Promise<void> {
     const res = await fetch(`${BASE}/tasks/${taskId}/report`);

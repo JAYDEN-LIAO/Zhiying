@@ -123,6 +123,10 @@ class Video(Base):
         comment="0.0 ~ 1.0, 供前端展示进度条",
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    task_hidden: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False,
+        comment="任务中心隐藏标记：删除任务时置 true，不影响视频本身",
+    )
 
     # ── 文件信息 ──
     file_path: Mapped[str] = mapped_column(

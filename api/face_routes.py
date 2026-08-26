@@ -74,28 +74,47 @@ async def get_face_data(
             continue  # 每 track 只记一个身份（该 track 的主身份）
         track_map[trk_id] = {"identity_id": ident_id}
 
-    # 3. 身份 ↔ track 出现时间段（v0.30: 检测栏人脸行展开显示；按 track 聚合 min/max，
-    #    人脸为多帧稀疏采样，同 track 采样点代表该次出现跨度，比单点更符合直觉）
+    # 3. 身份 ↔ track 出现时间段（v0.6.1：人脸身份与 person track 匹配后，出现段 = 该
+    #    track 的 [first_seen, last_seen]（真实标黄时长），而非人脸采样点——人脸采样稀疏，
+    #    单帧会退化成点；也不用跨 track 合并（会并入无关无标黄时间）。每个匹配的 track 即一段。
     appearance_stmt = (
         select(
             FaceDetection.identity_id,
             FaceDetection.track_id,
-            func.min(FaceDetection.timestamp_sec).label("start_sec"),
-            func.max(FaceDetection.timestamp_sec).label("end_sec"),
+            func.min(FaceDetection.timestamp_sec),
+            func.max(FaceDetection.timestamp_sec),
         )
         .where(FaceDetection.video_id == video_id)
         .where(FaceDetection.identity_id.isnot(None))
         .group_by(FaceDetection.identity_id, FaceDetection.track_id)
-        .order_by(func.min(FaceDetection.timestamp_sec))
     )
-    app_result = await db.execute(appearance_stmt)
+    app_rows = list(await db.execute(appearance_stmt))
+    # 收集所有 track_id 批量查 track 真实起止（无 track 的人脸回退到采样点）
+    from core.models import Track
+    track_ids = {r[1] for r in app_rows if r[1] is not None}
+    track_range_map: dict[int, tuple[float, float]] = {}
+    if track_ids:
+        trk_rows = await db.execute(
+            select(Track.track_id, Track.first_seen, Track.last_seen)
+            .where(Track.track_id.in_(track_ids))
+        )
+        for tid, fs, ls in trk_rows:
+            track_range_map[tid] = (float(fs), float(ls))
     appearances_by_id: dict[int, list[dict]] = {}
-    for ident_id, trk_id, start_sec, end_sec in app_result:
+    for ident_id, trk_id, det_min, det_max in app_rows:
+        # 严格采用整条 track 的 [first_seen, last_seen] 作为出现段（真实标黄时长）；
+        # 无 track 的人脸回退到人脸采样点。
+        if trk_id is not None and trk_id in track_range_map:
+            start_sec, end_sec = track_range_map[trk_id]
+        else:
+            start_sec, end_sec = det_min, det_max
         appearances_by_id.setdefault(ident_id, []).append({
             "track_id": trk_id,
             "start_sec": round(float(start_sec), 2),
             "end_sec": round(float(end_sec), 2),
         })
+    for lst in appearances_by_id.values():
+        lst.sort(key=lambda x: x["start_sec"])
 
     # 4. 构建身份摘要
     identities_data = [

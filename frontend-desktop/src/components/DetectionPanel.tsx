@@ -32,7 +32,7 @@ interface Props {
   expandedFaceId: number | null;
   onFaceViewChange: (v: boolean) => void;
   onExpandedFaceChange: (v: number | null) => void;
-  onSeekTo?: (start: number, end: number | null) => void;
+  onSeekTo?: (start: number, end: number | null, segments?: { start: number; end: number }[]) => void;
   faceData: import("../types").FaceData | null;
   plateData: import("../types").PlateData | null;
   /* ── v0.19 组感知 ── */
@@ -42,6 +42,10 @@ interface Props {
   onDetectionVideoChange?: (videoId: string | null) => void;
   /* ── v0.6 沉淀到图片素材库：track 行「+ 加入素材库」 ── */
   onAddToLibrary?: (track: Track, thumbnailUrl?: string | null) => void;
+  /* ── v0.6 沉淀到图片素材库：人脸身份行「+ 加入素材库」 ── */
+  onAddFaceToLibrary?: (identity: import("../types").FaceIdentity) => void;
+  /* ── 自动跳播时高亮当前播放时间段：视频元素（读 currentTime 判断落在哪段） ── */
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
 }
 
 function thumbUrl(videoId: string, ts: number, bbox: { x1: number; y1: number; x2: number; y2: number }) {
@@ -162,7 +166,7 @@ const TrackRow = memo(function TrackRow({
   );
 });
 
-export function DetectionPanel({ video, data, selectedTrackId, classFilter, onClassFilterChange, onTrackSelect, faceData, plateData, groupVideos, videos, detectionVideoId, onDetectionVideoChange, faceViewOpen, expandedFaceId, onFaceViewChange, onExpandedFaceChange, onSeekTo, onAddToLibrary }: Props) {
+export function DetectionPanel({ video, data, selectedTrackId, classFilter, onClassFilterChange, onTrackSelect, faceData, plateData, groupVideos, videos, detectionVideoId, onDetectionVideoChange, faceViewOpen, expandedFaceId, onFaceViewChange, onExpandedFaceChange, onSeekTo, onAddToLibrary, onAddFaceToLibrary, videoRef }: Props) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [trackDropdown, setTrackDropdown] = useState<number | null>(null);
   const [faceDropdownId, setFaceDropdownId] = useState<number | null>(null);
@@ -173,6 +177,16 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     | null
   >(null);
   const [scrollTop, setScrollTop] = useState(0);
+
+  /* ── 自动跳播高亮：跟随视频 currentTime，落到正在播放的时间段上（黄色框随跳播下移） ── */
+  const [playheadSec, setPlayheadSec] = useState<number | null>(null);
+  useEffect(() => {
+    const el = videoRef?.current;
+    if (!el || !faceViewOpen) { setPlayheadSec(null); return; }
+    const onTime = () => setPlayheadSec(el.currentTime);
+    el.addEventListener("timeupdate", onTime);
+    return () => el.removeEventListener("timeupdate", onTime);
+  }, [videoRef, faceViewOpen]);
   const [viewportH, setViewportH] = useState(400);
   const listRef = useRef<HTMLDivElement>(null);
   const scrollRaf = useRef(0);
@@ -231,13 +245,6 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     }
     return map;
   }, [plateData]);
-
-  // v0.30: track_id → person display_seq（人脸出现时间段显示"人 #N"标签）
-  const trackSeq = useMemo(() => {
-    const m = new Map<number, number>();
-    for (const t of data?.tracks ?? []) m.set(t.track_id, t.display_seq ?? t.track_id);
-    return m;
-  }, [data?.tracks]);
 
   const tracks = data?.tracks ?? [];
   const filtered = useMemo(
@@ -603,6 +610,16 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                     {(ident.appearances?.length ?? 0) > 1 && (
                       <svg className={`w-3 h-3 shrink-0 text-gray-400 transition-transform ${isSel ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="currentColor"><path d="M3 5l3 3 3-3" /></svg>
                     )}
+                    {/* 加入图片素材库（v0.6） */}
+                    {onAddFaceToLibrary && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onAddFaceToLibrary(ident); }}
+                        className="w-6 h-6 rounded-md flex items-center justify-center text-gray-300 hover:text-[#4f7cff] hover:bg-blue-50 transition-all cursor-pointer"
+                        title="加入图片素材库"
+                      >
+                        <IconPlus />
+                      </button>
+                    )}
                     {/* 下载 dropdown（v0.30: 与物体 TrackRow 统一摆放，展开符号在其左侧） */}
                     <div className="relative shrink-0">
                       <button
@@ -638,25 +655,51 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                       )}
                     </div>
                   </div>
-                  {isSel && (ident.appearances?.length ?? 0) > 1 && (
-                    <div className="px-3 py-1.5 text-[10px] text-gray-400" style={{ paddingLeft: 60 }}>
-                      <div>出现 {ident.face_count} 次 · 平均质量 {ident.avg_quality.toFixed(2)}</div>
-                      <div className="mt-1 flex flex-col gap-0.5">
-                        {(ident.appearances ?? []).map((ap, ai) => (
-                          <button key={ai}
-                            onClick={(e) => { e.stopPropagation(); onSeekTo?.(ap.start_sec, null); }}
-                            className="block w-full text-left text-[10px] text-gray-500 hover:text-teal-600 py-0.5 rounded cursor-pointer"
-                          >
-                            <span className="text-teal-500">▶</span> {formatSec(ap.start_sec)}
-                            {ap.end_sec !== ap.start_sec ? ` – ${formatSec(ap.end_sec)}` : ""}
-                            {ap.track_id != null && (
-                              <span className="text-gray-400"> · {zhLabel("person", trackSeq.get(ap.track_id) ?? ap.track_id)}</span>
-                            )}
-                          </button>
-                        ))}
+                  {isSel && (() => {
+                    // 该身份归属的 person track = 时间轴高亮同一来源（track_to_identity：每 track 的主身份）。
+                    // 段 = 每个主 track 的 [first_seen, last_seen]（或其 segments），与时间轴完全一致，
+                    // 排除「搭车」出现的非主 track（否则会把 2 分钟长 track / 无关时间并进来）。
+                    const tids = new Set(
+                      (faceData?.track_to_identity
+                        ? Object.entries(faceData.track_to_identity)
+                            .filter(([, info]) => info.identity_id === ident.id)
+                            .map(([tid]) => Number(tid))
+                        : []),
+                    );
+                    const faceTracks = (data?.tracks ?? []).filter((t) => tids.has(t.track_id));
+                    const segs: { start: number; end: number; label: string }[] = [];
+                    for (const t of faceTracks) {
+                      const tsegs = t.segments?.length ? t.segments : [{ start: t.first_seen, end: t.last_seen }];
+                      for (const s of tsegs) {
+                        segs.push({ start: s.start, end: s.end, label: zhLabel("person", t.display_seq ?? t.track_id) });
+                      }
+                    }
+                    segs.sort((a, b) => a.start - b.start);
+                    if (segs.length === 0) return null;
+                    // 当前正在播放的时间段（黄色框，随自动跳播向下流动）
+                    const activeIdx = playheadSec != null
+                      ? segs.findIndex((s) => playheadSec >= s.start && playheadSec <= s.end)
+                      : -1;
+                    return (
+                      <div className="px-3 py-1.5 text-[10px] text-gray-400" style={{ paddingLeft: 60 }}>
+                        <div>出现 {ident.face_count} 次 · 平均质量 {ident.avg_quality.toFixed(2)}</div>
+                        <div className="mt-1 flex flex-col gap-0.5">
+                          {segs.map((seg, si) => (
+                            <button key={si}
+                              onClick={(e) => { e.stopPropagation(); onSeekTo?.(seg.start, seg.end, segs.slice(si)); }}
+                              className={"block w-full text-left text-[10px] py-0.5 rounded cursor-pointer transition-colors " +
+                                (si === activeIdx ? "bg-[#FFD700]/15 border border-[#FFD700] text-black"
+                                  : "text-gray-500 hover:text-teal-600")}
+                            >
+                              <span className="text-teal-500">▶</span> {formatSec(seg.start)}
+                              {seg.end !== seg.start ? ` – ${formatSec(seg.end)}` : ""}
+                              <span className="text-gray-400"> · {seg.label}</span>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               );
             })}

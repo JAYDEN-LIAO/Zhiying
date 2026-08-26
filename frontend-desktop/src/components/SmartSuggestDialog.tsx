@@ -5,6 +5,7 @@
    ════════════════════════════════════════════════════════════ */
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../services/api";
 import type { SmartSuggestion, PipelineParams, VideoListItem } from "../types";
 import { IconBolt, IconClose, IconRetry, IconInfo } from "./icons";
@@ -139,7 +140,7 @@ export function SmartSuggestDialog({ videos, onClose, onApply }: SmartSuggestDia
     return params as PipelineParams;
   }
 
-  return (
+  return createPortal(
     <div className="g-modal-overlay">
       <div className="g-modal" style={{ width: 720, height: "min(620px, 84vh)" }}>
         <div className="g-card-hd">
@@ -215,6 +216,7 @@ export function SmartSuggestDialog({ videos, onClose, onApply }: SmartSuggestDia
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

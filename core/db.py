@@ -511,6 +511,12 @@ async def init_db():
             ON subject_photo_embedding (kind)
         """))
 
+        # ── 增量迁移：任务中心「删除任务」隐藏标记 ──
+        await conn.execute(text("""
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS task_hidden boolean DEFAULT false NOT NULL
+        """))
+
         # ── 清理：删除废弃的列、枚举类型、触发器 ──
         await conn.execute(text("""
             ALTER TABLE videos DROP COLUMN IF EXISTS ai_detect_enabled

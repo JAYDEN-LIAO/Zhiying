@@ -23,8 +23,8 @@ export function VideoSearchCard({
   videoId: string | null;
   onSeekTo?: (start: number, end: number | null) => void;
   onTrackResult?: (videoId: string, trackId: number, className: string, start: number, end?: number | null) => void;
-  /* v0.30: 人脸结果点击 → 定位检测栏"人脸"视图（identityId + 时间戳） */
-  onFaceResult?: (videoId: string, identityId: number, timestamp: number) => void;
+  /* v0.30: 人脸结果点击 → 定位检测栏"人脸"视图（identityId + 时间戳 + 出现片段） */
+  onFaceResult?: (videoId: string, identityId: number, timestamp: number, segments?: { start: number; end: number }[]) => void;
   /* ── 跨页搜索关键词同步：全局搜索→本卡片自动填充并搜索（一次性） ── */
   initialQuery?: string | null;
   initialFaceFile?: File | null;
@@ -360,7 +360,24 @@ export function VideoSearchCard({
                         suppressResetRef.current = true;  // 由重置 effect 消费
                       }
                       const ts = fr.appearances?.[0]?.timestamp_sec ?? fr.first_seen;
-                      onFaceResult?.(fr.video_id, fr.identity_id, ts);
+                      // 每个出现段 = 一个匹配上的 person track 的 [track_start, track_end]（真实标黄时长）。
+                      // 按 track_id 聚合取该 track 起止；无 track 的人脸按检测点独立成段。不跨 track 合并。
+                      const segMap = new Map<number | string, { start: number; end: number }>();
+                      for (const ap of appearances) {
+                        const tid = ap.track_id;
+                        const key = tid != null ? tid : `t${ap.timestamp_sec}`;
+                        const s = ap.track_start ?? ap.timestamp_sec;
+                        const e = ap.track_end ?? ap.timestamp_sec;
+                        const seg = segMap.get(key);
+                        if (seg) {
+                          if (s < seg.start) seg.start = s;
+                          if (e > seg.end) seg.end = e;
+                        } else {
+                          segMap.set(key, { start: s, end: e });
+                        }
+                      }
+                      const segments = Array.from(segMap.values()).sort((a, b) => a.start - b.start);
+                      onFaceResult?.(fr.video_id, fr.identity_id, ts, segments.length > 1 ? segments : undefined);
                     }}
                   >
                     <div className="sr-top">

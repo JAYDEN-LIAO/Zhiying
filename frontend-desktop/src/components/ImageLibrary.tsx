@@ -9,6 +9,7 @@
    ════════════════════════════════════════════════════════════ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useApp } from "../AppContext";
 import { subjectsApi, subjectPhotoUrl, subjectPrimaryUrl } from "../mocks/subjectsMock";
 import type { ImageSubject, ImageSubjectKind, SubjectPhoto } from "../types";
@@ -397,9 +398,9 @@ function CropDialog({ subjectId, photo, onClose, onSaved }: {
     } finally { setSaving(false); }
   };
 
-  return (
-    <div className="g-modal-overlay" onClick={onClose}>
-      <div className="g-modal" style={{ width: 700 }} onClick={(e) => e.stopPropagation()}>
+  return createPortal(
+    <div className="g-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="g-modal" style={{ width: 700 }}>
         <div className="g-card-hd">
           <span className="g-card-tt">裁剪底图（对齐人脸 / 车牌区域）</span>
           <button className="modal-x" onClick={onClose} title="关闭" aria-label="关闭">×</button>
@@ -451,7 +452,8 @@ function CropDialog({ subjectId, photo, onClose, onSaved }: {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -488,9 +490,9 @@ function NewSubjectDialog({ onClose, onCreated }: { onClose: () => void; onCreat
     } finally { setBusy(false); }
   };
 
-  return (
-    <div className="g-modal-overlay" onClick={onClose}>
-      <div className="g-modal" style={{ width: 460 }} onClick={(e) => e.stopPropagation()}>
+  return createPortal(
+    <div className="g-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="g-modal" style={{ width: 460 }}>
         <div className="g-card-hd">
           <span className="g-card-tt"><IconPlus /> 新建目标</span>
           <button className="modal-x" onClick={onClose} title="关闭" aria-label="关闭">×</button>
@@ -546,7 +548,8 @@ function NewSubjectDialog({ onClose, onCreated }: { onClose: () => void; onCreat
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

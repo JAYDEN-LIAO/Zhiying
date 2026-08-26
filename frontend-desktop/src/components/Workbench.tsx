@@ -187,9 +187,9 @@ export function Workbench() {
   /* ── 视频详情与状态 ── */
   const [currentVideo, setCurrentVideo] = useState<VideoResponse | null>(null);
   const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
-  const [seekTarget, setSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
+  const [seekTarget, setSeekTarget] = useState<{ start: number; end: number | null; segments?: { start: number; end: number }[] } | null>(null);
   // 跨视频 pending seek：等主视频切到目标版本且元素就绪后再定位（避免首击 seek 到旧元素被重置）
-  const [pendingSeek, setPendingSeek] = useState<{ videoId: string; start: number; end: number | null } | null>(null);
+  const [pendingSeek, setPendingSeek] = useState<{ videoId: string; start: number; end: number | null; segments?: { start: number; end: number }[] } | null>(null);
   const [topPanel, setTopPanel] = useState<"history" | "export" | null>(null);
   const [paramsOpen, setParamsOpen] = useState(false);
   const [reparseMode, setReparseMode] = useState(false); // 重新解析：参数窗提交时建新版本
@@ -199,6 +199,10 @@ export function Workbench() {
   const videoRef = useRef<HTMLVideoElement>(null);
   // 搜索结果自动暂停：记录 end 时间，timeupdate 到达时暂停
   const autoPauseEndRef = useRef<number | null>(null);
+  // 人脸搜索片段跳播队列：点击人脸结果后，按出现片段顺序自动跳播
+  const segmentQueueRef = useRef<{ start: number; end: number }[] | null>(null);
+  const segmentIdxRef = useRef<number>(0);
+  const segmentJumpingRef = useRef(false); // 防重入：跳转中忽略 timeupdate，等视频真正播放到新位置
   // 搜索结果发起的跨视频切换 → 重置 effect 跳过（保留结果/定位，由 handler 精确控制状态）
   const suppressWorkbenchResetRef = useRef(false);
   // 跨视频切换刚发生时标记目标视频，供 seek 类 handler 决定走 pendingSeek 而非立即 seek
@@ -387,9 +391,55 @@ export function Workbench() {
     });
   }, [vid, currentVideo?.file_name]);
 
+  /* ── v0.6 沉淀：人脸身份 → 图片素材库（优先已存缩略图，其次截当前帧） ── */
+  const handleAddFaceToLibrary = useCallback(async (ident: { id: number; label: string; best_thumbnail_url: string | null }) => {
+    let blob: Blob | null = null;
+    if (ident.best_thumbnail_url) {
+      try {
+        const res = await fetch(ident.best_thumbnail_url);
+        if (res.ok) blob = await res.blob();
+      } catch { /* 缩略图加载失败 → 回退截当前帧 */ }
+    }
+    if (!blob) blob = await captureVideoFrame(videoRef.current);
+    setAddSubjectDrawer({
+      kind: "person",
+      presetName: ident.label,
+      image: blob ? { blob } : null,
+      source: "track",
+      sourceVideoId: vid,
+      videoName: currentVideo?.file_name ?? null,
+    });
+  }, [vid, currentVideo?.file_name]);
+
   /* ── Seek（跨视频可靠定位） ── */
   useEffect(() => {
     if (!seekTarget) return;
+    const segs = seekTarget.segments;
+    if (segs && segs.length > 0) {
+      // 片段跳播模式：播放第一个片段，记录全部片段和当前索引
+      segmentQueueRef.current = segs;
+      segmentIdxRef.current = 0;
+      segmentJumpingRef.current = false;
+      autoPauseEndRef.current = segs[0].end;
+      const applySeek = () => {
+        const video = videoRef.current;
+        if (!video || video.readyState < 1) return false;
+        video.currentTime = segs[0].start;
+        video.play().catch(() => {});
+        return true;
+      };
+      if (applySeek()) return;
+      let attempts = 0;
+      const iv = setInterval(() => {
+        if (applySeek()) { clearInterval(iv); return; }
+        if (++attempts >= 40) clearInterval(iv);
+      }, 150);
+      return () => clearInterval(iv);
+    }
+    // 普通模式（无片段）
+    segmentQueueRef.current = null;
+    segmentIdxRef.current = 0;
+    segmentJumpingRef.current = false;
     autoPauseEndRef.current = seekTarget.end;
     const applySeek = () => {
       const video = videoRef.current;
@@ -407,15 +457,41 @@ export function Workbench() {
     return () => clearInterval(iv);
   }, [seekTarget]);
 
-  /* ── 搜索结果自动暂停：播放到 end 时间时暂停 ── */
+  /* ── 搜索结果自动暂停 / 片段跳播：播放到 end 时间时暂停或跳到下一片段 ── */
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     const onTimeUpdate = () => {
+      // 跳转进行中，等视频真正播放到新位置再处理
+      if (segmentJumpingRef.current) return;
       const end = autoPauseEndRef.current;
       if (end != null && video.currentTime >= end) {
-        video.pause();
-        autoPauseEndRef.current = null;
+        const segs = segmentQueueRef.current;
+        const idx = segmentIdxRef.current;
+        if (segs && idx + 1 < segs.length) {
+          // 还有下一片段 → 跳播（加锁防重入）
+          segmentJumpingRef.current = true;
+          segmentIdxRef.current = idx + 1;
+          const next = segs[idx + 1];
+          video.currentTime = next.start;
+          autoPauseEndRef.current = next.end;
+          // 等视频真正开始播放新位置后再解锁（seeked 说明定位完成，playing 说明已恢复播放）
+          const unlock = () => {
+            segmentJumpingRef.current = false;
+            video.removeEventListener("seeked", unlock);
+            video.removeEventListener("playing", unlock);
+          };
+          video.addEventListener("seeked", unlock, { once: true });
+          video.addEventListener("playing", unlock, { once: true });
+          // 兜底：若两个事件都没触发（极端情况），500ms 后强制解锁
+          setTimeout(unlock, 500);
+        } else {
+          // 所有片段播完 → 暂停
+          video.pause();
+          autoPauseEndRef.current = null;
+          segmentQueueRef.current = null;
+          segmentIdxRef.current = 0;
+        }
       }
     };
     video.addEventListener("timeupdate", onTimeUpdate);
@@ -428,12 +504,23 @@ export function Workbench() {
     if (!pendingSeek) return;
     const targetReady = vid === pendingSeek.videoId || currentVideo?.id === pendingSeek.videoId;
     if (!targetReady) return;  // 等 vid/currentVideo 变化重新触发
+    const segs = pendingSeek.segments;
     const applySeek = () => {
       const video = videoRef.current;
       if (!video || video.readyState < 1) return false;
-      video.currentTime = pendingSeek.start;
-      autoPauseEndRef.current = pendingSeek.end;
-      if (pendingSeek.end != null) video.play().catch(() => {});
+      if (segs && segs.length > 0) {
+        // 片段跳播模式
+        segmentQueueRef.current = segs;
+        segmentIdxRef.current = 0;
+        segmentJumpingRef.current = false;
+        video.currentTime = segs[0].start;
+        autoPauseEndRef.current = segs[0].end;
+        video.play().catch(() => {});
+      } else {
+        video.currentTime = pendingSeek.start;
+        autoPauseEndRef.current = pendingSeek.end;
+        if (pendingSeek.end != null) video.play().catch(() => {});
+      }
       return true;
     };
     if (applySeek()) { setPendingSeek(null); return; }
@@ -480,25 +567,42 @@ export function Workbench() {
   /* ── 搜索人脸结果点击 ── */
   const handleFaceResult = useCallback((videoId: string, identityId: number, ts: number) => {
     if (videoId && videoId !== currentVideoId) handleGroupVideoSwitch(videoId);
+    // 跳播段与检测栏人脸列表同源（track_to_identity 主 track + track.segments）：
+    // 覆盖搜索接口按 track 折叠成的单段（一条主 track 内部多段出现时也能跨段跳过），
+    // 传完整列表 → 从第一段自动播放并逐段跳过。
+    const tids = new Set(
+      Object.entries(faceData?.track_to_identity ?? {})
+        .filter(([, info]) => info.identity_id === identityId)
+        .map(([tid]) => Number(tid)),
+    );
+    const segs: { start: number; end: number }[] = [];
+    for (const t of detectionData?.tracks ?? []) {
+      if (!tids.has(t.track_id)) continue;
+      const tsegs = t.segments?.length ? t.segments : [{ start: t.first_seen, end: t.last_seen }];
+      for (const s of tsegs) segs.push({ start: s.start, end: s.end });
+    }
+    segs.sort((a, b) => a.start - b.start);
+    const start = segs[0]?.start ?? ts;
     const target = justSwitchedToRef.current;
     if (target) {
       justSwitchedToRef.current = null;
-      setPendingSeek({ videoId: target, start: ts, end: null });
+      setPendingSeek({ videoId: target, start, end: segs[0]?.end ?? null, segments: segs.length > 0 ? segs : undefined });
     } else {
-      setSeekTarget({ start: ts, end: null });
+      setSeekTarget({ start, end: segs[0]?.end ?? null, segments: segs.length > 0 ? segs : undefined });
     }
     setDetectionVideoId(null);
     setFaceViewOpen(true);
     setExpandedFaceId(identityId);
-  }, [currentVideoId, handleGroupVideoSwitch]);
+  }, [currentVideoId, handleGroupVideoSwitch, detectionData, faceData]);
 
-  const handleSeekTo = useCallback((start: number, end: number | null) => {
+  const handleSeekTo = useCallback((start: number, end: number | null, segments?: { start: number; end: number }[]) => {
+    const payload = segments && segments.length ? { start, end, segments } : { start, end };
     const target = justSwitchedToRef.current;
     if (target) {
       justSwitchedToRef.current = null;
-      setPendingSeek({ videoId: target, start, end });  // 跨视频：等新视频就绪再定位
+      setPendingSeek({ videoId: target, ...payload });  // 跨视频：等新视频就绪再定位
     } else {
-      setSeekTarget({ start, end });
+      setSeekTarget(payload);
       if (videoRef.current) videoRef.current.currentTime = start;
     }
   }, []);
@@ -682,6 +786,8 @@ export function Workbench() {
                     detectionVideoId={detectionVideoId}
                     onDetectionVideoChange={setDetectionVideoId}
                     onAddToLibrary={handleAddTrackToLibrary}
+                    onAddFaceToLibrary={handleAddFaceToLibrary}
+                    videoRef={videoRef}
                   />
                 }
                 search={

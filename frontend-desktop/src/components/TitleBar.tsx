@@ -9,6 +9,7 @@
    ════════════════════════════════════════════════════════════ */
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../services/api";
 import { IconClock, IconSun, IconMoon } from "./icons";
 import { useApp } from "../AppContext";
@@ -224,9 +225,9 @@ export function TitleBar() {
     </header>
 
     {/* 关闭确认弹窗（替代 pywebview 原生 MessageBox，主题化） */}
-    {showCloseConfirm && (
-      <div className="g-modal-overlay" onClick={() => setShowCloseConfirm(false)}>
-        <div className="g-modal" style={{ width: 400 }} onClick={(e) => e.stopPropagation()}>
+    {showCloseConfirm && createPortal(
+      <div className="g-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowCloseConfirm(false); }}>
+        <div className="g-modal" style={{ width: 400 }}>
           <div className="g-card-hd">
             <span className="g-card-tt">退出确认</span>
           </div>
@@ -240,7 +241,8 @@ export function TitleBar() {
             </div>
           </div>
         </div>
-      </div>
+      </div>,
+      document.body,
     )}
     </>
   );

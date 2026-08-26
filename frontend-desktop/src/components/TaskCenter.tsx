@@ -6,11 +6,12 @@
    ════════════════════════════════════════════════════════════ */
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../services/api";
 import { useApp } from "../AppContext";
 import type { TaskItem, TaskLogLine } from "../types";
 import { fmtDate, fmtDuration, fmtTime, versionName, copyText } from "../utils/helpers";
-import { IconDownload, IconReport, IconLog, IconTask, IconRetry, IconCopy } from "./icons";
+import { IconDownload, IconReport, IconLog, IconTask, IconRetry, IconCopy, IconTrash } from "./icons";
 
 const FILTERS = [
   { key: "all", label: "全部" },
@@ -45,7 +46,6 @@ function TaskHeader({
         <p className="text-[12px] text-gray-500 leading-tight">后台进程监控与历史记录追溯</p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <span className="text-[11px] text-gray-400">每 1.5 秒自动刷新</span>
         <select className="g-input !h-[30px] !text-[12px]" value={filter}
           onChange={(e) => onFilter(e.target.value as FilterKey)} title="筛选状态">
           {FILTERS.map((f) => (
@@ -63,7 +63,7 @@ function TaskHeader({
 
 /* ═══════════════════════ ② 正文卡 ═══════════════════════ */
 function TaskBody({
-  tasks, onOpenLog, onExportReport, onOpenTask, busyId, onRetry, highlightIds,
+  tasks, onOpenLog, onExportReport, onOpenTask, busyId, onRetry, onDelete, highlightIds,
 }: {
   tasks: TaskItem[];
   onOpenLog: (t: TaskItem) => void;
@@ -71,6 +71,7 @@ function TaskBody({
   onOpenTask: (t: TaskItem) => void;
   busyId: string | null;
   onRetry: (t: TaskItem) => void;
+  onDelete: (t: TaskItem) => void;
   highlightIds: string[];  // 本次进入任务中心待高亮的「新完成」行 id
 }) {
   return (
@@ -113,7 +114,7 @@ function TaskBody({
                     <div className="flex items-center gap-2">
                       <span className={"g-badge " + sm.cls}>{sm.pulse && <span className="pulse" />}{sm.label}</span>
                       {(t.status === "processing" || t.status === "pending") && (
-                        <div className="g-progress w-16"><div style={{ width: `${t.progress}%` }} /></div>
+                        <span className="text-[12px] text-gray-500 font-mono">{Math.round(t.progress * 100)}%</span>
                       )}
                     </div>
                   </td>
@@ -121,10 +122,16 @@ function TaskBody({
                   <td className="text-gray-500 font-mono !pl-1">{fmtDuration(t.duration_sec)}</td>
                   <td className="text-right pr-4 whitespace-nowrap">
                     {t.status === "failed" && (
-                      <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors mr-1" title="重试"
-                        onClick={(e) => { e.stopPropagation(); onRetry(t); }} disabled={busyId === t.id}>
-                        <IconRetry className={busyId === t.id ? "animate-spin" : ""} />
-                      </button>
+                      <>
+                        <button className="p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors mr-1" title="删除任务"
+                          onClick={(e) => { e.stopPropagation(); onDelete(t); }}>
+                          <IconTrash />
+                        </button>
+                        <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors mr-1" title="重试"
+                          onClick={(e) => { e.stopPropagation(); onRetry(t); }} disabled={busyId === t.id}>
+                          <IconRetry className={busyId === t.id ? "animate-spin" : ""} />
+                        </button>
+                      </>
                     )}
                     <button className="p-1.5 rounded-md text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors mr-1" title="导出报告"
                       onClick={(e) => { e.stopPropagation(); onExportReport(t); }}>
@@ -182,7 +189,7 @@ export function TaskCenter() {
   };
   useEffect(() => { load(); }, [filter]);
   useEffect(() => {
-    const iv = setInterval(load, 1500);
+    const iv = setInterval(load, 1000);
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
@@ -205,6 +212,18 @@ export function TaskCenter() {
       load();
     } catch (err) {
       alert(err instanceof Error ? err.message : "重试失败");
+    }
+    setBusyId(null);
+  };
+
+  const deleteTask = async (t: TaskItem) => {
+    if (!window.confirm(`确认删除该任务？视频文件不会被删除。`)) return;
+    setBusyId(t.id);
+    try {
+      await api.deleteTask(t.id);
+      load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "删除失败");
     }
     setBusyId(null);
   };
@@ -241,11 +260,12 @@ export function TaskCenter() {
         onOpenTask={(t) => openWorkbench(t.id, { openParams: false, versionId: t.id })}
         busyId={busyId}
         onRetry={retry}
+        onDelete={deleteTask}
         highlightIds={taskHighlightIds}
       />
 
       {/* 日志弹窗 */}
-      {logTask && (
+      {logTask && createPortal(
         <div className="g-modal-overlay">
           <div className="g-modal" style={{ width: 600 }}>
             <div className="g-card-hd">
@@ -269,7 +289,8 @@ export function TaskCenter() {
               ))}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

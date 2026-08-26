@@ -8,12 +8,14 @@
    ════════════════════════════════════════════════════════════ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../services/api";
 import { useApp } from "../AppContext";
 import type { FileItem, VideoGroup, CaseAssetItem, PipelineParams, VideoResponse, VideoMetadata } from "../types";
 import { fmtDuration, fmtDate, fmtBytes } from "../utils/helpers";
 import { IconFolder, IconPlus, IconPlay2, IconTrash, IconPencil, IconBolt, IconBoltSolid, IconEye, IconGrid, IconList, IconDownload, IconClose, IconInfo, IconRetry } from "./icons";
 import { useHEVCCapability } from "../hooks/useHEVCCapability";
+import { useDisableVideoInteraction } from "../hooks/useDisableVideoInteraction";
 import { SmartSuggestDialog } from "./SmartSuggestDialog";
 
 type TreeKey = "all" | "ungrouped" | `g:${string}`;
@@ -545,9 +547,9 @@ function CaseContent({
       </div>
 
       {/* 图片预览弹窗 */}
-      {previewImg && group && (
-        <div className="g-modal-overlay" onClick={() => setPreviewImg(null)}>
-          <div className="g-modal" style={{ maxWidth: "70vw" }} onClick={(e) => e.stopPropagation()}>
+      {previewImg && group && createPortal(
+        <div className="g-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setPreviewImg(null); }}>
+          <div className="g-modal" style={{ maxWidth: "70vw" }}>
             <div className="g-card-hd">
               <span className="g-card-tt">{previewImg.name}</span>
               <button className="modal-x" onClick={() => setPreviewImg(null)} title="关闭" aria-label="关闭">×</button>
@@ -557,7 +559,8 @@ function CaseContent({
                 style={{ maxWidth: "100%", maxHeight: "62vh", objectFit: "contain" }} />
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
       {/* 视频详情抽屉 */}
       {detailFile && (
@@ -757,9 +760,9 @@ function FileDetailDrawer({
   /* 导出结构化数据（JSON） —— 已废弃（智能识别结果 section 删除后此导出无引用方），保留占位可后续扩展 */
   /* ── 已删除 exportStructured：原 export 按钮无调用方；如需重启请恢复下面代码并加按钮 ── */
 
-  return (
-    <div className="fl-drawer-overlay" onClick={onClose}>
-      <div className="fl-drawer" onClick={(e) => e.stopPropagation()}>
+  return createPortal(
+    <div className="fl-drawer-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fl-drawer">
         {/* 头部：文件名 + 重命名 + 关闭 */}
         <div className="fl-drawer-hd">
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
@@ -914,7 +917,7 @@ function FileDetailDrawer({
           )}
           {ps === "processing" && (
             <button className="g-btn g-btn-primary" disabled title="解析进行中">
-              解析中… {progress != null ? `${progress}%` : ""}
+              解析中… {progress != null ? `${Math.round(progress * 100)}%` : ""}
             </button>
           )}
           {ps === "completed" && (
@@ -925,7 +928,8 @@ function FileDetailDrawer({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1324,7 +1328,7 @@ export function FileLibrary() {
       )}
 
       {/* 新建案例弹窗 */}
-      {showNewGroup && (
+      {showNewGroup && createPortal(
         <div className="g-modal-overlay">
           <div className="g-modal" style={{ width: 440 }}>
             <div className="g-card-hd">
@@ -1352,11 +1356,12 @@ export function FileLibrary() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* 编辑案例弹窗：改 名称/编号/负责人 */}
-      {editCase && (
+      {editCase && createPortal(
         <div className="g-modal-overlay">
           <div className="g-modal" style={{ width: 440 }}>
             <div className="g-card-hd">
@@ -1384,8 +1389,10 @@ export function FileLibrary() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
+
 
       {/* 批量解析小弹窗（v0.37）：2 选项（按各视频设置 / 统一参数）替代旧 ParameterPanel */}
       {batchTargets && (
@@ -1593,7 +1600,7 @@ function BatchAnalyzeDialog({
     }
   }
 
-  return (
+  return createPortal(
     <div className="g-modal-overlay">
       <div className="g-modal" style={{ width: 520, maxHeight: "85vh" }}>
         <div className="g-card-hd">
@@ -1645,13 +1652,14 @@ function BatchAnalyzeDialog({
           <button className="g-btn g-btn-primary" onClick={handleSubmit} disabled={busy}>
             {busy ? "启动中…" : `开始解析（${count}）`}
           </button>
-        </div>
+</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
-/* �══════════════════════ 单视频解析小弹窗（v0.37，Workbench 复用） ═══════════════════════ */
+
 export function SingleAnalyzeDialog({
   title, initial, reparse, onClose, onSubmit,
 }: {
@@ -1663,6 +1671,7 @@ export function SingleAnalyzeDialog({
 }) {
   const [unified, setUnified] = useState<UnifiedParams>(initial);
   const [busy, setBusy] = useState(false);
+  useDisableVideoInteraction();
 
   async function handleSubmit() {
     if (busy) return;
@@ -1677,8 +1686,9 @@ export function SingleAnalyzeDialog({
     }
   }
 
-  return (
-    <div className="g-modal-overlay">
+  return createPortal(
+    <div className="g-modal-overlay"
+      style={{ zIndex: 2147483000, transform: "translateZ(0)", pointerEvents: "auto", backdropFilter: "none" }}>
       <div className="g-modal" style={{ width: 460, maxHeight: "85vh" }}>
         <div className="g-card-hd">
           <span className="g-card-tt">
@@ -1702,6 +1712,7 @@ export function SingleAnalyzeDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -173,7 +173,7 @@ async def search_face(
     elapsed = (time.monotonic() - t0) * 1000
 
     # 收集每个命中的身份的出现时间段（v0.30：身份 ↔ 时间回溯，供前端下钻）
-    from core.models import FaceDetection
+    from core.models import FaceDetection, Track
     identity_ids = [identity.id for identity, _ in results]
     appearances_by_id: dict[int, list[dict]] = {}
     if identity_ids:
@@ -188,11 +188,34 @@ async def search_face(
                 .where(FaceDetection.identity_id.in_(identity_ids))
                 .order_by(FaceDetection.timestamp_sec)
             )
-            for identity_id, ts, bbox, track_id in rows:
+            all_rows = list(rows)
+            # 收集所有 track_id，批量查 track 时间范围
+            track_ids = {r[3] for r in all_rows if r[3] is not None}
+            track_ranges: dict[int, tuple[float, float]] = {}
+            if track_ids:
+                trows = await session.execute(
+                    select(Track.track_id, Track.first_seen, Track.last_seen)
+                    .where(Track.track_id.in_(track_ids))
+                )
+                for tid, fs, ls in trows:
+                    track_ranges[tid] = (fs, ls)
+            # 每 track 的主身份（首个出现的身份）——与检测栏 track_to_identity 同口径
+            main_identity_by_track: dict[int, int] = {}
+            for identity_id, _ts, _bbox, track_id in all_rows:
+                if track_id is not None and track_id not in main_identity_by_track:
+                    main_identity_by_track[track_id] = identity_id
+            for identity_id, ts, bbox, track_id in all_rows:
+                tr = track_ranges.get(track_id) if track_id is not None else None
+                # 仅保留该身份为「主身份」的 track 出现点（与检测栏 track_to_identity/时间轴高亮一致）；
+                # 非主 track 上只是搭车出现的命中不参与，避免把横跨很久的无关长 track 并进跳播段。
+                if track_id is not None and main_identity_by_track.get(track_id) != identity_id:
+                    continue
                 appearances_by_id.setdefault(identity_id, []).append({
                     "timestamp_sec": ts,
                     "bbox": bbox,
                     "track_id": track_id,
+                    "track_start": tr[0] if tr else ts,
+                    "track_end": tr[1] if tr else ts,
                 })
 
     items: list[dict] = []

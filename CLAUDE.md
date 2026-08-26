@@ -62,6 +62,8 @@
 - **多格式**: remux(-c copy) + proxy(NVENC h264, 按需)；管道优先读 remuxed
 - **ReID 双层**: 在线 BoT-SORT with_reid + 全局 tracklet 缝合（cosine ≥0.85）
 - **人脸双阈值**: 同 track 0.30 宽松合并，跨 track 0.58 保守合并；检索锚点最典型脸
+- **人脸出现段（v0.6.1）**: 检测栏人脸展开显示该身份的**主 person track**（`track_to_identity`，时间轴同源）的 `[first_seen, last_seen]`/`segments`，排除"搭车"长 track；`face_routes.py` 出现段 = track 起止（非人脸采样点）、`search_routes.py` 人脸搜索 `appearances` 仅保留主身份 track；点击结果/时间列表从首段自动播放并逐段跳过，当前段黄框高亮（`DetectionPanel` `videoRef`+`timeupdate` 判 `currentTime` 落段）；`Workbench.handleFaceResult` 跳播段与检测栏同源
+- **弹窗/抽屉 portal**: 桌面前端所有 modal/drawer 必须 `createPortal(document.body)` + `onMouseDown` 遮罩关闭（`e.target===currentTarget`）；`DetectionOverlay` 用真实事件目标 `container.contains` 判定防穿透/遮挡关不掉
 - **搜索隔离**: search/face 与 search/image 参数必须 `Form(...)` 声明（防全库泄漏）
 - **版本号**: `core/version.py` `__version__` 唯一来源；后端+服务器前端改动必须 `./bump`
 - **存储卫生**: 删除必须 `repository.delete_video`；新落盘路径登记进 `storage_manager.py`
@@ -71,7 +73,7 @@
 | Table | Purpose |
 |---|---|
 | `video_groups` | 批量上传自动分组（案例） |
-| `videos` | 主表：status/progress/summary/开关/参数/格式/source_owned/file_id+version_no/processing_started_at/suggested_* |
+| `videos` | 主表：status/progress/summary/开关/参数/格式/source_owned/file_id+version_no/processing_started_at/suggested_*/task_hidden(任务删除隐藏) |
 | `scenes` | 搜索主粒度：text_embedding/caption/ocr_text/transcript/entities |
 | `transcripts` | 完整字幕 + words |
 | `frame_embeddings` / `chunks` | 1fps 帧向量 / 滑动窗口向量 |

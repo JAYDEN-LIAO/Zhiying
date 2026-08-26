@@ -6,6 +6,7 @@
    ════════════════════════════════════════════════════════════ */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useApp } from "../AppContext";
 import type { ImageSubject, ImageSubjectKind, SubjectPhoto } from "../types";
 import { IconClose, IconBolt, IconPerson, IconSearch } from "./icons";
@@ -146,9 +147,9 @@ export function AddSubjectDrawer({ data, onClose, onSaved }: Props) {
 
   if (!data) return null;
 
-  return (
-    <div className="fl-drawer-overlay" onClick={onClose}>
-      <div className="fl-drawer" onClick={(e) => e.stopPropagation()} style={{ width: 400 }}>
+  return createPortal(
+    <div className="fl-drawer-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fl-drawer" style={{ width: 400 }}>
         <div className="fl-drawer-hd">
           <span className="flex items-center gap-1.5 text-[14px] font-semibold text-gray-900">
             <span className="text-[#4f7cff]"><IconBolt /></span>
@@ -333,6 +334,7 @@ export function AddSubjectDrawer({ data, onClose, onSaved }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
