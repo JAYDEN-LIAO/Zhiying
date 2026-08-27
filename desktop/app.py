@@ -212,6 +212,11 @@ def run_gui(args) -> int:
         "智影视频分析", html=SPLASH_HTML, width=1280, height=800, min_size=(1024, 700),
         js_api=main_api,
         frameless=True, shadow=True,
+        # ⚠️ 必须显式关掉 easy_drag：pywebview 默认 True，会在全页面注入无条件 mousedown
+        # 监听（customize.js「easy drag for edge chromium」）→ 正文区一拖就整个窗口被挪，
+        # 且最大化态走裸 window.move() 无还原逻辑 → 全屏大窗被直接平移。
+        # 拖拽统一由前端 TitleBar 自绘标题栏手动实现（最大化态先还原再跟随光标）。
+        easy_drag=False,
         # 不用 confirm_close：那是 pywebview 原生 MessageBox（"Do you really want to quit?"），
         # 无法定制样式。关闭确认改由前端 TitleBar 主题化弹窗处理（确认后经 js_api quit() 退出）。
     )

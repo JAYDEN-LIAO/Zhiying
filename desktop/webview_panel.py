@@ -90,9 +90,14 @@ SPLASH_HTML = """<!DOCTYPE html>
   .foot { margin-top:22px; font-size:11px; color:#94a3b8; }
   .spin { animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
+  /* 顶部拖拽条：frameless 关掉 easy_drag 后，靠 pywebview 内置 .pywebview-drag-region
+     选择器保留启动页拖动能力（customize.js 走该选择器，不依赖 easy_drag）。
+     z-index 低于右上角关闭按钮（z-50），避免遮挡退出。 */
+  .splash-drag { position:fixed; top:0; left:0; right:0; height:36px; z-index:10; }
 </style>
 </head>
 <body>
+  <div class="splash-drag pywebview-drag-region"></div>
   <div class="deco a"></div>
   <div class="deco b"></div>
   <button class="close-btn" id="closeBtn" title="终止启动并退出" aria-label="关闭" onclick="quitLaunch()">×</button>
