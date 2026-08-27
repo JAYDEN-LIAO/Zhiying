@@ -40,6 +40,43 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*]', "_", name)
 
 
+# ═══════════════════════════════════════════════════════════
+# 文本产出工具（摘要/OCR txt 导出与任务报告共用）
+# ═══════════════════════════════════════════════════════════
+
+def fmt_clock(sec: float | None) -> str:
+    """秒 → 视频内时间戳 MM:SS（超 1 小时进位 H:MM:SS）。"""
+    total = max(0, int(sec or 0))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def condense_ocr(dets) -> list[tuple[float, str]]:
+    """折叠相邻时间戳（<1.5s）的重复 OCR 文本行 — OCR 逐帧抽帧会产生大量重复。
+
+    dets: 按 timestamp_sec 升序、带 timestamp_sec/text 属性的对象序列。
+    返回 [(timestamp_sec, text)]，文本已 strip。
+    """
+    out: list[tuple[float, str]] = []
+    prev_ts: float | None = None
+    prev_text: str | None = None
+    for d in dets:
+        text = (getattr(d, "text", "") or "").strip()
+        ts = getattr(d, "timestamp_sec", 0.0)
+        if (
+            text
+            and prev_text is not None
+            and text == prev_text
+            and prev_ts is not None
+            and ts - prev_ts < 1.5
+        ):
+            continue
+        out.append((ts, text))
+        prev_ts, prev_text = ts, text
+    return out
+
+
 class ExportService:
     """导出服务 — 视频片段裁剪 / 关键帧 / 追踪轨迹 / 缩略图打包。"""
 

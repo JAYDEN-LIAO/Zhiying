@@ -692,7 +692,7 @@ export function Workbench() {
       {topPanel && (
         <>
           <div className="absolute inset-0 z-40" onClick={() => setTopPanel(null)} />
-          <div className="absolute right-2 top-[68px] z-50 case-card overflow-hidden" style={{ width: 300 }}>
+          <div className="absolute right-2 top-[68px] z-50 case-card overflow-hidden" style={{ width: 180, borderColor: "#d0d5dd", boxShadow: "0 4px 16px rgba(16,24,40,0.10)" }}>
             {topPanel === "history" ? (
               <div className="flex flex-col" style={{ maxHeight: "48vh" }}>
                 <div className="g-card-title"><span className="g-card-tt text-[13px]">历史记录（切换版本）</span></div>
@@ -716,7 +716,13 @@ export function Workbench() {
                 </div>
               </div>
             ) : (
-              <ExportMenu videoId={vid!} onClose={() => setTopPanel(null)} />
+              <ExportMenu
+                videoId={vid!}
+                hasSummary={!!currentVideo?.summary}
+                hasOcr={!!currentVideo?.ocr_enabled}
+                hasPlate={!!currentVideo?.plate_enabled}
+                onClose={() => setTopPanel(null)}
+              />
             )}
           </div>
         </>

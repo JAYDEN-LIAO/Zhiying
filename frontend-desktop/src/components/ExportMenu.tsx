@@ -1,87 +1,121 @@
 /* ════════════════════════════════════════════════════════════
-   ExportMenu — 简化版导出菜单（单个表单）
-   仅保留"导出视频片段或节点"功能。
-   start == end → 导出单帧
-   start < end  → 导出视频片段
-   使用 GET + window.open 直接导航，避免浏览器屏蔽自动下载。
+   ExportMenu — 紧凑下拉导出菜单
+   5 个选项：视频片段（展开时间输入）/ 分析报告 / 视频摘要 / 文字识别 / 车牌识别
+   除视频片段外，点击即导出。
    ════════════════════════════════════════════════════════════ */
 
 import { useState } from "react";
 import { api } from "../services/api";
-import { IconClose } from "./icons";
 
 export function ExportMenu({
   videoId,
+  hasSummary = false,
+  hasOcr = false,
+  hasPlate = false,
   onClose,
 }: {
   videoId: string;
+  hasSummary?: boolean;
+  hasOcr?: boolean;
+  hasPlate?: boolean;
   onClose: () => void;
 }) {
+  const [clipOpen, setClipOpen] = useState(false);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
-  const handleExport = () => {
+  const handleClipExport = () => {
     setErr(null);
     const s = parseFloat(start);
     const e = parseFloat(end);
-
-    if (isNaN(s) || s < 0) { setErr("起始时间无效（必须 ≥ 0）"); return; }
-    if (isNaN(e) || e < 0) { setErr("结束时间无效（必须 ≥ 0）"); return; }
-    if (s > e) { setErr("结束时间必须 ≥ 起始时间"); return; }
-
+    if (isNaN(s) || s < 0) { setErr("起始时间无效"); return; }
+    if (isNaN(e) || e < 0) { setErr("结束时间无效"); return; }
+    if (s > e) { setErr("结束时间须 ≥ 起始时间"); return; }
     window.open(api.getClipExportUrl(videoId, s, e), "_blank");
     onClose();
   };
 
+  const itemCls = (enabled: boolean) =>
+    "w-full text-left px-3 py-[7px] text-[13px] rounded-md transition-all duration-150 border-l-2 " +
+    (enabled
+      ? "text-gray-700 border-transparent hover:border-teal-500 hover:bg-teal-50 hover:text-teal-700 cursor-pointer"
+      : "text-gray-400 border-transparent cursor-not-allowed");
+
   return (
-    <div className="w-full" onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-        <h3 className="font-bold text-gray-900 text-sm">导出视频片段或节点</h3>
-        <button onClick={onClose} className="modal-x" title="关闭" aria-label="关闭">
-          <IconClose />
-        </button>
-      </div>
-
-      <div className="py-4 space-y-4">
-        <p className="px-5 text-xs text-gray-500">
-          起始与结束时间相同时导出单帧，否则导出视频片段（mp4）。
-        </p>
-
-        <div className="px-5">
-          <label className="block text-xs text-gray-500 mb-1">起始时间（秒）</label>
-          <input
-            type="number" min="0" step="any"
-            value={start}
-            onChange={(e) => setStart(e.target.value)}
-            placeholder="0.0"
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
-          />
-        </div>
-
-        <div className="px-5">
-          <label className="block text-xs text-gray-500 mb-1">结束时间（秒）</label>
-          <input
-            type="number" min="0" step="any"
-            value={end}
-            onChange={(e) => setEnd(e.target.value)}
-            placeholder="10.0"
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
-          />
-        </div>
-
-        {err && <p className="px-5 text-xs text-red-500">{err}</p>}
-
-        <div className="px-5 pt-1">
+    <div className="py-1.5" onClick={(e) => e.stopPropagation()}>
+      {/* 视频片段 */}
+      <button
+        className="w-full text-left px-3 py-[7px] text-[13px] rounded-md border-l-2 border-transparent hover:border-teal-500 hover:bg-teal-50 hover:text-teal-700 transition-all duration-150 flex items-center justify-between text-gray-700"
+        onClick={() => setClipOpen((v) => !v)}
+      >
+        <span>视频片段</span>
+        <svg className={"w-3 h-3 text-gray-400 transition-transform " + (clipOpen ? "rotate-180" : "")} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+      </button>
+      {clipOpen && (
+        <div className="px-3 pb-2 space-y-1.5">
+          <div className="flex gap-1.5">
+            <input
+              type="number" min="0" step="any"
+              value={start} onChange={(e) => setStart(e.target.value)}
+              placeholder="起始(秒)"
+              className="flex-1 min-w-0 rounded border border-gray-200 px-2 py-1 text-[12px] focus:outline-none focus:ring-1 focus:ring-teal-400"
+            />
+            <input
+              type="number" min="0" step="any"
+              value={end} onChange={(e) => setEnd(e.target.value)}
+              placeholder="结束(秒)"
+              className="flex-1 min-w-0 rounded border border-gray-200 px-2 py-1 text-[12px] focus:outline-none focus:ring-1 focus:ring-teal-400"
+            />
+          </div>
+          {err && <p className="text-[11px] text-red-500">{err}</p>}
           <button
-            onClick={handleExport}
+            onClick={handleClipExport}
             disabled={!start.trim() || !end.trim()}
-            className="w-full rounded-lg bg-teal-600 text-white text-sm font-medium py-2.5 hover:bg-teal-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="w-full rounded bg-teal-600 text-white text-[12px] font-medium py-1.5 hover:bg-teal-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            {start && end && parseFloat(start) === parseFloat(end) ? "导出帧" : "导出片段"}
+            导出
           </button>
         </div>
-      </div>
+      )}
+
+      {/* 分析报告 */}
+      <button
+        className={itemCls(true)}
+        onClick={() => { window.open(api.getTaskReportExportUrl(videoId), "_blank"); onClose(); }}
+      >
+        分析报告
+      </button>
+
+      {/* 视频摘要 */}
+      <button
+        className={itemCls(hasSummary)}
+        disabled={!hasSummary}
+        onClick={() => { if (hasSummary) { window.open(api.getSummaryExportUrl(videoId), "_blank"); onClose(); } }}
+        title={!hasSummary ? "解析时未开启摘要" : undefined}
+      >
+        视频摘要{!hasSummary && <span className="text-[11px] ml-1">（未开启）</span>}
+      </button>
+
+      {/* 文字识别 */}
+      <button
+        className={itemCls(hasOcr)}
+        disabled={!hasOcr}
+        onClick={() => { if (hasOcr) { window.open(api.getOcrExportUrl(videoId), "_blank"); onClose(); } }}
+        title={!hasOcr ? "解析时未开启 OCR" : undefined}
+      >
+        文字识别{!hasOcr && <span className="text-[11px] ml-1">（未开启）</span>}
+      </button>
+
+      {/* 车牌识别 */}
+      <button
+        className={itemCls(hasPlate)}
+        disabled={!hasPlate}
+        onClick={() => { if (hasPlate) { window.open(api.getPlatesExportUrl(videoId), "_blank"); onClose(); } }}
+        title={!hasPlate ? "解析时未开启车牌识别" : undefined}
+      >
+        车牌识别{!hasPlate && <span className="text-[11px] ml-1">（未开启）</span>}
+      </button>
     </div>
   );
 }

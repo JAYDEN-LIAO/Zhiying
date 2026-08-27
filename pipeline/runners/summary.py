@@ -18,6 +18,9 @@ from pipeline.runners.base import OperationRunner, PipelineContext, effective_su
 
 logger = logging.getLogger(__name__)
 
+# fallback 场景描述展示预算（字符）：超限时在句末标点优雅收尾，绝不词中间硬切
+_FALLBACK_DESC_LIMIT = 500
+
 
 class SummaryRunner(OperationRunner):
     """摘要生成执行器 — 策略模式路由双模式。"""
@@ -148,8 +151,11 @@ class SummaryRunner(OperationRunner):
             raw = await summarizer.summarize(script, system_prompt, user_prompt)
         except Exception as e:
             # 摘要属 best-effort：LLM 失败（API / 截断 / 解析）→ 回退本地聚合，
-            # 绝不因摘要失败拖垮整个管道（摘要本就是可降级产物）
+            # 绝不因摘要失败拖垮整个管道（摘要本就是可降级产物）。
+            # 降级原因必须进任务日志——静默回退会让"词中间截断的脏摘要"无从排查。
             logger.warning("[SummaryRunner] LLM summary failed (%s), falling back to native aggregator", e)
+            if pctx.log:
+                await pctx.log(f"智能摘要 LLM 调用失败（{e}），已回退本地画面描述聚合")
             await self._run_aggregate(pctx, scenes)
             return
         await self._validate_and_store(pctx, raw)
@@ -234,13 +240,32 @@ class SummaryRunner(OperationRunner):
             await pctx.log(f"智能摘要完成：{one_liner or '（无概述）'}")
 
     @staticmethod
+    def _trim_desc(text: str, limit: int = _FALLBACK_DESC_LIMIT) -> str:
+        """场景描述兜底截断 — 句子边界收尾，禁止词中间硬切。
+
+        超预算时优先在预算窗口内最后一个句末标点/段落空行处断句；
+        窗口后半段找不到任何句末标点才以省略号兜底。
+        """
+        text = (text or "").strip()
+        if len(text) <= limit:
+            return text
+        window = text[:limit]
+        cut = max(
+            (window.rfind(sep) for sep in ("。", "！", "？", "；", "!", "?", ";", "\n\n")),
+            default=-1,
+        )
+        if cut >= len(window) // 2:
+            return window[:cut + 1].rstrip()
+        return window.rstrip() + "…"
+
+    @staticmethod
     def _fallback_summary(scenes: list[Scene]) -> dict:
         captioned = [s for s in scenes if s.caption]
         if not captioned:
             return {"one_liner": "", "scenes_summary": [], "tags": [], "main_topics": [], "main_entities": []}
         items = [
             {"scene_index": s.scene_index, "start_sec": s.start_sec, "end_sec": s.end_sec,
-             "description": (s.caption or "")[:200], "keywords": []}
+             "description": SummaryRunner._trim_desc(s.caption), "keywords": []}
             for s in captioned
         ]
         # fallback 也构建多场景总摘要

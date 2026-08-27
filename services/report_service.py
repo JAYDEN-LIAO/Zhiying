@@ -15,8 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.models import (
     Video, TaskLog, Scene,
     FrameEmbedding, Chunk, FrameDetection, Track,
-    FaceIdentity, FaceDetection, PlateDetection,
+    FaceIdentity, FaceDetection, PlateDetection, OCRDetection,
 )
+from services.export_service import condense_ocr, fmt_clock
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ async def build_report_md(session: AsyncSession, video: Video) -> str:
     except Exception:
         logger.warning("[Report] track aggregate failed, degrades to '—'", exc_info=True)
 
-    # ── 车牌文本列表 ──
+    # ── 车牌识别明细（去重保序，完整列出） ──
     plate_texts: list[str] = []
     try:
         plate_texts = (await session.execute(
@@ -112,7 +113,19 @@ async def build_report_md(session: AsyncSession, video: Video) -> str:
         )).scalars().all()
     except Exception:
         logger.warning("[Report] plate texts failed, degrades to empty", exc_info=True)
-    plate_texts = list(dict.fromkeys(plate_texts))[:10]  # 去重保序，最多列 10 个
+    plate_texts = list(dict.fromkeys(plate_texts))
+
+    # ── OCR 画面文字（相邻重复行折叠，与 txt 导出同一逻辑） ──
+    ocr_lines: list[tuple[float, str]] = []
+    try:
+        ocr_dets = (await session.execute(
+            select(OCRDetection)
+            .where(OCRDetection.video_id == video.id)
+            .order_by(OCRDetection.timestamp_sec)
+        )).scalars().all()
+        ocr_lines = condense_ocr(ocr_dets)
+    except Exception:
+        logger.warning("[Report] ocr condense failed, degrades to empty", exc_info=True)
 
     # ── 任务日志（表缺失时降级为空） ──
     logs = []
@@ -122,18 +135,6 @@ async def build_report_md(session: AsyncSession, video: Video) -> str:
         )).scalars().all()
     except Exception:
         logger.warning("[Report] task_logs read failed, degrades to empty", exc_info=True)
-
-    # ── 摘要 ──
-    summary_text = ""
-    summary = video.summary if isinstance(video.summary, dict) else None
-    if summary:
-        if summary.get("overview"):
-            summary_text += f"- **概述**：{summary['overview']}\n"
-        for k in ("highlights", "key_points", "conclusions"):
-            if summary.get(k):
-                items = summary[k]
-                if isinstance(items, list):
-                    summary_text += f"- **{k}**：\n" + "".join(f"  - {i}\n" for i in items)
 
     # ── 时长 ──
     duration_sec = None
@@ -148,6 +149,7 @@ async def build_report_md(session: AsyncSession, video: Video) -> str:
         f"- 版本：V{video.version_no}" if video.version_no else "- 版本：—",
         f"- 所属案例：{gname}" if gname else "- 所属案例：未分组",
         f"- 提交时间：{_fmt_dt(video.created_at)}",
+        f"- 完成时间：{_fmt_dt(video.updated_at)}" if video.status == "completed" else None,
         f"- 处理耗时：{_fmt_sec(duration_sec)}",
         f"- 视频时长：{_fmt_sec(video.duration)}",
         "",
@@ -158,12 +160,51 @@ async def build_report_md(session: AsyncSession, video: Video) -> str:
         f"- 检测轨迹：{track_count}（帧检测 {detection_count} 次）",
         f"- 检测类别：{det_summary}",
         f"- 人脸身份：{face_identity_count}（检测 {face_detection_count} 次）",
-        f"- 车牌：{plate_count} 条",
     ]
-    if plate_texts:
-        lines += [f"- 车牌列表：{'、'.join(plate_texts)}"]
-    if summary_text:
-        lines += ["", "## 摘要", summary_text.rstrip("\n")]
+    lines = [ln for ln in lines if ln is not None]
+
+    # ── 视频产出：摘要 / OCR / 车牌（有数据才出对应小节） ──
+    output_parts: list[str] = []
+
+    summary = video.summary if isinstance(video.summary, dict) else None
+    if summary:
+        sum_lines: list[str] = []
+        if summary.get("one_liner"):
+            sum_lines.append(f"**一句话概述**：{summary['one_liner']}")
+        for label, key in (("标签", "tags"), ("核心主题", "main_topics"), ("主要实体", "main_entities")):
+            items = [str(t) for t in (summary.get(key) or []) if str(t).strip()]
+            if items:
+                sum_lines.append(f"**{label}**：{'、'.join(items)}")
+        scenes = summary.get("scenes_summary") or []
+        if scenes:
+            scene_items = [
+                "- **[{} - {}]** {}".format(
+                    fmt_clock(sc.get("start_sec", 0)),
+                    fmt_clock(sc.get("end_sec", 0)),
+                    (sc.get("description") or "").strip().replace("\n", "\n  "),
+                )
+                for sc in scenes
+            ]
+            sum_lines.append("**分场景摘要**：\n" + "\n".join(scene_items))
+        if sum_lines:
+            output_parts.append("### 智能摘要\n\n" + "\n\n".join(sum_lines))
+
+    if ocr_lines:
+        ocr_items = [f"- **[{fmt_clock(ts)}]** {text}" for ts, text in ocr_lines]
+        output_parts.append(
+            f"### 画面文字识别（去重后 {len(ocr_lines)} 行）\n\n" + "\n".join(ocr_items)
+        )
+
+    if plate_count or plate_texts:
+        plate_md = f"### 车牌识别\n\n- 识别条数：{plate_count} 条"
+        if plate_texts:
+            plate_md += f"\n- 车牌列表（去重后 {len(plate_texts)} 个）：{'、'.join(plate_texts)}"
+        output_parts.append(plate_md)
+
+    if output_parts:
+        lines += ["", "## 视频产出"]
+        for part in output_parts:
+            lines += ["", part]
     if logs:
         lines += ["", "## 处理日志"]
         lines += [f"{l.seq}. [{l.level}] {l.message}" for l in logs]

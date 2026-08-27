@@ -2,7 +2,7 @@
 
 ## Overview
 
-智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 + 图片素材库（人脸/通用图搜分轨检索）→ FastAPI + PostgreSQL/pgvector 对外服务。当前版本 **v0.6**（图片素材库 + 搜索统一 + 摘要 UI 重构；v0.6.1 人脸出现段 / v0.6.2 日志与存储卫生强化）；后端定版 v0.34（OCR RapidOCR+DirectML 子进程）。
+智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 + 图片素材库（人脸/通用图搜分轨检索）→ FastAPI + PostgreSQL/pgvector 对外服务。当前版本 **v0.6**；后端定版 v0.34。
 
 **关键锚点**：
 - **生产部署**：10.0.0.176（systemd `zhiying.service`，8011）；发版 `./bump` → 服务器 `bash deploy.sh v<tag>`
@@ -19,13 +19,13 @@
   POST /videos/upload(/upload/batch) → 存盘 → probe → 建记录(pending) → 异步 remux/proxy
   POST /videos/suggest-params → 按画面内容推荐参数（9 场景分类, 低置信兜底默认）
   PUT /videos/{id}/params → 校验 → 入队 → PipelineEngine.run()(pending) / run_incremental()(completed)
-  PATCH /videos/{id}/toggles（v0.37）→ 仅持久化 6 核心开关，不入队管道（抽屉「参数设置」专用）
+  PATCH /videos/{id}/toggles → 仅持久化 6 核心开关，不入队管道（抽屉「参数设置」专用）
   PipelineEngine 事件驱动 DAG(16 ops):
     duration → detection(生产者-消费者, 共享 NVDEC) → track_encode → face/plate
     duration → segmentation → keyframes → caption → summary → frame/text/chunk_encode
     duration → ocr(RapidOCR+DirectML 独立子进程) → ocr_detections
   搜索 7 路并行 + 图搜：frame/chunk/text/label/track/plate/ocr
-  素材库检索（v0.6）：/search/subjects 上传图片 → person 走 ArcFace 512 / other 走 Qwen3-VL → 命中底库目标
+  素材库检索：/search/subjects 上传图片 → person 走 ArcFace 512 / other 走 Qwen3-VL → 命中底库目标
   沉淀：检测 track「+」/ 图搜「+」→ AddSubjectDrawer → 底库照片 + 编码入库
 ```
 
@@ -42,42 +42,40 @@
 - **DB 连接**: 环境变量 `POSTGRES_URI` → config.yaml `database.uri` → 兜底 5432；`python run.py` 自动自举数据库（端口已通→直接复用 / 内嵌 vendor/pg / docker compose 回退），与桌面启动器 `desktop/db.py` 同优先级
 - **配置模板化**: config.yaml 机器相关 gitignored；新机复制 `config.yaml.example` 自改
 - **4 级参数系统**: L1 场景（9 智能推荐场景 + 5 旧值）→ L2 感知模块 → L3 功能开关 → L4 高级参数
-- **智能参数系统（v0.37）**: 场景分类与参数预设集中在 `services/smart_suggest.py`（9 类）；低置信兜底 `_DEFAULT_PARAMS`；改场景须加/改 `_scene_fingerprint()` 相关缓存（列表增改自动失效）
+- **智能参数系统**: 场景分类与参数预设集中在 `services/smart_suggest.py`（9 类）；低置信兜底 `_DEFAULT_PARAMS`；改场景须加/改 `_scene_fingerprint()` 相关缓存（列表增改自动失效）
   - **持久化**：suggest-params 自动落库到 `videos.suggested_scene_key/label/confidence/params(JSONB)` 4 字段；关闭弹窗不丢
   - **抽屉轻量层**：`PATCH /videos/{id}/toggles` 仅持久化 6 核心开关，不入队管道、不动版本、不联动组
   - **抽屉 UI**：FileDetailDrawer「参数设置」section + Workbench `SingleAnalyzeDialog` + 案例库 `BatchAnalyzeDialog` 三处共用 `AnalyzeSettingsPanel` + `buildPipelineParams()`
-  - **摘要默认全关**（v0.37）：模型/上传/场景预设/智能推荐按钮联动 → 都关
-  - **caption-summary 联动**（v0.6）：开摘要自动开画面描述（后端校验 caption OFF → summary OFF）
+  - **摘要默认全关**：模型/上传/场景预设/智能推荐按钮联动 → 都关
+  - **caption-summary 联动**：开摘要自动开画面描述（后端校验 caption OFF → summary OFF）
   - **9 场景预设**：traffic/vehicle_focus/surveillance_people/indoor/portrait_focus/document/street_mixed/outdoor_landscape/chat_screen，每个场景对应一组检测/人脸/车牌/OCR 开关预设
-- **图片素材库（v0.6）**：关注目标（人/其他）底库照片管理 + 检索分轨
+- **图片素材库**：关注目标（人/其他）底库照片管理 + 检索分轨
   - **3 表**：`image_subjects`（目标）/ `subject_photos`（底图）/ `subject_photo_embedding`（分轨向量：person→Vector(512) / other→EmbedVector）
   - **15 个 API**：`/subjects` CRUD + 照片 + 合并 + 文件 + `/search/subjects` 图片检索
   - **检索分轨**：person→`face_recognizer.extract_best_embedding`（ArcFace 512）/ other→`embedder.encode_image`（Qwen3-VL）；落盘即编码入库
-  - **桌面端第 5 页**：`ImageLibrary`（左列表+右详情+裁剪+拖拽扩充）+ `SubjectPhotoPicker`（替代已退役的 `CaseAssetPicker`，全局搜索/视频搜索卡统一选图来源）+ `AddSubjectDrawer`（检测/图搜一键沉淀，支持新建/已有目标两种模式）
+  - **桌面端第 5 页**：`ImageLibrary`（左列表+右详情+裁剪+拖拽扩充）+ `SubjectPhotoPicker`（全局搜索/视频搜索卡统一选图来源）+ `AddSubjectDrawer`（检测/图搜一键沉淀，支持新建/已有目标两种模式）
   - **搜索同步**：全局搜索文字/人脸/图搜 → 点击结果跳工作台 → 视频搜索卡片自动填充并搜索
   - **视频搜索卡智能筛选推荐**：`POST /search/suggest-filter` 文本相似度预判——事件/动作/语义类（求婚、打架、两车相撞…）自动画面定位（frame）；单物体类（黑色车辆、戴口罩的人…）自动物体定位（track）；手动选择优先（`autoFilterActive` 状态，用户手动切下拉后置 false）；车牌/文字模式不参与；`skipFilterReseachRef` 抑制自动改筛选触发的重复搜索
   - **告警红点**：前端空壳保留（`imageLibAlertCount`/侧栏红点），后端本期不做（下一阶段）
-  - **案例图片退役**：案例库不再支持图片上传，`images` 恒空；`CaseAssetPicker` 已被 `SubjectPhotoPicker` 替代
+  - **案例库图片边界**：案例库不支持图片上传，`images` 恒空；选图统一走素材库
 - **双前端**: UI 各自演进；对接层 `frontend-shared/` 一份实现，改后端接口只改一处；桌面壳 `load_url` 必须带版本号（`desktop/app.py _cache_bust_url`）击穿 WebView2 持久化缓存（`private_mode=False` 跨版本复用旧缓存会显示旧 UI）
 - **多格式**: remux(-c copy) + proxy(NVENC h264, 按需)；管道优先读 remuxed
 - **ReID 双层**: 在线 BoT-SORT with_reid + 全局 tracklet 缝合（cosine ≥0.85）
 - **人脸双阈值**: 同 track 0.30 宽松合并，跨 track 0.58 保守合并；检索锚点最典型脸
-- **人脸出现段（v0.6.1）**: 检测栏人脸展开显示该身份的**主 person track**（`track_to_identity`，时间轴同源）的 `[first_seen, last_seen]`/`segments`，排除"搭车"长 track；`face_routes.py` 出现段 = track 起止（非人脸采样点）、`search_routes.py` 人脸搜索 `appearances` 仅保留主身份 track；点击结果/时间列表从首段自动播放并逐段跳过，当前段黄框高亮（`DetectionPanel` `videoRef`+`timeupdate` 判 `currentTime` 落段）；`Workbench.handleFaceResult` 跳播段与检测栏同源
+- **人脸出现段**: 检测栏人脸展开显示该身份的**主 person track**（`track_to_identity`，时间轴同源）的 `[first_seen, last_seen]`/`segments`，排除"搭车"长 track；人脸搜索 `appearances` 仅保留主身份 track；点击结果从首段自动播放并逐段跳过，当前段黄框高亮（前端 `timeupdate` 判 `currentTime` 落段）
 - **弹窗/抽屉 portal**: 桌面前端所有 modal/drawer 必须 `createPortal(document.body)` + `onMouseDown` 遮罩关闭（`e.target===currentTarget`）；`DetectionOverlay` 用真实事件目标 `container.contains` 判定防穿透/遮挡关不掉
 - **搜索隔离**: search/face 与 search/image 参数必须 `Form(...)` 声明（防全库泄漏）
 - **版本号**: `core/version.py` `__version__` 唯一来源；后端+服务器前端改动必须 `./bump`
-- **存储卫生**: 删除必须 `repository.delete_video`；新落盘路径登记进 `storage_manager.py`
-- **删除三层保证（v0.6.2）**: 路由显式清盘 → DB FK CASCADE → `maintenance/sweep` 兜底；
+- **删除三层保证**: 路由显式清盘 → DB FK CASCADE → `maintenance/sweep` 兜底；
   task_logs / pipeline_tasks 无 FK（bootstrap 手建表），由 delete_video **显式清除**
   （删视频连队列行一起清，重启恢复不复活僵尸任务；恢复时发现视频已删的排队任务标 failed，
   executor 缺视频抛错而非静默 completed）
 - **素材库/案例库路径**: 底图/案例图落盘一律经 StorageManager（`subject_photo_dir` /
-  `case_asset_dir`）存**绝对路径**；历史相对路径行由读取侧归一化兼容（`_resolve_legacy_path` 等），
-  不迁移存量数据
-- **任务日志**: 失败 traceback 批量单次落库（append_task_logs）；日志孤儿/超期行与队列终态行
-  按 `TASK_LOG_RETENTION_DAYS`（90 天）随 sweep 清理；queued/running 队列行永不清（重启恢复数据源）
-- **图片素材纳入清扫**: subject_photos / case_assets 目录递归扫引用集 + 600s mtime 保护
-  （覆盖"文件已落盘、DB 未 commit"的崩溃窗口）
+  `case_asset_dir`）存**绝对路径**；历史相对路径行由读取侧归一化兼容，不迁移存量数据
+- **清扫范围**: sweep 覆盖视频文件/附属目录/exports TTL/空组 + **subject_photos / case_assets 图片孤儿**
+  （引用集 + 600s mtime 保护，覆盖"文件已落盘、DB 未 commit"的崩溃窗口）；yunzhi 平台工作目录有意豁免
+- **任务日志**: 失败 traceback 批量单次落库；日志孤儿/超期行与队列终态行按 `TASK_LOG_RETENTION_DAYS`
+  （90 天）随 sweep 清理；queued/running 队列行永不清（重启恢复数据源）
 
 ## Database (19 tables)
 
@@ -115,6 +113,7 @@
 10. **Storage hygiene**: 删除必须 `repository.delete_video`；新落盘路径登记进 `core/storage_manager.py`
 11. **commit / tag / push / 部署必须事前征得用户明确同意**
 12. **改前端先确认哪端**: 服务器 `frontend/`（需 bump）vs 桌面 `frontend-desktop/`（独立）；`frontend-shared/` 双端共用
+13. **文档卫生**: 三份权威文档（README/CLAUDE.md/arch.md）只写**当前事实**——新增功能改写对应章节为现在时态；不追加"某版本做了什么"的改动叙事段，变更历史由 git log 承担
 
 ## Python Environment
 

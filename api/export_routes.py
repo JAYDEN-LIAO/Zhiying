@@ -12,7 +12,7 @@ import uuid
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,8 +23,8 @@ from api.schemas import (
     ExportTrackRequest,
     ExportThumbnailsRequest,
 )
-from core.models import FrameDetection, Scene, Track, Video
-from services.export_service import ExportService, format_ts, sanitize_filename
+from core.models import FrameDetection, OCRDetection, PlateDetection, Scene, Track, Video
+from services.export_service import ExportService, condense_ocr, fmt_clock, format_ts, sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +302,127 @@ async def export_track_thumbnail(
     if background_tasks is not None:
         background_tasks.add_task(_cleanup_file, out_path)
     return _file_response(out_path, f"{safe_name}_{cls}_{label}_{format_ts(thumb_ts)}.jpg", "image/jpeg")
+
+
+# ═══════════════════════════════════════════════════════════
+# 摘要 / OCR 画面文字导出 — txt（GET 直接导航下载，同 clip 模式）
+# ═══════════════════════════════════════════════════════════
+
+def _txt_response(text: str, filename: str) -> Response:
+    """txt 下载响应：UTF-8 加 BOM + CRLF（Windows 记事本旧默认 ANSI/无换行会乱）；
+    中文文件名走 RFC 5987 filename*（HTTP header 仅 latin-1）。"""
+    import urllib.parse
+    ascii_name = urllib.parse.quote(filename)
+    return Response(
+        content=text.replace("\n", "\r\n").encode("utf-8-sig"),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{ascii_name}',
+        },
+    )
+
+
+@router.get("/{video_id}/export/summary")
+async def export_summary_txt(
+    video_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """导出视频摘要为 txt（未生成摘要时 404）。"""
+    result = await db.execute(
+        select(Video.file_name, Video.summary).where(Video.id == video_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    summary: dict | None = row.summary
+    if not summary:
+        raise HTTPException(status_code=404, detail="该视频未生成摘要")
+
+    base_name = os.path.splitext(row.file_name or str(video_id))[0]
+    lines: list[str] = [f"视频摘要 — {row.file_name}", ""]
+
+    one_liner = (summary.get("one_liner") or "").strip()
+    if one_liner:
+        lines += ["【一句话概述】", one_liner, ""]
+
+    for label, key in (("标签", "tags"), ("主题", "main_topics"), ("实体", "main_entities")):
+        items = [str(t) for t in (summary.get(key) or []) if str(t).strip()]
+        if items:
+            lines.append(f"【{label}】{'、'.join(items)}")
+    if lines[-1] != "":
+        lines.append("")
+
+    scenes = summary.get("scenes_summary") or []
+    if scenes:
+        lines += ["【分场景摘要】"]
+        for sc in scenes:
+            ts = f"{fmt_clock(sc.get('start_sec', 0))} - {fmt_clock(sc.get('end_sec', 0))}"
+            desc = (sc.get("description") or "").strip()
+            lines.append(f"[{ts}] {desc}")
+
+    return _txt_response("\n".join(lines), f"{sanitize_filename(base_name)}_摘要.txt")
+
+
+@router.get("/{video_id}/export/ocr")
+async def export_ocr_txt(
+    video_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """导出画面文字识别（OCR）清单为 txt（无识别数据时 404）。"""
+    video_result = await db.execute(select(Video.file_name).where(Video.id == video_id))
+    v_row = video_result.one_or_none()
+    if v_row is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    det_result = await db.execute(
+        select(OCRDetection)
+        .where(OCRDetection.video_id == video_id)
+        .order_by(OCRDetection.timestamp_sec)
+    )
+    dets = list(det_result.scalars().all())
+    if not dets:
+        raise HTTPException(status_code=404, detail="该视频未开启画面文字识别或暂无识别数据")
+
+    base_name = os.path.splitext(v_row.file_name or str(video_id))[0]
+    condensed = condense_ocr(dets)
+    lines: list[str] = [f"画面文字识别 — {v_row.file_name}", ""]
+    for ts, text in condensed:
+        lines.append(f"[{fmt_clock(ts)}] {text}")
+    lines.append("")
+    lines.append(f"共识别文字行：{len(condensed)} 行")
+
+    return _txt_response("\n".join(lines), f"{sanitize_filename(base_name)}_画面文字.txt")
+
+
+@router.get("/{video_id}/export/plates")
+async def export_plates_txt(
+    video_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """导出视频中识别到的全部车牌为 txt（与任务报告同一去重逻辑，无数据时 404）。"""
+    video_result = await db.execute(select(Video.file_name).where(Video.id == video_id))
+    v_row = video_result.one_or_none()
+    if v_row is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    rows = await db.execute(
+        select(PlateDetection.plate_text).where(
+            PlateDetection.video_id == video_id,
+            PlateDetection.plate_text.isnot(None),
+        )
+    )
+    plate_texts = list(dict.fromkeys(rows.scalars().all()))
+    if not plate_texts:
+        raise HTTPException(status_code=404, detail="该视频未开启车牌识别或暂无识别数据")
+
+    base_name = os.path.splitext(v_row.file_name or str(video_id))[0]
+    lines = [
+        f"车牌识别清单 — {v_row.file_name}",
+        f"去重后共 {len(plate_texts)} 个：",
+        "",
+        *plate_texts,
+    ]
+    return _txt_response("\n".join(lines), f"{sanitize_filename(base_name)}_车牌.txt")
 
 
 # ═══════════════════════════════════════════════════════════

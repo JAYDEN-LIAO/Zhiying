@@ -444,6 +444,20 @@ export const api = {
   getThumbnailsExportUrl(videoId: string): string {
     return `${BASE}/videos/${videoId}/export/thumbnails`;
   },
+  /* ── 摘要 / 画面文字 / 车牌 txt 导出 + 任务报告（GET 直接导航下载，同 clip 模式） ── */
+  getSummaryExportUrl(videoId: string): string {
+    return `${BASE}/videos/${videoId}/export/summary`;
+  },
+  getOcrExportUrl(videoId: string): string {
+    return `${BASE}/videos/${videoId}/export/ocr`;
+  },
+  getPlatesExportUrl(videoId: string): string {
+    return `${BASE}/videos/${videoId}/export/plates`;
+  },
+  /** 任务报告（task_id 即视频行 id，与任务中心导出同源） */
+  getTaskReportExportUrl(taskId: string): string {
+    return `${BASE}/tasks/${taskId}/report`;
+  },
 
   /* ═══ v0.34 文件库 / 多版本 / 任务中心 ═══ */
   listGroups() {

@@ -28,11 +28,11 @@ curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # �
 | 车牌识别（HyperLPR3） | `GET /videos/{id}/plate/data` + 模糊搜索 | ✅ |
 | OCR 画面文字提取（RapidOCR PP-OCRv3 + DirectML, 独立子进程） | `GET /videos/{id}/ocr/data` · `POST /search/semantic` (search_types=["ocr"]) | ✅ |
 | 通用图搜（Qwen3-VL-Embedding → frame_embeddings） | `POST /search/image` | ✅ |
-| 导出（clip/frames/track/thumbnails zip） | `GET/POST /videos/{id}/export/...` | ✅ |
+| 导出（片段/单帧 + 轨迹 zip + 缩略图 zip + 摘要/画面文字 txt） | `GET/POST /videos/{id}/export/...` | ✅ |
 | 系统设置+参数预设（运行时生效, 预设随 git 迁移） | `GET/PUT /settings` + `/settings/presets` | ✅ |
 | 文件库/多版本/任务中心/批量解析/重命名/任务删除(仅失败,隐藏) | `/files` `/groups` `/tasks` `/analyze-batch` · `DELETE /tasks/{id}` | ✅ |
 | 案例素材管理（图片拖拽上传/预览/删除） | `GET/POST /groups/{id}/assets` · `/assets/{id}/file` · `DELETE /assets/{id}` | ✅ |
-| 任务报告导出（Markdown 聚合产物统计） | `GET /tasks/{id}/report` · `POST /tasks/export-batch` | ✅ |
+| 任务报告导出（Markdown：基本信息/分析结果/**视频产出**（摘要·OCR·车牌全量）/处理日志） | `GET /tasks/{id}/report` · `POST /tasks/export-batch` | ✅ |
 | 存储卫生 | 删除即清盘（视频/案例/素材库/版本链三层保证：路由显式清 → FK 级联 → sweep 兜底）+ 孤儿清扫（`POST /maintenance/sweep` / `scripts/sweep_storage.py`；含 subject_photos/case_assets 图片孤儿与 mtime 保护）+ 存储用量（`GET /maintenance/storage`） | ✅ |
 | 任务日志 | 日志弹窗复制/一键导出 `.log`（UTF-8 BOM + CRLF）+ 处理中自动增量刷新尾部跟随；失败 traceback 批量落库、孤儿/超期 90 天清扫 | ✅ |
 | 云智平台集成 | `register-external` + `/internal/yunzhi/jobs`（202 异步+回调+幂等） | ✅ |
@@ -100,23 +100,8 @@ zhiying/
 └── docs/           # arch.md(权威架构) / archive/(历史归档)
 ```
 
-## Development Status
+## Status
 
-**当前状态（v0.6）**：图片素材库 + 搜索统一 + 摘要/文字识别 UI 重构
+核心链路全部可用（权威架构与细节见 `docs/arch.md`）。已知边界：Chunk 编码默认关 · OCR 导出/增强（预留）· Grounding(Florence-2 占位) · 素材库告警红点（前端空壳）。
 
-- **任务日志系统健壮化**（v0.6.2）：日志弹窗三图标钮（导出/复制/关闭 28×28 等高对齐）+ 一键导出 `.log` 纯文本（头部元信息注释块、UTF-8 BOM 防 Windows 记事本乱码、grep/tail 友好）+ 处理中任务弹窗 2.5s 增量刷新尾部跟随；后端 `delete_video` 显式清 task_logs，孤儿/超期 90 天随 sweep 清理，失败 traceback 批量单次落库
-- **存储卫生收编**（v0.6.2）：subject_photos / case_assets 纳入孤儿清扫（引用集 + mtime 保护）；素材库 merge 重写（先搬文件重写路径再删源目录，修复缺 `request` 参数必 NameError 的整体不可用）；案例素材/底图绝对路径落库 + 历史相对路径读取侧归一化兼容；pipeline_tasks 治理（删视频清队列行、重启恢复僵尸标 failed、executor 缺视频诚实失败、终态行 90 天保留）
-
-- **图片素材库**（v0.6 核心）：`image_subjects` / `subject_photos` / `subject_photo_embedding` 三表 + 15 个 `/subjects` API + 桌面端第 5 页 `ImageLibrary`（左列表+右详情+裁剪+拖拽扩充）+ `SubjectPhotoPicker`（全局搜索/视频搜索卡统一选图来源）+ `AddSubjectDrawer`（检测/图搜一键沉淀）；检索分轨：person→ArcFace 512 / other→Qwen3-VL
-- **搜索统一**：退役 `CaseAssetPicker`（案例图片选图），所有图搜/人脸搜入口统一走素材库 `SubjectPhotoPicker`；全局搜索关键词/人脸/图搜自动同步到视频搜索卡片
-- **摘要/文字识别 UI**：`VideoSummaryCard` 标题随内容自动切换（视频摘要/文字识别），无 tab 按钮；去掉 `minor-card` 嵌套容器
-- **caption-summary 联动**：开摘要自动开画面描述（后端校验 caption OFF → summary OFF）
-- **视频搜索卡优化**：退役范围下拉，严格限定当前视频检索（与全局搜索划清边界）+ 结果类型筛选下拉（全部/画面定位/物体定位）+ 搜索框固定不随结果滚动 + 搜索结果时间范围自动暂停
-- **视频搜索卡智能筛选推荐**：`POST /search/suggest-filter` 文本相似度预判——事件/动作/语义类（求婚、打架、两车相撞…）自动画面定位；单物体类（黑色车辆、戴口罩的人…）自动物体定位；手动选择优先，不打扰
-- **全局搜索类型互斥**：人/车/车牌/文本 chip 选中互斥，切换自动清除前一个
-- **智能参数系统**（v0.37）：持久化推荐 + 抽屉轻量面板 + AnalyzeSettingsPanel 三处共用 + 摘要默认全关
-- **人脸出现段修复**（v0.6.1）：检测栏人脸出现段 = 该身份的主 person track 的 `[first_seen, last_seen]`（时间轴同源 `track_to_identity`），排除搭车长 track；点击人脸搜索结果/时间列表自动从头播放并逐段跳过，当前播放段黄色高亮（字样标黑）
-- **任务中心删除**：`DELETE /tasks/{id}` 仅允许删除失败任务（清 `pipeline_tasks`/`task_logs`，`videos.task_hidden=true` 隐藏，不删视频/文件）；列表过滤 `task_hidden`，失败任务显示百分比
-- **弹窗/抽屉 portal 修复**：桌面前端所有弹窗/抽屉统一 `createPortal(document.body)` + `onMouseDown` 遮罩关闭 + `DetectionOverlay` 用真实事件目标 containment 判定（杜绝穿透点击/遮挡关不掉）
-- **案例素材管理**：`case_assets` 表 + 案例库拖拽上传图片素材（图片上传已退役，仅保留视频）
-- **Planned**：Grounding(Florence-2)。
+> 变更历史查 git log——本仓库提交信息承担完整变更记录职责；历史归档在 `docs/archive/`。
