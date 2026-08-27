@@ -5,13 +5,13 @@
      右 66% 结果展示（状态栏 + 自适应卡片网格）
    ════════════════════════════════════════════════════════════ */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
 import { useApp } from "../AppContext";
 import type { SearchResultItem, VideoListItem } from "../types";
 import { formatSec, fmtFullDate } from "../utils/helpers";
 import { zh } from "../labels";
-import { IconSearch5, IconImageSearch, IconFolder, IconClock, IconClose, IconVideo, IconRetry, IconImage, IconPlus } from "./icons";
+import { IconSearch5, IconImageSearch, IconFolder, IconClose, IconVideo, IconRetry, IconPlus } from "./icons";
 import { SubjectPhotoPicker } from "./SubjectPhotoPicker";
 import { SplitPane } from "./SplitPane";
 import { AddSubjectDrawer, type AddSubjectDrawerData } from "./AddSubjectDrawer";
@@ -116,33 +116,7 @@ const PRECISION_LABEL: Record<string, string> = {
   frame: "画面",
 };
 
-/* 胶囊色调：按目标类型分配不同颜色背景 */
-const TAG_TONES: Record<string, string> = {
-  行人: "blue",
-  车: "indigo",
-  车辆: "indigo",
-  车牌: "purple",
-  文字: "amber",
-  物体: "teal",
-  画面: "slate",
-  片段: "slate",
-  标签: "slate",
-};
-
-/* 从识别描述中提取颜色特征（如「红衣」→「红色」） */
-const COLOR_WORDS: [string, string][] = [
-  ["红色", "红色"],
-  ["红衣", "红色"],
-  ["橙色", "橙色"],
-  ["黄色", "黄色"],
-  ["绿色", "绿色"],
-  ["蓝色", "蓝色"],
-  ["紫色", "紫色"],
-  ["白色", "白色"],
-  ["黑色", "黑色"],
-  ["灰色", "灰色"],
-  ["粉色", "粉色"],
-];
+/* （v0.6 网格化重构：原结果行胶囊标签 TAG_TONES / COLOR_WORDS / buildPills 已随列表视图退役） */
 
 export function GlobalSearch() {
   const { videos, caseGroups, openWorkbench, selectedTree } = useApp();
@@ -321,14 +295,13 @@ export function GlobalSearch() {
     setError(null);
     try {
       if (tab === "text") {
-        // 与 Workbench VideoSearchCard.handleSearch 完全一致：不传 top_k / min_similarity，
-        // 后端默认 0.3 门槛 + top_k 20 + 7 路并行召回。原先写死 top_k=60 / min_similarity=0
-        // 导致跨视频场景下 frame 路径低分噪声冲榜（v0.37）。
-        // v0.6：车牌/文本类型选中时走专搜，不走通用语义搜索
+        // 与 Workbench VideoSearchCard.handleSearch 同参（min_similarity 后端默认 0.3），
+        // 但全局是跨视频共享 top_k 配额：20 会被多个视频瓜分导致热门视频被饿死（单视频仅得 ~11 条），
+        // 提回 60 与图搜(searchImage top_k=60)对齐；低分噪声由 0.3 门槛兜底（v0.37 的问题是同时开了 0）
         const searchTypes = activeTypeKey === "plate" ? ["plate"]
           : activeTypeKey === "text" ? ["ocr"]
           : undefined;
-        const res = await api.searchSemantic(query.trim(), { video_ids: ids, search_types: searchTypes });
+        const res = await api.searchSemantic(query.trim(), { video_ids: ids, search_types: searchTypes, top_k: 60 });
         const list = res.results ?? [];
         setResults(list);
         setTotal(res.total ?? list.length);
@@ -451,37 +424,27 @@ export function GlobalSearch() {
     });
   }
 
-  function tagTone(tag: string): string {
-    return TAG_TONES[tag] ?? "blue";
-  }
-
-  function extractColor(caption?: string | null): string | null {
-    if (!caption) return null;
-    for (const [kw, name] of COLOR_WORDS) if (caption.includes(kw)) return name;
-    return null;
-  }
-
-  /* 每行标签胶囊：[命中素材库?] [目标类型] [颜色特征/车牌] [置信度] */
-  function buildPills(item: SearchResultItem): { text: string; tone: string }[] {
-    const pills: { text: string; tone: string }[] = [];
-    /* v0.6：素材库命中 — 醒目标签 [命中: 目标名] */
-    if (item.matched_subject) {
-      pills.push({ text: `命中: ${item.matched_subject.subject_name}`, tone: "red" });
-    }
-    const tag = targetTag(item);
-    pills.push({ text: tag, tone: tagTone(tag) });
-    if (item.precision_level === "plate" && item.plate_text) {
-      pills.push({ text: item.plate_text, tone: "purple" });
-    } else {
-      const color = extractColor(item.caption);
-      if (color) pills.push({ text: color, tone: "rose" });
-    }
-    const sim = simValue(item);
-    if (sim >= 0) {
-      pills.push({ text: `${sim}%`, tone: sim >= 80 ? "green" : sim >= 60 ? "amber" : "gray" });
-    }
-    return pills;
-  }
+  /* ── 网格列数测量：折叠态显示一整行结果需要知道当前宽度下每行几格。
+     与 CSS .gs-group-bd 的 minmax(150px,1fr) + gap 10px 公式保持一致：
+     auto-fill 列数 = floor((容器宽 + gap) / (min宽 + gap))。
+     用 callback ref 而非挂载 effect：gs-list 在首搜后才渲染，effect([]) 跑一次时
+     元素不存在会永远停在初始值 —— 回调 ref 保证每次真实挂载都重新测量 ── */
+  const TILE_MIN = 150, TILE_GAP = 10;
+  const gridRoRef = useRef<ResizeObserver | null>(null);
+  const [gridCols, setGridCols] = useState(8);
+  const attachResultGrid = useCallback((el: HTMLDivElement | null) => {
+    gridRoRef.current?.disconnect();
+    if (!el) return;
+    const compute = () => {
+      // 精确宽度：clientWidth − 自身右内边距 4 − group-bd 左右 padding 20
+      const innerW = el.clientWidth - 24;
+      setGridCols(Math.max(1, Math.floor((innerW + TILE_GAP) / (TILE_MIN + TILE_GAP))));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    gridRoRef.current = ro;
+  }, []);
 
   /* 未命名文件显示「摄像头_时间」 */
   function displayName(v?: VideoListItem): string {
@@ -950,7 +913,7 @@ export function GlobalSearch() {
             <span className="gs-empty-sub">试试调整描述、缩短时间段或扩大检索范围</span>
           </div>
         ) : (
-          <div className="gs-list">
+          <div className="gs-list" ref={attachResultGrid}>
             {groupedResults.map(({ videoId, items }) => {
               const v = videoMap.get(videoId);
               const isExpanded = resultGroupsOpen.has(videoId);
@@ -958,8 +921,8 @@ export function GlobalSearch() {
               const fileName = displayName(v);
               const topSim = Math.round(((items[0]?.confidence ?? items[0]?.similarity) ?? 0) * 100);
 
-              /* 渲染单条结果行 */
-              const renderRow = (r: SearchResultItem, i: number) => {
+              /* 渲染单个结果格（网格视图）：缩略图在上 + 简短标签在下（「卡车#10 · 0:12–15 51%」） */
+              const renderTile = (r: SearchResultItem, i: number) => {
                 const processing = v != null && (v.status === "processing" || v.status === "pending");
                 const pct = v?.progress != null ? Math.round(v.progress * 100) : null;
                 const timeSec = r.precise_start ?? r.scene_range_start;
@@ -968,7 +931,9 @@ export function GlobalSearch() {
                 const openResult = () => {
                   const seekTo = timeSec != null ? { start: timeSec, end: r.precise_end ?? null } : undefined;
                   const syncFiles = tab === "image" ? { faceFile: imageSource === "face" ? faceFile ?? undefined : undefined, imageFile: imageSource === "image" ? imageFile ?? undefined : undefined } : {};
-                  if (isTrack && r.track_id != null && timeSec != null) {
+                  /* 车牌等非 track 结果也带 track_id（与视频搜索卡一致）：
+                     只要有主 track 就传 selectTrack，跳转后视频框照样黄框标中车辆 */
+                  if (r.track_id != null && timeSec != null) {
                     openWorkbench(r.video_id, {
                       versionId: r.video_id,
                       seekTo,
@@ -980,9 +945,10 @@ export function GlobalSearch() {
                     openWorkbench(r.video_id, { versionId: r.video_id, ...(seekTo ? { seekTo } : {}), searchQuery: tab === "text" ? query.trim() : undefined, ...syncFiles });
                   }
                 };
+                const simPct = Math.round(((r.confidence ?? r.similarity) ?? 0) * 100);
                 return (
-                  <div key={`${r.video_id}-${i}`} className={"gs-row" + (isSel ? " sel" : "")}>
-                    <div className="gs-row-media" onClick={openResult} title="点击打开对应视频">
+                  <div key={`${r.video_id}-${i}`} className={"gs-tile" + (isSel ? " sel" : "")} onClick={openResult} title={r.class_name ? `${fileName} · ${zh(r.class_name)}` : fileName}>
+                    <div className="gs-tile-media">
                       {r.thumbnail_url ? (
                         <img src={r.thumbnail_url} alt="" loading="lazy" />
                       ) : (
@@ -990,7 +956,6 @@ export function GlobalSearch() {
                           <IconVideo />
                         </div>
                       )}
-                      <span className="gs-row-badge">{timeSec != null ? formatSec(timeSec) : <IconImage />}</span>
                       <button
                         className="gs-row-add"
                         title="加入图片素材库"
@@ -1005,67 +970,57 @@ export function GlobalSearch() {
                         </div>
                       )}
                     </div>
-                    <div className="gs-row-info" onClick={openResult}>
-                      <div className="gs-row-title" title={r.class_name ? `${fileName} · ${r.class_name}` : fileName}>
-                        {isTrack && r.class_name ? (
-                          <span className="gs-row-target">{zh(r.class_name)}{r.display_seq != null && r.display_seq > 1 ? ` #${r.display_seq}` : ""}</span>
-                        ) : (
-                          <span className="gs-row-target muted">{targetTag(r)}</span>
-                        )}
-                        <span className="gs-row-time">{timeSec != null ? formatSec(timeSec) : ""}{r.precise_end != null && r.precise_end !== timeSec ? ` – ${formatSec(r.precise_end)}` : ""}</span>
-                      </div>
-                      <div className="gs-row-tags">
-                        {buildPills(r).map((p, j) => (
-                          <span key={j} className={"gs-pill " + p.tone}>
-                            {p.text}
+                    <div className="gs-tile-info">
+                      <span className="gs-tile-name">
+                        {isTrack && r.class_name
+                          ? `${zh(r.class_name)}${r.display_seq != null && r.display_seq > 1 ? ` #${r.display_seq}` : ""}`
+                          : targetTag(r)}
+                      </span>
+                      <span className="gs-tile-meta">
+                        {timeSec != null && (
+                          <span className="gs-tile-time">
+                            {formatSec(timeSec)}{r.precise_end != null && r.precise_end !== timeSec ? ` – ${formatSec(r.precise_end)}` : ""}
                           </span>
-                        ))}
-                      </div>
-                      <div className="gs-row-meta">
-                        <span className="gs-meta-time">
-                          <IconClock />
-                          {v?.created_at ? fmtFullDate(v.created_at) : "--"}
-                        </span>
-                      </div>
+                        )}
+                        {simPct > 0 && <span className="gs-tile-sim">{simPct}%</span>}
+                      </span>
                     </div>
                   </div>
                 );
               };
 
-              /* 单结果：不折叠，直接显示 */
-              if (items.length === 1) {
-                return (
-                  <div key={videoId} className="gs-group gs-single">
-                    <div className="gs-group-hd">
-                      <span className="gs-group-name" title={fileName}>{fileName}</span>
-                      {topSim > 0 && <span className="gs-group-top">{topSim}%</span>}
-                      <span className="gs-group-path" title={`${groupName} / ${fileName}`}>{groupName}</span>
-                    </div>
-                    <div className="gs-group-bd">
-                      {renderRow(items[0], 0)}
-                    </div>
-                  </div>
-                );
-              }
-
-              /* 多结果：折叠时显示第一条，展开时显示全部 */
-              const visibleRows = Math.min(items.length, 3);
+              /* 折叠规则（按当前网格列数 gridCols）：
+                 结果 ≤ 一行 → 不折叠、无三角，直接全显；
+                 超过一行   → 折叠显示一整行，展开最多两行（16），再多给「未显示」提示 */
+              const canExpand = items.length > gridCols;
+              const visibleItems = !canExpand
+                ? items
+                : isExpanded
+                  ? items.slice(0, gridCols * 2)
+                  : items.slice(0, gridCols);
+              const capText = !isExpanded
+                ? `折叠显示前 ${gridCols} 条 · 共 ${items.length} 条`
+                : `仅显示前 ${gridCols * 2} 条 · 共 ${items.length} 条 · 可在该视频内继续检索`;
               return (
-                <div key={videoId} className="gs-group">
-                  <div className={"gs-group-hd" + (isExpanded ? " open" : "")} onClick={() => toggleGroup(videoId)}>
-                    <span className="gs-group-arrow">▶</span>
+                <div key={videoId} className={"gs-group" + (!canExpand ? " gs-single" : "")}>
+                  <div
+                    className={"gs-group-hd" + (canExpand && isExpanded ? " open" : "")}
+                    onClick={canExpand ? () => toggleGroup(videoId) : undefined}
+                  >
+                    {canExpand && <span className="gs-group-arrow">▶</span>}
                     <span className="gs-group-name" title={fileName}>{fileName}</span>
-                    <span className="gs-group-count">{items.length} 个结果</span>
+                    {items.length > 1 && <span className="gs-group-count">{items.length} 个结果</span>}
                     {topSim > 0 && <span className="gs-group-top">{topSim}%</span>}
                     <span className="gs-group-path" title={`${groupName} / ${fileName}`}>{groupName}</span>
+                    {/* 截断提示：固定在分组头最右（折叠/展开都显示），与 个数/置信度/文件夹 同高 */}
+                    {canExpand && items.length > (isExpanded ? gridCols * 2 : gridCols) && (
+                      <span className="gs-grid-cap" title={capText}>
+                        {capText}
+                      </span>
+                    )}
                   </div>
-                  <div
-                    className={"gs-group-bd" + (isExpanded ? " expanded" : "")}
-                    style={{
-                      maxHeight: isExpanded ? `calc(180px * ${visibleRows} + 8px * ${visibleRows - 1} + 20px)` : "none",
-                    }}
-                  >
-                    {isExpanded ? items.map((r, i) => renderRow(r, i)) : renderRow(items[0], 0)}
+                  <div className="gs-group-bd">
+                    {visibleItems.map((r, i) => renderTile(r, i))}
                   </div>
                 </div>
               );

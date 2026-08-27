@@ -106,6 +106,13 @@ function WbStage({ player, timeline }: { player: React.ReactNode; timeline: Reac
 }
 
 /* ═══════════════ ③ 右摘要卡（摘要 / 文字识别，按状态自动切换） ═══════════════ */
+// 稳定播放：play() 被 seek/pause 瞬时打断（AbortError）时自动补一次，防「点了没反应」的边角态
+function safePlay(video: HTMLVideoElement) {
+  video.play().catch(() => {
+    setTimeout(() => { video.play().catch(() => {}); }, 120);
+  });
+}
+
 function WbSummary({ currentVideo, onSeekTo }: { currentVideo: VideoResponse | null; onSeekTo: (start: number, end: number | null) => void }) {
   // OCR 开启且摘要未开 → 文字识别；否则 → 摘要
   const tab = currentVideo?.ocr_enabled && !currentVideo?.summary_enabled ? "ocr" as const : "summary" as const;
@@ -425,7 +432,7 @@ export function Workbench() {
         const video = videoRef.current;
         if (!video || video.readyState < 1) return false;
         video.currentTime = segs[0].start;
-        video.play().catch(() => {});
+        safePlay(video);
         return true;
       };
       if (applySeek()) return;
@@ -445,7 +452,7 @@ export function Workbench() {
       const video = videoRef.current;
       if (!video || video.readyState < 1) return false;
       video.currentTime = seekTarget.start;
-      if (seekTarget.end != null) video.play().catch(() => {});
+      if (seekTarget.end != null) safePlay(video);
       return true;
     };
     if (applySeek()) return;
@@ -464,6 +471,9 @@ export function Workbench() {
     const onTimeUpdate = () => {
       // 跳转进行中，等视频真正播放到新位置再处理
       if (segmentJumpingRef.current) return;
+      // seek 定位过程中浏览器会派发带中间值的 timeupdate（含旧位置），
+      // 此时拿去和 end 比较会造成误暂停并清掉目标 → 「点了没反应」
+      if (video.seeking) return;
       const end = autoPauseEndRef.current;
       if (end != null && video.currentTime >= end) {
         const segs = segmentQueueRef.current;
@@ -515,11 +525,11 @@ export function Workbench() {
         segmentJumpingRef.current = false;
         video.currentTime = segs[0].start;
         autoPauseEndRef.current = segs[0].end;
-        video.play().catch(() => {});
+        safePlay(video);
       } else {
         video.currentTime = pendingSeek.start;
         autoPauseEndRef.current = pendingSeek.end;
-        if (pendingSeek.end != null) video.play().catch(() => {});
+        if (pendingSeek.end != null) safePlay(video);
       }
       return true;
     };
@@ -553,6 +563,11 @@ export function Workbench() {
   /* ── 搜索 track 结果点击 ── */
   const handleSearchTrackResult = useCallback((videoId: string, trackId: number, className: string, start: number, end?: number | null) => {
     if (videoId && videoId !== currentVideoId) handleGroupVideoSwitch(videoId);
+    // 同步预置（防 play/pause 竞态，理由同 handleSeekTo）
+    segmentQueueRef.current = null;
+    segmentIdxRef.current = 0;
+    segmentJumpingRef.current = false;
+    autoPauseEndRef.current = end ?? null;
     const target = justSwitchedToRef.current;
     if (target) {
       justSwitchedToRef.current = null;
@@ -583,6 +598,11 @@ export function Workbench() {
     }
     segs.sort((a, b) => a.start - b.start);
     const start = segs[0]?.start ?? ts;
+    // 同步预置（防 play/pause 竞态，理由同 handleSeekTo）
+    segmentQueueRef.current = segs.length > 0 ? segs : null;
+    segmentIdxRef.current = 0;
+    segmentJumpingRef.current = false;
+    autoPauseEndRef.current = segs.length > 0 ? segs[0].end : null;
     const target = justSwitchedToRef.current;
     if (target) {
       justSwitchedToRef.current = null;
@@ -597,6 +617,19 @@ export function Workbench() {
 
   const handleSeekTo = useCallback((start: number, end: number | null, segments?: { start: number; end: number }[]) => {
     const payload = segments && segments.length ? { start, end, segments } : { start, end };
+    // 同步预置自动暂停状态：点击→effect 执行之间有空窗，若挂着旧 end，在途 timeupdate
+    // 会抢先 pause 并清掉目标（play/pause 竞态 → 点击后无反应），必须点击瞬间就写 ref
+    if (segments && segments.length) {
+      segmentQueueRef.current = segments;
+      segmentIdxRef.current = 0;
+      segmentJumpingRef.current = false;
+      autoPauseEndRef.current = segments[0].end;
+    } else {
+      segmentQueueRef.current = null;
+      segmentIdxRef.current = 0;
+      segmentJumpingRef.current = false;
+      autoPauseEndRef.current = payload.end ?? null;
+    }
     const target = justSwitchedToRef.current;
     if (target) {
       justSwitchedToRef.current = null;
@@ -801,6 +834,7 @@ export function Workbench() {
                     initialQuery={pendingSearchQuery}
                     initialFaceFile={pendingFaceFile}
                     initialImageFile={pendingImageFile}
+                    selectedTrackId={selectedTrackId}
                   />
                 }
               />
