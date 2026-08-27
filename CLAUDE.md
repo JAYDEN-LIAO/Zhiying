@@ -2,7 +2,7 @@
 
 ## Overview
 
-智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 + 图片素材库（人脸/通用图搜分轨检索）→ FastAPI + PostgreSQL/pgvector 对外服务。当前版本 **v0.6**（图片素材库 + 搜索统一 + 摘要 UI 重构）；后端定版 v0.34（OCR RapidOCR+DirectML 子进程）。
+智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 + 图片素材库（人脸/通用图搜分轨检索）→ FastAPI + PostgreSQL/pgvector 对外服务。当前版本 **v0.6**（图片素材库 + 搜索统一 + 摘要 UI 重构；v0.6.1 人脸出现段 / v0.6.2 日志与存储卫生强化）；后端定版 v0.34（OCR RapidOCR+DirectML 子进程）。
 
 **关键锚点**：
 - **生产部署**：10.0.0.176（systemd `zhiying.service`，8011）；发版 `./bump` → 服务器 `bash deploy.sh v<tag>`
@@ -67,6 +67,17 @@
 - **搜索隔离**: search/face 与 search/image 参数必须 `Form(...)` 声明（防全库泄漏）
 - **版本号**: `core/version.py` `__version__` 唯一来源；后端+服务器前端改动必须 `./bump`
 - **存储卫生**: 删除必须 `repository.delete_video`；新落盘路径登记进 `storage_manager.py`
+- **删除三层保证（v0.6.2）**: 路由显式清盘 → DB FK CASCADE → `maintenance/sweep` 兜底；
+  task_logs / pipeline_tasks 无 FK（bootstrap 手建表），由 delete_video **显式清除**
+  （删视频连队列行一起清，重启恢复不复活僵尸任务；恢复时发现视频已删的排队任务标 failed，
+  executor 缺视频抛错而非静默 completed）
+- **素材库/案例库路径**: 底图/案例图落盘一律经 StorageManager（`subject_photo_dir` /
+  `case_asset_dir`）存**绝对路径**；历史相对路径行由读取侧归一化兼容（`_resolve_legacy_path` 等），
+  不迁移存量数据
+- **任务日志**: 失败 traceback 批量单次落库（append_task_logs）；日志孤儿/超期行与队列终态行
+  按 `TASK_LOG_RETENTION_DAYS`（90 天）随 sweep 清理；queued/running 队列行永不清（重启恢复数据源）
+- **图片素材纳入清扫**: subject_photos / case_assets 目录递归扫引用集 + 600s mtime 保护
+  （覆盖"文件已落盘、DB 未 commit"的崩溃窗口）
 
 ## Database (19 tables)
 
@@ -85,8 +96,8 @@
 | `image_subjects` | 素材库关注目标（人/其他，kind 两态） |
 | `subject_photos` | 素材库底库照片（crop/source/source_video_id） |
 | `subject_photo_embedding` | 素材库检索向量（分轨：person→Vector(512) / other→EmbedVector） |
-| `pipeline_tasks` | 全局任务队列持久化 |
-| `task_logs` | 任务生命周期日志 |
+| `pipeline_tasks` | 全局任务队列持久化；delete_video 显式清行（防僵尸）；终态行 90 天保留 |
+| `task_logs` | 任务生命周期日志；delete_video 显式清（无 FK）；孤儿/超期随 sweep 清理 |
 
 向量列用 `EmbedVector()`（8b=4096 / 2b=2048）；人脸 `Vector(512)`。
 

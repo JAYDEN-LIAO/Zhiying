@@ -202,10 +202,34 @@ class PipelineQueue:
             rows = (await session.execute(
                 select(PipelineTask).where(PipelineTask.status.in_(["queued", "running"]))
             )).scalars().all()
+            # 一次性取活视频 id 集：queued 任务的视频可能已在排队期间被删除
+            #（v0.6.2 前 delete_video 不清队列行）→ 重入队只会空转成僵尸任务。
+            # 视频表不可查询时（极简单测环境无 videos 表）→ 置 None 退回旧行为，
+            # 不阻断恢复流程（生产 PostgreSQL 恒有该表，恒走校验）。
+            try:
+                live_video_ids = {row[0] for row in await session.execute(select(Video.id))}
+            except Exception:
+                logger.warning("[PipelineQueue] recover: cannot verify video existence, skipping stale-task filter")
+                live_video_ids = None
         for row in rows:
             try:
                 payload = json.loads(row.payload_json)
                 video_id = str(row.video_id) if row.video_id else None
+                if live_video_ids is not None and row.video_id is not None and row.video_id not in live_video_ids:
+                    # 视频已不存在 → 标 failed 而非重入队（yunzhi 已建视频的续跑同理）
+                    async with self._db() as session:
+                        db_row = (await session.execute(
+                            select(PipelineTask).where(PipelineTask.id == row.id)
+                        )).scalar_one_or_none()
+                        if db_row is not None:
+                            db_row.status = "failed"
+                            db_row.error = "视频不存在（可能在排队期间被删除）"
+                            await session.commit()
+                    logger.info(
+                        "[PipelineQueue] recover skipped task %s (%s): video %s gone",
+                        row.id, row.type, video_id,
+                    )
+                    continue
                 if row.status == "queued":
                     await self._queue.put((str(row.id), row.type, payload, video_id))
                     logger.info("[PipelineQueue] recovered queued task %s (%s)", row.id, row.type)

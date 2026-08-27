@@ -88,6 +88,15 @@ class StorageManager:
         """素材库底库照片目录（v0.6，图片素材库）— 按目标一人一目录。"""
         return os.path.join(self.artifact_dir(), "subject_photos", str(subject_id))
 
+    def case_asset_dir(self, group_id: uuid.UUID) -> str:
+        """案例图片素材目录（v0.34）— 一组一目录。统一走 StorageManager 解析
+        （此前 groups_routes 用裸 load_config 相对值拼路径，CWD 变化即静默失配）。"""
+        return os.path.join(self.artifact_dir(), "case_assets", str(group_id))
+
+    def resolve(self, p: str) -> str:
+        """对外暴露路径归一化：相对路径收敛到项目根（处理历史行存的相对路径）。"""
+        return self._resolve(p)
+
     # ──────────────────────────────────────────────
     # 引用追踪（派生自 videos 表，不加新表）
     # ──────────────────────────────────────────────
@@ -112,6 +121,19 @@ class StorageManager:
         """活视频 id 集合 — 用于附属目录(缩略图/音频/chunk)的孤儿判定。"""
         result = await session.execute(select(Video.id))
         return {row[0] for row in result.all()}
+
+    async def all_subject_photo_paths(self, session: AsyncSession) -> set[str]:
+        """素材库底库照片引用集（归一化绝对路径）。subject_photos 此前游离在
+        清扫体系外（v0.6.2 收编）：泄漏只能靠路由层删除兜底，崩溃窗口产物无人回收。"""
+        from core.models import SubjectPhoto
+        result = await session.execute(select(SubjectPhoto.file_path))
+        return {self._resolve(row[0]) for row in result.all() if row[0]}
+
+    async def all_case_asset_paths(self, session: AsyncSession) -> set[str]:
+        """案例图片素材引用集（归一化；历史行可能存相对路径，_resolve 兼容）。"""
+        from core.models import CaseAsset
+        result = await session.execute(select(CaseAsset.path))
+        return {self._resolve(row[0]) for row in result.all() if row[0]}
 
     # ──────────────────────────────────────────────
     # 删除清理（DB 删除 commit 之后调用）
@@ -212,6 +234,10 @@ class StorageManager:
         # 4. 空组
         await self._sweep_empty_groups(report, session, dry_run=dry_run)
 
+        # 5. 图片素材孤儿（v0.6.2 收编：此前完全游离在清扫体系外）
+        await self._sweep_subject_photos(report, session, dry_run=dry_run)
+        await self._sweep_case_assets(report, session, dry_run=dry_run)
+
         report["total_bytes_reclaimable"] = sum(
             c.get("bytes", 0) for c in report["categories"].values()
         )
@@ -264,7 +290,9 @@ class StorageManager:
             now = _now()
             for name in os.listdir(base):
                 path = os.path.join(base, name)
-                if not os.path.isfile(path):
+                # v0.6.2: 目录也纳入 TTL（此前只扫顶层 isfile，子目录会永留；
+                # 当前代码只写顶层文件，属防御性修复）
+                if not os.path.isfile(path) and not os.path.isdir(path):
                     continue
                 try:
                     if now - os.path.getmtime(path) >= EXPORTS_TTL_SEC:
@@ -272,6 +300,42 @@ class StorageManager:
                 except OSError:
                     continue
         self._record(report, "exports_ttl", targets, dry_run=dry_run)
+
+    async def _sweep_subject_photos(
+        self, report: dict, session: AsyncSession, dry_run: bool,
+    ) -> None:
+        """subject_photos 孤儿文件：递归扫描目录，不在 SubjectPhoto.file_path
+        引用集内的文件回收（mtime 保护覆盖「文件已落盘、DB 未 commit」的上传窗口）。"""
+        referenced = await self.all_subject_photo_paths(session)
+        targets = self._orphan_files_under(os.path.join(self.artifact_dir(), "subject_photos"), referenced)
+        self._record(report, "subject_photo_files", targets, dry_run=dry_run)
+
+    async def _sweep_case_assets(
+        self, report: dict, session: AsyncSession, dry_run: bool,
+    ) -> None:
+        """case_assets 孤儿文件：同 subject_photos（引用集兼容历史相对路径行）。"""
+        referenced = await self.all_case_asset_paths(session)
+        targets = self._orphan_files_under(os.path.join(self.artifact_dir(), "case_assets"), referenced)
+        self._record(report, "case_asset_files", targets, dry_run=dry_run)
+
+    def _orphan_files_under(self, base: str, referenced: set[str]) -> list[str]:
+        """base 下递归收集「无引用且超过 mtime 保护窗」的文件；目录不存在返回空。"""
+        targets: list[str] = []
+        if not os.path.isdir(base):
+            return targets
+        now = _now()
+        for root, _dirs, files in os.walk(base):
+            for name in files:
+                path = os.path.join(root, name)
+                if self._resolve(path) in referenced:
+                    continue
+                try:
+                    if now - os.path.getmtime(path) < UPLOAD_MTIME_GUARD_SEC:
+                        continue  # 新文件可能是正在上传/未提交的窗口产物，不动
+                except OSError:
+                    continue
+                targets.append(path)
+        return targets
 
     async def _sweep_empty_groups(
         self, report: dict, session: AsyncSession, dry_run: bool,

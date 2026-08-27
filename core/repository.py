@@ -252,9 +252,12 @@ async def delete_video(
     group_id = video.group_id
 
     try:
-        # task_logs 无 FK（bootstrap 手建表），CASCADE 级联不到 —— 不清则孤儿日志
-        # 永久残留（v0.34 起删除视频前显式清理）
+        # task_logs / pipeline_tasks 无 FK（bootstrap 手建表），CASCADE 级联不到
+        # —— 不清则孤儿日志与僵尸队列行永久残留（v0.6.2 起 delete_video 显式清理）。
+        # 删除排队中视频时清掉其队列行，重启恢复也不会再把死任务重新入队。
+        from core.models import PipelineTask
         await session.execute(delete(TaskLog).where(TaskLog.task_id == video_id))
+        await session.execute(delete(PipelineTask).where(PipelineTask.video_id == video_id))
         await session.execute(delete(Video).where(Video.id == video_id))
 
         await session.commit()
@@ -749,6 +752,40 @@ async def prune_old_task_logs(
         )
         return int(res.scalar() or 0)
     res = await session.execute(delete(TaskLog).where(TaskLog.created_at < cutoff))
+    await session.commit()
+    return int(res.rowcount or 0)
+
+
+async def purge_pipeline_tasks(session: AsyncSession, video_id: uuid.UUID) -> int:
+    """删除某视频的全部队列持久化行（delete_video 调用；单列以便独立测试）。"""
+    from core.models import PipelineTask
+    res = await session.execute(delete(PipelineTask).where(PipelineTask.video_id == video_id))
+    return int(res.rowcount or 0)
+
+
+async def prune_old_pipeline_tasks(
+    session: AsyncSession,
+    days: int = TASK_LOG_RETENTION_DAYS,
+    dry_run: bool = True,
+) -> int:
+    """队列行保留策略：只清终态（completed/failed）超期的行。
+
+    ⚠️ queued/running 行绝不动 —— 它们是重启恢复（PipelineQueue.recover）的数据源；
+    dedup_key 幂等查重也依赖近侧行存在，90 天窗口远大于任何重试间隔。
+    """
+    from core.models import PipelineTask
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
+    cond = (
+        PipelineTask.status.in_(["completed", "failed"])
+        & (PipelineTask.updated_at < cutoff)
+    )
+    if dry_run:
+        res = await session.execute(
+            select(func.count()).select_from(PipelineTask).where(cond)
+        )
+        return int(res.scalar() or 0)
+    res = await session.execute(delete(PipelineTask).where(cond))
     await session.commit()
     return int(res.rowcount or 0)
 

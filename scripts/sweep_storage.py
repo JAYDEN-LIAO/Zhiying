@@ -65,6 +65,10 @@ def _print_human(report: dict) -> None:
             f"任务日志: 孤儿 {tl['orphan_rows']} 行 + 超期(>{tl['retention_days']}天) "
             f"{tl['pruned_rows']} 行 {verb}"
         )
+    pt = report.get("pipeline_tasks")
+    if pt:
+        verb = "待清理（dry-run，未删除）" if report["dry_run"] else "已清理"
+        print(f"队列行(终态): 超期(>{pt['retention_days']}天) {pt['pruned_rows']} 行 {verb}")
 
 
 async def main() -> int:
@@ -85,15 +89,21 @@ async def main() -> int:
     try:
         async with AsyncSessionLocal() as session:
             report = await manager.sweep(session, dry_run=not args.apply)
-            # 任务日志卫生与 API /maintenance/sweep 同源（孤儿 + 超保留期）
+            # 任务日志卫生与 API /maintenance/sweep 同源（孤儿 + 超保留期 + 队列终态行）
             from core.repository import (
                 TASK_LOG_RETENTION_DAYS,
                 cleanup_orphan_task_logs,
                 prune_old_task_logs,
+                prune_old_pipeline_tasks,
             )
             report["task_logs"] = {
                 "orphan_rows": await cleanup_orphan_task_logs(session, dry_run=not args.apply),
                 "pruned_rows": await prune_old_task_logs(
+                    session, days=TASK_LOG_RETENTION_DAYS, dry_run=not args.apply),
+                "retention_days": TASK_LOG_RETENTION_DAYS,
+            }
+            report["pipeline_tasks"] = {
+                "pruned_rows": await prune_old_pipeline_tasks(
                     session, days=TASK_LOG_RETENTION_DAYS, dry_run=not args.apply),
                 "retention_days": TASK_LOG_RETENTION_DAYS,
             }

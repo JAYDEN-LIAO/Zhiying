@@ -234,13 +234,33 @@ def _build_service(app) -> VideoService:
 
 
 async def execute_pipeline_task(app, task_id: str, payload: dict, video_id: str | None = None) -> None:
-    """队列 worker 执行的 pipeline 任务：对已有视频跑全管道。"""
-    await _build_service(app).process_video(uuid.UUID(payload["video_id"]))
+    """队列 worker 执行的 pipeline 任务：对已有视频跑全管道。
+
+    ⚠️ 视频不存在（排队期间被删除等）→ 抛错让队列行标 failed（error 带原因），
+    而非静默返回被标 completed —— 那个「完成」是假的，排查时误导。
+    """
+    svc = _build_service(app)
+    vid = uuid.UUID(payload["video_id"])
+    async with svc.db_session_factory() as session:
+        exists = (await session.execute(
+            select(Video.id).where(Video.id == vid)
+        )).scalar_one_or_none()
+    if exists is None:
+        raise RuntimeError(f"视频 {vid} 不存在（可能已被删除），任务无法执行")
+    await svc.process_video(vid)
 
 
 async def execute_incremental_task(app, task_id: str, payload: dict, video_id: str | None = None) -> None:
-    """队列 worker 执行的 incremental 任务：对已完成视频补跑指定阶段。"""
-    await _build_service(app).incremental_process(
-        uuid.UUID(payload["video_id"]),
+    """队列 worker 执行的 incremental 任务：对已完成视频补跑指定阶段。同上：缺视频即标失败。"""
+    vid = uuid.UUID(payload["video_id"])
+    svc = _build_service(app)
+    async with svc.db_session_factory() as session:
+        exists = (await session.execute(
+            select(Video.id).where(Video.id == vid)
+        )).scalar_one_or_none()
+    if exists is None:
+        raise RuntimeError(f"视频 {vid} 不存在（可能已被删除），增量任务无法执行")
+    await svc.incremental_process(
+        vid,
         set(payload.get("added_modalities", [])),
     )

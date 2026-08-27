@@ -63,7 +63,11 @@ def default_params_for_operation(operation: str) -> dict:
 
 
 def _write_report(work_dir: Path, result_data: dict) -> str | None:
-    """把结果 JSON 写入平台工作目录（供前端 files.saveToLibrary 登记到文件库）。"""
+    """把结果 JSON 写入平台工作目录（供前端 files.saveToLibrary 登记到文件库）。
+
+    注：平台侧工作目录**有意豁免** storage_manager 清扫 —— 归云智平台所有，
+    与「source_owned=False 就地引用不删源文件」同一原则，Zhiying 不负责回收。
+    """
     try:
         work_dir.mkdir(parents=True, exist_ok=True)
         report = work_dir / "zhiying-result.json"

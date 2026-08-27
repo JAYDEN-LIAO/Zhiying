@@ -33,7 +33,8 @@ curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # �
 | 文件库/多版本/任务中心/批量解析/重命名/任务删除(仅失败,隐藏) | `/files` `/groups` `/tasks` `/analyze-batch` · `DELETE /tasks/{id}` | ✅ |
 | 案例素材管理（图片拖拽上传/预览/删除） | `GET/POST /groups/{id}/assets` · `/assets/{id}/file` · `DELETE /assets/{id}` | ✅ |
 | 任务报告导出（Markdown 聚合产物统计） | `GET /tasks/{id}/report` · `POST /tasks/export-batch` | ✅ |
-| 存储卫生 | 删除即清盘 + 孤儿清扫（`POST /maintenance/sweep`）+ 存储用量（`GET /maintenance/storage`） | ✅ |
+| 存储卫生 | 删除即清盘（视频/案例/素材库/版本链三层保证：路由显式清 → FK 级联 → sweep 兜底）+ 孤儿清扫（`POST /maintenance/sweep` / `scripts/sweep_storage.py`；含 subject_photos/case_assets 图片孤儿与 mtime 保护）+ 存储用量（`GET /maintenance/storage`） | ✅ |
+| 任务日志 | 日志弹窗复制/一键导出 `.log`（UTF-8 BOM + CRLF）+ 处理中自动增量刷新尾部跟随；失败 traceback 批量落库、孤儿/超期 90 天清扫 | ✅ |
 | 云智平台集成 | `register-external` + `/internal/yunzhi/jobs`（202 异步+回调+幂等） | ✅ |
 | 桌面端启动器+独立桌面前端 | pywebview 壳 + 5 页管理后台（文件库/视频解析/素材库/任务中心/系统设置） | ✅ |
 | **图片素材库**（v0.6） | 关注目标（人/其他）底库照片管理 + 人脸/通用图搜分轨检索 + 检测/图搜沉淀 + 案例库转存 | ✅ |
@@ -102,6 +103,9 @@ zhiying/
 ## Development Status
 
 **当前状态（v0.6）**：图片素材库 + 搜索统一 + 摘要/文字识别 UI 重构
+
+- **任务日志系统健壮化**（v0.6.2）：日志弹窗三图标钮（导出/复制/关闭 28×28 等高对齐）+ 一键导出 `.log` 纯文本（头部元信息注释块、UTF-8 BOM 防 Windows 记事本乱码、grep/tail 友好）+ 处理中任务弹窗 2.5s 增量刷新尾部跟随；后端 `delete_video` 显式清 task_logs，孤儿/超期 90 天随 sweep 清理，失败 traceback 批量单次落库
+- **存储卫生收编**（v0.6.2）：subject_photos / case_assets 纳入孤儿清扫（引用集 + mtime 保护）；素材库 merge 重写（先搬文件重写路径再删源目录，修复缺 `request` 参数必 NameError 的整体不可用）；案例素材/底图绝对路径落库 + 历史相对路径读取侧归一化兼容；pipeline_tasks 治理（删视频清队列行、重启恢复僵尸标 failed、executor 缺视频诚实失败、终态行 90 天保留）
 
 - **图片素材库**（v0.6 核心）：`image_subjects` / `subject_photos` / `subject_photo_embedding` 三表 + 15 个 `/subjects` API + 桌面端第 5 页 `ImageLibrary`（左列表+右详情+裁剪+拖拽扩充）+ `SubjectPhotoPicker`（全局搜索/视频搜索卡统一选图来源）+ `AddSubjectDrawer`（检测/图搜一键沉淀）；检索分轨：person→ArcFace 512 / other→Qwen3-VL
 - **搜索统一**：退役 `CaseAssetPicker`（案例图片选图），所有图搜/人脸搜入口统一走素材库 `SubjectPhotoPicker`；全局搜索关键词/人脸/图搜自动同步到视频搜索卡片

@@ -21,6 +21,7 @@ from core.repository import (
     TASK_LOG_RETENTION_DAYS,
     cleanup_orphan_task_logs,
     prune_old_task_logs,
+    prune_old_pipeline_tasks,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,15 +62,20 @@ async def sweep_storage(
     # 任务日志卫生：孤儿日志（视频已删遗留）+ 超保留期旧行（dry_run 同步只统计）
     orphan_rows = await cleanup_orphan_task_logs(db, dry_run=req.dry_run)
     pruned_rows = await prune_old_task_logs(db, days=req.log_retention_days, dry_run=req.dry_run)
+    # 队列行保留策略：只清终态超期行（queued/running 是重启恢复数据源，绝不动）
+    pruned_task_rows = await prune_old_pipeline_tasks(
+        db, days=req.log_retention_days, dry_run=req.dry_run,
+    )
     report["task_logs"] = {
         "orphan_rows": orphan_rows,
         "pruned_rows": pruned_rows,
         "retention_days": req.log_retention_days,
     }
-    if orphan_rows or pruned_rows:
+    report["pipeline_tasks"] = {"pruned_rows": pruned_task_rows, "retention_days": req.log_retention_days}
+    if orphan_rows or pruned_rows or pruned_task_rows:
         logger.info(
-            "[Maintenance] Task-log sweep dry_run=%s → orphan=%d pruned=%d (>%dd)",
-            req.dry_run, orphan_rows, pruned_rows, req.log_retention_days,
+            "[Maintenance] Task-log sweep dry_run=%s → orphan=%d pruned=%d pipeline_tasks=%d (>%dd)",
+            req.dry_run, orphan_rows, pruned_rows, pruned_task_rows, req.log_retention_days,
         )
 
     logger.info(

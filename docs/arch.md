@@ -1,6 +1,6 @@
 # Zhiying Architecture
 
-> 版本: v0.6（图片素材库 + 搜索统一 + 摘要 UI 重构）· 后端定版 v0.34（OCR） | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> 版本: v0.6（图片素材库 + 搜索统一 + 摘要 UI 重构；v0.6.1 人脸出现段 / v0.6.2 日志与存储卫生强化）· 后端定版 v0.34（OCR） | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > 核心能力：16-op DAG · 4 编码路径 · YOLO11/BoT-SORT 双层 ReID · 人脸/车牌/OCR · 8 路搜索+图搜 · 图片素材库（人脸/通用图搜分轨检索）· 智能参数系统 · 全局任务队列 · 云智接入 · 桌面端
 
 ## System Data Flow
@@ -79,6 +79,8 @@ Keyframe 4 消费链: frame_encode/text_encode/chunk_encode/caption
 人脸路: SCRFD + ArcFace 512d → 护栏式双阈值聚类（同 track 0.30 / 跨 track 0.58）
        出现段 = 该身份主 person track 的 [first_seen, last_seen]（track_to_identity 同源，非采样点）
 任务队列: PipelineQueue FIFO + N worker + pipeline_tasks 表持久化
+任务日志: task_logs(seq/level/created_at, (task_id,seq) 索引)——失败 traceback 批量单次落库；
+          delete_video 显式清(无 FK)；孤儿/超期 90 天随 maintenance/sweep 清理(TASK_LOG_RETENTION_DAYS)
 文件库: videos.file_id+version_no 版本链；批量解析仅处理 pending 视频
 案例素材: case_assets 表（图片等归档素材，不参与管道；图片上传已退役，仅保留视频）
 素材库: image_subjects + subject_photos + subject_photo_embedding（分轨向量）
@@ -130,8 +132,8 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 | `image_subjects` | id, kind(person/other), name, tags(JSONB), photo_count | 素材库关注目标 |
 | `subject_photos` | id, subject_id, file_path, crop(JSONB), is_primary, source, source_video_id | 素材库底库照片 |
 | `subject_photo_embedding` | photo_id, kind, face_embedding(512), other_embedding(EmbedVector) | 素材库检索向量（分轨） |
-| `pipeline_tasks` | status, dedup_key | 任务队列持久化 |
-| `task_logs` | seq, level, message | 任务生命周期日志 |
+| `pipeline_tasks` | status, dedup_key | 任务队列持久化；delete_video 显式清行（防僵尸）；终态行 90 天保留 |
+| `task_logs` | seq, level, message | 任务生命周期日志；delete_video 显式清（无 FK）；孤儿/超期随 sweep 清理 |
 
 向量列 `EmbedVector()`（8b=4096 / 2b=2048）；人脸 `Vector(512)`。
 
@@ -203,6 +205,9 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 | OCR 独立子进程 | DML 隔离不破坏人脸/车牌 CUDA；封装态 worker 仅 .pyc，插件 .pyc 回退 + ZHIYING_PROJECT_ROOT 定位 vendor |
 | 参数预设随 git | config/presets.json 部署/换机开箱复用 |
 | 桌面壳 URL 版本缓存击穿 | WebView2 持久化缓存（private_mode=False）跨版本复用旧 UI，load_url 带 `?v=<version>` 强制取新 |
+| 删除三层保证（v0.6.2） | 路由显式清盘 → FK CASCADE → sweep 兜底；task_logs/pipeline_tasks 无 FK 由 delete_video 显式清，删视频连队列行一起清 |
+| 图片素材纳入 sweep | subject_photos/case_assets 文件级引用集 + 600s mtime 保护（上传崩溃窗口可回收）；路径一律 StorageManager 绝对落库，历史相对行读取侧归一化 |
+| 队列僵尸治理 | 重启恢复时视频已删的 queued 任务标 failed 不重入队；executor 缺视频抛错标 failed（不再假 completed）；终态队列行 90 天保留清理 |
 
 ## Current Status
 
@@ -213,6 +218,12 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 **桌面端 UI 优化**：视频搜索卡仅限当前视频检索（退役范围下拉，与全局搜索划清边界）+ 结果类型筛选下拉（全部/画面定位/物体定位，search_types API 过滤）+ **智能筛选推荐**（`POST /search/suggest-filter` 文本相似度预判，事件/动作类→画面定位、单物体类→物体定位，手动选择优先）+ 搜索框固定不随结果滚动 + 搜索结果时间范围自动暂停（timeupdate 监听）+ 摘要卡 tab 按钮删除（标题随内容自动切换）+ 摘要卡嵌套容器精简 + 全局搜索类型 chip 互斥选中 + 物体检测栏进度条删除 + 案例库添加下拉图标尺寸统一。
 
 **杂项修复**：**人脸出现段修复**（检测栏出现段=主 person track 起止，排除搭车长 track；人脸搜索结果/时间列表自动播放逐段跳过 + 当前段黄框高亮）· **任务中心删除**（`DELETE /tasks/{id}` 仅失败任务，`videos.task_hidden` 隐藏不删视频/文件）· **弹窗/抽屉 portal 统一**（`createPortal(document.body)` + `onMouseDown` 遮罩关闭 + `DetectionOverlay` 真实事件目标 containment 防穿透）。
+
+**v0.6.2 日志与存储卫生强化**：
+
+- **任务日志健壮化**：弹窗头部统一 28×28 图标钮（导出/复制/关闭等高对齐）+ 复制图标化成功反馈；一键导出 `.log` 纯文本——头部元信息 `#` 注释块、正文「时间 [级别] #序号 消息」固定列宽、UTF-8 BOM（防 Windows 记事本 ANSI 乱码）、CRLF、grep/tail 友好。处理中任务弹窗 2.5s 按 seq 增量刷新 + 尾部跟随（上翻 >40px 暂停吸底）。后端：delete_video 显式清 task_logs；孤儿行清扫 + 超期 90 天保留策略（TASK_LOG_RETENTION_DAYS，随 maintenance/sweep 与 scripts/sweep_storage.py 执行，报告含 task_logs/pipeline_tasks 键）；失败 traceback 由逐行 N 次事务合并为单次批量落库（append_task_logs）；repository 中 append_task_log 双重定义合并
+- **存储卫生收编**：subject_photos / case_assets 加入 sweep（新增 subject_photo_files / case_asset_files 类目，文件级引用集判定 + UPLOAD_MTIME_GUARD_SEC mtime 保护）；素材库 merge 重写——修复缺 `request: Request` 参数导致的必 NameError 500（接口此前整体不可用），且改为先搬文件重写 file_path 再清源目录（原逻辑 rmtree 会把并入照片变死链）；案例素材与底图落盘统一经 StorageManager（case_asset_dir / subject_photo_dir）存绝对路径，历史相对路径行读取侧归一化兼容（groups_routes._asset_abs_path / subjects_routes._resolve_legacy_path），预览/删除/转存全链路修正；_sweep_exports 子目录纳入 TTL
+- **队列僵尸治理**：delete_video 显式删 pipeline_tasks 行 → 重启恢复不再复活已删视频的排队任务；recover() 对视频已不存在的 queued 行标 failed（error 带原因），活视频集查询不可用时降级跳过校验；execute_pipeline/incremental_task 缺视频抛 RuntimeError 让队列诚实标 failed；终态（completed/failed）队列行按 90 天保留清理（queued/running 永不清）。yunzhi 平台工作目录有意豁免清扫（归平台所有，注释已声明）
 
 **v0.37 智能参数系统**：持久化推荐(suggest-params 自动落库 4 字段) + 抽屉轻量面板(PATCH toggles 点击即保存) + AnalyzeSettingsPanel 三处共用 + ContentType 9 场景枚举 + 摘要默认全关 + Workbench 紧凑弹窗 + 批量解析双模式(按各视频/统一参数)。
 

@@ -226,7 +226,8 @@ async def upload_subject_photos(
     if s is None:
         raise HTTPException(status_code=404, detail="目标不存在")
     sm = getattr(request.app.state, "storage_manager", None)
-    dest_dir = sm.subject_photo_dir(subject_id) if sm else os.path.join("data/artifacts", "subject_photos", str(subject_id))
+    from core.paths import project_root
+    dest_dir = sm.subject_photo_dir(subject_id) if sm else str(project_root() / "data" / "artifacts" / "subject_photos" / str(subject_id))
     os.makedirs(dest_dir, exist_ok=True)
     src = source or "upload"
 
@@ -263,14 +264,18 @@ async def import_case_asset_photo(
     if s is None:
         raise HTTPException(status_code=404, detail="目标不存在")
     asset = await db.get(CaseAsset, asset_id)
-    if asset is None or asset.group_id != group_id or not os.path.exists(asset.path):
+    if asset is None or asset.group_id != group_id or not asset.path:
+        raise HTTPException(status_code=404, detail="案例素材不存在")
+    src_abs = _resolve_legacy_path(asset.path)  # 历史行可能存相对路径
+    if not os.path.exists(src_abs):
         raise HTTPException(status_code=404, detail="案例素材不存在")
     sm = getattr(request.app.state, "storage_manager", None)
-    dest_dir = sm.subject_photo_dir(subject_id) if sm else os.path.join("data/artifacts", "subject_photos", str(subject_id))
+    from core.paths import project_root
+    dest_dir = sm.subject_photo_dir(subject_id) if sm else str(project_root() / "data" / "artifacts" / "subject_photos" / str(subject_id))
     os.makedirs(dest_dir, exist_ok=True)
-    ext = os.path.splitext(asset.path)[1] or ".jpg"
+    ext = os.path.splitext(src_abs)[1] or ".jpg"
     dest = os.path.join(dest_dir, f"{uuid.uuid4()}{ext}")
-    shutil.copyfile(asset.path, dest)
+    shutil.copyfile(src_abs, dest)
     p = SubjectPhoto(subject_id=subject_id, file_path=dest, source="case")
     db.add(p)
     await db.flush()
@@ -332,30 +337,88 @@ async def delete_subject_photo(
 
 # ─────────────── 合并 ───────────────
 
+def _resolve_legacy_path(p: str) -> str:
+    """历史行可能存相对路径（CWD 恰好=项目根才碰巧可用）→ 收敛到项目根绝对路径。"""
+    if os.path.isabs(p):
+        return p
+    from core.paths import project_root
+    return str(project_root() / p)
+
+
 @router.post("/subjects/merge", response_model=APIResponse[dict])
 async def merge_subjects(
     payload: MergeSubjectsRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
-    """手动合并：把 source 的全部照片并入 target，合并标签，删除 source。"""
+    """手动合并：把 source 的全部照片并入 target，合并标签，删除 source。
+
+    ⚠️ 实现要点（v0.6.2 修复）：照片文件按「每目标一目录」落盘，必须先把文件
+    从 source 目录**搬到 target 目录并重写 file_path**，否则直接删源目录会把
+    刚并入的照片全部变成死链。此前的实现还缺 `request` 参数声明 → 必然
+    NameError 500，该接口整体不可用。
+
+    顺序：搬文件 → 改行 → 清残留目录 → commit。中途崩溃的孤儿文件由
+    sweep 的 subject_photo_files 类目兜底回收。
+    """
     if payload.target_subject_id == payload.source_subject_id:
         raise HTTPException(status_code=400, detail="不能合并到自身")
     target = await db.get(ImageSubject, payload.target_subject_id)
     source = await db.get(ImageSubject, payload.source_subject_id)
     if target is None or source is None:
         raise HTTPException(status_code=404, detail="目标不存在")
-    await db.execute(
-        sa_update(SubjectPhoto).where(SubjectPhoto.subject_id == source.id).values(subject_id=target.id)
-    )
+
+    sm = getattr(request.app.state, "storage_manager", None)
+
+    def _photo_dir(sid: uuid.UUID) -> str:
+        return sm.subject_photo_dir(sid) if sm else _resolve_legacy_path(
+            os.path.join("data", "artifacts", "subject_photos", str(sid))
+        )
+
+    src_dir = _photo_dir(source.id)
+    dest_dir = _photo_dir(target.id)
+    os.makedirs(dest_dir, exist_ok=True)
+
+    # 1. 逐张搬文件 + 重写 file_path（uuid 文件名天然不冲突；撞名兜底换名）
+    rows = (await db.execute(
+        select(SubjectPhoto).where(SubjectPhoto.subject_id == source.id)
+    )).scalars().all()
+    moved_skipped = 0
+    for p in rows:
+        if not p.file_path:
+            moved_skipped += 1
+            continue
+        src_abs = _resolve_legacy_path(p.file_path)
+        if not os.path.exists(src_abs):
+            moved_skipped += 1  # 文件已丢：保留行挂在新目标下至少可见损坏状态
+            p.file_path = os.path.join(dest_dir, "missing_" + os.path.basename(src_abs))
+            continue
+        dest = os.path.join(dest_dir, os.path.basename(src_abs))
+        if os.path.abspath(dest) == os.path.abspath(src_abs):
+            continue
+        if os.path.exists(dest):  # 极小概率撞名（理论仅手工拷贝同 uid）
+            dest = os.path.join(
+                dest_dir, f"{uuid.uuid4()}{os.path.splitext(src_abs)[1]}"
+            )
+        shutil.move(src_abs, dest)
+        p.file_path = dest
+
+    # 2. 合并标签 + 计数
     merged_tags = list(dict.fromkeys(list(target.tags or []) + list(source.tags or [])))
     target.tags = merged_tags
+    for p in rows:
+        p.subject_id = target.id
     await _recount_photos(db, target.id)
-    # source 的照片目录并入 target（源目录残留文件清掉）
-    sm = getattr(request.app.state, "storage_manager", None)
+
+    # 3. 源目录此刻应只剩空壳/无引用残留 → 清掉（即便有漏网也有 sweep 兜底）
     if sm is not None:
-        shutil.rmtree(sm.subject_photo_dir(source.id), ignore_errors=True)
+        shutil.rmtree(src_dir, ignore_errors=True)
+
     await db.delete(source)
     await db.commit()
+    if moved_skipped:
+        logger.warning("[Subjects] merge %s -> %s: %d photo files were missing on disk",
+                       source.id, target.id, moved_skipped)
     return APIResponse(data={"ok": True, "target_subject_id": str(target.id)})
 
 

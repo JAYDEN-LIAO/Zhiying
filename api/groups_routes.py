@@ -25,6 +25,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _asset_abs_path(request: Request, p: str) -> str:
+    """案例素材路径归一化：新行存绝对路径；历史行存相对路径（此前依赖进程
+    CWD 恰好=项目根才碰巧可用），统一收敛到项目根。"""
+    if os.path.isabs(p):
+        return p
+    sm = getattr(request.app.state, "storage_manager", None)
+    if sm is not None:
+        return sm.resolve(p)
+    from core.paths import project_root
+    return str((project_root() / p).resolve())
+
+
 async def _group_to_dto(session: AsyncSession, g: VideoGroup) -> VideoGroupResponse:
     """组 → DTO（补 file_count = 组内文件数 + video_ids）。"""
     # 文件数 = 组内 distinct 文件（COALESCE(file_id, id)）
@@ -104,7 +116,6 @@ async def delete_group(
 ) -> APIResponse[dict]:
     """删除整个案例 — 组内全部视频（含版本链）+ 图片素材 + 组 + 磁盘目录。"""
     import shutil
-    from core.config_loader import load_config
     from core.repository import list_file_roots, list_file_versions, delete_video
 
     g = await db.get(VideoGroup, group_id)
@@ -126,9 +137,15 @@ async def delete_group(
             for v in await list_file_versions(db, root_video.file_id):
                 await delete_video(db, v, storage_manager=sm)
 
-    # 2. 图片素材 DB 行随 group CASCADE，清磁盘目录
-    artifact_dir = load_config().get("storage", {}).get("artifact_dir", "data/artifacts")
-    shutil.rmtree(os.path.join(artifact_dir, "case_assets", str(g.id)), ignore_errors=True)
+    # 2. 图片素材 DB 行随 group CASCADE，清磁盘目录（统一走 StorageManager 解析）
+    if sm is not None:
+        shutil.rmtree(sm.case_asset_dir(g.id), ignore_errors=True)
+    else:
+        from core.paths import project_root
+        shutil.rmtree(
+            str(project_root() / "data" / "artifacts" / "case_assets" / str(g.id)),
+            ignore_errors=True,
+        )
 
     # 3. 删组
     await db.delete(g)
@@ -201,9 +218,12 @@ async def upload_group_assets(
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[list]:
-    """上传案例图片素材（multipart, 多文件）。存 artifact_dir/case_assets/{group_id}/。"""
+    """上传案例图片素材（multipart, 多文件）。存 artifact_dir/case_assets/{group_id}/。
+
+    ⚠️ 路径统一走 StorageManager 解析并落库绝对路径 —— 此前用裸 load_config
+    相对值拼路径，DB 里存相对路径、删除靠进程 CWD 凑对，CWD 一变即静默孤儿。
+    """
     import os, shutil
-    from core.config_loader import load_config
     from core.models import CaseAsset
     from core.schemas import CaseAssetItem
 
@@ -211,8 +231,12 @@ async def upload_group_assets(
     if g is None:
         raise HTTPException(status_code=404, detail="案例不存在")
 
-    artifact_dir = load_config().get("storage", {}).get("artifact_dir", "data/artifacts")
-    dest_dir = os.path.join(artifact_dir, "case_assets", str(group_id))
+    sm = getattr(request.app.state, "storage_manager", None)
+    if sm is not None:
+        dest_dir = sm.case_asset_dir(group_id)
+    else:
+        from core.paths import project_root
+        dest_dir = str(project_root() / "data" / "artifacts" / "case_assets" / str(group_id))
     os.makedirs(dest_dir, exist_ok=True)
 
     saved: list[CaseAssetItem] = []
@@ -236,31 +260,37 @@ async def upload_group_assets(
 async def get_asset_file(
     group_id: uuid.UUID,
     asset_id: uuid.UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """返回案例图片素材文件（预览用）。"""
+    """返回案例图片素材文件（预览用）。路径归一化兼容历史相对路径行。"""
     from fastapi.responses import FileResponse
     from core.models import CaseAsset
     asset = await db.get(CaseAsset, asset_id)
-    if asset is None or asset.group_id != group_id or not os.path.exists(asset.path):
+    if asset is None or asset.group_id != group_id or not asset.path:
         raise HTTPException(status_code=404, detail="素材不存在")
-    return FileResponse(asset.path, filename=asset.name)
+    p = _asset_abs_path(request, asset.path)
+    if not os.path.exists(p):
+        raise HTTPException(status_code=404, detail="素材不存在")
+    return FileResponse(p, filename=asset.name)
 
 
 @router.delete("/groups/{group_id}/assets/{asset_id}", response_model=APIResponse[dict])
 async def delete_asset(
     group_id: uuid.UUID,
     asset_id: uuid.UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> APIResponse[dict]:
-    """删除案例图片素材（DB 行 + 磁盘文件）。"""
+    """删除案例图片素材（DB 行 + 磁盘文件）。路径归一化兼容历史相对路径行。"""
     from core.models import CaseAsset
     asset = await db.get(CaseAsset, asset_id)
     if asset is None or asset.group_id != group_id:
         raise HTTPException(status_code=404, detail="素材不存在")
-    if os.path.exists(asset.path):
+    if asset.path:
+        p = _asset_abs_path(request, asset.path)
         try:
-            os.remove(asset.path)
+            os.remove(p)  # 不存在时抛 FileNotFoundError ⊂ OSError，被吞（幂等）
         except OSError:
             pass
     await db.delete(asset)
