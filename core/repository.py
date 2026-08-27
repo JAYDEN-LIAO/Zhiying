@@ -79,18 +79,12 @@ async def append_task_log(
     message: str,
     level: str = "info",
 ) -> None:
-    """追加任务日志行（task_id = 版本行 videos.id）。供上传/参数/管道/重试全链路复用。"""
-    last = await session.execute(
-        select(func.max(TaskLog.seq)).where(TaskLog.task_id == task_id)
-    )
-    next_seq = int(last.scalar() or 0) + 1
-    session.add(TaskLog(
-        task_id=task_id,
-        seq=next_seq,
-        level=level,
-        message=message,
-    ))
-    await session.commit()
+    """追加任务日志行（task_id = 版本行 videos.id）。供上传/参数/管道/重试全链路复用。
+
+    注意：本文件后段曾重复定义同名函数（后者覆盖前者）——已合并为单一实现，
+    批量写（traceback 等）走 append_task_logs。
+    """
+    await append_task_logs(session, task_id, [message], level=level)
 
 
 # ──────────────────────────────────────────────────────────
@@ -258,6 +252,9 @@ async def delete_video(
     group_id = video.group_id
 
     try:
+        # task_logs 无 FK（bootstrap 手建表），CASCADE 级联不到 —— 不清则孤儿日志
+        # 永久残留（v0.34 起删除视频前显式清理）
+        await session.execute(delete(TaskLog).where(TaskLog.task_id == video_id))
         await session.execute(delete(Video).where(Video.id == video_id))
 
         await session.commit()
@@ -693,16 +690,65 @@ def resolve_file_id(video: Video) -> uuid.UUID:
     return video.file_id or video.id
 
 
-async def append_task_log(
-    session: AsyncSession, task_id: uuid.UUID, message: str,
+async def append_task_logs(
+    session: AsyncSession,
+    task_id: uuid.UUID,
+    entries: "list[str] | list[tuple[str, str]]",
     level: str = "info",
 ) -> None:
-    """追加一行任务日志（task_id 关联版本行 videos.id）。"""
+    """批量追加任务日志行：一次 SELECT max(seq) + 一次 commit。
+
+    entries 为 str（统一用 level）或 (message, level) 二元组。此前失败 traceback
+    逐行 append_task_log → 每行一个往返事务（十几行 = 十几次提交），合并后单次落库。
+    """
     from core.models import TaskLog
+    if not entries:
+        return
     last = await session.execute(
         select(func.coalesce(func.max(TaskLog.seq), 0))
         .where(TaskLog.task_id == task_id)
     )
-    next_seq = int(last.scalar() or 0) + 1
-    session.add(TaskLog(task_id=task_id, seq=next_seq, level=level, message=message))
+    seq = int(last.scalar() or 0)
+    for entry in entries:
+        msg, lv = entry if isinstance(entry, tuple) else (entry, level)
+        seq += 1
+        session.add(TaskLog(task_id=task_id, seq=seq, level=lv, message=msg))
     await session.commit()
+
+
+# 任务日志保留策略（天）：超过该时长的日志行随 maintenance/sweep 清理
+TASK_LOG_RETENTION_DAYS = 90
+
+
+async def cleanup_orphan_task_logs(session: AsyncSession, dry_run: bool = True) -> int:
+    """清扫孤儿任务日志：task_id 不在任何 videos 行上（历史删除遗留 —— task_logs
+    无 FK，v0.6 之前 delete_video 不清日志）。返回行数；dry_run=True 只统计。"""
+    from core.models import TaskLog
+    cond = ~TaskLog.task_id.in_(select(Video.id))
+    if dry_run:
+        res = await session.execute(select(func.count()).select_from(TaskLog).where(cond))
+        return int(res.scalar() or 0)
+    res = await session.execute(delete(TaskLog).where(cond))
+    await session.commit()
+    return int(res.rowcount or 0)
+
+
+async def prune_old_task_logs(
+    session: AsyncSession,
+    days: int = TASK_LOG_RETENTION_DAYS,
+    dry_run: bool = True,
+) -> int:
+    """保留策略清理：删除 created_at 早于 days 天的日志行（默认 90 天）。
+    重解析会重新追加新日志，历史行清掉不影响现有视频。返回行数；dry_run 只统计。"""
+    from core.models import TaskLog
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
+    if dry_run:
+        res = await session.execute(
+            select(func.count()).select_from(TaskLog).where(TaskLog.created_at < cutoff)
+        )
+        return int(res.scalar() or 0)
+    res = await session.execute(delete(TaskLog).where(TaskLog.created_at < cutoff))
+    await session.commit()
+    return int(res.rowcount or 0)
+

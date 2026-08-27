@@ -58,6 +58,13 @@ def _print_human(report: dict) -> None:
             print(f"    ... 还有 {len(info['items']) - 20} 项")
     print("-" * 50)
     print(f"合计可释放: {_fmt_size(report['total_bytes_reclaimable'])}")
+    tl = report.get("task_logs")
+    if tl:
+        verb = "待清理（dry-run，未删除）" if report["dry_run"] else "已清理"
+        print(
+            f"任务日志: 孤儿 {tl['orphan_rows']} 行 + 超期(>{tl['retention_days']}天) "
+            f"{tl['pruned_rows']} 行 {verb}"
+        )
 
 
 async def main() -> int:
@@ -78,6 +85,18 @@ async def main() -> int:
     try:
         async with AsyncSessionLocal() as session:
             report = await manager.sweep(session, dry_run=not args.apply)
+            # 任务日志卫生与 API /maintenance/sweep 同源（孤儿 + 超保留期）
+            from core.repository import (
+                TASK_LOG_RETENTION_DAYS,
+                cleanup_orphan_task_logs,
+                prune_old_task_logs,
+            )
+            report["task_logs"] = {
+                "orphan_rows": await cleanup_orphan_task_logs(session, dry_run=not args.apply),
+                "pruned_rows": await prune_old_task_logs(
+                    session, days=TASK_LOG_RETENTION_DAYS, dry_run=not args.apply),
+                "retention_days": TASK_LOG_RETENTION_DAYS,
+            }
     finally:
         await engine.dispose()
 

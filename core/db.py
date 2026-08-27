@@ -424,6 +424,11 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS ix_task_logs_task_seq
             ON task_logs (task_id, seq)
         """))
+        # 保留策略清理（maintenance/sweep 按 created_at 删旧行）走时间索引
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_task_logs_created_at
+            ON task_logs (created_at)
+        """))
 
         # ── 增量迁移 v0.34: 任务中心耗时（管道开始处理时间） ──
         await conn.execute(text("""

@@ -5,13 +5,13 @@
      状态/提交时间/操作: 日志/重试/删除）+ 日志弹窗。4s 轮询 api.listTasks(scope)。
    ════════════════════════════════════════════════════════════ */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api } from "../services/api";
 import { useApp } from "../AppContext";
 import type { TaskItem, TaskLogLine } from "../types";
-import { fmtDate, fmtDuration, fmtTime, versionName, copyText } from "../utils/helpers";
-import { IconDownload, IconReport, IconLog, IconTask, IconRetry, IconCopy, IconTrash } from "./icons";
+import { fmtDate, fmtDuration, fmtTime, versionName, copyText, parseUtcIso } from "../utils/helpers";
+import { api, downloadFile, sanitizeFile } from "../services/api";
+import { IconDownload, IconReport, IconLog, IconTask, IconRetry, IconCopy, IconTrash, IconCheck } from "./icons";
 
 const FILTERS = [
   { key: "all", label: "全部" },
@@ -30,6 +30,19 @@ const STATUS_META: Record<string, { label: string; cls: string; pulse?: boolean 
 };
 /* 排队中：已提交、在管道队列等 worker（status=pending + queued，黄徽章） */
 const QUEUED_META: { label: string; cls: string; pulse?: boolean } = { label: "排队中", cls: "warn" };
+
+/* 日志弹窗头部图标钮（导出/复制）：28×28 与 .modal-x 同尺寸 → 三钮等高对齐 */
+const LOG_HDR_BTN =
+  "w-7 h-7 rounded-md flex items-center justify-center text-gray-400 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors disabled:opacity-40 disabled:pointer-events-none";
+
+/* 导出文件用完整时间戳（Asia/Shanghai，与界面 fmtTime 同时区策略） */
+function fmtFull(iso: string): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    timeZone: "Asia/Shanghai",
+  }).format(parseUtcIso(iso)).replace(/\//g, "-");
+}
 
 /* ═══════════════════════ ① 顶部卡 ═══════════════════════ */
 function TaskHeader({
@@ -162,6 +175,11 @@ export function TaskCenter() {
   const [loadingLog, setLoadingLog] = useState(false);
   const [copiedLog, setCopiedLog] = useState(false);
 
+  /* 日志弹窗尾部跟随：sticky=用户滚到底部附近时自动吸底，往上翻则不打扰 */
+  const logBoxRef = useRef<HTMLDivElement | null>(null);
+  const stickBottomRef = useRef(true);
+  const lastLogSeqRef = useRef(0);
+
   const handleCopyLog = async () => {
     const text = logs
       .map((l) => `${l.created_at ?? ""} #${String(l.seq).padStart(2, "0")} ${l.message}`)
@@ -172,6 +190,35 @@ export function TaskCenter() {
       setTimeout(() => setCopiedLog(false), 2000);
     }
   };
+
+  /* 日志导出：.log 纯文本（机器日志行业扩展名，编辑器高亮 + grep/tail 可用）。
+     结构 = 头部元信息块（# 注释行，兼容 grep 过滤）+ 正文「时间 [级别] #序号 消息」。
+     UTF-8 加 BOM：客户机 Windows 记事本旧默认 ANSI，无 BOM 会中文乱码。 */
+  const handleDownloadLog = () => {
+    if (!logTask || loadingLog || logs.length === 0) return;
+    const sm = logTask.status === "pending" && logTask.queued ? QUEUED_META : STATUS_META[logTask.status] || STATUS_META.pending;
+    const first = logs[0], last = logs[logs.length - 1];
+    const header = [
+      "# ══════════════════════════════════════════",
+      "# 智影任务日志",
+      `# 任务 ID   : ${logTask.id}`,
+      `# 文件      : ${logTask.file_name ?? "-"}`,
+      `# 状态      : ${sm.label}`,
+      `# 记录条数  : ${logs.length}`,
+      `# 开始时间  : ${first?.created_at ? fmtFull(first.created_at) : "-"}`,
+      `# 结束时间  : ${last?.created_at ? fmtFull(last.created_at) : "-"}`,
+      `# 导出时间  : ${fmtFull(new Date().toISOString())}`,
+      "# ══════════════════════════════════════════",
+      "",
+    ].join("\r\n");
+    const body = logs.map((l) => {
+      const lv = (l.level || "info").toUpperCase().padEnd(5);
+      return `${l.created_at ? fmtFull(l.created_at) : "-".repeat(19)} [${lv}] #${String(l.seq).padStart(3, "0")} ${l.message}`;
+    }).join("\r\n");
+    const blob = new Blob(["\ufeff", header + "\r\n" + body + "\r\n"], { type: "text/plain;charset=utf-8" });
+    downloadFile(blob, `tasklog_${sanitizeFile(logTask.file_name ?? "")}_${logTask.id.slice(0, 8)}.log`);
+  };
+
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = () => {
@@ -198,12 +245,47 @@ export function TaskCenter() {
     setLogTask(t);
     setLogs([]);
     setLoadingLog(true);
+    lastLogSeqRef.current = 0;
+    // 存活任务初始直接跳到底部看最新日志；已完成任务从头看
+    const statusNow = tasks.find((x) => x.id === t.id)?.status ?? t.status;
+    stickBottomRef.current = statusNow === "processing" || statusNow === "pending";
     try {
       const d = await api.getTaskLog(t.id);
-      setLogs(d?.log ?? []);
+      const list = d?.log ?? [];
+      if (list.length > 0) lastLogSeqRef.current = list[list.length - 1].seq;
+      setLogs(list);
     } catch { setLogs([]); }
     setLoadingLog(false);
   };
+
+  /* 处理中/排队中任务的日志弹窗自动增量刷新（2.5s 按 seq 追加），结束后停止。
+     依赖用状态值而非 tasks 数组（列表每秒轮询刷新，数组恒变化会不断重建 interval） */
+  const logTaskStatus = logTask
+    ? (tasks.find((x) => x.id === logTask.id)?.status ?? logTask.status)
+    : null;
+  useEffect(() => {
+    if (!logTask || !(logTaskStatus === "processing" || logTaskStatus === "pending")) return;
+    const tid = logTask.id;
+    const iv = setInterval(async () => {
+      try {
+        const d = await api.getTaskLog(tid);
+        const fresh = (d?.log ?? []).filter((l) => l.seq > lastLogSeqRef.current);
+        if (fresh.length > 0) {
+          lastLogSeqRef.current = fresh[fresh.length - 1].seq;
+          setLogs((prev) => [...prev, ...fresh]);
+        }
+      } catch { /* 后端瞬时不可达：忽略，下一轮重试 */ }
+    }, 2500);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logTask?.id, logTaskStatus]);
+
+  /* 日志内容变化 → 吸底跟随（用户主动上翻后不再强制拉回） */
+  useEffect(() => {
+    const el = logBoxRef.current;
+    if (!el || logs.length === 0 || !stickBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [logs]);
 
   const retry = async (t: TaskItem) => {
     setBusyId(t.id);
@@ -270,15 +352,27 @@ export function TaskCenter() {
           <div className="g-modal" style={{ width: 600 }}>
             <div className="g-card-hd">
               <span className="g-card-tt">任务日志 · {logTask.file_name ?? ""}</span>
+              {/* 导出(.log) / 复制 / 关闭 —— 三钮统一 28×28 图标（与 .modal-x 同尺寸等高对齐） */}
               <div className="flex items-center gap-1">
-                <button className="px-2 h-7 inline-flex items-center gap-1 text-xs rounded-md text-gray-500 hover:text-[#4f7cff] hover:bg-blue-50 transition-colors"
-                  onClick={() => void handleCopyLog()} title="复制日志" aria-label="复制日志">
-                  {copiedLog ? "已复制" : (<><IconCopy />复制</>)}
+                <button className={LOG_HDR_BTN} disabled={loadingLog || logs.length === 0}
+                  onClick={handleDownloadLog} title="导出日志文件" aria-label="导出日志文件">
+                  <IconDownload />
                 </button>
-                <button className="modal-x" onClick={() => setLogTask(null)} title="关闭" aria-label="关闭">×</button>
+                <button className={copiedLog ? LOG_HDR_BTN + " !text-green-500" : LOG_HDR_BTN}
+                  onClick={() => void handleCopyLog()} disabled={loadingLog || logs.length === 0}
+                  title={copiedLog ? "已复制" : "复制日志"} aria-label="复制日志">
+                  {copiedLog ? <IconCheck /> : <IconCopy />}
+                </button>
+                <button className="modal-x ml-1" onClick={() => setLogTask(null)} title="关闭" aria-label="关闭">×</button>
               </div>
             </div>
-            <div className="p-4" style={{ maxHeight: "60vh", overflowY: "auto", fontFamily: "var(--font-mono)", fontSize: 12, background: "#0d1117", color: "#d1d5db" }}>
+            <div ref={logBoxRef} onScroll={() => {
+              // 用户上翻（距底 > 40px）→ 暂停吸底；翻回底部 → 恢复跟随
+              const el = logBoxRef.current;
+              if (!el) return;
+              stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+            }}
+              className="p-4" style={{ maxHeight: "60vh", overflowY: "auto", fontFamily: "var(--font-mono)", fontSize: 12, background: "#0d1117", color: "#d1d5db" }}>
               {loadingLog && <div className="text-gray-400">加载中…</div>}
               {!loadingLog && logs.length === 0 && <div className="text-gray-400">暂无日志</div>}
               {logs.map((l) => (

@@ -347,12 +347,14 @@ class PipelineEngine:
                 logger.info("[Pipeline] video %s deleted mid-run, aborting (%s)", self.video.id, e)
                 return
             logger.exception("[Pipeline] video %s failed: %s", self.video.id, e)
-            # 完整错误入任务日志（含 traceback，多行）——排查必须能看到调用栈
+            # 完整错误入任务日志（含 traceback，多行）——排查必须能看到调用栈；
+            # 批量一次落库（此前逐行写 = 十几次往返事务）
             import traceback
             tb = traceback.format_exc()
-            await self._log_task("管道失败", level="error")
-            for line in tb.rstrip("\n").splitlines():
-                await self._log_task(f"  {line}", level="error")
+            await self._log_tasks(
+                [("管道失败", "error")]
+                + [(f"  {line}", "error") for line in tb.rstrip("\n").splitlines()]
+            )
             tracker = self._new_tracker()
             await tracker.mark_failed(str(e))
 
@@ -649,6 +651,14 @@ class PipelineEngine:
         from core.repository import append_task_log
         async with self.db_session_factory() as session:
             await append_task_log(session, self.video.id, message, level)
+
+    async def _log_tasks(self, entries: "list[str] | list[tuple[str, str]]") -> None:
+        """批量追加任务日志行（一次往返/一次 commit；多行 traceback 用）。"""
+        from core.repository import append_task_logs
+        if not entries:
+            return
+        async with self.db_session_factory() as session:
+            await append_task_logs(session, self.video.id, entries)
 
     async def _log_pipeline_config(self, v: Video, enabled: list) -> None:
         """管道配置快照 → 任务日志（系统参数/感知开关/编码/检测/量化/fps 全量，溯源用）。"""
