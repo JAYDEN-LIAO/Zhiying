@@ -18,6 +18,8 @@ export function VideoSearchCard({
   initialQuery,
   initialFaceFile,
   initialImageFile,
+  searchTick,
+  intentVideoId,
   selectedTrackId,
 }: {
   video: VideoResponse | null;
@@ -30,6 +32,8 @@ export function VideoSearchCard({
   initialQuery?: string | null;
   initialFaceFile?: File | null;
   initialImageFile?: File | null;
+  searchTick?: number;             // 搜索意图递增戳（同视频同关键词重复跳转时保证 effect 重新触发）
+  intentVideoId?: string | null;   // 搜索意图的目标视频 id（openWorkbench 的 videoId）
   /* ── 检测栏当前选中的 track：物体/车牌结果命中时同步金色选中框 ── */
   selectedTrackId?: number | null;
 }) {
@@ -84,6 +88,12 @@ export function VideoSearchCard({
   const ocrDisabled = !detEnabled || !video?.ocr_enabled;
   const semanticReady = !!video?.search_index_enabled;
   const initialQueryRef = useRef<string | null>(null);
+  const searchTickRef = useRef(0);
+  // 当前待处理的跨页搜索意图：openWorkbench 跳转第一帧本组件拿到的 videoId 仍是旧视频的
+  // 版本行——意图带目标 id，等 videoId 对上才处理；期间不落入「切视频重置」分支
+  const pendingSearchIntentRef = useRef<{ query?: string; faceFile?: File; imageFile?: File } | null>(null);
+  // 已同步搜索上下文的视频 id：prop 被消费为 null（stale 更新）时不触发 reset，仅真正切换视频才重置
+  const lastProcessedVideoRef = useRef<string | null>(null);
 
   // 切换过滤器时重新搜索（已有查询才触发）
   useEffect(() => {
@@ -95,33 +105,49 @@ export function VideoSearchCard({
   }, [resultFilter]);
 
   // 视频切换：手动切换（header/历史）→ 重置搜索上下文；搜索结果自己发起的切换 → 抑制（保留结果）
-  // 若有 initialQuery/initialFaceFile/initialImageFile（全局搜索同步），跳过重置并自动搜索
+  // 跨页搜索意图（全局搜索同步）：先寄存、等 currentVideoId 切到 intentVideoId 目标视频再执行
+  // searchTick 保证同视频同关键词重复跳转也能重新触发（tick 递增，永远不重复）
   useEffect(() => {
     if (suppressResetRef.current) {
       suppressResetRef.current = false;
+      lastProcessedVideoRef.current = currentVideoId;
       return;
     }
-    // 全局搜索关键词同步：跳过重置，直接填充并搜索（含智能结果筛选推荐）
-    if (initialQuery && currentVideoId && initialQuery !== initialQueryRef.current) {
-      initialQueryRef.current = initialQuery;
-      setQuery(initialQuery);
-      void runSemanticSearch(initialQuery);
+    // 全局搜索意图到达：寄存到 ref（此刻 videoId 可能还是旧视频的版本行，不能立即搜）
+    if ((searchTick ?? 0) !== searchTickRef.current && (initialQuery || initialFaceFile || initialImageFile)) {
+      searchTickRef.current = searchTick ?? 0;
+      pendingSearchIntentRef.current = initialQuery
+        ? { query: initialQuery }
+        : initialFaceFile ? { faceFile: initialFaceFile } : { imageFile: initialImageFile! };
+    }
+    const intent = pendingSearchIntentRef.current;
+    // 意图匹配门控：videoId 落到目标视频才执行搜索（跳转过渡期 videoId=旧视频，跳过不动作）
+    if (intent && intentVideoId && currentVideoId === intentVideoId) {
+      lastProcessedVideoRef.current = currentVideoId;
+      if (intent.query != null) {
+        // 同视频同关键词：保留现有结果（避免闪烁）；否则填充查询并发起语义搜索
+        if (intent.query === initialQueryRef.current) { pendingSearchIntentRef.current = null; return; }
+        initialQueryRef.current = intent.query;
+        setQuery(intent.query);
+        void runSemanticSearch(intent.query);
+      } else if (intent.faceFile) {
+        setResults([]); setFaceResults([]); setError(null);
+        void runFaceSearch(intent.faceFile);
+      } else if (intent.imageFile) {
+        setResults([]); setFaceResults([]); setError(null);
+        void runImageSearch(intent.imageFile);
+      }
+      pendingSearchIntentRef.current = null;
       return;
     }
-    // 全局搜索人脸/图搜同步
-    if (initialFaceFile && currentVideoId) {
-      setResults([]); setFaceResults([]); setError(null);
-      void runFaceSearch(initialFaceFile);
-      return;
+    // 仅真正切换视频（且无待处理搜索意图）时才重置；
+    // 意图存在时不重置——旧视频 id 帧 + 待意图是跳转过渡的常态，重置会清掉刚填的查询
+    if (!pendingSearchIntentRef.current && currentVideoId !== lastProcessedVideoRef.current) {
+      lastProcessedVideoRef.current = currentVideoId;
+      setQuery(""); setResults([]); setSearching(false); setHasSearched(false); setError(null); setFaceResults([]);
     }
-    if (initialImageFile && currentVideoId) {
-      setResults([]); setFaceResults([]); setError(null);
-      void runImageSearch(initialImageFile);
-      return;
-    }
-    setQuery(""); setResults([]); setSearching(false); setHasSearched(false); setError(null); setFaceResults([]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentVideoId, initialQuery, initialFaceFile, initialImageFile]);
+  }, [currentVideoId, initialQuery, initialFaceFile, initialImageFile, searchTick, intentVideoId]);
 
   const runFaceSearch = useCallback(async (file: File) => {
     if (!file) return;

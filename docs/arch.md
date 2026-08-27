@@ -86,6 +86,9 @@ Keyframe 4 消费链: frame_encode/text_encode/chunk_encode/caption
 素材库: image_subjects + subject_photos + subject_photo_embedding（分轨向量）
         检索: /search/subjects 上传图片 → person ArcFace 512 / other Qwen3-VL → 命中底库目标
         沉淀: 检测 track「+」/ 图搜「+」→ AddSubjectDrawer → 底图 + 编码入库
+              保存后仅关抽屉停留当前页；已选目标列表随抽屉整体滚动
+重解析: completed/failed 视频参数改动走 POST /reanalyze 新建版本行（版本链 version_no+1）
+        PUT /params 仅保留 L3 开关（摘要/搜索索引）增量补跑；pending 走 PUT 启动全量管道
 ```
 
 ## Plugin System
@@ -111,6 +114,8 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 合并去重: 帧簇(≤4s)优先; confidence = 相似度 × 路径权重
 范围过滤: video_ids 空→空; None=全库; face/image 参数必须 Form(...) 声明
 视频搜索卡: 严格限定当前视频（video_ids=[currentVideoId]）；支持 search_types 结果类型筛选（全部/画面/物体）
+            跨页搜索同步: 全局搜索→openWorkbench 带 searchQuery/faceFile/imageFile + 目标视频 id + tick；
+            卡片寄存意图等 videoId 落到目标才搜索（常驻挂载下旧视频 id 过渡帧不动作、不被重置清空）
 智能筛选推荐: POST /search/suggest-filter 文本相似度预判——事件/动作类→画面定位(frame)、单物体类→物体定位(track)；手动选择优先（autoFilterActive）；车牌/文字模式不参与
 搜索结果时间范围: 点击结果自动播放到 end 时间后暂停（autoPauseEndRef + timeupdate 监听）
 ```
@@ -177,14 +182,14 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 
 ## Frontend Architecture
 
-**双前端共存**：服务器 `frontend/`（Dashboard）+ 桌面 `frontend-desktop/`（4 页管理后台）；**对接层 `frontend-shared/` 一份实现**。
+**双前端共存**：服务器 `frontend/`（Dashboard）+ 桌面 `frontend-desktop/`（5 页管理后台）；**对接层 `frontend-shared/` 一份实现**。
 
 **桌面前端**：
-- AppContext 全局状态（视频/任务/进度/树选/案例徽章/素材库跨页跳转）+ 5 页组件：
-  - **FileLibrary**（案例库）：左案例树 + 右内容区；选中案例时正文支持视频拖拽上传（图片上传已退役）；多版本行=一次解析
+- AppContext 全局状态（视频/任务/进度/树选/案例徽章/素材库跨页跳转）+ 5 页组件；Workbench 与 GlobalSearch 常驻挂载（切页 hide 不卸载，保播放与搜索状态），跨页意图（seek/track 选中/搜索同步）携带目标视频 id、等 vid 落到目标才消费：
+  - **FileLibrary**（案例库）：左案例树 + 右内容区；选中案例时正文支持视频拖拽上传与文件夹选择；多版本行=一次解析
   - **Workbench**（视频解析）：SplitPane 视频播放器 + 检测栏 + 视频搜索卡（结果类型筛选下拉：全部/画面定位/物体定位 + 语义/人脸/图搜/车牌/文字 toggle + 搜索框固定 + 搜索结果时间范围自动暂停）+ `SingleAnalyzeDialog` 紧凑弹窗；搜索卡仅限当前视频检索（与全局搜索划清边界）；摘要卡标题随内容自动切换（视频摘要/文字识别），无 tab 按钮
   - **ImageLibrary**（素材库页）：左目标列表 + 右底库照片详情（裁剪/拖拽扩充/溯源）+ 新建目标弹窗 + `AddSubjectDrawer`（检测/图搜一键沉淀）
-  - **GlobalSearch**（全局搜索）：左 34% 配置面板（文本/图像 Tab + 4 类型 chip 互斥选中 + 句式化 token + 人脸/通用图搜分轨）+ 右 66% 结果网格；选图来源统一走 `SubjectPhotoPicker`（素材库底图）
+  - **GlobalSearch**（全局搜索）：左 34% 配置面板（文本/图像 Tab + 人/车/车牌/文本/事件 5 类型 chip 互斥选中，切换即清空文本框 + 各类型专属特征选中才出现（颜色常驻）+ 句式化 token + 人脸/通用图搜分轨）+ 右 66% 结果网格；选图来源统一走 `SubjectPhotoPicker`（素材库底图）
   - **TaskCenter**（任务中心）+ **SettingsPage**（系统设置，4 子 tab）
 - TitleBar（frameless 暗色）+ SystemMonitor（底部系统监控）；侧栏 5 业务 + 2 设置入口
 
@@ -207,6 +212,8 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 | OCR 独立子进程 | DML 隔离不破坏人脸/车牌 CUDA；封装态 worker 仅 .pyc，插件 .pyc 回退 + ZHIYING_PROJECT_ROOT 定位 vendor |
 | 参数预设随 git | config/presets.json 部署/换机开箱复用 |
 | 桌面壳 URL 版本缓存击穿 | WebView2 持久化缓存（private_mode=False）跨版本复用旧 UI，load_url 带 `?v=<version>` 强制取新 |
+| 工作台常驻挂载 + 意图门控 | Workbench/GlobalSearch 切页 hide 不卸载保播放/搜索状态；跨页意图带目标视频 id，等 vid 落到目标才执行/消费（防旧视频 id 过渡帧误搜/误重置） |
+| 重解析建新版本 | completed/failed 参数改动走 POST /reanalyze（版本链复制文件信息）；PUT /params 仅摘要/索引开关增量——抽屉开关 PATCH /toggles 先行持久化，PUT 新旧比对必然一致 |
 | 删除三层保证 | 路由显式清盘 → FK CASCADE → sweep 兜底；task_logs/pipeline_tasks 无 FK 由 delete_video 显式清，删视频连队列行一起清 |
 | 图片素材纳入 sweep | subject_photos/case_assets 文件级引用集 + 600s mtime 保护（上传崩溃窗口可回收）；路径一律 StorageManager 绝对落库，历史相对行读取侧归一化 |
 | 队列僵尸治理 | 重启恢复时视频已删的 queued 任务标 failed 不重入队；executor 缺视频抛错标 failed（不再假 completed）；终态队列行 90 天保留清理 |

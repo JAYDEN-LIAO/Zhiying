@@ -37,8 +37,9 @@ curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # �
 | 任务日志 | 日志弹窗复制/一键导出 `.log`（UTF-8 BOM + CRLF）+ 处理中自动增量刷新尾部跟随；失败 traceback 批量落库、孤儿/超期 90 天清扫 | ✅ |
 | 云智平台集成 | `register-external` + `/internal/yunzhi/jobs`（202 异步+回调+幂等） | ✅ |
 | 桌面端启动器+独立桌面前端 | pywebview 壳 + 5 页管理后台（文件库/视频解析/素材库/任务中心/系统设置） | ✅ |
-| **图片素材库**（v0.6） | 关注目标（人/其他）底库照片管理 + 人脸/通用图搜分轨检索 + 检测/图搜沉淀 + 案例库转存 | ✅ |
-| 前端（服务器+桌面）| React 19 + Vite + Tailwind 4（对接层 `frontend-shared/` 一份实现） | ✅ |
+| **图片素材库**（v0.6） | 关注目标（人/其他）底库照片管理 + 人脸/通用图搜分轨检索 + 检测/图搜沉淀（保存后停留当前页）+ 案例库转存 | ✅ |
+| 全局搜索 5 目标类型 | 人/车/车牌/文本/事件 chip 互斥选中；类型切换自动清空检索词，各类型专属特征选中才出现（颜色常驻） | ✅ |
+| 前端（服务器+桌面）| React 19 + Vite + Tailwind 4（对接层 `frontend-shared/` 一份实现；桌面端工作台/全局搜索常驻挂载保状态） | ✅ |
 
 ## Architecture Overview
 

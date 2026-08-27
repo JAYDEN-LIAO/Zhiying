@@ -2,12 +2,11 @@
    AddSubjectDrawer — 轻量级沉淀 Drawer（v0.6 图片素材库）
    业务流（检测 track / 图搜结果）→「加入图片素材库」统一入口：
    自动携带首张底图（截帧 / track 缩略图 / 图搜缩略图），用户仅需
-   补充名称与标签即可保存。保存后跳转素材库定位到新目标。
+   补充名称与标签即可保存。保存后关闭抽屉、停留当前页面。
    ════════════════════════════════════════════════════════════ */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useApp } from "../AppContext";
 import type { ImageSubject, ImageSubjectKind, SubjectPhoto } from "../types";
 import { IconClose, IconBolt, IconPerson, IconSearch } from "./icons";
 import { subjectsApi } from "../mocks/subjectsMock";
@@ -25,7 +24,7 @@ export interface AddSubjectDrawerData {
 interface Props {
   data: AddSubjectDrawerData | null;
   onClose: () => void;
-  /* 保存成功回调（默认行为：openImageLibrary 定位新目标） */
+  /* 保存成功回调（可选；默认仅关闭抽屉、停留当前页面） */
   onSaved?: (subjectId: string) => void;
 }
 
@@ -44,7 +43,6 @@ async function imageToFile(image: { url?: string; blob?: Blob }, name: string): 
 const TAG_PRESETS = ["在逃", "重点", "套牌车", "失窃车辆", "嫌疑人", "受害人"];
 
 export function AddSubjectDrawer({ data, onClose, onSaved }: Props) {
-  const { openImageLibrary } = useApp();
   const [kind, setKind] = useState<ImageSubjectKind>("person");
   const [name, setName] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -135,8 +133,7 @@ export function AddSubjectDrawer({ data, onClose, onSaved }: Props) {
         }
       }
       onClose();
-      if (onSaved) onSaved(subjectId);
-      else openImageLibrary({ subjectId });
+      onSaved?.(subjectId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败");
     } finally {
@@ -218,7 +215,9 @@ export function AddSubjectDrawer({ data, onClose, onSaved }: Props) {
                       onChange={(e) => setSubjectSearch(e.target.value)}
                     />
                   </div>
-                  <div className="max-h-[160px] overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
+                  {/* 不设内滚高度上限：列表自然展开，由 fl-drawer-body 整体滚动，
+                      避免固定 max-h 把长目标列表困在小视口里 */}
+                  <div className="rounded-lg border border-gray-200 divide-y divide-gray-100">
                     {filteredSubjects.length === 0 ? (
                       <div className="text-[12px] text-gray-400 py-3 text-center">未找到匹配目标</div>
                     ) : (

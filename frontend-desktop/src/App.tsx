@@ -45,7 +45,8 @@ function Shell() {
 
         <main className={"app-main" + (page === "files" || page === "workbench" || page === "search" || page === "tasks" || page === "settings" || page === "imagelib" ? " app-main-flat" : "")}>
           {page === "files" && <FileLibrary />}
-          {page === "workbench" && <Workbench />}
+          {/* Workbench 始终挂载（hide 保住搜索结果/选中状态），切页回来直接恢复 */}
+          <div className={page === "workbench" ? "contents" : "hidden"}><Workbench /></div>
           {/* GlobalSearch 始终挂载（hide 保住搜索结果），切页回来直接恢复 */}
           <div className={page === "search" ? "contents" : "hidden"}><GlobalSearch /></div>
           {page === "tasks" && <TaskCenter />}

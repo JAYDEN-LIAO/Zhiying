@@ -182,7 +182,7 @@ function CaseContent({
   /* ── 视图模式（网格/列表）与视频详情抽屉 ── */
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [detailFile, setDetailFile] = useState<FileItem | null>(null);
-  /* ── 添加下拉：合并「选择视频文件 / 上传文件夹」 ── */
+  /* ── 添加下拉：合并「选择视频文件 / 选择文件夹」 ── */
   const [addOpen, setAddOpen] = useState(false);
 
   /* ── 文件名/图片名 内联编辑（点铅笔直接在单元格编辑） ── */
@@ -267,7 +267,7 @@ function CaseContent({
             <option value="completed">已完成</option>
             <option value="failed">失败</option>
           </select>
-          {/* 添加：合并「选择视频文件 / 上传文件夹」一键下拉（自动识别并上传） */}
+          {/* 添加：合并「选择视频文件 / 选择文件夹」一键下拉（自动识别并上传） */}
           <div className="relative">
             <button className="g-btn" onClick={() => setAddOpen((o) => !o)} disabled={isUploading}>
               <IconPlus />
@@ -291,7 +291,7 @@ function CaseContent({
                     title="上传整个文件夹（含子文件夹内的视频，扁平归档到本案例）"
                   >
                     <span className="[&_svg]:w-3.5 [&_svg]:h-3.5"><IconFolder /></span>
-                    上传文件夹
+                    选择文件夹
                   </button>
                 </div>
               </>
@@ -748,7 +748,14 @@ function FileDetailDrawer({
         encode_profile: video.encode_profile,
         apply_to_group: false,
       };
-      await api.updateParams(file.id, params);
+      /* reparse=true：completed/failed 必须走 POST /reanalyze 建新版本——
+         开关改动已被 PATCH /toggles 先行持久化，PUT /params 新旧比对必然一致，
+         会命中后端「参数未改变」/「此修改需新建记录」400 拦截 */
+      if (reparse) {
+        await api.reanalyze(file.id, params);
+      } else {
+        await api.updateParams(file.id, params);
+      }
       onClose();
     } catch (e) {
       alert(e instanceof Error ? e.message : (reparse ? "重新分析失败" : "解析失败"));

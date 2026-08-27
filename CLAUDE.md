@@ -53,8 +53,10 @@
   - **3 表**：`image_subjects`（目标）/ `subject_photos`（底图）/ `subject_photo_embedding`（分轨向量：person→Vector(512) / other→EmbedVector）
   - **15 个 API**：`/subjects` CRUD + 照片 + 合并 + 文件 + `/search/subjects` 图片检索
   - **检索分轨**：person→`face_recognizer.extract_best_embedding`（ArcFace 512）/ other→`embedder.encode_image`（Qwen3-VL）；落盘即编码入库
-  - **桌面端第 5 页**：`ImageLibrary`（左列表+右详情+裁剪+拖拽扩充）+ `SubjectPhotoPicker`（全局搜索/视频搜索卡统一选图来源）+ `AddSubjectDrawer`（检测/图搜一键沉淀，支持新建/已有目标两种模式）
-  - **搜索同步**：全局搜索文字/人脸/图搜 → 点击结果跳工作台 → 视频搜索卡片自动填充并搜索
+  - **桌面端第 5 页**：`ImageLibrary`（左列表+右详情+裁剪+拖拽扩充）+ `SubjectPhotoPicker`（全局搜索/视频搜索卡统一选图来源）+ `AddSubjectDrawer`（检测/图搜一键沉淀，支持新建/已有目标两种模式；保存后仅关抽屉停留当前页面，已选目标列表随抽屉整体滚动无内滚视口）
+  - **搜索同步**：全局搜索文字/人脸/图搜 → 点击结果跳工作台 → 视频搜索卡片自动填充并搜索。跨页意图带目标视频 id（`pendingSearchVideoId`）+ 递增 tick；Workbench 常驻挂载后卡片与消费方都等 vid 落到目标视频才执行/消费，防止拿旧视频 id 搜索或被 stale 重置清空
+  - **全局搜索目标类型**：人/车/车牌/文本/事件 5 类型 chip 互斥选中；各类型专属特征面板选中才出现（颜色常驻）；切换类型自动清空搜索文本框与已选 token
+  - **案例库重新分析**：抽屉「参数设置」开关点击即 PATCH /toggles 持久化 → completed/failed 视频「重新分析」必须走 POST /reanalyze 建新版本（PUT /params 会因新旧一致被「参数未改变」拦截）；pending 视频仍走 PUT /params
   - **视频搜索卡智能筛选推荐**：`POST /search/suggest-filter` 文本相似度预判——事件/动作/语义类（求婚、打架、两车相撞…）自动画面定位（frame）；单物体类（黑色车辆、戴口罩的人…）自动物体定位（track）；手动选择优先（`autoFilterActive` 状态，用户手动切下拉后置 false）；车牌/文字模式不参与；`skipFilterReseachRef` 抑制自动改筛选触发的重复搜索
   - **告警红点**：前端空壳保留（`imageLibAlertCount`/侧栏红点），后端本期不做（下一阶段）
   - **案例库图片边界**：案例库不支持图片上传，`images` 恒空；选图统一走素材库
@@ -64,6 +66,7 @@
 - **人脸双阈值**: 同 track 0.30 宽松合并，跨 track 0.58 保守合并；检索锚点最典型脸
 - **人脸出现段**: 检测栏人脸展开显示该身份的**主 person track**（`track_to_identity`，时间轴同源）的 `[first_seen, last_seen]`/`segments`，排除"搭车"长 track；人脸搜索 `appearances` 仅保留主身份 track；点击结果从首段自动播放并逐段跳过，当前段黄框高亮（前端 `timeupdate` 判 `currentTime` 落段）
 - **弹窗/抽屉 portal**: 桌面前端所有 modal/drawer 必须 `createPortal(document.body)` + `onMouseDown` 遮罩关闭（`e.target===currentTarget`）；`DetectionOverlay` 用真实事件目标 `container.contains` 判定防穿透/遮挡关不掉
+- **工作台常驻挂载**: 桌面端 Workbench/GlobalSearch 切页 hide 不卸载（保播放与搜索状态）；跨页意图（seek/track 选中/搜索同步）一律携带目标视频 id，等 vid 落到目标才消费
 - **搜索隔离**: search/face 与 search/image 参数必须 `Form(...)` 声明（防全库泄漏）
 - **版本号**: `core/version.py` `__version__` 唯一来源；后端+服务器前端改动必须 `./bump`
 - **删除三层保证**: 路由显式清盘 → DB FK CASCADE → `maintenance/sweep` 兜底；

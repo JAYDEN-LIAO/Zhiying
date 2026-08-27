@@ -24,8 +24,33 @@ interface FeatureChip {
   color?: string;
 }
 
-/* ── 4 大目标类型 + 各自专属特征 ──
-   选中某类型后专属特征面板才出现；颜色/事件为常驻通用特征。
+/* ── 颜色（常驻通用特征）────────────────────────────── */
+const COLOR_CHIPS: FeatureChip[] = [
+  { key: "黑色", label: "黑色", color: "#3b4252" },
+  { key: "白色", label: "白色", color: "#f0f2f5" },
+  { key: "红色", label: "红色", color: "#f04444" },
+  { key: "蓝色", label: "蓝色", color: "#4f6ef7" },
+  { key: "黄色", label: "黄色", color: "#f7c948" },
+  { key: "绿色", label: "绿色", color: "#36b37e" },
+  { key: "灰色", label: "灰色", color: "#8a94a6" },
+  { key: "银色", label: "银色", color: "#c0c8d4" },
+];
+
+/* ── 事件特征（原常驻 → 归入「事件」目标类型的专属特征，选中才显示）── */
+const ACTION_CHIPS: FeatureChip[] = [
+  { key: "打架", label: "打架" }, { key: "摔倒", label: "摔倒" },
+  { key: "追逐", label: "追逐" }, { key: "聚集", label: "聚集" },
+  { key: "挥手", label: "挥手" }, { key: "搬运", label: "搬运" },
+  { key: "争吵", label: "争吵" }, { key: "偷窃", label: "偷窃" },
+  { key: "拥堵", label: "拥堵" }, { key: "碰撞", label: "碰撞" },
+  { key: "违停", label: "违停" }, { key: "超速", label: "超速" },
+  { key: "逆行", label: "逆行" }, { key: "闯红灯", label: "闯红灯" },
+  { key: "火灾", label: "火灾" }, { key: "烟雾", label: "烟雾" },
+  { key: "闯入", label: "闯入" }, { key: "徘徊", label: "徘徊" },
+];
+
+/* ── 5 大目标类型 + 各自专属特征 ──
+   选中某类型后专属特征面板才出现；颜色为常驻通用特征。
    文本框拼接按「预设句式」组合 token，不把类型名写入。 */
 const TYPE_CHIPS: { key: string; label: string; features: FeatureChip[]; phrase: string }[] = [
   { key: "person", label: "人", phrase: "{color}{服饰}{年龄}{性别}{配饰}{动作}", features: [
@@ -79,31 +104,7 @@ const TYPE_CHIPS: { key: string; label: string; features: FeatureChip[]; phrase:
     { key: "口罩", label: "口罩" }, { key: "拎包", label: "拎包" },
     { key: "背包", label: "背包" }, { key: "拉箱", label: "拉箱" },
   ]},
-];
-
-/* 颜色（人/车/非机动车通用，常驻显示） */
-const COLOR_CHIPS: FeatureChip[] = [
-  { key: "黑色", label: "黑色", color: "#3b4252" },
-  { key: "白色", label: "白色", color: "#f0f2f5" },
-  { key: "红色", label: "红色", color: "#f04444" },
-  { key: "蓝色", label: "蓝色", color: "#4f6ef7" },
-  { key: "黄色", label: "黄色", color: "#f7c948" },
-  { key: "绿色", label: "绿色", color: "#36b37e" },
-  { key: "灰色", label: "灰色", color: "#8a94a6" },
-  { key: "银色", label: "银色", color: "#c0c8d4" },
-];
-
-/* 事件（常驻通用特征） */
-const ACTION_CHIPS: FeatureChip[] = [
-  { key: "打架", label: "打架" }, { key: "摔倒", label: "摔倒" },
-  { key: "追逐", label: "追逐" }, { key: "聚集", label: "聚集" },
-  { key: "挥手", label: "挥手" }, { key: "搬运", label: "搬运" },
-  { key: "争吵", label: "争吵" }, { key: "偷窃", label: "偷窃" },
-  { key: "拥堵", label: "拥堵" }, { key: "碰撞", label: "碰撞" },
-  { key: "违停", label: "违停" }, { key: "超速", label: "超速" },
-  { key: "逆行", label: "逆行" }, { key: "闯红灯", label: "闯红灯" },
-  { key: "火灾", label: "火灾" }, { key: "烟雾", label: "烟雾" },
-  { key: "闯入", label: "闯入" }, { key: "徘徊", label: "徘徊" },
+  { key: "event", label: "事件", phrase: "{事件}", features: ACTION_CHIPS },
 ];
 
 const PRECISION_LABEL: Record<string, string> = {
@@ -179,23 +180,25 @@ export function GlobalSearch() {
   function toggleChip(value: string, group: "type" | "feature" | "color" | "action") {
     /* 选中目标类型本身不写入文本框（仅切换面板），其他特征 token 才进入 */
     const wasOn = chips.has(value);
-    if (group !== "type") setQuery((q) => applyToken(q, value));
     if (group === "type") {
+      // 切换目标类型：清空文本框与已选特征（换语义上下文，残留旧类型 token 无意义），仅保留新点亮的类型标签
+      if (!wasOn) {
+        setQuery("");
+        setChips(new Set([value]));
+      } else {
+        setChips(new Set());
+      }
       const typeDef = TYPE_CHIPS.find((t) => t.label === value);
       if (typeDef) setActiveTypeKey(wasOn ? null : typeDef.key);
-    }
-    setChips((prev) => {
-      const next = new Set(prev);
-      if (group === "type") {
-        // 类型互斥：先移除所有类型 chip，再决定是否添加当前
-        for (const t of TYPE_CHIPS) next.delete(t.label);
-        if (!wasOn) next.add(value);
-      } else {
+    } else {
+      setQuery((q) => applyToken(q, value));
+      setChips((prev) => {
+        const next = new Set(prev);
         if (wasOn) next.delete(value);
         else next.add(value);
-      }
-      return next;
-    });
+        return next;
+      });
+    }
   }
   const [folderIds, setFolderIds] = useState<Set<string> | null>(null); // null = 使用 selectedTree 默认
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -606,22 +609,7 @@ export function GlobalSearch() {
                     ))}
                   </div>
                 </div>
-                {/* 事件：常驻通用特征 */}
-                <div className="gs-chip-group">
-                  <span className="gs-chip-tt">事件</span>
-                  <div className="gs-chip-row">
-                    {ACTION_CHIPS.map((a) => (
-                      <button
-                        key={a.key}
-                        type="button"
-                        className={"gs-chip" + (chips.has(a.label) ? " on" : "")}
-                        onClick={() => toggleChip(a.label, "action")}
-                      >
-                        {a.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {/* 事件：已归入「事件」目标类型的专属特征（选中类型后出现） */}
               </div>
             </div>
           ) : (

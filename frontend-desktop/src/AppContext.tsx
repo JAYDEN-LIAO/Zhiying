@@ -39,8 +39,12 @@ interface AppCtx {
   /* 跨页 track 选中：全局搜索 track 结果点击 → 工作台选中 track（bbox+时间轴高亮，一次性消费） */
   pendingTrackSelect: { videoId: string; trackId: number; className: string; start: number } | null;
   consumePendingTrackSelect: () => void;
-  /* 跨页搜索关键词同步：全局搜索→工作台视频搜索卡片（一次性消费） */
+  /* 跨页搜索关键词同步：全局搜索→工作台视频搜索卡片（一次性消费）。
+     携带目标视频 id：Workbench 常驻挂载后 vid（版本行）晚一拍才切到目标，
+     卡片/消费方都等到对上才动作，防止拿旧视频 id 搜索或被 stale 重置清空 */
   pendingSearchQuery: string | null;
+  pendingSearchVideoId: string | null; // 搜索意图目标视频（openWorkbench 的 videoId）
+  pendingSearchTick: number;       // 搜索意图递增戳（同视频同关键词重复跳转时保证 effect 重新触发）
   consumePendingSearchQuery: () => void;
   pendingFaceFile: File | null;
   pendingImageFile: File | null;
@@ -95,6 +99,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [openSeekTarget, setOpenSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
   const [pendingTrackSelect, setPendingTrackSelect] = useState<{ videoId: string; trackId: number; className: string; start: number } | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
+  const [pendingSearchVideoId, setPendingSearchVideoId] = useState<string | null>(null);
+  const [pendingSearchTick, setPendingSearchTick] = useState(0);
   const [pendingFaceFile, setPendingFaceFile] = useState<File | null>(null);
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [videos, setVideos] = useState<VideoListItem[]>([]);
@@ -164,6 +170,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPendingSearchQuery(opts?.searchQuery ?? null);
     setPendingFaceFile(opts?.faceFile ?? null);
     setPendingImageFile(opts?.imageFile ?? null);
+    setPendingSearchVideoId(opts?.searchQuery || opts?.faceFile || opts?.imageFile ? videoId : null);
+    if (opts?.searchQuery || opts?.faceFile || opts?.imageFile) setPendingSearchTick((t) => t + 1);
   }, []);
 
   /* 参数面板自动打开意图一次性消费：弹过一次后归零，避免预览/切页回来重复弹 */
@@ -327,7 +335,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectedVideoId, openWorkbench, initialVersionId, paramsTick, consumeParamsTick,
     reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek,
     pendingTrackSelect, consumePendingTrackSelect,
-    pendingSearchQuery, consumePendingSearchQuery,
+    pendingSearchQuery, pendingSearchVideoId, pendingSearchTick, consumePendingSearchQuery,
     pendingFaceFile, pendingImageFile, consumePendingSearchFiles,
     videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups,
     selectedTree, setSelectedTree,

@@ -156,7 +156,7 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
 }
 
 export function Workbench() {
-  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek, pendingTrackSelect, consumePendingTrackSelect, pendingSearchQuery, consumePendingSearchQuery, pendingFaceFile, pendingImageFile, consumePendingSearchFiles, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
+  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek, pendingTrackSelect, consumePendingTrackSelect, pendingSearchQuery, pendingSearchVideoId, pendingSearchTick, consumePendingSearchQuery, pendingFaceFile, pendingImageFile, consumePendingSearchFiles, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
   const currentVideoId = selectedVideoId;
 
   /* ── 版本切换（v0.34）：打开文件 → 拉取版本链 → 默认当前版本 ── */
@@ -289,12 +289,15 @@ export function Workbench() {
     consumePendingTrackSelect();
   }, [pendingTrackSelect, vid, consumePendingTrackSelect]);
 
-  /* ── 跨页搜索关键词同步：全局搜索→视频搜索卡片（一次性消费，不依赖 track 选中） ── */
+  /* ── 跨页搜索关键词同步：全局搜索→视频搜索卡片（一次性消费，不依赖 track 选中） ──
+     Workbench 常驻挂载后点击跳转的第一帧 vid 仍是旧视频的版本行——
+     等 vid 落到目标视频才消费，否则卡片拿旧 id 搜索/被随后的视频切换重置清空 */
   useEffect(() => {
-    if ((!pendingSearchQuery && !pendingFaceFile && !pendingImageFile) || !vid) return;
+    if (!pendingSearchQuery && !pendingFaceFile && !pendingImageFile) return;
+    if (!pendingSearchVideoId || vid !== pendingSearchVideoId) return;
     consumePendingSearchQuery();
     consumePendingSearchFiles();
-  }, [pendingSearchQuery, pendingFaceFile, pendingImageFile, vid, consumePendingSearchQuery, consumePendingSearchFiles]);
+  }, [pendingSearchQuery, pendingFaceFile, pendingImageFile, pendingSearchVideoId, vid, consumePendingSearchQuery, consumePendingSearchFiles]);
 
   /* ── 派生布尔 ── */
   const isPending = currentVideo?.status === "pending";
@@ -840,6 +843,8 @@ export function Workbench() {
                     initialQuery={pendingSearchQuery}
                     initialFaceFile={pendingFaceFile}
                     initialImageFile={pendingImageFile}
+                    searchTick={pendingSearchTick}
+                    intentVideoId={currentVideoId}
                     selectedTrackId={selectedTrackId}
                   />
                 }
