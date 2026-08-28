@@ -38,16 +38,29 @@ CROP_INTERVAL = 2.0          # track crop 缓存间隔 (秒) — 每 track 每 2
 VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
 
 
+_EDGE_MARGIN = 0.03   # bbox 边缘贴近画面边界(0/1)的判定比例——贴边=被画面裁剪/半截车
+
+
 def _best_frame_score(conf: float, bbox: dict) -> float:
-    """最佳帧启发式评分 — 置信度 × 目标面积加权。
+    """最佳帧启发式评分 — 置信度 × 目标面积加权 × 贴边惩罚。
 
     人脸/车牌识别希望目标尽量大（近景）+ 检测置信高；
     纯置信度容易选到小目标/背影帧（低分辨率下识别率差）。
     面积项 (0.3 + area) 让近景大目标优先，area∈(0,1)。
+    贴边惩罚：bbox 任一边贴近画面边缘（0/1）时降权——贴边的车被画面裁掉
+    （立交桥/监控常见），crop 出来是半截车、车牌必丢；惩罚让完全入画的帧优先。
     """
     bw = max(0.0, bbox["x2"] - bbox["x1"])
     bh = max(0.0, bbox["y2"] - bbox["y1"])
-    return conf * (0.3 + bw * bh)
+
+    # 贴边因子 ∈[0,1]：完全入画=1，贴边→0（乘 0.35 起步不完全排除，保留进出画的好角度机会）
+    edge = 1.0
+    for d in (bbox["x1"], bbox["y1"], 1.0 - bbox["x2"], 1.0 - bbox["y2"]):
+        if d < _EDGE_MARGIN:
+            edge = min(edge, max(0.0, d / _EDGE_MARGIN))
+    edge_penalty = 0.35 + 0.65 * edge
+
+    return conf * (0.3 + bw * bh) * edge_penalty
 
 
 def _expand_crop(frame: np.ndarray, bbox: dict) -> np.ndarray:

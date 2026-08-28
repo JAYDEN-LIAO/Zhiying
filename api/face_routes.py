@@ -17,7 +17,8 @@ from PIL import Image
 
 from api.deps import get_db
 from api.schemas import APIResponse
-from core.models import FaceIdentity, Video
+from core.models import FaceIdentity
+from core.repository import get_video_source_path
 from utils.video_util import extract_keyframe_to_memory
 
 logger = logging.getLogger(__name__)
@@ -158,14 +159,10 @@ async def get_face_thumbnail(
       - identity_id: 返回该身份的最佳帧人脸 crop
       - timestamp + bbox: 返回指定时刻+位置的人脸 crop
     """
-    result = await db.execute(
-        select(Video.file_path).where(Video.id == video_id)
-    )
-    row = result.one_or_none()
-    if row is None:
+    file_path = await get_video_source_path(db, video_id)
+    if file_path is None:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    file_path: str = row[0]
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Video file not found on disk")
 

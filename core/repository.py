@@ -7,6 +7,7 @@ core/repository.py
 方法内部负责事务提交与异常回滚。
 """
 
+import os
 import uuid
 import logging
 
@@ -21,6 +22,33 @@ from core.models import (
 from core.schemas import VideoCreate
 
 logger = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────
+# 查询
+# ──────────────────────────────────────────────────────────
+
+async def get_video_source_path(session: AsyncSession, video_id) -> str | None:
+    """管道实际处理的视频文件（remuxed 优先，与 engine 的 pctx.ctx.file_path 同源）。
+
+    检测/车牌/人脸/OCR 等管道时间戳都以该文件为时间轴基准；缩略图/导出按
+    timestamp 抽帧必须抽**同一文件**，否则 remux 重封装改变时间轴
+    （如 mpeg_ps start_time=24634 → mp4 remux start_time=0 归零）时，
+    `-ss ts` 在原始文件上会钳到开头/错帧 → 缩略图抽到错误画面。
+
+    返回: 磁盘上实际存在的路径；记录不存在返回 None。
+    """
+    result = await session.execute(
+        select(Video.remuxed_path, Video.file_path).where(Video.id == video_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        return None
+    for p in (row.remuxed_path, row.file_path):
+        if p and os.path.exists(p):
+            return p
+    # 全部不存在时返回首选路径（remuxed 优先），由调用方 exists 检查兜底报 404
+    return row.remuxed_path or row.file_path
 
 
 # ──────────────────────────────────────────────────────────

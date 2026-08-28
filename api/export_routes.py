@@ -65,13 +65,14 @@ async def _handle_clip_export(
     request: Request, background_tasks: BackgroundTasks, db: AsyncSession,
 ) -> FileResponse:
     result = await db.execute(
-        select(Video.file_path, Video.duration, Video.file_name).where(Video.id == video_id)
+        select(Video.file_path, Video.remuxed_path, Video.duration, Video.file_name).where(Video.id == video_id)
     )
     row = result.one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    file_path: str = row.file_path
+    # 导出按管道时间戳抽帧/切段，必须用管道实际处理的文件（remuxed 优先，时间轴一致）
+    file_path: str = row.remuxed_path or row.file_path
     duration: float | None = row.duration
     file_name: str = row.file_name
     base_name = os.path.splitext(file_name)[0]
@@ -138,12 +139,12 @@ async def _handle_track_export(
     display_id: int | None = None,
 ) -> FileResponse:
     result = await db.execute(
-        select(Video.file_path, Video.file_name).where(Video.id == video_id)
+        select(Video.file_path, Video.remuxed_path, Video.file_name).where(Video.id == video_id)
     )
     row = result.one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Video not found")
-    file_path: str = row.file_path
+    file_path: str = row.remuxed_path or row.file_path
     file_name: str = row.file_name
     base_name = os.path.splitext(file_name)[0]
 
@@ -264,12 +265,12 @@ async def export_track_thumbnail(
 ) -> FileResponse:
     """导出 track 物体的全尺寸裁剪图（JPEG 下载）。"""
     result = await db.execute(
-        select(Video.file_path, Video.file_name).where(Video.id == video_id)
+        select(Video.file_path, Video.remuxed_path, Video.file_name).where(Video.id == video_id)
     )
     row = result.one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Video not found")
-    file_path: str = row.file_path
+    file_path: str = row.remuxed_path or row.file_path
     file_name: str = row.file_name
 
     track_result = await db.execute(

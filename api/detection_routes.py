@@ -17,7 +17,8 @@ from PIL import Image
 
 from api.deps import get_db
 from api.schemas import APIResponse
-from core.models import FrameDetection, Track, Video
+from core.models import FrameDetection, Track
+from core.repository import get_video_source_path
 from utils.video_util import extract_keyframe_to_memory
 
 logger = logging.getLogger(__name__)
@@ -218,14 +219,12 @@ async def get_detection_thumbnail(
             )
 
     # ── miss: ffmpeg 抽帧（原逻辑，行为一致）──
-    result = await db.execute(
-        select(Video.file_path).where(Video.id == video_id)
-    )
-    row = result.one_or_none()
-    if row is None:
+    # 必须用管道实际处理的文件（remuxed 优先，与检测时间戳同时间轴）：
+    # 否则 remux 重封装改变 start_time 时，-ss 在原始文件上钳到开头/错帧 → 缩略图抽到错误画面。
+    file_path = await get_video_source_path(db, video_id)
+    if file_path is None:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    file_path: str = row[0]
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Video file not found on disk")
     frame = await extract_keyframe_to_memory(file_path, timestamp)
