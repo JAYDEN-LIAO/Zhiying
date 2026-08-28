@@ -37,6 +37,7 @@ class SegmentRunner(OperationRunner):
         # 长视频(>30min) → 固定段数均匀切段，秒级完成，规避 TransNetV2 逐帧推理耗时
         if duration and duration > self._LONG_VIDEO_THRESHOLD:
             scenes = await self._fixed_count_segmentation(duration, max_scenes)
+            self._shift_scenes(scenes, pctx.ctx.start_time or 0.0)
             pctx.ctx.scenes = scenes
             await pctx.tracker.update(
                 "segmentation",
@@ -62,6 +63,7 @@ class SegmentRunner(OperationRunner):
         scenes = self._build_scenes(raw_scenes)
         if max_scenes and len(scenes) > max_scenes:
             scenes = self._merge_to_max(scenes, duration, max_scenes)
+        self._shift_scenes(scenes, pctx.ctx.start_time or 0.0)
 
         pctx.ctx.scenes = scenes
         await pctx.tracker.update(
@@ -73,6 +75,20 @@ class SegmentRunner(OperationRunner):
             await pctx.log(f"场景分割完成：共 {len(scenes)} 个场景")
 
     # ── 辅助方法 ──
+
+    @staticmethod
+    def _shift_scenes(scenes: list[SceneData], start_time: float) -> None:
+        """场景边界平移到媒体时间轴（start_time≠0 时，与检测/关键帧等时间戳同源对齐）。
+
+        TransNetV2 / 固定分段都按内容时间产出（0 基准），浏览器 currentTime 走媒体时间轴，
+        二者相差一个 start_time。引擎 _persist 用双指针把检测聚合进场景，检测与场景必须
+        同时间基准，否则按 timestamp vs scene.start_sec 的归并会整体错位。
+        """
+        if not start_time:
+            return
+        for s in scenes:
+            s.start_sec = round(s.start_sec + start_time, 2)
+            s.end_sec = round(s.end_sec + start_time, 2)
 
     @staticmethod
     def _build_scenes(raw_scenes: list[dict]) -> list[SceneData]:

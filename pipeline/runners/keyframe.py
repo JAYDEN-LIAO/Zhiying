@@ -45,6 +45,9 @@ class KeyframeRunner(OperationRunner):
 
         summary_mode = effective_summary_mode(pctx.video, pctx.config)
         total_seconds = int(duration)
+        # 媒体时间轴偏移（DurationRunner 探测）。场景时间已平移成媒体时间，映射回内容时间做索引；
+        # 输出的 ts 必须带偏移，与浏览器 currentTime 对齐。
+        start_time = pctx.ctx.start_time or 0.0
         pipeline_cfg = pctx.config.get("pipeline", {})
         use_nvdec = pipeline_cfg.get("use_nvdec", False)
         # 抽帧统一 resize 到编码预设分辨率（与 search_encode 一致，不再驻留原分辨率帧）
@@ -63,8 +66,8 @@ class KeyframeRunner(OperationRunner):
             scene_lookup[si] = scene
             scene.keyframes = []
             scene.frame_timestamps = []
-            for t in range(int(scene.start_sec), int(scene.end_sec)):
-                if t < total_seconds and second_to_scene[t] is None:
+            for t in range(int(scene.start_sec - start_time), int(scene.end_sec - start_time)):
+                if 0 <= t < total_seconds and second_to_scene[t] is None:
                     second_to_scene[t] = si
 
         # ── 流式抽帧 + 分发到 scene 对象和 frame_queue ──
@@ -91,7 +94,7 @@ class KeyframeRunner(OperationRunner):
 
                 scene_idx = second_to_scene[frame_idx]
                 if scene_idx is not None:
-                    ts = float(frame_idx)
+                    ts = start_time + float(frame_idx)
                     scene = scene_lookup[scene_idx]
                     scene.keyframes.append(frame)
                     scene.frame_timestamps.append(ts)

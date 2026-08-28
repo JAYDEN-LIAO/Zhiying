@@ -82,6 +82,7 @@ class VideoContext:
     video_id: str
     file_path: str
     duration: float | None = None
+    start_time: float = 0.0   # 媒体流首帧 PTS（ffprobe format.start_time）——管道时间戳统一到媒体时间轴（浏览器 currentTime 同源）
     scenes: list[Scene] = field(default_factory=list)
     transcript_full: str | None = None
     transcript_words: list[dict] = field(default_factory=list)

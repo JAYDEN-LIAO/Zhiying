@@ -184,7 +184,7 @@ class SearchEncodeRunner(OperationRunner):
                 thumbnail_frame = frame
 
             batch_frames.append(frame)
-            batch_times.append(float(frame_idx))
+            batch_times.append(pctx.ctx.start_time + float(frame_idx))
             frame_idx += 1
 
             if len(batch_frames) >= batch_size:
@@ -260,7 +260,7 @@ class SearchEncodeRunner(OperationRunner):
                 "scene_index": 0,  # 纯搜索无 scene 上下文，统一归到全视频 scene
                 "timestamp_sec": ts,
                 "embedding": emb,
-                "is_keyframe": ts == 0.0,  # 首帧标记为 keyframe（缩略图用）
+                "is_keyframe": ts == pctx.ctx.start_time,  # 首帧（媒体时间轴起点）标记为 keyframe（缩略图用）
             })
         return rows
 
@@ -289,12 +289,12 @@ class SearchEncodeRunner(OperationRunner):
             logger.warning("[SearchEncodeRunner] Thumbnail save failed: %s", e)
             thumb_path = None
 
-        # 覆盖全视频的虚拟 scene
+        # 覆盖全视频的虚拟 scene（媒体时间轴，含 start_time 偏移）
         scene = SceneData(
             scene_id=0,
             scene_index=0,
-            start_sec=0.0,
-            end_sec=duration,
+            start_sec=pctx.ctx.start_time,
+            end_sec=pctx.ctx.start_time + duration,
             keyframe_path=thumb_path,
         )
         # 追加到 ctx.scenes（如果摘要路径已创建了 scenes 则不覆盖）

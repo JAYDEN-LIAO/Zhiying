@@ -250,7 +250,7 @@ class OcrRunner(OperationRunner):
                 use_nvdec=use_nvdec,
                 total_frames=total,
             ):
-                ts = frame_idx / sample_fps
+                ts = pctx.ctx.start_time + frame_idx / sample_fps
                 frame_idx += 1
 
                 try:

@@ -156,7 +156,9 @@ class DetectionRunner(OperationRunner):
                     output_height=384,
                     total_frames=total_samples,
                 ):
-                    timestamp = float(frame_idx) / detection_fps
+                    # 媒体时间轴（= 浏览器 currentTime）：帧计数基准 + 首帧 PTS 偏移。
+                    # 不偏移时 start_time≠0 的视频检测框会整体提前一个 start_time。
+                    timestamp = pctx.ctx.start_time + float(frame_idx) / detection_fps
                     # 推入内部队列供 YOLO 消费
                     await inner_queue.put((frame, timestamp))
                     # 1fps 采样推入搜索队列（共享 NVDEC 流，单 session）

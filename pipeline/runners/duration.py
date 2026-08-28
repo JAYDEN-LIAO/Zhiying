@@ -95,7 +95,22 @@ class DurationRunner(OperationRunner):
                 "常见于 NVR 录像导出、中断下载——请检查源文件后重新上传。"
             )
 
+        # 媒体流首帧 PTS（format.start_time）。非 0 时管道时间戳必须平移到这里，
+        # 否则与浏览器 currentTime（媒体时间轴）错位 → 检测框/搜索跳转整体偏移一个 start_time。
+        # clamp 负值/NaN → 0（负 start_time 的媒体时间轴无一致映射，保守按 0 处理）。
+        start_time = 0.0
+        fmt = info.get("format") or {}
+        raw_st = fmt.get("start_time")
+        if raw_st:
+            try:
+                st = float(raw_st)
+                if st >= 0:
+                    start_time = st
+            except (TypeError, ValueError):
+                start_time = 0.0
+
         pctx.ctx.duration = duration
-        logger.info("[DurationRunner] Duration: %.1fs", duration)
+        pctx.ctx.start_time = start_time
+        logger.info("[DurationRunner] Duration: %.1fs (start_time=%.3fs)", duration, start_time)
         if pctx.log:
             await pctx.log(f"视频时长：{duration:.1f}s")
