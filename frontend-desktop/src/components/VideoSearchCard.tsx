@@ -20,7 +20,10 @@ export function VideoSearchCard({
   initialImageFile,
   searchTick,
   intentVideoId,
+  initialFrameSelectStart,
+  initialSearchMode,
   selectedTrackId,
+  rootVideoId,
 }: {
   video: VideoResponse | null;
   videoId: string | null;
@@ -34,6 +37,12 @@ export function VideoSearchCard({
   initialImageFile?: File | null;
   searchTick?: number;             // 搜索意图递增戳（同视频同关键词重复跳转时保证 effect 重新触发）
   intentVideoId?: string | null;   // 搜索意图的目标视频 id（openWorkbench 的 videoId）
+  /* 跨页画面结果联动：全局搜索 frame 结果的目标帧时间 → 搜完后高亮匹配的画面结果（一次性） */
+  initialFrameSelectStart?: number | null;
+  /* 跨页搜索模式：全局搜索目标类型决定卡片进 plate/ocr/semantic 模式（否则拿 query 语义搜车牌会空白） */
+  initialSearchMode?: "plate" | "ocr" | "semantic" | null;
+  /* 稳定视频根 id（选中视频，非版本行）：版本行切换时不变——门控/重置用它，容忍同视频内 vid 变化 */
+  rootVideoId?: string | null;
   /* ── 检测栏当前选中的 track：物体/车牌结果命中时同步金色选中框 ── */
   selectedTrackId?: number | null;
 }) {
@@ -63,6 +72,32 @@ export function VideoSearchCard({
   // 最近点击的结果（非 track 类无检测栏选中态可用，用本地记录标记金色选中框）；新搜索结果到达即清除
   const [clickedKey, setClickedKey] = useState<string | null>(null);
   useEffect(() => { setClickedKey(null); }, [results]);
+  // 跨页画面结果联动：目标帧时间（pendingFrameSelectRef），搜索结果到达后匹配并高亮。
+  // 必须放在 setClickedKey(null) 清理 effect 之后声明——同一 commit 内先清后设，最终高亮生效。
+  const pendingFrameSelectRef = useRef<number | null>(null);
+  useEffect(() => {
+    const target = pendingFrameSelectRef.current;
+    if (target == null) return;
+    pendingFrameSelectRef.current = null;
+    let bestIdx = -1;
+    let bestDiff = Infinity;
+    results.forEach((it, idx) => {
+      const start = it.precise_start ?? it.scene_range_start;
+      if (start == null) return;
+      const diff = Math.abs(start - target);
+      if (diff < bestDiff) { bestDiff = diff; bestIdx = idx; }
+    });
+    if (bestIdx >= 0 && bestDiff <= 2.0) {
+      const it = results[bestIdx];
+      const isTrack = it.precision_level === "track";
+      const key = isTrack ? `t-${it.video_id}-${it.track_id}-${bestIdx}`
+        : it.precision_level === "plate" ? `p-${it.video_id}-${it.track_id}-${bestIdx}`
+        : it.precision_level === "ocr" ? `o-${it.video_id}-${it.precise_start}-${bestIdx}`
+        : `${it.video_id}-f-${bestIdx}`;
+      setClickedKey(key);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results]);
   const [imageSearching, setImageSearching] = useState(false);
   // v0.30: 当前结果来自哪种搜索（决定 sr-type 标签；语义=frame/text/chunk/track/plate 混合）
   const [searchMode, setSearchMode] = useState<"semantic" | "image" | "face">("semantic");
@@ -88,12 +123,15 @@ export function VideoSearchCard({
   const ocrDisabled = !detEnabled || !video?.ocr_enabled;
   const semanticReady = !!video?.search_index_enabled;
   const initialQueryRef = useRef<string | null>(null);
+  const initialModeRef = useRef<"plate" | "ocr" | "semantic">("semantic"); // 上次处理意图的搜索模式（守卫同视频同词同模式才保留结果）
   const searchTickRef = useRef(0);
   // 当前待处理的跨页搜索意图：openWorkbench 跳转第一帧本组件拿到的 videoId 仍是旧视频的
   // 版本行——意图带目标 id，等 videoId 对上才处理；期间不落入「切视频重置」分支
-  const pendingSearchIntentRef = useRef<{ query?: string; faceFile?: File; imageFile?: File } | null>(null);
+  const pendingSearchIntentRef = useRef<{ query?: string; faceFile?: File; imageFile?: File; frameSelectStart?: number; searchMode?: "plate" | "ocr" | "semantic" } | null>(null);
   // 已同步搜索上下文的视频 id：prop 被消费为 null（stale 更新）时不触发 reset，仅真正切换视频才重置
   const lastProcessedVideoRef = useRef<string | null>(null);
+  // 已同步搜索上下文的「根视频」id（选中视频，非版本行）：版本行切换（vid 变）不触发 reset，仅换视频才重置
+  const lastProcessedRootRef = useRef<string | null>(null);
 
   // 切换过滤器时重新搜索（已有查询才触发）
   useEffect(() => {
@@ -111,25 +149,37 @@ export function VideoSearchCard({
     if (suppressResetRef.current) {
       suppressResetRef.current = false;
       lastProcessedVideoRef.current = currentVideoId;
+      lastProcessedRootRef.current = rootVideoId ?? currentVideoId;
       return;
     }
     // 全局搜索意图到达：寄存到 ref（此刻 videoId 可能还是旧视频的版本行，不能立即搜）
     if ((searchTick ?? 0) !== searchTickRef.current && (initialQuery || initialFaceFile || initialImageFile)) {
       searchTickRef.current = searchTick ?? 0;
       pendingSearchIntentRef.current = initialQuery
-        ? { query: initialQuery }
+        ? { query: initialQuery, frameSelectStart: initialFrameSelectStart ?? undefined, searchMode: initialSearchMode ?? "semantic" }
         : initialFaceFile ? { faceFile: initialFaceFile } : { imageFile: initialImageFile! };
     }
     const intent = pendingSearchIntentRef.current;
-    // 意图匹配门控：videoId 落到目标视频才执行搜索（跳转过渡期 videoId=旧视频，跳过不动作）
-    if (intent && intentVideoId && currentVideoId === intentVideoId) {
-      lastProcessedVideoRef.current = currentVideoId;
+    // 意图匹配门控：vid（或同视频的版本行 rootVideoId）落到目标视频才执行搜索
+    // （跳转过渡期 videoId=旧视频，跳过不动作；版本行分叉用 rootVideoId 容忍）
+    if (intent && intentVideoId && (currentVideoId === intentVideoId || rootVideoId === intentVideoId)) {
       if (intent.query != null) {
-        // 同视频同关键词：保留现有结果（避免闪烁）；否则填充查询并发起语义搜索
-        if (intent.query === initialQueryRef.current) { pendingSearchIntentRef.current = null; return; }
+        const mode = intent.searchMode ?? "semantic";
+        // 同视频同关键词同模式：保留现有结果（避免闪烁）；
+        // 跨视频 / 跨模式同关键词必须重新搜索——现有结果属于旧视频/旧模式
+        if (intent.query === initialQueryRef.current
+            && initialModeRef.current === mode
+            && lastProcessedVideoRef.current === currentVideoId) {
+          pendingSearchIntentRef.current = null;
+          return;
+        }
         initialQueryRef.current = intent.query;
+        initialModeRef.current = mode;
+        // 进入对应搜索模式（plate/ocr/语义）：UI toggle 同步；搜索用 mode 覆盖（不依赖 state 闭包时序）
+        setPlateMode(mode === "plate");
+        setOcrMode(mode === "ocr");
         setQuery(intent.query);
-        void runSemanticSearch(intent.query);
+        void runSemanticSearch(intent.query, intent.frameSelectStart, mode);
       } else if (intent.faceFile) {
         setResults([]); setFaceResults([]); setError(null);
         void runFaceSearch(intent.faceFile);
@@ -137,12 +187,16 @@ export function VideoSearchCard({
         setResults([]); setFaceResults([]); setError(null);
         void runImageSearch(intent.imageFile);
       }
+      lastProcessedVideoRef.current = currentVideoId;
+      lastProcessedRootRef.current = rootVideoId ?? currentVideoId;
       pendingSearchIntentRef.current = null;
       return;
     }
-    // 仅真正切换视频（且无待处理搜索意图）时才重置；
+    // 仅真正切换视频（且无待处理搜索意图）时才重置；版本行分叉（rootVideoId 不变）不重置。
     // 意图存在时不重置——旧视频 id 帧 + 待意图是跳转过渡的常态，重置会清掉刚填的查询
-    if (!pendingSearchIntentRef.current && currentVideoId !== lastProcessedVideoRef.current) {
+    const root = rootVideoId ?? currentVideoId;
+    if (!pendingSearchIntentRef.current && root !== lastProcessedRootRef.current) {
+      lastProcessedRootRef.current = root;
       lastProcessedVideoRef.current = currentVideoId;
       setQuery(""); setResults([]); setSearching(false); setHasSearched(false); setError(null); setFaceResults([]);
     }
@@ -192,14 +246,18 @@ export function VideoSearchCard({
   }, [runImageSearch]);
 
   // 语义搜索 + 智能推荐结果筛选（画面/物体定位），供搜索框 Enter 与全局搜索关键词同步共用
-  const runSemanticSearch = useCallback(async (text: string) => {
+  // modeOverride: 跨页意图指定模式（plate/ocr/semantic），不依赖 toggle state 闭包时序
+  const runSemanticSearch = useCallback(async (text: string, selectStart?: number, modeOverride?: "plate" | "ocr" | "semantic") => {
     const q = text.trim();
     setResults([]); setSearching(true); setError(null); setFaceResults([]);
     setSearchMode("semantic"); // 语义搜索（含帧/物体/车牌）
+    // 生效模式：modeOverride 优先（跨页意图），否则取当前 toggle state
+    const plate = modeOverride === "plate" ? true : (modeOverride === "ocr" ? false : plateMode);
+    const ocr = modeOverride === "ocr" ? true : (modeOverride === "plate" ? false : ocrMode);
     // 智能推荐结果筛选：仅当用户未手动覆盖时才自动判断；
     // 车牌/文字模式不参与（它们有各自的精确检索路径）
     let effectiveFilter: "all" | "frame" | "track" = resultFilter;
-    if (autoFilterActive && !plateMode && !ocrMode) {
+    if (autoFilterActive && !plate && !ocr) {
       try {
         const sug = await api.suggestSearchFilter(q);
         if (sug.filter === "frame" || sug.filter === "track") {
@@ -214,11 +272,14 @@ export function VideoSearchCard({
     try {
       const data = await api.searchSemantic(q, {
         video_ids: searchVideoIds ?? undefined,
-        ...(plateMode ? { search_types: ["plate"], top_k: 100 } : {}),
-        ...(ocrMode ? { search_types: ["ocr"], top_k: 100 } : {}),
-        ...(effectiveFilter === "frame" && !plateMode && !ocrMode ? { search_types: ["frame"] } : {}),
-        ...(effectiveFilter === "track" && !plateMode && !ocrMode ? { search_types: ["track"] } : {}),
+        ...(plate ? { search_types: ["plate"], top_k: 100 } : {}),
+        ...(ocr ? { search_types: ["ocr"], top_k: 100 } : {}),
+        ...(effectiveFilter === "frame" && !plate && !ocr ? { search_types: ["frame"] } : {}),
+        ...(effectiveFilter === "track" && !plate && !ocr ? { search_types: ["track"] } : {}),
       });
+      // 跨页画面结果联动：目标帧时间在结果落库后由 highlight effect 匹配高亮（先于 setResults 设置，
+      // 与 setResults 同批——中间的 setResults([]) 已过去，不会提前被清）
+      if (selectStart != null) pendingFrameSelectRef.current = selectStart;
       setResults(data.results ?? []); setHasSearched(true);
     } catch (err) { setError(err instanceof Error ? err.message : "搜索失败"); }
     finally { setSearching(false); }

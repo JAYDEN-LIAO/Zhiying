@@ -156,19 +156,23 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
 }
 
 export function Workbench() {
-  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek, pendingTrackSelect, consumePendingTrackSelect, pendingSearchQuery, pendingSearchVideoId, pendingSearchTick, consumePendingSearchQuery, pendingFaceFile, pendingImageFile, consumePendingSearchFiles, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
+  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek, pendingTrackSelect, consumePendingTrackSelect, pendingSearchQuery, pendingSearchVideoId, pendingSearchTick, consumePendingSearchQuery, pendingSearchFrameSelect, consumePendingSearchFrameSelect, pendingSearchMode, consumePendingSearchMode, pendingFaceFile, pendingImageFile, consumePendingSearchFiles, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
   const currentVideoId = selectedVideoId;
 
   /* ── 版本切换（v0.34）：打开文件 → 拉取版本链 → 默认当前版本 ── */
   const [versions, setVersions] = useState<VersionInfo[]>([]);
-  const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
-  const vid = activeVersionId ?? currentVideoId; // 有效分析版本行 id
+  // 版本选择「归键到视频」：videoId 记录所选版本行所属的视频。
+  // currentVideoId 切换时立即失效 → vid 立刻落到新视频（消除「所选版本还是旧视频」的
+  // 过渡窗口——跨页 seek/搜索曾在此窗口作用到旧视频元素后被消费，导致新视频从 0 开始/搜索空白）。
+  // 同一视频内切版本行，vid 变但 rootVideoId（currentVideoId）不变，意图门控不受影响。
+  const [activeVersionSel, setActiveVersionSel] = useState<{ videoId: string | null; versionId: string | null }>({ videoId: null, versionId: null });
+  const vid = activeVersionSel.videoId === currentVideoId ? (activeVersionSel.versionId ?? currentVideoId) : currentVideoId; // 有效分析版本行 id
   const activeVersion = versions.find((v) => v.id === vid);
   const curVersionName = activeVersion ? versionName(activeVersion) : "";
 
   useEffect(() => {
     setVersions([]);
-    setActiveVersionId(null);
+    setActiveVersionSel({ videoId: currentVideoId, versionId: null });
     if (!currentVideoId) return;
     let cancelled = false;
     api.listVersions(currentVideoId)
@@ -178,14 +182,14 @@ export function Workbench() {
         // 跳转定位版本：任务中心跳转带 initialVersionId → 精确定位该版本行
         const targeted = initialVersionId ? vs.find((v) => v.id === initialVersionId) : undefined;
         if (targeted) {
-          setActiveVersionId(targeted.id);
+          setActiveVersionSel({ videoId: currentVideoId, versionId: targeted.id });
           return;
         }
         // 默认当前版本 = 最新 completed，否则最新 version_no
         const cur = [...vs].sort((a, b) => (b.version_no ?? 0) - (a.version_no ?? 0))
           .find((v) => v.status === "completed");
         const pick = cur ?? [...vs].sort((a, b) => (b.version_no ?? 0) - (a.version_no ?? 0))[0];
-        if (pick) setActiveVersionId(pick.id);
+        if (pick) setActiveVersionSel({ videoId: currentVideoId, versionId: pick.id });
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -259,14 +263,24 @@ export function Workbench() {
     }
   }, [paramsTick, currentVideoId, consumeParamsTick, consumeReparseIntent, reparseIntent]);
 
-  /* ── 跨页 seek（全局搜索→工作台）：等视频就绪后定位到目标时间，一次性消费 ── */
+  /* ── 跨页 seek（全局搜索→工作台）：等视频就绪后定位到目标时间，一次性消费。
+     与 handleSeekTo 一致：设 autoPauseEndRef，片段播放到 end 自动暂停。
+     门控：等 vid/版本行落到目标视频才定位——跳转过渡期 activeVersion 仍是旧视频版本时绝不作用到旧元素 */
   useEffect(() => {
     if (!openSeekTarget || !vid) return;
+    const targetReady = vid === openSeekTarget.videoId
+      || currentVideo?.id === openSeekTarget.videoId
+      || activeVersionSel.videoId === openSeekTarget.videoId;
+    if (!targetReady) return;
     let cancelled = false;
     let attempts = 0;
     const apply = () => {
       const video = videoRef.current;
       if (!video || video.readyState < 1) return false;
+      // 同步预置自动暂停（清掉旧片段跳播队列，防串场）
+      segmentQueueRef.current = null;
+      segmentIdxRef.current = 0;
+      autoPauseEndRef.current = openSeekTarget.end ?? null;
       video.currentTime = openSeekTarget.start;
       if (openSeekTarget.end != null) video.play().catch(() => {});
       return true;
@@ -278,26 +292,38 @@ export function Workbench() {
       if (++attempts >= 40) { clearInterval(iv); consumeOpenSeek(); }
     }, 150);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [openSeekTarget, vid, consumeOpenSeek]);
+  }, [openSeekTarget, vid, currentVideo?.id, activeVersionSel.videoId, consumeOpenSeek]);
 
   /* ── 跨页 track 选中（全局搜索 track 结果→工作台）：等 vid 切到目标后再 setSelectedTrackId，
      让检测栏 bbox 高亮 + 时间轴高亮，与 Workbench VideoSearchCard.onTrackResult 一致 ── */
   useEffect(() => {
     if (!pendingTrackSelect) return;
-    if (!vid || vid !== pendingTrackSelect.videoId) return;  // 跨视频：等 vid 落到目标再触发
+    // 跨视频：等 vid/版本行落到目标再触发（版本行分叉用 activeVersion.videoId 容忍）
+    if (!vid) return;
+    const targetReady = vid === pendingTrackSelect.videoId
+      || currentVideo?.id === pendingTrackSelect.videoId
+      || activeVersionSel.videoId === pendingTrackSelect.videoId;
+    if (!targetReady) return;
     setSelectedTrackId(pendingTrackSelect.trackId);
     consumePendingTrackSelect();
-  }, [pendingTrackSelect, vid, consumePendingTrackSelect]);
+  }, [pendingTrackSelect, vid, currentVideo?.id, activeVersionSel.videoId, consumePendingTrackSelect]);
 
   /* ── 跨页搜索关键词同步：全局搜索→视频搜索卡片（一次性消费，不依赖 track 选中） ──
      Workbench 常驻挂载后点击跳转的第一帧 vid 仍是旧视频的版本行——
      等 vid 落到目标视频才消费，否则卡片拿旧 id 搜索/被随后的视频切换重置清空 */
   useEffect(() => {
     if (!pendingSearchQuery && !pendingFaceFile && !pendingImageFile) return;
-    if (!pendingSearchVideoId || vid !== pendingSearchVideoId) return;
+    if (!pendingSearchVideoId) return;
+    // 等 vid/版本行落到目标视频再消费（版本行分叉用 activeVersionSel.videoId 容忍）
+    const targetReady = vid === pendingSearchVideoId
+      || currentVideo?.id === pendingSearchVideoId
+      || activeVersionSel.videoId === pendingSearchVideoId;
+    if (!targetReady) return;
     consumePendingSearchQuery();
+    consumePendingSearchFrameSelect();
+    consumePendingSearchMode();
     consumePendingSearchFiles();
-  }, [pendingSearchQuery, pendingFaceFile, pendingImageFile, pendingSearchVideoId, vid, consumePendingSearchQuery, consumePendingSearchFiles]);
+  }, [pendingSearchQuery, pendingFaceFile, pendingImageFile, pendingSearchVideoId, vid, currentVideo?.id, activeVersionSel.videoId, consumePendingSearchQuery, consumePendingSearchFrameSelect, consumePendingSearchMode, consumePendingSearchFiles]);
 
   /* ── 派生布尔 ── */
   const isPending = currentVideo?.status === "pending";
@@ -704,7 +730,7 @@ export function Workbench() {
                     <div key={v.id}
                       className={"border rounded-lg px-2.5 py-2 cursor-pointer transition-colors " +
                         (vid === v.id ? "border-[#4f7cff] bg-[#4f7cff]/5" : "border-gray-200 hover:border-gray-300")}
-                      onClick={() => { setActiveVersionId(v.id); setTopPanel(null); }}
+                      onClick={() => { setActiveVersionSel({ videoId: currentVideoId, versionId: v.id }); setTopPanel(null); }}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className={"text-[12.5px] font-medium truncate " + (vid === v.id ? "text-[#4f7cff]" : "text-gray-700")}>{versionName(v)}</span>
@@ -845,6 +871,9 @@ export function Workbench() {
                     initialImageFile={pendingImageFile}
                     searchTick={pendingSearchTick}
                     intentVideoId={currentVideoId}
+                    rootVideoId={currentVideoId}
+                    initialFrameSelectStart={pendingSearchFrameSelect?.start ?? null}
+                    initialSearchMode={pendingSearchMode}
                     selectedTrackId={selectedTrackId}
                   />
                 }

@@ -29,12 +29,12 @@ interface AppCtx {
   /* 跨页选视频：跳工作台并（可选）自动打开参数面板 */
   selectedVideoId: string | null;
   initialVersionId: string | null;
-  openWorkbench: (videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null }; selectTrack?: { trackId: number; className: string; start: number }; searchQuery?: string; faceFile?: File; imageFile?: File }) => void;
+  openWorkbench: (videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null }; selectTrack?: { trackId: number; className: string; start: number }; searchQuery?: string; faceFile?: File; imageFile?: File; frameSelect?: { start: number }; searchMode?: "plate" | "ocr" | "semantic" }) => void;
   paramsTick: number;
   consumeParamsTick: () => void; // 参数面板自动打开意图一次性消费（预览/切页不再重复弹）
   reparseIntent: boolean;        // 自动打开的参数面板是否走「重新解析」模式（已完成文件重配置参数 → reanalyze 建新版本）
   consumeReparseIntent: () => void;
-  openSeekTarget: { start: number; end: number | null } | null; // 跨页 seek：全局搜索→工作台（一次性消费）
+  openSeekTarget: { videoId: string; start: number; end: number | null } | null; // 跨页 seek：全局搜索→工作台（带目标视频 id，等 vid 落到目标才定位，防作用到旧视频元素）
   consumeOpenSeek: () => void;
   /* 跨页 track 选中：全局搜索 track 结果点击 → 工作台选中 track（bbox+时间轴高亮，一次性消费） */
   pendingTrackSelect: { videoId: string; trackId: number; className: string; start: number } | null;
@@ -46,6 +46,14 @@ interface AppCtx {
   pendingSearchVideoId: string | null; // 搜索意图目标视频（openWorkbench 的 videoId）
   pendingSearchTick: number;       // 搜索意图递增戳（同视频同关键词重复跳转时保证 effect 重新触发）
   consumePendingSearchQuery: () => void;
+  /* 跨页画面结果选中：全局搜索 frame 结果点击 → 工作台视频搜索卡片联动高亮对应画面结果（一次性消费）。
+     携带目标帧时间（precise_start ?? scene_range_start），卡片搜完按时间匹配结果后高亮 */
+  pendingSearchFrameSelect: { videoId: string; start: number } | null;
+  consumePendingSearchFrameSelect: () => void;
+  /* 跨页搜索模式：全局搜索目标类型 → 卡片进入对应模式（plate/ocr/semantic），
+     否则卡片拿 query 在语义模式搜车牌/文字会空白 */
+  pendingSearchMode: "plate" | "ocr" | "semantic" | null;
+  consumePendingSearchMode: () => void;
   pendingFaceFile: File | null;
   pendingImageFile: File | null;
   consumePendingSearchFiles: () => void;
@@ -96,11 +104,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [initialVersionId, setInitialVersionId] = useState<string | null>(null); // 跳转精确定位版本行（任务中心）
   const [paramsTick, setParamsTick] = useState(0);
   const [reparseIntent, setReparseIntent] = useState(false);
-  const [openSeekTarget, setOpenSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
+  const [openSeekTarget, setOpenSeekTarget] = useState<{ videoId: string; start: number; end: number | null } | null>(null);
   const [pendingTrackSelect, setPendingTrackSelect] = useState<{ videoId: string; trackId: number; className: string; start: number } | null>(null);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
   const [pendingSearchVideoId, setPendingSearchVideoId] = useState<string | null>(null);
   const [pendingSearchTick, setPendingSearchTick] = useState(0);
+  const [pendingSearchFrameSelect, setPendingSearchFrameSelect] = useState<{ videoId: string; start: number } | null>(null);
+  const [pendingSearchMode, setPendingSearchMode] = useState<"plate" | "ocr" | "semantic" | null>(null);
   const [pendingFaceFile, setPendingFaceFile] = useState<File | null>(null);
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [videos, setVideos] = useState<VideoListItem[]>([]);
@@ -156,13 +166,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPage("settings");
   }, []);
 
-  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null }; selectTrack?: { trackId: number; className: string; start: number }; searchQuery?: string; faceFile?: File; imageFile?: File }) => {
+  const openWorkbench = useCallback((videoId: string, opts?: { openParams?: boolean; versionId?: string; reparse?: boolean; seekTo?: { start: number; end?: number | null }; selectTrack?: { trackId: number; className: string; start: number }; searchQuery?: string; faceFile?: File; imageFile?: File; frameSelect?: { start: number }; searchMode?: "plate" | "ocr" | "semantic" }) => {
     setSelectedVideoId(videoId);
     setInitialVersionId(opts?.versionId ?? null); // 精确定位版本行（任务中心跳转）
     setPage("workbench");
     setReparseIntent(opts?.reparse ?? false);      // 参数面板自动打开时是否走「重新解析」（已完成文件重配参数）
     if (opts?.openParams) setParamsTick((t) => t + 1);
-    setOpenSeekTarget(opts?.seekTo ? { start: opts.seekTo.start, end: opts.seekTo.end ?? null } : null); // 跨页 seek：全局搜索→工作台定位时间
+    setOpenSeekTarget(opts?.seekTo ? { videoId, start: opts.seekTo.start, end: opts.seekTo.end ?? null } : null); // 跨页 seek：全局搜索→工作台定位时间（携带目标视频 id）
     /* track 选中意图：全局搜索 track 结果点击 → 工作台高亮 bbox+时间轴。
        若未传 selectTrack，主动清空旧意图（避免上一轮残留导致新打开仍带高亮） */
     setPendingTrackSelect(opts?.selectTrack ? { videoId, ...opts.selectTrack } : null);
@@ -171,6 +181,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPendingFaceFile(opts?.faceFile ?? null);
     setPendingImageFile(opts?.imageFile ?? null);
     setPendingSearchVideoId(opts?.searchQuery || opts?.faceFile || opts?.imageFile ? videoId : null);
+    /* 跨页画面结果选中意图：画面类结果跳转时带目标帧时间；无则清空旧意图（防上一轮残留误高亮） */
+    setPendingSearchFrameSelect(opts?.frameSelect ? { videoId, ...opts.frameSelect } : null);
+    /* 跨页搜索模式：仅文字搜索带 query 时才有效（plate/ocr/semantic），否则清空 */
+    setPendingSearchMode(opts?.searchQuery ? (opts?.searchMode ?? "semantic") : null);
     if (opts?.searchQuery || opts?.faceFile || opts?.imageFile) setPendingSearchTick((t) => t + 1);
   }, []);
 
@@ -180,6 +194,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const consumeOpenSeek = useCallback(() => setOpenSeekTarget(null), []);
   const consumePendingTrackSelect = useCallback(() => setPendingTrackSelect(null), []);
   const consumePendingSearchQuery = useCallback(() => setPendingSearchQuery(null), []);
+  const consumePendingSearchFrameSelect = useCallback(() => setPendingSearchFrameSelect(null), []);
+  const consumePendingSearchMode = useCallback(() => setPendingSearchMode(null), []);
   const consumePendingSearchFiles = useCallback(() => { setPendingFaceFile(null); setPendingImageFile(null); }, []);
 
   /* ═══ v0.6 图片素材库：打开页面并（可选）携带定位意图；意图一次性消费，切页回来不重复弹 ═══ */
@@ -336,6 +352,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek,
     pendingTrackSelect, consumePendingTrackSelect,
     pendingSearchQuery, pendingSearchVideoId, pendingSearchTick, consumePendingSearchQuery,
+    pendingSearchFrameSelect, consumePendingSearchFrameSelect,
+    pendingSearchMode, consumePendingSearchMode,
     pendingFaceFile, pendingImageFile, consumePendingSearchFiles,
     videos, videoGroups, caseGroups, refreshCaseGroups: loadCaseGroups,
     selectedTree, setSelectedTree,

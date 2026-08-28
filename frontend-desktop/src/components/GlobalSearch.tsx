@@ -919,6 +919,10 @@ export function GlobalSearch() {
                 const openResult = () => {
                   const seekTo = timeSec != null ? { start: timeSec, end: r.precise_end ?? null } : undefined;
                   const syncFiles = tab === "image" ? { faceFile: imageSource === "face" ? faceFile ?? undefined : undefined, imageFile: imageSource === "image" ? imageFile ?? undefined : undefined } : {};
+                  /* 搜索模式同步：目标类型 plate→车牌模式 / text→文字(OCR)模式 / 其余→语义模式。
+                     否则卡片拿 query 在语义模式搜车牌/文字会空白 */
+                  const searchMode: "plate" | "ocr" | "semantic" = activeTypeKey === "plate" ? "plate"
+                    : activeTypeKey === "text" ? "ocr" : "semantic";
                   /* 车牌等非 track 结果也带 track_id（与视频搜索卡一致）：
                      只要有主 track 就传 selectTrack，跳转后视频框照样黄框标中车辆 */
                   if (r.track_id != null && timeSec != null) {
@@ -927,10 +931,19 @@ export function GlobalSearch() {
                       seekTo,
                       selectTrack: { trackId: r.track_id, className: r.class_name ?? "", start: timeSec },
                       searchQuery: tab === "text" ? query.trim() : undefined,
+                      searchMode: tab === "text" ? searchMode : undefined,
                       ...syncFiles,
                     });
                   } else {
-                    openWorkbench(r.video_id, { versionId: r.video_id, ...(seekTo ? { seekTo } : {}), searchQuery: tab === "text" ? query.trim() : undefined, ...syncFiles });
+                    /* 画面类结果：带 frameSelect（目标帧时间）→ 工作台视频搜索卡片搜完后联动高亮对应画面结果 */
+                    openWorkbench(r.video_id, {
+                      versionId: r.video_id,
+                      ...(seekTo ? { seekTo } : {}),
+                      ...(seekTo && timeSec != null ? { frameSelect: { start: timeSec } } : {}),
+                      searchQuery: tab === "text" ? query.trim() : undefined,
+                      searchMode: tab === "text" ? searchMode : undefined,
+                      ...syncFiles,
+                    });
                   }
                 };
                 const simPct = Math.round(((r.confidence ?? r.similarity) ?? 0) * 100);
