@@ -172,6 +172,8 @@ class HyperLPRPlateRecognizer(BasePlateRecognizer):
 
                     plate_code = (res[0] or "").strip()
                     rec_confidence = float(res[1]) if res[1] is not None else 0.0
+                    if np.isnan(rec_confidence):
+                        rec_confidence = 0.0
                     plate_type_int = int(res[2]) if res[2] is not None else -1
                     det_bbox = res[3]  # [x1, y1, x2, y2] 像素坐标
 

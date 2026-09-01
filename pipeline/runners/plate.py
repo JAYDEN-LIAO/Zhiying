@@ -259,9 +259,9 @@ class PlateRunner(OperationRunner):
                 "timestamp_sec": ts,
                 "plate_text": plate["plate_text"],
                 "plate_type": plate.get("plate_type", "blue"),
-                "char_confidences": plate.get("char_confidences", []),
+                "char_confidences": [0.0 if (isinstance(c, float) and np.isnan(c)) else c for c in plate.get("char_confidences", [])],
                 "bbox": frame_bbox,
-                "detection_confidence": plate["confidence"],
+                "detection_confidence": 0.0 if np.isnan(float(plate["confidence"])) else float(plate["confidence"]),
                 "thumbnail_path": None,
             })
 

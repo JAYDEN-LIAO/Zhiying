@@ -264,6 +264,8 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
       if (!t || !container.contains(t)) return;
       // 兜底几何过滤：视频容器内的点击（原生控件 shadow DOM 目标可能是 video 本身）
       if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+      // 原生控制条区域（底部 44px）：跳过手动 toggle，让浏览器原生处理
+      if (e.clientY > rect.bottom - 44) return;
       const video = videoRef.current;
       const currentTime = video?.currentTime ?? 0;
       ensure(currentTime); // 数据空档兜底：确保点击时刻窗口已加载（已加载则 no-op）
@@ -302,6 +304,8 @@ export function DetectionOverlay({ videoRef, videoId, enabled, hasDetection, sel
         // v0.30 空点击：只模拟原生播放/暂停切换，不再反选选中框。
         // （原实现 play/pause + onTrackSelect(-1) 耦合导致：暂停态选中物体后
         //   点空白播放 → 高亮被取消。现在播放/暂停与选中/取消完全解耦。）
+        e.preventDefault();
+        e.stopPropagation();
         if (video) {
           if (video.paused) video.play().catch(() => {});
           else video.pause();

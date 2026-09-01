@@ -20,6 +20,13 @@ const ROW_GAP = 4;
 const ROW_STEP = ROW_H + ROW_GAP;
 const OVERSCAN = 5;
 
+/* 播放头落在哪一段：返回命中段索引；带 0.05s end 容忍（跳播收尾 currentTime 恰压/越 end 一瞬，
+   严格 `<= end` 会漏判跌回老选中段 → 起播又从头）。黄框高亮与「一键播放」起播共用同一判定。 */
+function segIndexAt(segs: { start: number; end: number }[], t: number): number {
+  if (segs.length === 0) return -1;
+  return segs.findIndex((s) => t >= s.start && t <= s.end + 0.05);
+}
+
 interface Props {
   video: VideoResponse | null;
   data: DetectionData | null;
@@ -172,6 +179,10 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
   const [faceDropdownId, setFaceDropdownId] = useState<number | null>(null);
   // 最后点选的人脸时间段（identId + 段索引）：段播完暂停后，「一键播放」从这里起播并继续自动跳播
   const [faceSegSel, setFaceSegSel] = useState<{ identId: number; si: number } | null>(null);
+  // 「一键播放」进行中的身份行：图标三角 ↔ 双竖条；视频暂停（全部段播完自动暂停/手动暂停/切视频）即复原三角
+  const [facePlayingId, setFacePlayingId] = useState<number | null>(null);
+  // 视频是否在播放：搜索人脸结果/自动跳播触发的一键播放态需凭它派生（仅按钮点击不会置 facePlayingId）
+  const [videoPlaying, setVideoPlaying] = useState(false);
   // hover 浮层：物体 = {videoId,ts,bbox} 现截视频；人脸 = {src} 直接显示已存缩略图
   const [hoverThumb, setHoverThumb] = useState<
     | { videoId: string; ts: number; bbox: { x1: number; y1: number; x2: number; y2: number }; x: number; y: number }
@@ -206,8 +217,38 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     }
   }, [showFaceBtn, faceViewOpen]);
 
-  // 切视频 → 清除段选中记录（identId 跨视频可能撞号，防「一键播放」误续播旧视频的段）
-  useEffect(() => { setFaceSegSel(null); }, [video?.id]);
+  // 切视频 → 清除段选中记录与播放态（identId 跨视频可能撞号，防「一键播放」误续播旧视频的段）
+  useEffect(() => { setFaceSegSel(null); setFacePlayingId(null); }, [video?.id]);
+
+  /* ── 播放态跟踪 + 「一键播放」双竖条自动复原 ──
+     videoPlaying：搜索人脸结果/自动跳播触发的一键播放态凭它派生（按钮点击才置 facePlayingId）。
+     facePlayingId 复原：全部段播完 Workbench 自动暂停 / 手动暂停 / 切视频 → 图标复原三角；
+     段间跳转是 seek 不触发 pause，不会误复原。
+     ended 兜底：自然播到片尾规范只派发 ended 不派发 pause。
+     重挂兜底：监听脱离窗口期（切到物体视图再切回）发生的 pause 不补发，按当前 paused 态校准。 */
+  useEffect(() => {
+    const el = videoRef?.current;
+    if (!el || !faceViewOpen) return;
+    setVideoPlaying(!el.paused);
+    if (el.paused) setFacePlayingId(null);
+    const onPlay = () => setVideoPlaying(true);
+    const onStop = () => { setVideoPlaying(false); setFacePlayingId(null); };
+    el.addEventListener("play", onPlay);
+    el.addEventListener("pause", onStop);
+    el.addEventListener("ended", onStop);
+    return () => {
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onStop);
+      el.removeEventListener("ended", onStop);
+    };
+  }, [videoRef, faceViewOpen, video?.id]);
+
+  /* ── 人脸搜索结果点击覆盖跳播队列（Workbench handleFaceResult 重建队列）：
+     展开身份落到其他行 → 原行「一键播放」态已名存实亡，立即复原三角 ── */
+  useEffect(() => {
+    if (facePlayingId != null && facePlayingId !== expandedFaceId) setFacePlayingId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedFaceId]);
 
   // v0.30: 定位人脸 → 丝滑滚动到身份行（与物体列表统一规范：页内不跳、页外丝滑、
   // 目标位置顶边停在视口顶部往下约 1 行（偏上）；人脸列表非虚拟，用 offsetTop）
@@ -250,6 +291,28 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
     }
     return map;
   }, [plateData]);
+
+  /* ── 人脸身份 → 出现段列表（与检测栏展开列表/时间轴/Workbench 自动跳播同源：
+     track_to_identity 主 person track 的 [first_seen, last_seen]（或其 segments），
+     排除「搭车」长 track。行内「一键播放」与展开时间列表共用 ── */
+  const segListByIdent = useMemo(() => {
+    const m = new Map<number, { start: number; end: number; label: string }[]>();
+    if (!faceData?.track_to_identity) return m;
+    const tidToIdent = new Map<number, number>();
+    for (const [tid, info] of Object.entries(faceData.track_to_identity)) {
+      tidToIdent.set(Number(tid), info.identity_id);
+    }
+    for (const t of data?.tracks ?? []) {
+      const iid = tidToIdent.get(t.track_id);
+      if (iid == null) continue;
+      const tsegs = t.segments?.length ? t.segments : [{ start: t.first_seen, end: t.last_seen }];
+      const list = m.get(iid) ?? [];
+      for (const s of tsegs) list.push({ start: s.start, end: s.end, label: zhLabel("person", t.display_seq ?? t.track_id) });
+      m.set(iid, list);
+    }
+    for (const list of m.values()) list.sort((a, b) => a.start - b.start);
+    return m;
+  }, [faceData, data]);
 
   const tracks = data?.tracks ?? [];
   const filtered = useMemo(
@@ -567,24 +630,16 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
           <div className="dtc-list" ref={listRef} style={{ position: "relative", overflowY: "visible", overflowX: "hidden", flex: 1, minHeight: 0 }}>
             {faceData.identities.map((ident) => {
               const isSel = expandedFaceId === ident.id;
-              // 出现段与展开列表/时间轴同源：该身份归属的主 person track 的 [first_seen, last_seen]
-              //（或其 segments），排除「搭车」长 track。行内「一键播放」与展开时间列表共用。
-              const tids = new Set(
-                (faceData?.track_to_identity
-                  ? Object.entries(faceData.track_to_identity)
-                      .filter(([, info]) => info.identity_id === ident.id)
-                      .map(([tid]) => Number(tid))
-                  : []),
-              );
-              const segList: { start: number; end: number; label: string }[] = [];
-              for (const t of data?.tracks ?? []) {
-                if (!tids.has(t.track_id)) continue;
-                const tsegs = t.segments?.length ? t.segments : [{ start: t.first_seen, end: t.last_seen }];
-                for (const s of tsegs) {
-                  segList.push({ start: s.start, end: s.end, label: zhLabel("person", t.display_seq ?? t.track_id) });
-                }
-              }
-              segList.sort((a, b) => a.start - b.start);
+              const segList = segListByIdent.get(ident.id) ?? [];
+              // 播放头落在该身份哪一段（与展开列表黄框高亮同源判定，含末段边界容忍）：-1 = 不在任何段
+              const playheadIn = playheadSec != null ? segIndexAt(segList, playheadSec) : -1;
+              // 「一键播放」进行中：按钮触发（facePlayingId）或 搜索人脸结果跳播
+              //（Workbench handleFaceResult 展开身份 + 播放中 + 播放头落本身份段）
+              const rowPlaying = facePlayingId === ident.id
+                || (isSel && videoPlaying && playheadIn !== -1);
+              // 起播段 = 播放头当前段（播放到哪段续哪段），其次上次点选段，最后从头
+              const faceStartIdx = playheadIn !== -1 ? playheadIn
+                : (faceSegSel && faceSegSel.identId === ident.id && faceSegSel.si < segList.length ? faceSegSel.si : 0);
               return (
                 <div key={ident.id}>
                   <div
@@ -630,21 +685,35 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                       </div>
                       <div className="dtc-time">{ident.first_seen.toFixed(1)}s – {ident.last_seen.toFixed(1)}s</div>
                     </div>
-                    {/* 一键播放（v0.6.x）：替代展开三角。未选过段→从头自动跳播全部出现段
-                        （与人脸搜索结果点击一致）；点选过某段→从该段起播并继续自动跳播后续段 */}
+                    {/* 一键播放（v0.6.x）：替代展开三角。从未选/无播放位置→从头自动跳播全部出现段；
+                        否则从「当前播放段（黄色高亮段）」起播并继续自动跳播后续段——播放到哪段续哪段。
+                        跳播进行中图标变双竖条（暂停语义）：再点暂停视频并退出跳播态；
+                        全部段播完自动暂停 / 手动暂停 → 图标自动复原三角 */}
                     {segList.length > 0 && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          const si = faceSegSel && faceSegSel.identId === ident.id && faceSegSel.si < segList.length ? faceSegSel.si : 0;
-                          const rest = segList.slice(si).map(({ start, end }) => ({ start, end }));
+                          if (rowPlaying) {
+                            // 跳播进行中再点 → 暂停 + 退出跳播态（图标复原三角）
+                            videoRef?.current?.pause();
+                            setFacePlayingId(null);
+                            return;
+                          }
+                          const rest = segList.slice(faceStartIdx).map(({ start, end }) => ({ start, end }));
+                          setFacePlayingId(ident.id);
                           onSeekTo?.(rest[0].start, rest[0].end, rest);
                           setFaceDropdownId(null);
                         }}
                         className="w-6 h-6 rounded-md shrink-0 flex items-center justify-center text-gray-400 bg-white border border-gray-200 shadow-sm hover:text-[#4f7cff] hover:border-blue-300 hover:bg-blue-50 transition-all cursor-pointer"
-                        title={faceSegSel && faceSegSel.identId === ident.id ? "一键播放（从上次选中段起播，播完自动跳下一段）" : "一键播放（自动逐段播放所有出现片段）"}
+                        title={rowPlaying
+                          ? "暂停（正在自动逐段播放）"
+                          : playheadIn !== -1 ? "一键播放（从当前段起播，播完自动跳下一段）" : "一键播放（自动逐段播放所有出现片段）"}
                       >
-                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                        {rowPlaying ? (
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" /></svg>
+                        ) : (
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                        )}
                       </button>
                     )}
                     {/* 加入图片素材库（v0.6） */}
@@ -700,11 +769,9 @@ export function DetectionPanel({ video, data, selectedTrackId, classFilter, onCl
                       {segList.length > 0 && (
                         <div className="mt-1 flex flex-col gap-0.5">
                           {segList.map((seg, si) => {
-                            // 黄框优先跟随播放位置；停播/落段外时保留最后点选的段的高亮
-                            const playheadIdx = playheadSec != null
-                              ? segList.findIndex((s) => playheadSec >= s.start && playheadSec <= s.end)
-                              : -1;
-                            const activeIdx = playheadIdx !== -1 ? playheadIdx
+                            // 黄框优先跟随播放位置（与行首「一键播放」起播段同一判定 segIndexAt）；
+                            // 停播/落段外时保留最后点选的段的高亮
+                            const activeIdx = playheadIn !== -1 ? playheadIn
                               : (faceSegSel && faceSegSel.identId === ident.id && faceSegSel.si < segList.length ? faceSegSel.si : -1);
                             return (
                               <button key={si}

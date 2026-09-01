@@ -156,7 +156,7 @@ function WbAnalysis({ detection, search }: { detection: React.ReactNode; search:
 }
 
 export function Workbench() {
-  const { selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek, pendingTrackSelect, consumePendingTrackSelect, pendingSearchQuery, pendingSearchVideoId, pendingSearchTick, consumePendingSearchQuery, pendingSearchFrameSelect, consumePendingSearchFrameSelect, pendingSearchMode, consumePendingSearchMode, pendingFaceFile, pendingImageFile, consumePendingSearchFiles, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
+  const { page, selectedVideoId, initialVersionId, paramsTick, consumeParamsTick, reparseIntent, consumeReparseIntent, openSeekTarget, consumeOpenSeek, pendingTrackSelect, consumePendingTrackSelect, pendingSearchQuery, pendingSearchVideoId, pendingSearchTick, consumePendingSearchQuery, pendingSearchFrameSelect, consumePendingSearchFrameSelect, pendingSearchMode, consumePendingSearchMode, pendingFaceFile, pendingImageFile, consumePendingSearchFiles, videos, videoGroups, caseGroups, navigate, openWorkbench, handleUploadClick, isUploading } = useApp();
   const currentVideoId = selectedVideoId;
 
   /* ── 版本切换（v0.34）：打开文件 → 拉取版本链 → 默认当前版本 ── */
@@ -208,6 +208,13 @@ export function Workbench() {
   const [showStageInfo, setShowStageInfo] = useState(false); // 播放器信息浮层
   const [addSubjectDrawer, setAddSubjectDrawer] = useState<AddSubjectDrawerData | null>(null); // v0.6 沉淀素材库
   const videoRef = useRef<HTMLVideoElement>(null);
+  // 切离视频解析页时自动暂停，防止后台持续播放
+  useEffect(() => {
+    if (page !== "workbench") {
+      const v = videoRef.current;
+      if (v && !v.paused) v.pause();
+    }
+  }, [page]);
   // 搜索结果自动暂停：记录 end 时间，timeupdate 到达时暂停
   const autoPauseEndRef = useRef<number | null>(null);
   // 人脸搜索片段跳播队列：点击人脸结果后，按出现片段顺序自动跳播

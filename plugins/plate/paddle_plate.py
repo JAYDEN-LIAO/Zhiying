@@ -115,6 +115,9 @@ class PaddlePlateRecognizer(BasePlateRecognizer):
             if ocr_result and ocr_result[0]:
                 for line in ocr_result[0]:
                     bbox_points, (text, confidence) = line
+                    confidence = float(confidence)
+                    if np.isnan(confidence):
+                        confidence = 0.0
                     if not text:
                         continue
 

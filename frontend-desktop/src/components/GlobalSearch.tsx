@@ -592,7 +592,8 @@ export function GlobalSearch() {
                     </div>
                   </div>
                 )}
-                {/* 颜色：常驻通用特征 */}
+                {/* 颜色：人/车/未选中时显示，车牌/文本/事件时隐藏 */}
+                {!activeTypeKey || activeTypeKey === "person" || activeTypeKey === "vehicle" ? (
                 <div className="gs-chip-group">
                   <span className="gs-chip-tt">颜色</span>
                   <div className="gs-chip-row">
@@ -609,6 +610,7 @@ export function GlobalSearch() {
                     ))}
                   </div>
                 </div>
+                ) : null}
                 {/* 事件：已归入「事件」目标类型的专属特征（选中类型后出现） */}
               </div>
             </div>
