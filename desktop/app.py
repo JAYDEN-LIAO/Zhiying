@@ -27,6 +27,7 @@ from checks import (project_root, install_script_name, read_server_config, check
                     sweep_orphan_backends)
 import db as db_mod
 import backend as backend_mod
+from model_bootstrap import ModelBootstrap
 
 ROOT = project_root()
 
@@ -49,6 +50,52 @@ def parse_args(argv=None) -> argparse.Namespace:
 def _log_path(args) -> Path:
     d = Path(args.log_dir) if args.log_dir else ROOT / "data" / "logs"
     return d / "desktop.log"
+
+
+def _embedding_profile(root: Path) -> str:
+    """读 config.yaml 的 embedding_profile（2b/8b）；缺失默认 8b。"""
+    try:
+        for line in (root / "config" / "config.yaml").read_text(encoding="utf-8").splitlines():
+            if "embedding_profile" in line and ":" in line:
+                v = line.split(":", 1)[1].strip().strip('"\'')
+                return v if v in ("2b", "8b") else "8b"
+    except Exception:
+        pass
+    return "8b"
+
+
+def _saved_proxy(root: Path) -> str:
+    """读 install1/install2 记忆的代理（data/proxy.txt），首启下载默认使用。"""
+    try:
+        return (root / "data" / "proxy.txt").read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def _wait_model_bootstrap(boot: ModelBootstrap, profile: str, proxy: str, log) -> bool:
+    """进入 model_boot 状态并等模型下载完成。
+
+    下载在后台线程跑（boot 实例同时暴露给 SplashApi，供前端点「重试」重新 start）。
+    返回 True=下载完成可继续；False=失败/中止（调用方应等退出）。
+    """
+    boot.start(profile=profile, proxy=proxy)
+    app_state.set(State.MODEL_BOOT, "模型未齐全，正在下载模型…", profile=profile)
+    last_state = None
+    while True:
+        st = boot.status
+        if st["state"] == "done":
+            return True
+        if st["state"] == "aborted":
+            app_state.set(State.ERROR, "模型下载已取消",
+                          detail="已停止下载，关闭启动器后可重新打开重试")
+            return False
+        if st["state"] == "failed" and last_state != "failed":
+            app_state.set(State.MODEL_BOOT, "模型下载失败，请检查代理后重试",
+                          detail=st["error"] or "下载失败", profile=profile)
+        elif st["state"] == "running" and last_state != "running":
+            app_state.set(State.MODEL_BOOT, "模型未齐全，正在下载模型…", profile=profile)
+        last_state = st["state"]
+        time.sleep(0.4)
 
 
 def _cache_bust_url(url: str, version: str | None) -> str:
@@ -203,6 +250,7 @@ def run_gui(args) -> int:
         request_shutdown=request_shutdown,
         on_backend_crash=on_backend_crash,
         already_running=False,
+        model_boot=ModelBootstrap(ROOT, runtime_python(ROOT), log),
     )
 
     # v0.34 桌面重构：frameless 无边框 + shadow（Windows EdgeChromium 保留圆角/阴影），
@@ -264,11 +312,25 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
         if models["error"]:
             raise RuntimeError("模型检查运行失败", f"错误: {models['error']}")
         if missing:
-            raise RuntimeError(
-                "模型未齐全",
-                "缺失模型: " + ", ".join(missing)
-                + f"\n请先运行部署脚本完成安装：deploy/{install_script_name()}（或手动 python deploy/download_models.py --component all）",
-            )
+            # ── 首启模型引导（骨架包部署）：不抛错，进 model_boot 状态下载模型后继续 ──
+            # 环境（.venv/依赖/配置）由安装器/deploy 脚本保证；此处只补模型 25GB。
+            # 若连 .venv 都没有 → 说明压根没装环境，仍走安装脚本提示。
+            if not (ROOT / ".venv" / "Scripts" / "python.exe").exists():
+                raise RuntimeError(
+                    "环境未安装",
+                    f"缺少 .venv 虚拟环境。请先运行部署脚本完成安装：deploy/{install_script_name()}，然后重启启动器",
+                )
+            if not _wait_model_bootstrap(ctx.model_boot, _embedding_profile(ROOT),
+                                         _saved_proxy(ROOT), log):
+                runtime["done"].wait()
+                return
+            log.write("模型下载完成，继续启动…")
+            app_state.set(State.CHECKING, "模型下载完成，继续启动…")
+            # 下载后重新校验（download_models.py 自带校验，这里兜底），仍缺则报错退出
+            models = check_models(ROOT, runtime_python(ROOT))
+            missing = [k for k, v in models["present"].items() if not v] if models["present"] else None
+            if missing:
+                raise RuntimeError("模型校验未通过", "仍缺失: " + ", ".join(missing))
 
         if already:
             body = probe_health("127.0.0.1", cfg["port"]) or {}

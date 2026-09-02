@@ -1,7 +1,7 @@
 # Zhiying Architecture
 
 > 版本: v0.6 · 后端定版 v0.34 | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
-> 核心能力：16-op DAG · 4 编码路径 · YOLO11/BoT-SORT 双层 ReID · 人脸/车牌/OCR · 8 路搜索+图搜 · 图片素材库（人脸/通用图搜分轨检索）· 智能参数系统 · 全局任务队列 · 云智接入 · 桌面端
+> 核心能力：16-op DAG · 4 编码路径 · YOLO11/BoT-SORT 双层 ReID · 人脸/车牌/OCR · 8 路搜索+图搜 · 图片素材库（人脸/通用图搜分轨检索）· 智能参数系统 · 全局任务队列 · 云智接入 · 桌面端 · Windows 安装器（骨架包+首启模型引导）
 
 ## System Data Flow
 
@@ -193,7 +193,22 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
   - **TaskCenter**（任务中心）+ **SettingsPage**（系统设置，4 子 tab）
 - TitleBar（frameless 暗色）+ SystemMonitor（底部系统监控）；侧栏 5 业务 + 2 设置入口
 
-**桌面端窗口壳**：pywebview 主窗（frameless, shadow）；SplashApi 窗口控制/系统监控；后端 backend_launcher.py（字节码/源码双模式 + 看门狗）。壳 `load_url` 追加 `?v=<version>` 击穿 WebView2 持久化 HTTP 缓存（`private_mode=False`，跨版本复用会显示旧 UI，如素材库消失）。
+**桌面端窗口壳**：pywebview 主窗（frameless, shadow）；SplashApi 窗口控制/系统监控/模型下载引导（start_model_download / get_model_download_status / abort_model_download）；后端 backend_launcher.py（字节码/源码双模式 + 看门狗）。壳 `load_url` 追加 `?v=<version>` 击穿 WebView2 持久化 HTTP 缓存（`private_mode=False`，跨版本复用会显示旧 UI，如素材库消失）。
+
+## Desktop Installer (Windows)
+
+```
+构建链: build_backend_pyc.py（无源字节码包）→ build_exe.ps1 -Deploy（壳 exe + _internal）→ ISCC zhiying.iss → Bin\*.exe
+向导流: 选目录 → 档位页（8B/2B 在线下载 | 自备模型导入：路径校验 Qwen 子目录 + robocopy 前置复制，不依赖环境安装成败）
+        → 代理页（预填 http://127.0.0.1:，只补端口）→ 安装 → 完成
+安装期: 隐藏跑 setup_windows.ps1（-SkipModels -Quiet -EmbeddingProfile/-Proxy/-ProgressLog/-DoneMarker/-OutputLog 非交互参数）
+        进度 = setup 离散标记（pip 非终端无进度条，按阶段加权 8/40/66/70/90/92/99）+ Inno 侧蠕动平滑（~2.5s +1 到阶段上限）
+        等待循环在 UI 线程：每轮 ProcessMessages 泵消息防窗口假死；DoneMarker 兜底 90 分钟超时；powershell 启动失败立即报错
+骨架包: 不含 25GB 模型——首启 check_models 缺失 → State.MODEL_BOOT → model_bootstrap.py 后台跑 download_models.py
+        （断点续传；档位写回 config.yaml 保证向量维度一致；代理经 data/proxy.txt 记忆）
+交付面: 客户机无明文后端源码（backend_pyc）；装完删安装耗材（requirements.txt / setup_windows.ps1 / desktop\db.py / manifest.json）
+        卸载 [UninstallRun] stop_runtime.ps1 停壳+停 pg → [UninstallDelete] 清 .venv/vendor，保留 data/models（用户数据/自备模型）
+```
 
 ## Key Design Decisions
 
@@ -217,6 +232,9 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 | 删除三层保证 | 路由显式清盘 → FK CASCADE → sweep 兜底；task_logs/pipeline_tasks 无 FK 由 delete_video 显式清，删视频连队列行一起清 |
 | 图片素材纳入 sweep | subject_photos/case_assets 文件级引用集 + 600s mtime 保护（上传崩溃窗口可回收）；路径一律 StorageManager 绝对落库，历史相对行读取侧归一化 |
 | 队列僵尸治理 | 重启恢复时视频已删的 queued 任务标 failed 不重入队；executor 缺视频抛错标 failed（不再假 completed）；终态队列行 90 天保留清理 |
+| 骨架包 + 首启模型引导 | 安装包不背 25GB 模型（分发体积 14MB）；首启 MODEL_BOOT 后台断点续传下载，档位写回 config.yaml 防维度错配 |
+| 安装器单进度条 + 蠕动平滑 | 解压/环境安装复用同一进度条；pip 非终端无进度可解析，离散真实标记 + Inno 侧定时蠕动，条不再长时间死住 |
+| 安装耗材交付面清理 | requirements/setup 脚本/db 引导/平台清单装完即删，客户机只留运行必需；卸载清 .venv/vendor（安装产物），data/models 有意保留 |
 
 ## Current Status
 

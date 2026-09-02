@@ -13,6 +13,7 @@ from threading import Lock
 class State(str, Enum):
     INIT = "init"                  # 初始
     CHECKING = "checking"          # 环境检查
+    MODEL_BOOT = "model_boot"      # 首启模型引导（模型缺失 → 下载面板）
     DB_START = "db_start"          # docker compose up -d db
     BACKEND_START = "backend_start"  # 起 uvicorn 子进程
     READY = "ready"                # /health 200 且 database=ok
@@ -45,6 +46,7 @@ class AppState:
                 "port": self._meta.get("port"),
                 "version": self._meta.get("version"),
                 "detail": self._meta.get("detail"),
+                "profile": self._meta.get("profile"),
             }
 
 

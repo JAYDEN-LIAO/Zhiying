@@ -8,6 +8,7 @@
 - **生产部署**：10.0.0.176（systemd `zhiying.service`，8011）；发版 `./bump` → 服务器 `bash deploy.sh v<tag>`
 - **配置**：`config/config.yaml` 机器相关 gitignored；运行时覆盖走 `data/settings.json`（保存即生效）+ 共享预设 `config/presets.json`（入 git）
 - **双前端**：服务器 `frontend/` + 桌面 `frontend-desktop/`（5 页管理后台，pywebview 壳）；对接层 `frontend-shared/` 一份实现
+- **Windows 安装器**：`zhiying.iss`（Inno Setup 6.2.1）+ `desktop/build_installer.ps1` → `Bin\*.exe`（gitignored；SVN TestVersion 交付）；骨架包不含 25GB 模型，首启 MODEL_BOOT 引导下载/校验（`desktop/model_bootstrap.py` 后台跑 `deploy/download_models.py`，档位写回 config.yaml）
 - **模型档位**：`embedding_profile` 8b=4096 维（默认）/ 2b=2048 维（低显存平替）；人脸固定 512（ArcFace）
 - **摘要**：vlm_llm（API，默认）；native_video 已退役
 - 架构细节见 `docs/arch.md`
@@ -66,6 +67,7 @@
 - **人脸双阈值**: 同 track 0.30 宽松合并，跨 track 0.58 保守合并；检索锚点最典型脸
 - **人脸出现段**: 检测栏人脸展开显示该身份的**主 person track**（`track_to_identity`，时间轴同源）的 `[first_seen, last_seen]`/`segments`，排除"搭车"长 track；人脸搜索 `appearances` 仅保留主身份 track；点击结果从首段自动播放并逐段跳过，当前段黄框高亮（前端 `timeupdate` 判 `currentTime` 落段）
 - **弹窗/抽屉 portal**: 桌面前端所有 modal/drawer 必须 `createPortal(document.body)` + `onMouseDown` 遮罩关闭（`e.target===currentTarget`）；`DetectionOverlay` 用真实事件目标 `container.contains` 判定防穿透/遮挡关不掉
+- **安装器约定**: Inno 等待循环跑 UI 线程——每轮必须 ProcessMessages 泵消息（否则窗口假死）+ DoneMarker 兜底 90 分钟超时；进度 = setup 离散标记 + Inno 侧蠕动平滑（pip 接管道非 TTY 无进度条可解析）；pip 走清华镜像、torch 官方源走代理失败回退阿里云 find-links 直连；自备模型复制前置（不依赖环境安装成败）+ 路径校验（models\Qwen 为锚）；装完删安装耗材（requirements.txt/setup_windows.ps1/desktop/db.py/manifest.json），卸载 [UninstallDelete] 清 .venv/vendor、保留 data/models
 - **工作台常驻挂载**: 桌面端 Workbench/GlobalSearch 切页 hide 不卸载（保播放与搜索状态）；跨页意图（seek/track 选中/搜索同步）一律携带目标视频 id，等 vid 落到目标才消费
 - **搜索隔离**: search/face 与 search/image 参数必须 `Form(...)` 声明（防全库泄漏）
 - **版本号**: `core/version.py` `__version__` 唯一来源；后端+服务器前端改动必须 `./bump`

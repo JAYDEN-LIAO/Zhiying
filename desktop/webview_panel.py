@@ -94,6 +94,30 @@ SPLASH_HTML = """<!DOCTYPE html>
      选择器保留启动页拖动能力（customize.js 走该选择器，不依赖 easy_drag）。
      z-index 低于右上角关闭按钮（z-50），避免遮挡退出。 */
   .splash-drag { position:fixed; top:0; left:0; right:0; height:36px; z-index:10; }
+  /* 首启模型下载引导面板（State.MODEL_BOOT） */
+  .mboot { display:none; margin-top:16px; text-align:left; font-size:12px; }
+  .mboot-title { font-size:13px; font-weight:600; margin-bottom:10px; }
+  .mboot-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .mboot-row label { width:36px; color:#64748b; flex-shrink:0; }
+  body.dark .mboot-row label { color:#94a3b8; }
+  .mboot-row select, .mboot-row input {
+    flex:1; padding:6px 8px; border-radius:8px; border:1px solid rgba(100,116,139,.35);
+    background:rgba(255,255,255,.75); color:inherit; font-size:12px; outline:none;
+  }
+  body.dark .mboot-row select, body.dark .mboot-row input { background:rgba(30,34,46,.8); border-color:rgba(255,255,255,.12); }
+  .mboot-status { font-size:12px; color:#4f7cff; margin-top:4px; min-height:16px; }
+  body.dark .mboot-status { color:#a5b0fb; }
+  .mboot-bar { height:7px; border-radius:999px; background:rgba(100,116,139,.18); margin-top:8px; overflow:hidden; }
+  body.dark .mboot-bar { background:rgba(255,255,255,.12); }
+  .mboot-fill { height:100%; width:0; border-radius:999px; background:linear-gradient(90deg,#4f7cff,#10b981); transition:width .3s ease; }
+  .mboot-pct { font-size:11px; color:#94a3b8; margin-top:5px; font-family:Consolas,monospace; }
+  body.dark .mboot-pct { color:#6b7280; }
+  .mboot-actions { display:flex; gap:8px; margin-top:12px; }
+  .mboot-btn { flex:1; padding:8px 0; border:none; border-radius:8px; background:linear-gradient(90deg,#4f7cff,#7a88f5); color:#fff; font-size:13px; cursor:pointer; }
+  .mboot-btn:hover { filter:brightness(1.05); }
+  .mboot-btn.ghost { background:rgba(100,116,139,.16); color:inherit; }
+  .mboot-btn:disabled { opacity:.5; cursor:not-allowed; }
+  .mboot-err { color:#ef4444; font-size:12px; margin-top:8px; white-space:pre-wrap; display:none; text-align:left; }
 </style>
 </head>
 <body>
@@ -111,6 +135,28 @@ SPLASH_HTML = """<!DOCTYPE html>
     <div class="pct" id="pct">0%</div>
     <div class="err" id="err"></div>
     <div class="foot">首次启动需加载模型与本地服务，约需 1–3 分钟</div>
+    <div class="mboot" id="mboot">
+      <div class="mboot-title">模型未齐全 · 首次使用需下载模型（约 25GB，依网络而定）</div>
+      <div class="mboot-row">
+        <label>档位</label>
+        <select id="mbootProfile">
+          <option value="8b">8B（4096 维，需 ~16GB 显存）</option>
+          <option value="2b">2B（2048 维，低显存）</option>
+        </select>
+      </div>
+      <div class="mboot-row">
+        <label>代理</label>
+        <input id="mbootProxy" placeholder="http://127.0.0.1:7897（可空；下载 GitHub 源组件时可能需要）" />
+      </div>
+      <div class="mboot-status" id="mbootStatus">准备中…</div>
+      <div class="mboot-bar"><div class="mboot-fill" id="mbootFill"></div></div>
+      <div class="mboot-pct" id="mbootPct">0%</div>
+      <div class="mboot-actions">
+        <button class="mboot-btn" id="mbootStart">开始下载</button>
+        <button class="mboot-btn ghost" id="mbootCancel">取消</button>
+      </div>
+      <div class="mboot-err" id="mbootErr"></div>
+    </div>
   </div>
 <script>
   /* 暗色：与前端 index.html 防闪烁同逻辑 */
@@ -127,7 +173,7 @@ SPLASH_HTML = """<!DOCTYPE html>
     try { window.close(); } catch (e2) {}
   }
 
-  var NAMES = {"init":"初始化","checking":"环境检查","db_start":"启动数据库容器","backend_start":"加载模型与服务",
+  var NAMES = {"init":"初始化","checking":"环境检查","model_boot":"下载模型","db_start":"启动数据库容器","backend_start":"加载模型与服务",
                "ready":"就绪","stopping":"正在停止","stopped":"已停止","error":"出错了"};
   /* 阶段基础进度：模型加载前各阶段只占前 10%，模型加载段（backend_start）映射 10%→90% */
   var BASE = {"init":2, "checking":4, "db_start":7, "backend_start":10};
@@ -161,6 +207,71 @@ SPLASH_HTML = """<!DOCTYPE html>
     else setProgress(BASE[lastState.state] != null ? BASE[lastState.state] : 5);
   }
 
+  // ── 首启模型下载引导面板 ─────────────────────────────────
+  var mbootInit = false;
+  function refreshModelBoot() {
+    pywebview.api.get_model_download_status().then(function (b) {
+      if (!b) return;
+      var fill = document.getElementById('mbootFill');
+      var pct = document.getElementById('mbootPct');
+      var st = document.getElementById('mbootStatus');
+      var err = document.getElementById('mbootErr');
+      var startBtn = document.getElementById('mbootStart');
+      var p = Math.max(0, Math.min(100, b.percent || 0));
+      fill.style.width = p + '%';
+      pct.textContent = p + '%';
+      st.textContent = b.current || '准备中…';
+      if (b.state === 'failed') {
+        err.style.display = 'block';
+        err.textContent = '下载失败：' + (b.error || '未知错误') + '\\n请检查网络 / 代理后点击「重新下载」。';
+        startBtn.textContent = '重新下载';
+        startBtn.disabled = false;
+      } else if (b.state === 'done') {
+        err.style.display = 'none';
+        st.textContent = '模型下载完成，正在启动服务…';
+        startBtn.textContent = '下载完成';
+        startBtn.disabled = true;
+      } else if (b.state === 'running') {
+        err.style.display = 'none';
+        startBtn.textContent = '下载中…';
+        startBtn.disabled = true;
+      } else {
+        err.style.display = 'none';
+        startBtn.textContent = '开始下载';
+        startBtn.disabled = false;
+      }
+    }).catch(function () {});
+  }
+  function showModelBoot(s) {
+    document.getElementById('mboot').style.display = 'block';
+    document.querySelector('.bar').style.display = 'none';
+    document.querySelector('.pct').style.display = 'none';
+    if (!mbootInit && s.profile) {
+      var sel = document.getElementById('mbootProfile');
+      for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === s.profile) { sel.selectedIndex = i; break; }
+      }
+      mbootInit = true;
+    }
+    refreshModelBoot();
+  }
+  function hideModelBoot() {
+    document.getElementById('mboot').style.display = 'none';
+    document.querySelector('.bar').style.display = '';
+    document.querySelector('.pct').style.display = '';
+  }
+  function wireModelBoot() {
+    document.getElementById('mbootStart').addEventListener('click', function () {
+      var profile = document.getElementById('mbootProfile').value;
+      var proxy = document.getElementById('mbootProxy').value.trim();
+      document.getElementById('mbootErr').style.display = 'none';
+      pywebview.api.start_model_download(profile, proxy).catch(function () {});
+    });
+    document.getElementById('mbootCancel').addEventListener('click', function () {
+      pywebview.api.abort_model_download().catch(function () {});
+    });
+  }
+
   function tick() {
     pywebview.api.get_status().then(function (s) {
       var stage = document.getElementById('stage');
@@ -168,13 +279,20 @@ SPLASH_HTML = """<!DOCTYPE html>
       lastState = s;
       if (s.state === 'ready') {
         stage.textContent = '✓ 就绪 · 版本 ' + (s.version || '') + '，正在进入…';
+        hideModelBoot();
       } else if (s.state === 'error') {
         stage.textContent = '启动失败';
         err.style.display = 'block';
         err.textContent = s.detail || s.message || '启动失败，请查看 data/logs 后重启';
+        hideModelBoot();
+      } else if (s.state === 'model_boot') {
+        stage.textContent = '下载模型 · ' + (s.message || '');
+        err.style.display = 'none';
+        showModelBoot(s);
       } else {
         stage.textContent = (NAMES[s.state] || s.state) + (s.message ? ' · ' + s.message : '');
         err.style.display = 'none';
+        hideModelBoot();
       }
       updateProgress();
     }).catch(function () {});
@@ -195,6 +313,7 @@ SPLASH_HTML = """<!DOCTYPE html>
     if (!window.pywebview || !pywebview.api) { setTimeout(run, 200); return; }
     tick();
   }
+  wireModelBoot();  // 按钮 DOM 在脚本前已存在，一次性接线（handler 内才访问 pywebview.api）
   window.addEventListener('pywebviewready', run);
   setTimeout(run, 500);
 </script>
@@ -214,6 +333,7 @@ class Ctx:
     request_shutdown: Callable[[], None]
     on_backend_crash: Callable[[int], None]
     already_running: bool = False
+    model_boot: object | None = None  # ModelBootstrap（首启模型下载引导），app.py 注入
 
 
 class SplashApi:
@@ -251,6 +371,30 @@ class SplashApi:
         """启动实时日志增量拉取（原控制窗 LogApi 迁入）：返回 {next, lines}。"""
         idx, lines = self._ctx.log.get_since(int(since or 0))
         return {"next": idx, "lines": lines}
+
+    # ── 首启模型下载引导（State.MODEL_BOOT）────────────────────
+    def start_model_download(self, profile: str = "8b", proxy: str = "") -> dict:
+        """前端「开始/重试下载」：重启 ModelBootstrap 后台下载。返回当前 status。"""
+        boot = self._ctx.model_boot
+        if boot is None:
+            return {"state": "failed", "error": "模型引导未初始化", "current": "", "percent": 0}
+        try:
+            boot.start(profile=profile, proxy=proxy or "")
+        except Exception as e:
+            return {"state": "failed", "error": f"启动下载失败: {e}", "current": "", "percent": 0}
+        return boot.status
+
+    def get_model_download_status(self) -> dict:
+        """前端轮询下载进度：{state, current, percent, components, error}。"""
+        boot = self._ctx.model_boot
+        return boot.status if boot is not None else {"state": "idle", "current": "", "percent": 0,
+                                                     "components": {}, "error": None}
+
+    def abort_model_download(self) -> None:
+        """前端「取消」：终止下载进程（生命周期随即置 ERROR 等退出）。"""
+        boot = self._ctx.model_boot
+        if boot is not None:
+            boot.abort()
 
     # ── 窗口控制（frameless 标题栏按钮）──────────────────────────
     def minimize(self) -> None:

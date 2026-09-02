@@ -68,8 +68,10 @@ onnxruntime>=1.18.0; platform_machine == "aarch64" or platform_machine == "arm64
 #  License plate recognition — hyperlpr3 是主后端 (ONNX Runtime)
 # ══════════════════════════════════════════════
 hyperlpr3>=0.1
-paddlepaddle>=2.6.0
-paddleocr>=2.7.0          # 备选车牌后端 (paddle_plate.py)
+# 备选 paddle 后端（plate.backend=paddle / ocr.backend=paddleocr）生产不启用
+# （生产 = hyperlpr + rapidocr），已裁剪 paddlepaddle/paddleocr 以省 ~500MB 安装体积。
+# 插件代码（plugins/plate/paddle_plate.py、plugins/ocr/paddleocr.py）保留、factory 懒加载，
+# 如确需启用，手动补装：pip install paddlepaddle paddleocr
 
 #  OCR 画面文字提取 — RapidOCR (PP-OCRv3 ONNX)，v0.34 生产定版
 #   推理走 onnxruntime DirectML EP，但 DML 版 onnxruntime 装在独立 vendor/ort_dml

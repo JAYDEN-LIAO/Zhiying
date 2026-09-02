@@ -16,10 +16,12 @@
 
 | 文件 | 作用 |
 |---|---|
-| `setup_windows.ps1` | **Windows 交互式一键安装器**（入口 = 根目录 `install1.bat` 双击）：选 **2B/8B** + 输代理 → Python/FFmpeg → .venv + CUDA torch + 依赖 → **内嵌 PostgreSQL**(`vendor/pg`，免 Docker/WSL2) → 模型(按档位) → 生成 config.yaml → init_db 建表 → **WebView2 Runtime 自动更新**（<151 过旧会 pywebview 静默白屏，下载 Evergreen 更新到最新，失败仅告警） → 校验完成（前端构建交给 `install2.bat`） |
+| `setup_windows.ps1` | **Windows 一键安装器**（开发机入口 = 根目录 `install1.bat` 双击交互；客户端 = Inno 安装器静默调用非交互）：选 **2B/8B** + 输代理 → Python/FFmpeg → .venv + CUDA torch + 依赖 → **内嵌 PostgreSQL**(`vendor/pg`，免 Docker/WSL2；组装完删 `vendor/pg-zips` 源 zip) → 模型(按档位) → 生成 config.yaml → init_db 建表 → **WebView2 Runtime 自动更新**（<151 过旧会 pywebview 静默白屏，下载 Evergreen 更新到最新，失败仅告警） → 校验完成（前端构建交给 `install2.bat`）。**非交互参数**（Inno 安装器用）：`-EmbeddingProfile/-Proxy/-Quiet/-ProgressLog/-DoneMarker/-OutputLog`——进度行 `PROGRESS\t<pct>\t<slug>` 供安装器轮询，退出码写 DoneMarker；**镜像策略**：pip 走清华镜像、CUDA torch 官方源走代理（失败自动回退阿里云 `pytorch-wheels` find-links 直连） |
 | `setup_linux.sh` | **Linux 开发机一键安装器**（开发态，规格同 Windows）：apt / venv / CUDA torch / requirements+onnxruntime / 模型 / Docker db / config.yaml / Node+前端 dist |
 | `build_backend_pyc.py` | 后端源码编译为 `.pyc` 字节码包 → `build/backend_pyc/`（封装模式：客户端盘上无明文源码；**用 `py_compile` 生成包根 legacy `<模块>.pyc`**——compileall 的 `__pycache__/*.cpython-XX.pyc` 在无源时 Python 不可导入，会致封装后端 `No module named 'core.db'` → exe 白屏；`build_exe.ps1` 打 exe 前调用） |
 | `download_models.py` | 模型下载/校验（embedding 按 `--embedding-profile 8b/2b` 选档，yolo/reid/face/plate/segmenter，断点续传、`--verify-only`；**safetensors 下载后 `safe_open` 校验头部**——续传拼接产坏则删除重下） |
+| `stop_runtime.ps1` | 卸载前停桌面壳 + 内嵌 PostgreSQL（Inno `[UninstallRun]` 调用；容忍全部错误，宁 immediate 强停不带锁删除） |
+| `iss-lang/` | Inno Setup 中文语言包（`zhiying.iss` `[Languages]` 引用，构建必需随仓库走） |
 | `deploy_feedback.md` | 部署实测问题与修复历史（踩坑记录，含本次所有修复的说明） |
 
 > 旧 `write_windows_config.py`（生成 config/config.windows.yaml）与 `start_windows.ps1`（后端启动脚本）已删除——
@@ -43,6 +45,23 @@
 ---
 
 ## 3. 快速开始
+
+### 3.0 Windows 安装器交付（客户端骨架包，Inno Setup 6.2.1）
+
+面向最终用户的交付形态：**单个安装 exe**（不含模型、不含明文后端源码）。
+
+```powershell
+# 构建（项目根；前置：Inno Setup 6.2.1 + 已跑过 install1 的 .venv）
+powershell -ExecutionPolicy Bypass -File desktop/build_installer.ps1
+# 可选：-EmbeddingProfile 2b（2B 机器专用包）、-Version 1.0
+# 产物：Bin\智影视频智能检索平台 Ver <版本>.exe（gitignored；交付上 SVN TestVersion）
+```
+
+流程与约定：
+- `zhiying.iss`（仿 云侠.iss 骨架）：向导 = 选目录 → **档位页**（8B/2B 在线下载 | **自备模型导入**：路径校验 `models\Qwen` 锚 + robocopy 前置复制，不依赖环境安装成败）→ **代理页**（预填 `http://127.0.0.1:` 只补端口）→ 安装
+- 安装期隐藏跑 `setup_windows.ps1`（非交互参数，见 §1）；**单进度条**（解压复用 Inno 原生条，环境安装由自建条接管）= setup 离散真实标记 + 安装器侧蠕动平滑（pip 接管道非 TTY 无进度条可解析）；等待循环每轮 ProcessMessages 泵消息防窗口假死，**90 分钟超时兜底**
+- **骨架包不含 25GB 模型**：首启桌面壳 check_models 缺失 → `State.MODEL_BOOT` → `desktop/model_bootstrap.py` 后台跑 `download_models.py`（断点续传，档位写回 config.yaml），下载面板可改档位/代理/重试
+- **交付面清理**：装完删安装耗材（`requirements.txt` / `deploy\setup_windows.ps1` / `desktop\db.py` / `manifest.json`）；卸载 = `stop_runtime.ps1` 停壳停 pg → `[UninstallDelete]` 清 `.venv`/`vendor`（保留 `data/` 用户数据与 `models/` 自备模型）
 
 ### 3.1 Windows 桌面机（desktop 路径，全新机）
 

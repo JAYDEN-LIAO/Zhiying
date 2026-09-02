@@ -11,6 +11,9 @@ build/
 /智影桌面端.exe
 *.lnk
 
+# ── 安装包构建产物（Inno Setup 输出，不入 git；交付走上 SVN TestVersion）──
+/Bin/
+
 # ── Test / coverage ──
 .pytest_cache/
 .coverage

@@ -14,7 +14,15 @@
 param(
     [switch]$SkipModels,
     [switch]$SkipPg,
-    [switch]$NoElevate
+    [switch]$NoElevate,
+    # 非交互参数（Inno 安装器 [run] 静默调用用）：
+    [string]$EmbeddingProfile = "",   # 填 "8b"/"2b" 则跳过 2B/8B 交互选择
+    [string]$Proxy = "",              # 填 "http://..." 则跳过代理交互输入
+    [switch]$Quiet,                   # 跳过所有 Read-Host 暂停（错误提示/结尾）
+    # Inno 安装器进度集成：
+    [string]$ProgressLog = "",        # 写进度行（ASCII："PROGRESS`t<0-100>`t<slug>"）供安装器轮询
+    [string]$DoneMarker = "",         # 结束/出错时写退出码（"0"=成功 "1"=失败）供安装器判断
+    [string]$OutputLog = ""           # 完整输出日志（Start-Transcript 捕获全部 Write-Host，供安装器进度页小窗实时展示）
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,7 +41,10 @@ trap {
         Add-Content -Path $InstallLog -Value $msg -Encoding UTF8
     } catch {}
     Write-Host "`n[安装异常] $msg（已写入 $InstallLog，请把该文件发我）" -ForegroundColor Red
-    Read-Host "`n按回车关闭此窗口（日志已写入 $InstallLog）"
+    if (-not $Quiet) {
+        Read-Host "`n按回车关闭此窗口（日志已写入 $InstallLog）"
+    }
+    if ($DoneMarker) { [System.IO.File]::WriteAllText($DoneMarker, "1") }
     break
 }
 
@@ -59,6 +70,9 @@ if (-not $NoElevate) {
         $extra = @()
         if ($SkipModels) { $extra += "-SkipModels" }
         if ($SkipPg)     { $extra += "-SkipPg" }
+        if ($EmbeddingProfile) { $extra += "-EmbeddingProfile", "`"$EmbeddingProfile`"" }
+        if ($Proxy)             { $extra += "-Proxy", "`"$Proxy`"" }
+        if ($Quiet)             { $extra += "-Quiet" }
         Start-Process -FilePath "powershell.exe" -ArgumentList (@(
             "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`""
         ) + $extra) -Verb RunAs
@@ -67,13 +81,54 @@ if (-not $NoElevate) {
 }
 
 # ───────────────────────────── 输出 helpers ─────────────────────────────
+# 输出小窗日志：Add-Content 每次开→写→关（不持锁，Inno 进度页可并发读尾部）
+function Write-Out([string]$Line) {
+    if ($OutputLog) {
+        try { Add-Content -Path $OutputLog -Value $Line -Encoding UTF8 } catch { }
+    }
+}
+# 步骤 → 进度区间 [start, end]（按实际耗时配权：deps 装 torch+全家桶最重占大头；
+# 子步骤输出在区间内插值细化，见 Invoke-Native 的 PipeSpan）
+$script:StepSpan = @{ 1=@(0,8); 2=@(8,70); 3=@(70,80); 4=@(80,90); 5=@(90,92); 6=@(92,99) }
+# 步骤 → 安装器进度条 slug（ASCII，Inno [Code] 按此映射中文文案）
+$script:StepSlug = @{ 1='env'; 2='deps'; 3='db'; 4='models'; 5='config'; 6='init' }
 function Write-Step([string]$Index, [string]$Title) {
     Write-Host ""
     Write-Host "─── [$Index] $Title ───" -ForegroundColor Cyan
+    Write-Out "─── [$Index] $Title ───"
+    if ($ProgressLog) {
+        $parts = $Index.Split('/')
+        $n = 0; $total = 0
+        [void][int]::TryParse($parts[0].Trim(), [ref]$n)
+        [void][int]::TryParse($parts[1].Trim(), [ref]$total)
+        $pct = 0
+        $span = $script:StepSpan[[int]$n]
+        if ($span) { $pct = $span[0] }
+        $slug = $script:StepSlug[[int]$n]
+        if (-not $slug) { $slug = 'step' }
+        Add-Content -Path $ProgressLog -Value "PROGRESS`t$pct`t$slug" -Encoding ASCII
+    }
 }
-function Write-Ok([string]$Msg)   { Write-Host "  ✔ $Msg" -ForegroundColor Green }
-function Write-Warn([string]$Msg) { Write-Host "  ⚠ $Msg" -ForegroundColor Yellow }
-function Write-Info([string]$Msg) { Write-Host "  · $Msg" -ForegroundColor Gray }
+
+# 段内细粒度进度：Set-PipeSpan 后，Invoke-Native 把子命令输出折算成区间内 PROGRESS 行
+#   - pip（--progress-bar raw）的 "n/m xxx.whl" 行 → 按 n/m 在区间内插值
+#   - download_models.py 的 "[progress] name N%" 行 → 按 N% 在区间内插值
+# $null = 关闭。用完务必 Clear-PipeSpan，避免把后续无关输出误折算。
+$script:PipeSpan = $null
+$script:PipeLast = -1
+function Set-PipeSpan([int]$Base, [int]$Span, [string]$Slug) {
+    $script:PipeSpan = @($Base, $Span, $Slug); $script:PipeLast = -1
+}
+function Clear-PipeSpan { $script:PipeSpan = $null }
+
+# 离散进度点：长阶段内的关键节点（pip 接管道时无进度条可解析，非 TTY 只有
+# "Downloading x.whl (size)" 一行——实测如此；平滑推进交给安装器侧蠕动插值）
+function Write-ProgressPoint([int]$Pct, [string]$Slug) {
+    if ($ProgressLog) { Add-Content -Path $ProgressLog -Value "PROGRESS`t$Pct`t$Slug" -Encoding ASCII }
+}
+function Write-Ok([string]$Msg)   { Write-Host "  ✔ $Msg" -ForegroundColor Green; Write-Out "  [OK] $Msg" }
+function Write-Warn([string]$Msg) { Write-Host "  ⚠ $Msg" -ForegroundColor Yellow; Write-Out "  [WARN] $Msg" }
+function Write-Info([string]$Msg) { Write-Host "  · $Msg" -ForegroundColor Gray; Write-Out "  [..] $Msg" }
 
 # 执行命令；$UseProxy 决定是否注入代理环境。返回 exit code。
 function Invoke-Native {
@@ -91,7 +146,29 @@ function Invoke-Native {
     $ErrorActionPreference = "Continue"
     try {
         # 2>&1：合并 stderr，进度/警告不再被吞，也不会触发 NativeCommandError（stderr 变普通输出）
-        & $Cmd[0] @($Cmd[1..($Cmd.Length-1)]) 2>&1 | ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray }
+        & $Cmd[0] @($Cmd[1..($Cmd.Length-1)]) 2>&1 | ForEach-Object {
+            Write-Host "      $_" -ForegroundColor DarkGray
+            Write-Out "      $_"
+            # 段内细粒度进度：pip 的 "n/m xxx.whl" 行 / 模型下载的 "[progress] x N%" 行 → 区间内插值
+            if ($null -ne $script:PipeSpan -and $ProgressLog) {
+                $p = -1
+                if ($_ -match '(\d+)\s*/\s*(\d+)\s+\S+\.whl' -and [int]$Matches[2] -gt 0) {
+                    $p = [math]::Floor($script:PipeSpan[0] + [int]$Matches[1] * 1.0 / [int]$Matches[2] * $script:PipeSpan[1])
+                }
+                elseif ($_ -match '\[progress\]') {
+                    $ms = [regex]::Matches($_, '\[progress\]\s*\S+\s+(\d+)\s*%')
+                    if ($ms.Count -gt 0) {
+                        $v = [int]$ms[$ms.Count - 1].Groups[1].Value
+                        $p = [math]::Floor($script:PipeSpan[0] + $v / 100.0 * $script:PipeSpan[1])
+                    }
+                }
+                # 只前进不回退（一行可能带多个 \r 帧/多轮重试），且不越过区间终点
+                if ($p -gt $script:PipeLast -and $p -lt ($script:PipeSpan[0] + $script:PipeSpan[1])) {
+                    $script:PipeLast = $p
+                    Add-Content -Path $ProgressLog -Value "PROGRESS`t$p`t$($script:PipeSpan[2])" -Encoding ASCII
+                }
+            }
+        }
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $eap
@@ -184,13 +261,30 @@ Write-Host ""
 Write-Host "请选择 embedding 模型档位（决定向量维度 + 装哪个模型）："
 Write-Host "  [1] 8B  Qwen3-VL-Embedding-8B  → 4096 维（默认；需 ~16GB 显存）"
 Write-Host "  [2] 2B  Qwen3-VL-Embedding-2B  → 2048 维（低显存机器平替）"
-$choice = Read-Host "输入 1 或 2"
-$script:EmbeddingProfile = if ($choice -eq "2") { "2b" } else { "8b" }
-Write-Ok "已选档位: $script:EmbeddingProfile"
+if ($EmbeddingProfile) {
+    $script:EmbeddingProfile = if ($EmbeddingProfile -eq "2b") { "2b" } else { "8b" }
+    Write-Info "非交互模式：档位 = $script:EmbeddingProfile（-EmbeddingProfile $EmbeddingProfile）"
+} elseif (-not $Quiet) {
+    $choice = Read-Host "输入 1 或 2"
+    $script:EmbeddingProfile = if ($choice -eq "2") { "2b" } else { "8b" }
+    Write-Ok "已选档位: $script:EmbeddingProfile"
+} else {
+    $script:EmbeddingProfile = "8b"
+    Write-Info "非交互模式：默认档位 8b（-Quiet 且未指定）"
+}
 
-$proxyInput = Read-Host "输入代理地址（如 http://127.0.0.1:7897；能直连可留空）"
-$script:Proxy = ($proxyInput.Trim() -replace '/$', '')
-if ($script:Proxy) { Write-Ok "代理: $script:Proxy" } else { Write-Warn "未使用代理（国内源直连，GitHub 组件可能失败）" }
+if ($Proxy) {
+    $script:Proxy = ($Proxy.Trim() -replace '/$', '')
+    Write-Info "非交互模式：代理 = $script:Proxy（-Proxy 参数）"
+} elseif (-not $Quiet) {
+    $proxyInput = Read-Host "输入代理地址（如 http://127.0.0.1:7897；能直连可留空）"
+    $script:Proxy = ($proxyInput.Trim() -replace '/$', '')
+    if ($script:Proxy) { Write-Ok "代理: $script:Proxy" } else { Write-Warn "未使用代理（国内源直连，GitHub 组件可能失败）" }
+} else {
+    # -Quiet 且未给代理：直接空代理（否则 Read-Host 会卡在隐藏窗口上）
+    $script:Proxy = ''
+    Write-Info "非交互模式：未提供代理（-Quiet，GitHub 源组件可能下载失败）"
+}
 # 保存代理到 data/proxy.txt，供 install2.bat 复用（机器相关，data/ 已 gitignore）
 $proxyFile = Join-Path $ProjectRoot "data\proxy.txt"
 New-Item -ItemType Directory -Force -Path (Split-Path $proxyFile) | Out-Null
@@ -330,21 +424,44 @@ if (-not (Test-Path $VenvPython)) {
     Write-Ok ".venv 已存在"
 }
 Write-Info "升级 pip ..."
-$pipArgs = @("-m", "pip", "install", "--upgrade", "pip", "--progress-bar", "raw")
+# pip 依赖统一走清华镜像直连（国内快、免梯子；梯子到 PyPI 实测 3.7KB/s 会卡死）
+$PipIndex = "https://pypi.tuna.tsinghua.edu.cn/simple"
+$pipArgs = @("-m", "pip", "install", "--upgrade", "pip", "--progress-bar", "raw", "-i", $PipIndex)
 if ($script:Proxy) { $pipArgs += @("--proxy", $script:Proxy) }
 $rc = Invoke-Native (@($VenvPython) + $pipArgs)
-
+Write-ProgressPoint 10 'deps'
 # CUDA 版 PyTorch：pip 默认装 CPU 版，必须用 PyTorch 官方源；按驱动 CUDA 版本选 cu124/cu126/cu130
 # nvidia-smi 新版驱动头是 "CUDA UMD Version"（旧版是 "CUDA Version"），两种都匹配；null 兜底
 $cudaLine = & nvidia-smi 2>$null | Select-String "CUDA (UMD )?Version:\s*([0-9.]+)" | Select-Object -First 1
 $driverCuda = if ($cudaLine) { $cudaLine.Matches[0].Groups[2].Value } else { "" }
+# CUDA 版 PyTorch：两级源——① PyTorch 官方索引（正规 pip index，走代理）优先；
+# ② 失败回退阿里云 pytorch-wheels 平铺目录。注意阿里云该镜像是 whl 平铺列表，
+# 只能 --find-links（-f）用，不能 --index-url（请求 <镜像>/torch/ 会 404，必现失败）。
 $torchIdx = "https://download.pytorch.org/whl/cu124"
-if ($driverCuda -and [version]$driverCuda -ge [version]"13.0") { $torchIdx = "https://download.pytorch.org/whl/cu130" }
-elseif ($driverCuda -and [version]$driverCuda -ge [version]"12.6") { $torchIdx = "https://download.pytorch.org/whl/cu126" }
-Write-Info "安装 CUDA 版 PyTorch + torchvision（$torchIdx，驱动 CUDA $driverCuda）..."
-# torchvision 必须同源（cu130）装，否则 requirements 阶段从 PyPI 拉 CPU 版 → torchvision::nms CUDA 报错（§13）
+$torchFlat = "https://mirrors.aliyun.com/pytorch-wheels/cu124"
+if ($driverCuda -and [version]$driverCuda -ge [version]"13.0") {
+    $torchIdx = "https://download.pytorch.org/whl/cu130"; $torchFlat = "https://mirrors.aliyun.com/pytorch-wheels/cu130"
+}
+elseif ($driverCuda -and [version]$driverCuda -ge [version]"12.6") {
+    $torchIdx = "https://download.pytorch.org/whl/cu126"; $torchFlat = "https://mirrors.aliyun.com/pytorch-wheels/cu126"
+}
+Write-Info "安装 CUDA 版 PyTorch + torchvision（官方源 $torchIdx，驱动 CUDA $driverCuda）..."
+# torchvision 必须同源（cu130 等）装，否则 requirements 阶段从 PyPI 拉 CPU 版 → torchvision::nms CUDA 报错（§13）
+# ① 官方索引走代理（$true）；代理可用时索引完整、依赖同源自解析
 $rc = Invoke-Native @($VenvPython, "-m", "pip", "install", "torch", "torchvision", "--index-url", $torchIdx, "--progress-bar", "raw") $true
+if ($rc -ne 0) {
+    # ② 回退：阿里云平铺目录 --no-index 直连（不走代理，国内 CDN 最快）。
+    #    --no-index 下 pip 不解析依赖，torch/torchvision 的运行时依赖先用清华索引补齐。
+    Write-Warn "官方源安装失败（exit=$rc），回退阿里云镜像直连（$torchFlat）..."
+    [void](Invoke-Native @($VenvPython, "-m", "pip", "install", `
+        "filelock", "typing-extensions", "sympy", "mpmath", "networkx", `
+        "jinja2", "MarkupSafe", "fsspec", "numpy", "pillow", `
+        "-i", $PipIndex, "--progress-bar", "raw") $false)
+    $rc = Invoke-Native @($VenvPython, "-m", "pip", "install", "--no-index", `
+        "--find-links", $torchFlat, "torch", "torchvision", "--progress-bar", "raw") $false
+}
 if ($rc -ne 0) { throw "CUDA PyTorch 安装失败" }
+Write-ProgressPoint 40 'deps'   # torch+torchvision 就位（最大件）
 
 # onnxruntime 处理（§14）：先清真实 CPU dist-info + 建虚拟桩，让 requirements 只装 onnxruntime-gpu
 Write-Info "预置 onnxruntime 虚拟桩（防 CPU/GPU 双装冲突）..."
@@ -371,10 +488,11 @@ Remove-Item $onnxTmp -Force -ErrorAction SilentlyContinue
 if ($rc -ne 0) { Write-Warn "onnxruntime 桩创建失败（继续安装，稍后校验）" }
 
 Write-Info "安装其余依赖（torch/torchvision 已满足会自动跳过；首次需数分钟，耐心等待）..."
-$pipArgs2 = @("-m", "pip", "install", "-r", (Join-Path $ProjectRoot "requirements.txt"), "--progress-bar", "raw")
+$pipArgs2 = @("-m", "pip", "install", "-r", (Join-Path $ProjectRoot "requirements.txt"), "--progress-bar", "raw", "-i", $PipIndex)
 if ($script:Proxy) { $pipArgs2 += @("--proxy", $script:Proxy) }
 $rc = Invoke-Native (@($VenvPython) + $pipArgs2)
 if ($rc -ne 0) { throw "依赖安装失败" }
+Write-ProgressPoint 66 'deps'   # 其余依赖就位
 
 # onnxruntime-gpu 校验：get_device() 必须为 GPU；否则强制重装 gpu 版
 Write-Info "校验 onnxruntime（应为 GPU 设备）..."
@@ -472,6 +590,8 @@ else {
         if (Test-Path (Join-Path $pgDir "bin\pg_ctl.exe")) { Write-Ok "vendor/pg 就绪（含 pgvector）" }
         else { throw "vendor/pg 组装失败：bin\pg_ctl.exe 缺失" }
     }
+    # 源 zip 已解压组装完毕 → 删除（308MB 死重，客户机交付面不留安装耗材）
+    Remove-Item (Join-Path $ProjectRoot "vendor\pg-zips") -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # ───────────────────────────── 4/6 模型（按档位） ─────────────────────────────
@@ -480,14 +600,18 @@ if ($SkipModels) { Write-Info "已跳过（-SkipModels）" }
 else {
     $dlPy = Join-Path $PSScriptRoot "download_models.py"
     # 国内源组件（embedding 按档位 + plate + segmenter）：必须直连（modelscope 是国内 CDN，走代理反而更慢更易断）
+    Set-PipeSpan 80 6 'models'   # [progress] N% → 80%~86%
     $rc = Invoke-Native @($VenvPython, $dlPy, "--embedding-profile", $script:EmbeddingProfile,
         "--component", "embedding", "--component", "plate", "--component", "segmenter",
         "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $false
+    Clear-PipeSpan
     if ($rc -ne 0) { throw "国内源模型下载失败（modelscope 直连；已内置断点续传，可重跑续传）" }
     # GitHub 源组件（yolo/reid/face，需代理）
+    Set-PipeSpan 86 4 'models'   # → 86%~90%
     $rc = Invoke-Native @($VenvPython, $dlPy,
         "--component", "yolo", "--component", "reid", "--component", "face",
         "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $true
+    Clear-PipeSpan
     if ($rc -ne 0) { throw "GitHub 源模型下载失败（检查代理）" }
     Write-Ok "全部模型就绪"
 }
@@ -543,10 +667,21 @@ Remove-Item $initTmp -Force -ErrorAction SilentlyContinue
 if ($rc -ne 0) { throw "内嵌 PostgreSQL 启动失败" }
 
 Write-Info "建表（init_db）..."
-$rc = Invoke-Native @($VenvPython, "-c",
-    "import asyncio; from core.db import init_db; asyncio.run(init_db()); print('tables ok')")
-if ($rc -ne 0) { throw "init_db 建表失败" }
-Write-Ok "数据库已就绪、表已创建"
+# 后端代码定位：开发机（git 源码树有 core/）→ 直接 import；
+# 封装安装包（无明文源码）→ 把 _internal\backend_pyc 无源字节码包插到 sys.path（legacy .pyc 可导入）
+$initDbCode = "import asyncio; from core.db import init_db; asyncio.run(init_db()); print('tables ok')"
+if (-not (Test-Path (Join-Path $ProjectRoot "core")) -and
+        (Test-Path (Join-Path $ProjectRoot "_internal\backend_pyc"))) {
+    Write-Info "封装模式：从 _internal\backend_pyc 字节码包 import"
+    $initDbCode = "import sys; sys.path.insert(0, r'$ProjectRoot\_internal\backend_pyc'); " + $initDbCode
+}
+$rc = Invoke-Native @($VenvPython, "-c", $initDbCode)
+if ($rc -ne 0) {
+    # 非致命：main.py lifespan 启动时本就会 init_db 建表，此处仅提前保险，不让它炸掉安装
+    Write-Warn "init_db 预建表失败（不阻断安装；后端首次启动时会自动建表）"
+} else {
+    Write-Ok "数据库已就绪、表已创建"
+}
 
 # ───────────────────────────── 完成 ─────────────────────────────
 Write-Host ""
@@ -558,4 +693,8 @@ Write-Host ""
 Write-Host "  后续日常更新/启动：双击根目录 install2.bat（git pull + 依赖 + 前端 + 打 exe）"
 Write-Host "  或直接启动桌面端：python desktop\app.py"
 Write-Host "══════════════════════════════" -ForegroundColor Green
-Read-Host "`n安装流程结束（按回车关闭此窗口）"
+if ($ProgressLog) { Add-Content -Path $ProgressLog -Value "PROGRESS`t100`tdone" -Encoding ASCII }
+if (-not $Quiet) {
+    Read-Host "`n安装流程结束（按回车关闭此窗口）"
+}
+if ($DoneMarker) { [System.IO.File]::WriteAllText($DoneMarker, "0") }
