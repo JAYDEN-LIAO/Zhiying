@@ -21,7 +21,8 @@ AppVersion={#MyAppVersion}
 VersionInfoVersion={#VersionInfoVersion}
 AppCopyright={#AppCopyright}
 AppPublisher={#AppPublisher}
-DefaultDirName=D:\Zhiying            ; 避开 Program Files 写入权限（models/data/config 写应用目录）
+; 默认落 D:\Zhiying：避开 Program Files 写入权限（models/data/config 都写应用目录）
+DefaultDirName=D:\Zhiying
 DisableDirPage=no
 DisableProgramGroupPage=yes
 DefaultGroupName={#MyAppName}
