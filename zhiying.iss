@@ -77,11 +77,9 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 ; .venv/vendor 是安装产物，不声明则卸载残留 10GB+；data（用户数据）与 models（自备模型）保留
 Type: filesandordirs; Name: "{app}\.venv"
 Type: filesandordirs; Name: "{app}\vendor"
-
-[Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{group}\卸载{#MyAppName}"; Filename: "{app}\{#UnistallExe}"
+; 快捷方式由 [Code] 在环境安装成功后创建（不进卸载日志），卸载时手动清
+Type: files; Name: "{commondesktop}\{#ProductName}.lnk"
+Type: filesandordirs; Name: "{group}"
 
 [Code]
 // 向导：档位页（8B/2B/自备模型导入）+ 代理页 + 环境安装进度（自建进度条接管原生条，
@@ -475,6 +473,35 @@ begin
   end;
 end;
 
+// 快捷方式延后创建：[Icons] 段在解压后立即执行（早于环境安装），装一半失败会留下
+// 无效图标 → 改为环境安装成功后由代码创建；卸载清理走 [UninstallDelete]
+procedure MakeLnk(const LnkPath, Target, WorkDir: String);
+var
+  Shell, Lnk: Variant;
+begin
+  Shell := CreateOleObject('WScript.Shell');
+  Lnk := Shell.CreateShortcut(LnkPath);
+  Lnk.TargetPath := Target;
+  Lnk.WorkingDirectory := WorkDir;
+  Lnk.IconLocation := Target + ',0';
+  Lnk.Save;
+end;
+
+procedure CreateAppShortcuts();
+var
+  AppDir, Exe, Group: String;
+begin
+  AppDir := ExpandConstant('{app}');
+  Exe := AppDir + '\' + ExpandConstant('{#MyAppExeName}');
+  Group := ExpandConstant('{group}');
+  ForceDirectories(Group);
+  MakeLnk(Group + '\' + ExpandConstant('{#ProductName}') + '.lnk', Exe, AppDir);
+  MakeLnk(Group + '\卸载' + ExpandConstant('{#ProductName}') + '.lnk',
+    AppDir + '\' + ExpandConstant('{#UnistallExe}'), AppDir);
+  if WizardIsTaskSelected('desktopicon') then
+    MakeLnk(ExpandConstant('{commondesktop}\') + ExpandConstant('{#ProductName}') + '.lnk', Exe, AppDir);
+end;
+
 procedure RunEnvSetup();
 var
   ResultCode: Integer;
@@ -563,6 +590,8 @@ begin
   DeleteFile(ExpandConstant('{app}') + '\requirements.txt');
   DeleteFile(ExpandConstant('{app}') + '\deploy\setup_windows.ps1');
   DeleteFile(ExpandConstant('{app}') + '\desktop\db.py');
+
+  CreateAppShortcuts();   // 全部安装步骤成功后才建图标
 
   WizardForm.StatusLabel.Caption := '环境安装完成';
   EnvBar.Position := 100;
