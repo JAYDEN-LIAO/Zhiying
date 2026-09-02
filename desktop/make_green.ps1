@@ -1,12 +1,12 @@
 ﻿# ═══════════════════════════════════════════════════════════
-#  desktop/make_green.ps1 — 装配"绿色版"交付 zip
+#  desktop/make_green.ps1 — 装配"打包材料"交付 zip（安装器 [Files] 完整输入集）
 #
-#  绿色版 = 安装器（zhiying.iss [Files]）的完整输入集 = 解压即可运行的程序目录：
+#  打包材料 = 安装器（zhiying.iss [Files]）的完整输入集（客户机需另装 .venv/模型/PG 才可运行）：
 #    智影桌面端.exe + _internal/(含 backend_pyc) + frontend-desktop/dist +
 #    config/(无 config.yaml，装机生成) + deploy 引导件 + iss-lang + desktop/db.py +
 #    requirements.txt + manifest.json
 #
-#  用途：安装包编译/签名由打包方执行——我们交付绿色版 + iss 脚本，对方
+#  用途：安装包编译/签名由打包方执行——我们交付打包材料 + iss 脚本，对方
 #        解压 → 放入 zhiying.iss → ISCC 编译 → 签名 → 成品安装包。
 #
 #  前置：已跑过 desktop/build_exe.ps1 -Deploy（根目录有 智影桌面端.exe + _internal）
@@ -57,10 +57,10 @@ Get-ChildItem $Stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Re
 # ── 压 zip ────────────────────────────────────────────────
 if (-not $OutputDir) { $OutputDir = Join-Path $Root "Bin" }
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-$ZipPath = Join-Path $OutputDir "智影绿色版 v$Version.zip"
+$ZipPath = Join-Path $OutputDir "智影打包材料 v$Version.zip"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
 Compress-Archive -Path "$Stage\*" -DestinationPath $ZipPath -CompressionLevel Optimal
 
 $mb = [math]::Round((Get-Item $ZipPath).Length / 1MB, 1)
-Write-Host "`n✅ 绿色版: $ZipPath（$mb MB）" -ForegroundColor Green
+Write-Host "`n✅ 打包材料: $ZipPath（$mb MB）" -ForegroundColor Green
 Write-Host "  打包方：解压 → 放入 zhiying.iss → ISCC 编译 → 签名（见交付目录打包说明.md）"
