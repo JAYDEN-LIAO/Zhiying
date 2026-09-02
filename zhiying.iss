@@ -15,7 +15,7 @@
 ;        可用 /D 覆盖：#define 见下（如 /DMyAppVersion=1.0 /DDefaultEmbeddingProfile=2b）
 ; ═══════════════════════════════════════════════════════════
 #define MyAppName                  "智影视频智能检索平台"
-#define MyAppVersion               "1.0"
+#define MyAppVersion               "0.9.0"   ; 默认值；构建时被 build_installer.ps1 /DMyAppVersion 覆盖（自动取 core/version.py）
 #define VersionInfoVersion         "1.0"
 #define AppCopyright               ""
 #define AppPublisher               ""
