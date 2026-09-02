@@ -28,6 +28,7 @@ from checks import (project_root, install_script_name, read_server_config, check
 import db as db_mod
 import backend as backend_mod
 from model_bootstrap import ModelBootstrap
+import license_check as license_mod
 
 ROOT = project_root()
 
@@ -294,6 +295,15 @@ def run_gui(args) -> int:
 
 def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
     try:
+        # ── License 校验（封装态启动即验，开发源码态跳过——同云侠 isDev 分支）──
+        if getattr(sys, "frozen", False):
+            app_state.set(State.CHECKING, "检查许可…")
+            ok, msg, lic = license_mod.verify_license(ROOT, log)
+            if not ok:
+                raise RuntimeError("许可校验失败", msg)
+            log.write(f"许可校验通过（licenseType={lic.get('license_type')}，"
+                      f"有效期至 {license_mod.expired_date(lic) or '—'}）")
+
         app_state.set(State.CHECKING, "检查环境…")
         if not check_config_file(ROOT):
             raise RuntimeError("未找到 config/config.yaml",

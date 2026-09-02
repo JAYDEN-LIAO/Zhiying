@@ -1,9 +1,11 @@
 ﻿; ═══════════════════════════════════════════════════════════
-;  智影视频智能检索平台 · Inno Setup 安装脚本
+;  视频快速智能检索平台 · Inno Setup 安装脚本
 ;  不含后端明文源码（backend_pyc 字节码运行）与 25GB 模型（首启 MODEL_BOOT 引导下载）
 ;  构建：desktop/build_exe.ps1 -Deploy → ISCC zhiying.iss
 ; ═══════════════════════════════════════════════════════════
-#define MyAppName                  "智影视频智能检索平台"
+#define ProductCode                "A5300"   ; 产品编号（软件管家定版；校验命令 software_center.exe 1 A5300 用）
+#define ProductName                "视频快速智能检索平台"   ; 产品名称（定版权威字段）
+#define MyAppName                  ProductName
 #define MyAppVersion               "0.9.0"   ; 被 build_installer.ps1 /DMyAppVersion 覆盖（自动取 core/version.py）
 #define VersionInfoVersion         "1.0"
 #define AppCopyright               ""
@@ -24,7 +26,7 @@ DisableDirPage=no
 DisableProgramGroupPage=yes
 DefaultGroupName={#MyAppName}
 OutputDir=.\Bin
-OutputBaseFilename=智影视频智能检索平台 Ver {#MyAppVersion}
+OutputBaseFilename=视频快速智能检索平台 Ver {#MyAppVersion}
 Compression=lzma
 SolidCompression=yes
 PrivilegesRequired=admin
@@ -64,7 +66,7 @@ Source: "requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "desktop\db.py"; DestDir: "{app}\desktop"; Flags: ignoreversion
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "启动 智影视频智能检索平台"; Flags: nowait postinstall skipifsilent unchecked
+Filename: "{app}\{#MyAppExeName}"; Description: "启动 视频快速智能检索平台"; Flags: nowait postinstall skipifsilent unchecked
 
 [UninstallRun]
 ; 停桌面壳 + 内嵌 postgres，否则文件被锁删不掉；容忍全部错误不中断卸载
