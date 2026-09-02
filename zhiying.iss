@@ -138,6 +138,9 @@ var
   CurCap: Integer;            // 当前阶段蠕动上限
   CurStatus: String;
   LastCreep: DWORD;
+  LastSnap: String;           // 进度日志尾部快照（判断有无新输出）
+  LastEvent: DWORD;           // 最近一次新输出时刻（无输出超时依据）
+  TotalStart: DWORD;          // 安装开始时刻（总兜底）
 
 // 自备模型档位检测：Qwen\ 子目录名含 2B/8B
 function DetectProfile(const SourceDir: String): String;
@@ -396,6 +399,14 @@ begin
     except
       Exit;   // 文件正被写入：本次跳过
     end;
+    // 有新输出 → 刷新活跃时刻（模型段单个 16GB 文件下载期间 [progress] 帧持续到来）
+    if Lines.Count > 0 then begin
+      S := IntToStr(Lines.Count) + '|' + Lines[Lines.Count - 1];
+      if S <> LastSnap then begin
+        LastSnap := S;
+        LastEvent := GetTickCount();
+      end;
+    end;
     for i := 0 to Lines.Count - 1 do begin
       S := Lines[i];
       if Copy(S, 1, 8) <> 'PROGRESS' then
@@ -537,7 +548,7 @@ begin
   WizardForm.Refresh;
 
   Params := '-NoProfile -ExecutionPolicy Bypass -File "' + AppDir +
-    '\deploy\setup_windows.ps1" -SkipModels -NoElevate -Quiet' +
+    '\deploy\setup_windows.ps1" -NoElevate -Quiet' +
     ' -EmbeddingProfile "' + GetEmbeddingProfile() + '"' +
     ' -Proxy "' + GetProxy() + '"' +
     ' -ProgressLog "' + ProgressLog + '"' +
@@ -551,8 +562,13 @@ begin
     Abort();
   end;
 
-  // 轮询进度 + 蠕动 + 泵消息（防 UI 假死），90 分钟超时兜底
+  // 轮询进度 + 蠕动 + 泵消息（防 UI 假死）。
+  // 超时策略（模型 25GB 在安装段内下载，不能按总时长掐）：30 分钟无任何新输出 = 卡死；
+  // 总时长 12h 兜底
   StartTick := GetTickCount();
+  TotalStart := StartTick;
+  LastEvent := StartTick;
+  LastSnap := '';
   TimedOut := False;
   repeat
     ProcessMessages();
@@ -561,14 +577,16 @@ begin
     TickCreep();
     Sleep(300);
     if not FileExists(DoneMarker) then
-      TimedOut := GetTickCount() - StartTick > 5400000;
+      TimedOut := (GetTickCount() - LastEvent > 1800000) or   // 30 min 无输出
+                  (GetTickCount() - TotalStart > 43200000);   // 12h 总兜底
   until FileExists(DoneMarker) or TimedOut;
 
   if TimedOut then begin
     WizardForm.StatusLabel.Caption := '环境安装超时';
-    MsgBox('环境安装超过 90 分钟未完成，已中止。' + #13#10 + #13#10 +
-      '常见原因：安全软件拦截了安装脚本（进程被杀，日志会戛然而止）/ 网络极慢。' + #13#10 +
-      '（日志：' + AppDir + '\vendor\install.log 与 install.output）', mbError, MB_OK);
+    MsgBox('环境安装长时间无进展，已中止。' + #13#10 + #13#10 +
+      '常见原因：安全软件拦截了安装脚本（进程被杀，日志会戛然而止）/ 网络中断。' + #13#10 +
+      '（日志：' + AppDir + '\vendor\install.log 与 install.output）' + #13#10 +
+      '重新运行安装程序可从断点续传。', mbError, MB_OK);
     Abort();
   end;
 
