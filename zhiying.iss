@@ -78,7 +78,6 @@ Source: "deploy\setup_windows.ps1"; DestDir: "{app}\deploy"; Flags: ignoreversio
 Source: "deploy\stop_runtime.ps1"; DestDir: "{app}\deploy"; Flags: ignoreversion
 ; ── 环境安装用 ──
 Source: "requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
-Source: "manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 ; setup_windows.ps1 生成的 vendor\.start-pg.py 用 venv python 按源码路径加载 desktop\db.py
 Source: "desktop\db.py"; DestDir: "{app}\desktop"; Flags: ignoreversion
 
@@ -596,12 +595,11 @@ begin
     Abort();
   end;
 
-  // 清理安装耗材：仅在安装期使用（pip 清单 / 环境安装脚本自身 / PG 引导依赖 / 平台桥接清单），
+  // 清理安装耗材：仅在安装期使用（pip 清单 / 环境安装脚本自身 / PG 引导依赖），
   // 运行期无用——交付面只留运行必需。文件在 [Files] 清单里的，卸载时已删过会自动跳过。
   DeleteFile(ExpandConstant('{app}') + '\requirements.txt');
   DeleteFile(ExpandConstant('{app}') + '\deploy\setup_windows.ps1');
   DeleteFile(ExpandConstant('{app}') + '\desktop\db.py');
-  DeleteFile(ExpandConstant('{app}') + '\manifest.json');
 
   // 自备模型已在 CurStepChanged 前置复制；此处收尾
   WizardForm.StatusLabel.Caption := '环境安装完成';

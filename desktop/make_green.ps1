@@ -50,7 +50,6 @@ Copy-Item "$Root\deploy\iss-lang" "$Stage\deploy\iss-lang" -Recurse   # iss 编�
 New-Item -ItemType Directory -Force -Path "$Stage\desktop" | Out-Null
 Copy-Item "$Root\desktop\db.py" "$Stage\desktop\"
 Copy-Item "$Root\requirements.txt" $Stage
-Copy-Item "$Root\manifest.json" $Stage
 
 # 清理 __pycache__（若有）
 Get-ChildItem $Stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
