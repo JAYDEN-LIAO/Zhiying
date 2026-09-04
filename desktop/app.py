@@ -66,7 +66,7 @@ def _embedding_profile(root: Path) -> str:
 
 
 def _saved_proxy(root: Path) -> str:
-    """读 install1/install2 记忆的代理（data/proxy.txt），首启下载默认使用。"""
+    """读安装脚本记忆的代理（data/proxy.txt），首启下载默认使用。"""
     try:
         return (root / "data" / "proxy.txt").read_text(encoding="utf-8").strip()
     except Exception:

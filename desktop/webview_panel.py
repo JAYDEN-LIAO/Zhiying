@@ -448,7 +448,7 @@ class SplashApi:
     def get_recent_commits(self, n: int = 5) -> list[dict]:
         """TitleBar「最近更新」下拉：项目根 git log 最近 n 条提交（纯本地，git log 不联网）。
 
-        桌面壳跑在项目根（exe 部署处），git 随 install2.bat 安装必然可用。
+        桌面壳跑在项目根（exe 部署处），git 随部署脚本安装必然可用。
         返回 [{hash, date, subject}, ...]；任何异常返回空列表（浏览器 dev 无 pywebview 时前端不调用）。
 
         ⚠️ 编码坑（已修）：git log 输出 commit message 恒为 UTF-8（git 不做 locale 转换），

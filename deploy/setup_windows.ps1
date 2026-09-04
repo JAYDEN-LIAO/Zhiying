@@ -5,7 +5,7 @@
 #        命令行窗口交互（选 2B/8B 模型 + 输代理）→ 自动托管：
 #          Python → .venv+依赖 → 内嵌 PostgreSQL(vendor/pg) → 模型(按档位)
 #          → config.yaml 生成 → 建表 → 校验
-#        完成后无缝交给根目录 install2.bat（前端构建 / 打 exe 的日常更新走它）。
+#        完成后：日常更新 git pull + pip install；跑桌面端 python desktoppp.py；
 #
 #  用法： 双击本文件，或
 #         powershell -ExecutionPolicy Bypass -File deploy\setup_windows.ps1
@@ -285,11 +285,11 @@ if ($Proxy) {
     $script:Proxy = ''
     Write-Info "非交互模式：未提供代理（-Quiet，GitHub 源组件可能下载失败）"
 }
-# 保存代理到 data/proxy.txt，供 install2.bat 复用（机器相关，data/ 已 gitignore）
+# 保存代理到 data/proxy.txt（机器相关，data/ 已 gitignore；首启模型下载自动读取）
 $proxyFile = Join-Path $ProjectRoot "data\proxy.txt"
 New-Item -ItemType Directory -Force -Path (Split-Path $proxyFile) | Out-Null
 [System.IO.File]::WriteAllText($proxyFile, [string]$script:Proxy)
-Write-Ok "代理已保存到 data/proxy.txt（install2.bat 自动读取）"
+Write-Ok "代理已保存到 data/proxy.txt（首启模型下载自动读取）"
 
 # ───────────────────────────── 1/6 Python ─────────────────────────────
 Write-Step "1/6" "Python + FFmpeg + Node.js 环境"
@@ -360,7 +360,7 @@ Write-Ok "Node.js $nodeVer"
 # npm 国内镜像（中国网络免代理拉依赖；写入用户配置持久生效）
 if (Get-Command npm -ErrorAction SilentlyContinue) {
     $null = & npm config set registry https://registry.npmmirror.com 2>&1
-    Write-Ok "npm 镜像已配置：registry.npmmirror.com（install2 拉依赖免代理）"
+    Write-Ok "npm 镜像已配置：registry.npmmirror.com（npm install 走国内源免代理）"
 }
 
 # WebView2 Runtime（桌面端 exe 的 pywebview 依赖）。
@@ -690,7 +690,7 @@ Write-Host "  档位: $script:EmbeddingProfile  |  代理: $($script:Proxy)"
 Write-Host "  内嵌 PostgreSQL: vendor/pg（端口 5432，数据在 data/pgdata）"
 Write-Host "  模型: models\ 就绪  |  config.yaml: 已生成"
 Write-Host ""
-Write-Host "  后续日常更新/启动：双击根目录 install2.bat（git pull + 依赖 + 前端 + 打 exe）"
+Write-Host "  后续日常更新：git pull + .venv\Scripts\pip install -r requirements.txt"
 Write-Host "  或直接启动桌面端：python desktop\app.py"
 Write-Host "══════════════════════════════" -ForegroundColor Green
 if ($ProgressLog) { Add-Content -Path $ProgressLog -Value "PROGRESS`t100`tdone" -Encoding ASCII }

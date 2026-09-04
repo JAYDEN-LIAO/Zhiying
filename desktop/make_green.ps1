@@ -4,14 +4,14 @@
 #  打包材料 = 安装器（zhiying.iss [Files]）的完整输入集（客户机需另装 .venv/模型/PG 才可运行）：
 #    智影桌面端.exe + _internal/(含 backend_pyc) + frontend-desktop/dist +
 #    config/(无 config.yaml，装机生成) + deploy 引导件 + iss-lang + desktop/db.py +
-#    requirements.txt + manifest.json
+#    requirements.txt
 #
 #  用途：安装包编译/签名由打包方执行——我们交付打包材料 + iss 脚本，对方
 #        解压 → 放入 zhiying.iss → ISCC 编译 → 签名 → 成品安装包。
 #
 #  前置：已跑过 desktop/build_exe.ps1 -Deploy（根目录有 智影桌面端.exe + _internal）
 #  用法：powershell -ExecutionPolicy Bypass -File desktop/make_green.ps1
-#  产物：Bin\智影绿色版 v<版本>.zip（版本自动取 core/version.py）
+#  产物：Bin\智影打包材料 v<版本>.zip（版本自动取 core/version.py）
 # ═══════════════════════════════════════════════════════════
 param(
     [string]$OutputDir = ""   # 默认 <root>\Bin

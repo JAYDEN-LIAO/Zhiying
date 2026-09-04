@@ -6,8 +6,8 @@
 #      -EmbeddingProfile 2b   安装器写死档位（默认 8b；2B 机器用 2b）
 #      -Version 0.9.0         安装包版本（默认自动读 core/version.py；覆盖 zhiying.iss #define）
 #  流程：build_exe.ps1 -Deploy（刷新 exe + _internal）→ ISCC 编译 zhiying.iss
-#  产物：Bin\智影视频智能检索平台 Ver <版本>.exe
-#  前置：本机已装 Inno Setup 6（ISCC.exe），且已跑过 install1 建好 .venv
+#  产物：Bin\视频快速智能检索平台 Ver <版本>.exe
+#  前置：本机已装 Inno Setup 6（ISCC.exe），且已跑过 deploy\setup_windows.ps1 建好 .venv
 # ═══════════════════════════════════════════════════════════
 param(
     [string]$EmbeddingProfile = "8b",

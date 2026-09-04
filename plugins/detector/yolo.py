@@ -68,7 +68,7 @@ def _torchvision_fix_hint() -> str:
         f"（版本串无 +cu 后缀），YOLO 的 GPU NMS（torchvision::nms）会报 "
         f"`NotImplementedError: ... 'CUDA' backend`。请重装同源 CUDA 版（替换 cu{cu}）：\n"
         f"  pip install torchvision --index-url https://download.pytorch.org/whl/cu{cu}\n"
-        f"Windows PyPI 不发 CUDA 版 torchvision，必须走 PyTorch 官方源（install1/install2 已内置同源安装）。"
+        f"Windows PyPI 不发 CUDA 版 torchvision，必须走 PyTorch 官方源（setup_windows.ps1 已内置同源安装）。"
     )
 
 
