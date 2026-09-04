@@ -12,7 +12,7 @@ cd frontend && npm install && npm run dev       # 启动前端开发服务器
 curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # 上传视频
 ```
 
-> API key 放项目根 `.env`（gitignored）。**Windows 桌面端交付**：`powershell -File desktop/build_installer.ps1` 出安装包（`Bin\智影视频智能检索平台 Ver <版本>.exe`，Inno Setup）——向导内选 2B/8B/自备模型 + 代理，装环境（内嵌 PostgreSQL）+ 首启引导下载模型；开发机仍用 `install1.bat` 一键部署 / `install2.bat` 日常更新。
+> API key 放项目根 `.env`（gitignored）。**Windows 桌面端交付**：`desktop/make_green.ps1` 出打包材料 zip 交打包方编译签名，或 `desktop/build_installer.ps1` 本地出安装包（`Bin\视频快速智能检索平台 Ver <版本>.exe`，Inno Setup）——向导选模型档位 + 代理，一体化安装环境与模型（首启 MODEL_BOOT 兜底补齐），启动经软件管家 License 校验；开发机首装 `powershell -ExecutionPolicy Bypass -File deploy\setup_windows.ps1`。
 
 ## Core Features
 
@@ -37,8 +37,8 @@ curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # �
 | 任务日志 | 日志弹窗复制/一键导出 `.log`（UTF-8 BOM + CRLF）+ 处理中自动增量刷新尾部跟随；失败 traceback 批量落库、孤儿/超期 90 天清扫 | ✅ |
 | 云智平台集成 | `register-external` + `/internal/yunzhi/jobs`（202 异步+回调+幂等） | ✅ |
 | 桌面端启动器+独立桌面前端 | pywebview 壳 + 5 页管理后台（文件库/视频解析/素材库/任务中心/系统设置） | ✅ |
-| **Windows 安装器**（Inno Setup 6.2.1） | `zhiying.iss` + `desktop/build_installer.ps1` → 单 exe 安装包：档位选择（8B/2B/自备模型导入）+ 代理 + 隐藏跑环境安装（单进度条+蠕动平滑+超时兜底）；骨架包不含 25GB 模型，首启引导下载/校验补齐；客户机无明文后端源码（backend_pyc） | ✅ |
-| **图片素材库**（v0.6） | 关注目标（人/其他）底库照片管理 + 人脸/通用图搜分轨检索 + 检测/图搜沉淀（保存后停留当前页）+ 案例库转存 | ✅ |
+| **Windows 安装器**（Inno Setup 6） | `zhiying.iss` → 单 exe 安装包：档位选择（8B/2B/自备模型导入）+ 代理 + 一体化安装（环境 + 内嵌 PostgreSQL + 25GB 模型安装段内下载；单进度条+蠕动平滑+卡死兜底）；首启 MODEL_BOOT 兜底补齐；软件管家 License 校验（试用/正式版 SuperDog 加密狗）；客户机无明文后端源码（backend_pyc） | ✅ |
+| **图片素材库** | 关注目标（人/其他）底库照片管理 + 人脸/通用图搜分轨检索 + 检测/图搜沉淀（保存后停留当前页）+ 案例库转存 | ✅ |
 | 全局搜索 5 目标类型 | 人/车/车牌/文本/事件 chip 互斥选中；类型切换自动清空检索词，各类型专属特征选中才出现（颜色常驻） | ✅ |
 | 前端（服务器+桌面）| React 19 + Vite + Tailwind 4（对接层 `frontend-shared/` 一份实现；桌面端工作台/全局搜索常驻挂载保状态） | ✅ |
 
@@ -84,7 +84,7 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 
 ```
 zhiying/
-├── bump / install1.bat / install2.bat   # 发版启动器 / 开发机一键部署 / 桌面端一键更新
+├── bump                           # 发版启动器（交互联动版本号/commit/tag/push）
 ├── zhiying.iss                    # Windows 安装器脚本（Inno Setup 6.2.1 → Bin\*.exe）
 ├── run.py / main.py / backend_launcher.py
 ├── api/            # 路由: video/search/settings/tasks/groups/detection/face/plate/ocr/export/maintenance/yunzhi/subjects
@@ -100,11 +100,11 @@ zhiying/
 ├── desktop/        # 桌面端 pywebview 壳 + build_exe.ps1(打纯壳 exe) + build_installer.ps1(出安装包) + model_bootstrap.py(首启模型引导)
 ├── deploy/         # setup_windows.ps1 / setup_linux.sh / build_backend_pyc.py / download_models.py / stop_runtime.ps1 / iss-lang/(Inno 中文语言包)
 ├── scripts/        # sweep_storage.py / bump_version.py / mock_yunzhi_platform.py
-└── docs/           # arch.md(权威架构) / archive/(历史归档)
+└── docs/           # arch.md(权威架构)
 ```
 
 ## Status
 
 核心链路全部可用（权威架构与细节见 `docs/arch.md`）。已知边界：Chunk 编码默认关 · OCR 导出/增强（预留）· Grounding(Florence-2 占位) · 素材库告警红点（前端空壳）。
 
-> 变更历史查 git log——本仓库提交信息承担完整变更记录职责；历史归档在 `docs/archive/`。
+> 变更历史查 git log——本仓库提交信息承担完整变更记录职责。

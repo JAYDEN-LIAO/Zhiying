@@ -2,13 +2,14 @@
 
 ## Overview
 
-智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 + 图片素材库（人脸/通用图搜分轨检索）→ FastAPI + PostgreSQL/pgvector 对外服务。当前版本 **v0.6**；后端定版 v0.34。
+智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 + 图片素材库（人脸/通用图搜分轨检索）→ FastAPI + PostgreSQL/pgvector 对外服务。当前版本 **0.9.0**（统一版本号：`core/version.py` 与 `frontend/package.json` 同步）。
 
 **关键锚点**：
 - **生产部署**：10.0.0.176（systemd `zhiying.service`，8011）；发版 `./bump` → 服务器 `bash deploy.sh v<tag>`
 - **配置**：`config/config.yaml` 机器相关 gitignored；运行时覆盖走 `data/settings.json`（保存即生效）+ 共享预设 `config/presets.json`（入 git）
 - **双前端**：服务器 `frontend/` + 桌面 `frontend-desktop/`（5 页管理后台，pywebview 壳）；对接层 `frontend-shared/` 一份实现
-- **Windows 安装器**：`zhiying.iss`（Inno Setup 6.2.1）+ `desktop/build_installer.ps1` → `Bin\*.exe`（gitignored；SVN TestVersion 交付）；骨架包不含 25GB 模型，首启 MODEL_BOOT 引导下载/校验（`desktop/model_bootstrap.py` 后台跑 `deploy/download_models.py`，档位写回 config.yaml）
+- **Windows 安装器**：`zhiying.iss`（Inno Setup 6）→ `Bin\视频快速智能检索平台 Ver <版本>.exe`（gitignored）；一体化安装（环境 + 内嵌 PG + 25GB 模型在安装段内完成；首启 MODEL_BOOT 兜底续传，`desktop/model_bootstrap.py` 跑 `deploy/download_models.py`，档位写回 config.yaml）；交付走 `desktop/make_green.ps1` 打包材料 zip 交打包方编译签名
+- **License 校验（软件管家）**：封装态启动即验、开发态跳过（`desktop/license_check.py`）——调软件管家 `software_center.exe 1 A5300`，退出码 0=试用通过 / 1=失败弹窗退出 / 2=正式版自校验 SuperDog 加密狗（`SuperDog_x64.dll` 与壳同级）
 - **模型档位**：`embedding_profile` 8b=4096 维（默认）/ 2b=2048 维（低显存平替）；人脸固定 512（ArcFace）
 - **摘要**：vlm_llm（API，默认）；native_video 已退役
 - 架构细节见 `docs/arch.md`
@@ -67,7 +68,7 @@
 - **人脸双阈值**: 同 track 0.30 宽松合并，跨 track 0.58 保守合并；检索锚点最典型脸
 - **人脸出现段**: 检测栏人脸展开显示该身份的**主 person track**（`track_to_identity`，时间轴同源）的 `[first_seen, last_seen]`/`segments`，排除"搭车"长 track；人脸搜索 `appearances` 仅保留主身份 track；点击结果从首段自动播放并逐段跳过，当前段黄框高亮（前端 `timeupdate` 判 `currentTime` 落段）
 - **弹窗/抽屉 portal**: 桌面前端所有 modal/drawer 必须 `createPortal(document.body)` + `onMouseDown` 遮罩关闭（`e.target===currentTarget`）；`DetectionOverlay` 用真实事件目标 `container.contains` 判定防穿透/遮挡关不掉
-- **安装器约定**: Inno 等待循环跑 UI 线程——每轮必须 ProcessMessages 泵消息（否则窗口假死）+ DoneMarker 兜底 90 分钟超时；进度 = setup 离散标记 + Inno 侧蠕动平滑（pip 接管道非 TTY 无进度条可解析）；pip 走清华镜像、torch 官方源走代理失败回退阿里云 find-links 直连；自备模型复制前置（不依赖环境安装成败）+ 路径校验（models\Qwen 为锚）；装完删安装耗材（requirements.txt/setup_windows.ps1/desktop/db.py/manifest.json），卸载 [UninstallDelete] 清 .venv/vendor、保留 data/models
+- **安装器约定**: Inno 等待循环跑 UI 线程——每轮必须 ProcessMessages 泵消息（否则窗口假死）；超时 = 30 分钟无任何新输出判卡死 + 12h 总兜底（模型 25GB 在安装段内下载，不能按总时长掐）；进度 = setup 离散标记 + Inno 侧蠕动平滑（pip 接管道非 TTY 无进度条可解析）；pip 走清华镜像、torch 官方源走代理失败回退阿里云 find-links 直连；自备模型复制前置（不依赖环境安装成败）+ 路径校验（models\Qwen 为锚）；快捷方式延后到环境安装成功后由代码创建（[Icons] 段早于环境安装执行）；装完删安装耗材（requirements.txt/setup_windows.ps1/desktop/db.py；download_models.py 保留供首启引导），卸载 [UninstallDelete] 清 .venv/vendor、保留 data/models
 - **工作台常驻挂载**: 桌面端 Workbench/GlobalSearch 切页 hide 不卸载（保播放与搜索状态）；跨页意图（seek/track 选中/搜索同步）一律携带目标视频 id，等 vid 落到目标才消费
 - **搜索隔离**: search/face 与 search/image 参数必须 `Form(...)` 声明（防全库泄漏）
 - **版本号**: `core/version.py` `__version__` 唯一来源；后端+服务器前端改动必须 `./bump`
@@ -111,7 +112,7 @@
 3. **新感知模块** = `pipeline/runners/` 新 runner + `pipeline/operations.py` 一个 Operation
 4. **Sync vs Async**: 插件接口全 async；同步模型推理必须 `asyncio.to_thread()`
 5. **向量维度**: 向量列用 `EmbedVector()`；人脸 `Vector(512)`
-6. **新依赖**: 加 `requirements.txt` AND `Dockerfile`
+6. **新依赖**: 加 `requirements.txt`
 7. **改后端接口/字段** → 只改 `frontend-shared/`
 8. **Detection gate**: 可选感知模块遵循双门控（config backend + per-video toggle）
 9. **cv2/sync calls MUST use asyncio.to_thread()**
