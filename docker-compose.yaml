@@ -1,4 +1,5 @@
-
+# 仅数据库服务——后端/桌面端直接跑宿主机（生产 systemd，桌面内嵌 pg）；
+# run.py 数据库自举与 desktop/db.py 的 docker 回退只用到本文件的 db 服务。
 services:
   db:
     image: pgvector/pgvector:pg17  # PostgreSQL 17 + pgvector
@@ -16,30 +17,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    networks:
-      - zhiying_network
-
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: zhiying_app
-    ports:
-      - "8011:8011"
-    environment:
-      - POSTGRES_URI=postgresql+asyncpg://zhiying:zhiying@db:5432/zhiying  # 容器间通信使用 db 服务名
-    volumes:
-      - .:/home/zhiying/project
-      - /home/zhiying/data:/home/zhiying/data  # 挂载视频数据存放目录
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - zhiying_network
 
 volumes:
   zhiying_db_data:
-
-networks:
-  zhiying_network:
-    driver: bridge
