@@ -1,27 +1,29 @@
-"""desktop/license_check.py — 软件管家 License 校验（照抄云侠 license.ts 逻辑，移植 Python）。
+"""desktop/license_check.py — 软件管家 License 校验。
 
+权威依据：《软件管家-客户端需求功能.docx》第四节"启动客户端"（注册表/接口/返回值均按文档）。
 校验在桌面壳启动时执行（iss 安装器不校验），流程：
-  1. 读注册表 HKLM\\Software\\TuoJie\\TJHouseKeeper 的 Path → 软件管家安装目录
-  2. 解析 exe 同级 license.dat：RC4（密钥 gn9xswy）→ 跳过 1024 字节 → 定长字段
-     （licenseType: 0=试用 / 1=正式；含过期年月日与加密狗名/密码）
-  3. 试用版 → 调 "<管家>\\software_center.exe" 1 A5300 "<license.dat>"，退出码 0 = 通过
-     正式版 → SuperDog 加密狗验证（SuperDog_x64.dll 置于壳同级；DLL 未就位时报错退出）
-  4. 找不到软件管家 / 校验失败 → 返回失败，壳弹窗退出
+  1. 读注册表 HKLM\\SOFTWARE\\WOW6432Node\\Tuojie\\TJHouseKeeper 的 Path → 软件管家安装目录
+  2. 调 "<管家>\\software_center.exe" "1" "A5300" "<license.dat 路径>"（激活助手，无论
+     本地是否已有 license.dat——校验/在线下拉认证文件都是它的职责）
+  3. 按退出码分流（文档规定，勿用客户端自解析 license.dat 分流）：
+       0 = 校验通过（试用），继续启动
+       1 = 失败，弹窗退出
+       2 = 正式版 → 客户端自行 SuperDog 加密狗校验（SuperDog_x64.dll 置于壳同级）
+  4. 失败 → 返回失败，壳弹窗退出
 
-开发态（非 frozen）跳过校验，同云侠 isDev 分支。
+开发态（非 frozen）跳过校验。
 """
 from __future__ import annotations
 
 import ctypes
 import struct
-import subprocess
 import winreg
+from ctypes import wintypes
 from pathlib import Path
 
 PRODUCT_CODE = "A5300"          # 产品编号（软件管家定版）
 _LICENSE_KEY = b"gn9xswy"       # license.dat RC4 密钥（与云侠一致）
 _FIELD_OFFSET = 1024            # 有效字段起始偏移
-_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # SuperDog 厂商码（与云侠 license.ts VENDOR_CODE 一致，照抄）
 _VENDOR_CODE = (
@@ -50,8 +52,8 @@ _LICENSE_FIELDS = (
 
 
 def read_tj_housekeeper() -> str | None:
-    """读注册表定位软件管家安装目录；两个注册表视图都试（software_center 可能 32 位）。"""
-    for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+    """读注册表定位软件管家安装目录（文档路径 WOW6432Node → 32 位视图优先）。"""
+    for view in (winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY):
         try:
             with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                                 r"Software\TuoJie\TJHouseKeeper", 0,
@@ -124,15 +126,70 @@ def _verify_super_dog(license_data: dict, dll_path: Path) -> None:
         lib.dog_logout(h)
 
 
-def verify_license(root: Path, log=None) -> tuple[bool, str, dict]:
-    """启动校验入口。返回 (是否通过, 失败提示, license 字段 dict)。"""
-    license_path = root / "license.dat"
-    data = get_license_data(license_path)
-    license_type = data.get("license_type")
-    housekeeper = read_tj_housekeeper()
+_SEE_MASK_NOCLOSEPROCESS = 0x00000040
+_INFINITE = 0xFFFFFFFF
 
-    if license_type == 1:
-        # 正式版：SuperDog 加密狗（SuperDog_x64.dll 与壳同级）
+
+class _ShellExecuteInfo(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD), ("fMask", wintypes.ULONG),
+        ("hwnd", wintypes.HANDLE), ("lpVerb", wintypes.LPCWSTR),
+        ("lpFile", wintypes.LPCWSTR), ("lpParameters", wintypes.LPCWSTR),
+        ("lpDirectory", wintypes.LPCWSTR), ("nShow", ctypes.c_int),
+        ("hInstApp", wintypes.HINSTANCE), ("lpIDList", ctypes.c_void_p),
+        ("lpClass", wintypes.LPCWSTR), ("hkeyClass", wintypes.HANDLE),
+        ("dwHotKey", wintypes.DWORD), ("hIconOrMonitor", wintypes.HANDLE),
+        ("hProcess", wintypes.HANDLE),
+    ]
+
+
+def _run_software_center(exe: Path, license_path: Path) -> int:
+    """调起激活助手（software_center.exe 需管理员权限 → ShellExecute 'runas' 触发 UAC），
+    等待退出码。用户拒绝 UAC → OSError。"""
+    sei = _ShellExecuteInfo()
+    sei.cbSize = ctypes.sizeof(sei)
+    sei.fMask = _SEE_MASK_NOCLOSEPROCESS
+    sei.lpVerb = "runas"
+    sei.lpFile = str(exe)
+    sei.lpParameters = f'1 {PRODUCT_CODE} "{license_path}"'
+    sei.nShow = 1  # SW_SHOWNORMAL：激活助手 UI 本就要给用户看（激活/输码）
+    if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei)):
+        err = ctypes.windll.kernel32.GetLastError()
+        if err == 1223:  # ERROR_CANCELLED：用户拒绝 UAC
+            raise OSError("许可校验需要管理员授权（UAC 被取消）")
+        raise OSError(f"调起软件管家失败（WinError {err}）")
+    if not sei.hProcess:
+        raise OSError("无法获取激活助手进程句柄")
+    ctypes.windll.kernel32.WaitForSingleObject(sei.hProcess, _INFINITE)
+    code = wintypes.DWORD()
+    ctypes.windll.kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(code))
+    ctypes.windll.kernel32.CloseHandle(sei.hProcess)
+    return code.value
+
+
+def verify_license(root: Path, log=None) -> tuple[bool, str, dict]:
+    """启动校验入口。返回 (是否通过, 失败提示, license 字段 dict)。
+
+    按文档：无论本地有无 license.dat 都调激活助手（校验/在线下拉认证文件是它的职责），
+    由退出码分流（0=试用通过 / 1=失败 / 2=正式版转客户端自校验狗）。
+    """
+    license_path = root / "license.dat"
+    housekeeper = read_tj_housekeeper()
+    if not housekeeper:
+        return False, "未检测到拓界软件管家，请安装后再试！", {}
+    software_center = Path(housekeeper) / "software_center.exe"
+    if not software_center.exists():
+        return False, "软件管家组件缺失（software_center.exe），请重装软件管家", {}
+
+    try:
+        rc = _run_software_center(software_center, license_path)
+    except Exception as e:
+        return False, f"许可校验执行失败（{e}）", {}
+    if rc == 0:
+        return True, "", get_license_data(license_path)
+    if rc == 2:
+        # 正式版：客户端自行 SuperDog 加密狗校验（SuperDog_x64.dll 与壳同级）
+        data = get_license_data(license_path)
         dll = root / "SuperDog_x64.dll"
         if not dll.exists():
             return False, "正式版校验组件缺失（SuperDog_x64.dll），请联系管理员", data
@@ -141,22 +198,6 @@ def verify_license(root: Path, log=None) -> tuple[bool, str, dict]:
             return True, "", data
         except Exception as e:
             return False, f"检测许可环境失败（{e}）", data
-
-    # 试用版：软件管家命令行校验（退出码 0 = 通过）
-    if not housekeeper:
-        return False, "未检测到拓界软件管家，请安装后再试！", data
-    software_center = Path(housekeeper) / "software_center.exe"
-    if not license_path.exists():
-        return False, "未找到许可文件 license.dat，请联系管理员获取", data
-    try:
-        proc = subprocess.run(
-            [str(software_center), "1", PRODUCT_CODE, str(license_path)],
-            creationflags=_NO_WINDOW, timeout=120,
-        )
-    except Exception as e:
-        return False, f"许可校验执行失败（{e}）", data
-    if proc.returncode == 0:
-        return True, "", data
     return False, "检测许可环境失败！", data
 
 
