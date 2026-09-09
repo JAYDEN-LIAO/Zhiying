@@ -2,15 +2,20 @@
 # Zhiying 版本号一键提升（随仓库分发，任意开发机 git pull 后即可用）
 #
 # 用法:
-#   ./bump minor        # 0.22.0 → 0.23.0（新功能：中间位 +1）
-#   ./bump patch        # 0.22.0 → 0.22.1（修 bug：末位 +1）
-#   ./bump 0.24.0       # 直接指定完整版本号
+#   ./bump minor        # 0.90 → 0.91（发版 +0.01）
+#   ./bump 0.95         # 直接指定完整版本号（两段式 X.Y）
 #   ./bump --dry-run minor  # 只预览会改成什么，不改文件
 #   ./bump              # 查看当前版本
 #
-# 真实逻辑在 scripts/bump_version.py（联动改 core/version.py + frontend 两个文件）
+# 真实逻辑在 scripts/bump_version.py（联动改 core/version.py + 双前端 package.json/lock；
+# 尾链可选一键构建发版产物：根 exe + Bin 安装包 + 打包材料 zip，仅 Windows）
 set -euo pipefail
 # readlink -f 解析软链真实路径：setup_linux.sh 会把本启动器软链到 ~/.local/bin/bump，
 # 直接按 $0/BASH_SOURCE 定位会在软链目录里找不到 scripts/。
 DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-exec python3 "$DIR/scripts/bump_version.py" "$@"
+# Windows 无 python3 命令（或指向 Microsoft Store 占位 stub，静默失败）→ 优先探测可用解释器
+PY=python3
+if ! command -v "$PY" >/dev/null 2>&1 || ! "$PY" -c pass >/dev/null 2>&1; then
+  PY=python
+fi
+exec "$PY" "$DIR/scripts/bump_version.py" "$@"

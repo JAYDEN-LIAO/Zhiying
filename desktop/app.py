@@ -100,13 +100,22 @@ def _wait_model_bootstrap(boot: ModelBootstrap, profile: str, proxy: str, log) -
 
 
 def _cache_bust_url(url: str, version: str | None) -> str:
-    """首页 URL 追加版本号查询参数，击穿 WebView2 持久化 HTTP 缓存。
+    """首页 URL 追加缓存键查询参数，击穿 WebView2 持久化 HTTP 缓存。
 
     桌面壳 private_mode=False 使用持久化 WebView2 配置（%APPDATA%\\pywebview），
     跨版本复用会缓存旧 index.html + 旧 JS → 发版后窗口仍显示旧 UI（如素材库消失）。
-    每次发版 version 变化 → index.html 强制重新拉取 → 内容哈希资产自然取新。"""
+    封装态：发版 version 变化 → index.html 强制重新拉取 → 内容哈希资产自然取新。
+    开发态：仅改桌面前端不 bump、版本号不变 → 改用 dist/index.html 的 mtime 当缓存键，
+    重新构建前端后 URL 必变，无需清缓存即可看到新 UI。"""
+    key = version
+    if not getattr(sys, "frozen", False):
+        try:
+            index_html = ROOT / "frontend-desktop" / "dist" / "index.html"
+            key = str(int(index_html.stat().st_mtime))
+        except OSError:
+            pass  # dist 未构建等异常 → 回退版本号键
     sep = "&" if "?" in url else "?"
-    return f"{url}{sep}v={version or ''}"
+    return f"{url}{sep}v={key or version or ''}"
 
 
 # ────────────────────────────────────────────────────────────
@@ -167,6 +176,7 @@ def run_headless(args) -> int:
     cfg = read_server_config(ROOT)
     log.write("无窗口冒烟模式：起 db + 后端，Ctrl+C 退出")
     proc = None
+    db_started = False
     try:
         if not db_mod.db_available(ROOT):
             log.write("[FAIL] 数据库后端不可用 —— 需 vendor/pg（内嵌）或 Docker Desktop（回退）")
@@ -178,10 +188,12 @@ def run_headless(args) -> int:
         if not db_mod.wait_db_healthy(ROOT, log):
             log.write("[FAIL] 数据库容器未 healthy")
             return 1
+        db_started = True
         if sweep_orphan_backends(cfg["port"], log):
             time.sleep(0.8)  # 等端口/句柄完全释放再启动
         log.write("启动后端…")
-        proc = backend_mod.start_backend(ROOT, runtime_python(ROOT), "127.0.0.1", cfg["port"], log)
+        proc = backend_mod.start_backend(ROOT, runtime_python(ROOT), "127.0.0.1", cfg["port"], log,
+                                         db_uri=db_mod.db_uri_for_backend(ROOT, log))
         health = backend_mod.wait_health("127.0.0.1", cfg["port"], log)
         log.write(f"后端就绪 http://127.0.0.1:{cfg['port']} (version {health.get('version')})")
         while True:
@@ -194,6 +206,8 @@ def run_headless(args) -> int:
     finally:
         if proc and proc.poll() is None:
             backend_mod.stop_backend(proc, log)
+        if db_started:
+            db_mod.stop_db(ROOT, log)
     return 0
 
 
@@ -219,7 +233,7 @@ def run_gui(args) -> int:
     host, port = "127.0.0.1", cfg["port"]
     url = f"http://{host}:{port}"
 
-    runtime = {"proc": None, "stopping": False, "done": threading.Event()}
+    runtime = {"proc": None, "stopping": False, "db_started": False, "done": threading.Event()}
 
     def stop_backend() -> None:
         runtime["stopping"] = True
@@ -278,7 +292,7 @@ def run_gui(args) -> int:
     main_window.events.closed += _on_main_closed
 
     def lifecycle() -> None:
-        _lifecycle(runtime, ctx, cfg, log, main_window)
+        _lifecycle(runtime, ctx, cfg, log, main_window, main_api)
 
     # private_mode=False：让前端 localStorage（参数面板自定义参数）持久化。
     # 注意：pywebview 6.x 中 private_mode 是 start() 的全局参数，不在 create_window。
@@ -287,13 +301,17 @@ def run_gui(args) -> int:
         start_kwargs["gui"] = args.gui
     webview.start(lifecycle, **start_kwargs)
 
-    # webview.start 返回 = 所有窗口已关闭，兜底清理
+    # webview.start 返回 = 所有窗口已关闭，兜底清理：停后端 → 停本实例内嵌 PG
+    # （只停自己 pgdata 的实例，pg_ctl status 判定；从不碰别的安装/系统的 PG）
     if runtime["proc"] and runtime["proc"].poll() is None and not runtime["stopping"]:
         backend_mod.stop_backend(runtime["proc"], log)
+    if runtime["db_started"]:
+        log.write("停止内嵌 PostgreSQL…")
+        db_mod.stop_db(ROOT, log)
     return 0
 
 
-def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
+def _lifecycle(runtime, ctx, cfg, log, main_window, main_api) -> None:
     try:
         # ── License 校验（封装态启动即验，开发源码态跳过——同云侠 isDev 分支）──
         if getattr(sys, "frozen", False):
@@ -347,7 +365,7 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
             app_state.set(State.READY, "检测到已有后端，直接复用", port=cfg["port"],
                           version=body.get("version"))
             log.write(f"已有 Zhiying 在运行，直接打开 {ctx.url}")
-            time.sleep(1.5)  # 让启动页把进度平滑推满 100% 并展示「正在进入」过渡后再切前端
+            main_api.wait_first_screen(cfg["port"])  # 等首屏数据就绪再进正式页（启动页停留 100%）
             main_window.load_url(_cache_bust_url(ctx.url, body.get("version")))
             runtime["done"].wait()
             return
@@ -360,15 +378,18 @@ def _lifecycle(runtime, ctx, cfg, log, main_window) -> None:
             raise RuntimeError("启动数据库失败", "docker compose up -d db 失败，见控制窗日志")
         if not db_mod.wait_db_healthy(ROOT, log):
             raise RuntimeError("数据库未就绪", "数据库容器未在超时内 healthy，请检查 Docker Desktop")
+        runtime["db_started"] = True
 
         app_state.set(State.BACKEND_START, "启动后端…")
-        proc = backend_mod.start_backend(ROOT, runtime_python(ROOT), "127.0.0.1", cfg["port"], log)
+        # POSTGRES_URI 注入本实例库 URI（端口每实例终身固定）——后端连自己的库，不串别的安装
+        proc = backend_mod.start_backend(ROOT, runtime_python(ROOT), "127.0.0.1", cfg["port"], log,
+                                         db_uri=db_mod.db_uri_for_backend(ROOT, log))
         runtime["proc"] = proc
         backend_mod.spawn_monitor(proc, ctx.on_backend_crash)
         health = backend_mod.wait_health("127.0.0.1", cfg["port"], log)
         app_state.set(State.READY, "后端就绪", port=cfg["port"], version=health.get("version"))
         log.write(f"后端就绪 {ctx.url} (version {health.get('version')})")
-        time.sleep(1.5)  # 让启动页把进度平滑推满 100% 并展示「正在进入」过渡后再切前端
+        main_api.wait_first_screen(cfg["port"])  # 等首屏数据就绪再进正式页（启动页停留 100%）
         main_window.load_url(_cache_bust_url(ctx.url, health.get("version")))
 
     except RuntimeError as e:

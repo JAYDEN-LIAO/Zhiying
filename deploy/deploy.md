@@ -47,16 +47,21 @@
 面向最终用户的交付形态：**单个安装 exe**（`zhiying.iss` 产品名定版「视频快速智能检索平台」；不含明文后端源码）。
 
 ```powershell
-# 路径一（交付打包方）：装配打包材料 zip（安装器 [Files] 完整输入集；版本自动取 core/version.py）
-#   前置：已跑过 desktop/build_exe.ps1 -Deploy（根目录有 智影桌面端.exe + _internal）
+# 一键出货（推荐；双击根目录 update_build.bat 等价）：桌面前端 dist → 壳 exe → 安装包 → 打包材料，四步全跑
+#   末尾自动清理 build\backend_pyc / build\build_exe 构建中间物
+
+# 路径一（交付打包方）：装配打包材料目录（安装器 [Files] 完整输入集，zhiying.iss 就位；版本自动取 core/version.py）
+#   前置：已跑过 desktop/build_exe.ps1（dist\智影桌面端\ 有产物）
 powershell -ExecutionPolicy Bypass -File desktop/make_green.ps1
-#   产物：Bin\智影打包材料 v<版本>.zip —— 打包方解压 → 放入 zhiying.iss → ISCC 编译 → 签名 → 成品安装包
+#   产物：build\green\ —— 打包方直接 ISCC/GUI 编译（编译基准 = iss 所在目录）→ 签名 → 成品安装包；-Zip 可选出 zip
 
 # 路径二（本地直接出包；前置：本机 Inno Setup 6 + 已跑过 setup_windows.ps1 的 .venv）
 powershell -ExecutionPolicy Bypass -File desktop/build_installer.ps1
-# 可选：-EmbeddingProfile 2b（2B 机器专用包）、-Version 0.9.0（默认自动读 core/version.py）
-# 产物：Bin\视频快速智能检索平台 Ver <版本>.exe（gitignored；交付上 SVN TestVersion）
+# 可选：-EmbeddingProfile 2b（2B 机器专用包）、-Version 0.90（默认自动读 core/version.py）
+# 产物：build\视频快速智能检索平台 Ver <版本>.exe（gitignored；交付上 SVN TestVersion）
 ```
+
+> 版本号兜底：`zhiying.iss` 内 `#ifndef` 兜底值由 `./bump` 自动同步，GUI 直编不会拿旧版本号；`build_installer.ps1` 仍传 `/DMyAppVersion` 双保险。
 
 流程与约定：
 - `zhiying.iss`（仿 云侠.iss 骨架）：向导 = 选目录（默认 `D:\Zhiying`，磁盘预检 40GB）→ **档位页**（8B/2B 在线下载 | **自备模型导入**：路径校验 `models\Qwen` 锚 + robocopy 前置复制，不依赖环境安装成败）→ **代理页**（预填 `http://127.0.0.1:` 只补端口）→ 安装
@@ -92,7 +97,7 @@ powershell -ExecutionPolicy Bypass -File deploy\setup_windows.ps1
 - **代理策略**：`github.com` / `download.pytorch.org` / `enterprisedb.com` **走代理**；**`modelscope.cn` 强制直连**（国内 CDN，走国际代理反而更慢更易断）。
 - **构建健壮性**（`build_exe.ps1`）：部署前 **pg_ctl 幂等停内嵌 postgres**（常驻 daemon 从旧 `_internal` 加载 MSVC 运行库锁 DLL → `_internal` 删不掉；轮询 / immediate 强停 / 硬杀三级兜底）。
 
-**日常更新/运行**：`git pull` + `.venv\Scripts\pip install -r requirements.txt`（桌面前端改过后在 `frontend-desktop` 下 `npm run build`）；跑桌面端 `python desktop\app.py`；出壳 exe/打包材料走 `desktop\build_exe.ps1 -Deploy` → `desktop\make_green.ps1`（或 `desktop\build_installer.ps1` 本地直接出安装包）。
+**日常更新/运行**：`git pull` + `.venv\Scripts\pip install -r requirements.txt`（桌面前端改过后在 `frontend-desktop` 下 `npm run build`）；跑桌面端 `python desktop\app.py`；出货双击 `update_build.bat`（或分步 `desktop\build_exe.ps1 -Deploy` → `desktop\build_installer.ps1` → `desktop\make_green.ps1`，产物统一落 `build\`：安装包 exe + `build\green\` 打包材料目录）。
 
 > **总下载量约 25GB+**（torch ~2.6GB + embedding 8B 16GB / 2B ~4GB + 其余模型），请预留磁盘空间。
 
@@ -116,7 +121,7 @@ bash deploy/setup_linux.sh --proxy http://127.0.0.1:7897 --non-interactive
 9. Node（缺失时装 v22）+ 构建 frontend-desktop / frontend dist
 10. 自校验 → 打印启动指令
 
-装完形态与本机参考机一致：`.venv` / `models/` / `config/config.yaml` / 双前端 `dist`，即可开始开发改代码测试。
+装完形态与本机参考机一致：`.venv` / `models/` / `config/config.yaml` / 前端 `dist`，即可开始开发改代码测试。
 
 **总下载量约 25GB+**，请预留磁盘空间。
 
@@ -197,7 +202,7 @@ npm run dev
 - **多架构依赖**：`onnxruntime-gpu` 仅 Windows/x86 Linux 有 wheel；ARM64（DGX Spark/GB10）由 requirements 环境标记自动装 `onnxruntime` CPU 版。新增带平台差异的依赖时用 PEP 508 环境标记区分（如 `; sys_platform == "win32" or platform_machine == "x86_64"`）
 - **新增会产生磁盘文件的功能** → 落盘路径模式必须登记进 `core/storage_manager.py`
 - **新增感知模块** → `pipeline/runners/` 新 runner + `pipeline/operations.py` 一个 Operation，engine 零改动
-- **版本号与发布** → 版本唯一事实来源 `core/version.py`；`/health` 返回 `version` 字段（部署/回滚后核对运行版本）；发版用 `./bump minor|patch|0.24.0`（联动改后端 + 前端 + 锁文件，交互式确认提交信息/commit/tag/push）；git tag 必须 `v<版本>` 与 version.py 一致，回滚 = `git checkout` 旧 tag + 重启
+- **版本号与发布** → 版本唯一事实来源 `core/version.py`；`/health` 返回 `version` 字段（部署/回滚后核对运行版本）；发版用 `./bump minor|X.Y`（两段式版本号；联动 core/version.py + 三前端 package.json/lock + zhiying.iss 版本兜底，交互式确认提交信息/commit/tag/push，尾链可选一键构建发版产物）；git tag 必须 `v<版本>` 与 version.py 一致，回滚 = `git checkout` 旧 tag + 重启
 
 ## 8. Linux / Windows 环境差异（摘要）
 

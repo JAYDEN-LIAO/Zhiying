@@ -8,14 +8,14 @@ Windows 桌面机（有 NVIDIA GPU）的本地启动器：管理本地后端生�
 
 1. `.venv` 已建（Python 3.13 + 全部后端依赖 + **`pip install pywebview`**，见 `desktop/requirements.txt`）。
 2. 模型齐全：`python deploy/download_models.py --component all --model-root models --verify-only` 返回 0（含 embedding/yolo/reid/face/plate/segmenter；**不含 captioner 8B**——摘要走 API 模式）。
-3. Docker Desktop 运行中（`desktop.bat --check` 会验证）。
+3. Docker Desktop 运行中（`desktop.bat --check`（项目根） 会验证）。
 4. `config/config.yaml` 已从 `config/config.yaml.example` 复制并按机器修改（至少改 `storage.video_dir/artifact_dir`；`database.uri` 默认 `localhost:5432`，与 docker-compose 的 db 服务对齐）。
 5. 桌面前端已构建：`cd frontend-desktop && npm install && npm run build`（**独立于服务器前端 `frontend/`**，默认 env 即可——`VITE_YUNZHI_MOCK` 缺省即本地模式，无云智 Bridge）。
 
 ## 使用
 
 ```bat
-desktop.bat            # 启动桌面端（双击即可，带控制台方便看报错）
+桌面根目录 desktop.bat            # 启动桌面端（双击即可，带控制台方便看报错）
 desktop.bat --check    # 先自检：config/模型/端口/Docker，输出报告后退出
 ```
 
@@ -71,7 +71,6 @@ desktop/
 ├── logs.py             # 线程安全日志汇聚（环形缓冲 + 落盘 + 增量拉取）
 ├── webview_panel.py    # 主窗毛玻璃启动页（内嵌 HTML，无构建步骤）+ SplashApi js_api（含启动日志 get_logs）
 ├── requirements.txt    # 额外依赖（pywebview>=6,<7）
-├── desktop.bat         # Windows 入口（带控制台，排错用）
 ├── create_desktop_shortcut.vbs # 生成桌面快捷方式（无黑框 + 图标，日常用）
 ├── assets/zhiying.ico  # 桌面快捷方式图标
 └── README.md           # 本文件

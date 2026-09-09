@@ -11,7 +11,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../services/api";
-import { IconClock, IconSun, IconMoon } from "./icons";
+import { useDownloader } from "../services/downloads";
+import { IconDownload, IconInfo, IconSun, IconMoon } from "./icons";
+import { AboutDialog } from "./AboutDialog";
 import { useApp } from "../AppContext";
 
 declare global {
@@ -23,7 +25,6 @@ declare global {
         is_maximized?: () => Promise<boolean>;
         quit?: () => void;
         move?: (x: number, y: number) => void;
-        get_recent_commits?: (n?: number) => Promise<{ hash: string; date: string; subject: string }[]>;
       };
     };
   }
@@ -45,23 +46,11 @@ export function TitleBar() {
   }, [dark]);
   const toggleTheme = () => setDark((d) => !d);
 
-  /* ── 最近更新：i 按钮下拉 → SplashApi.get_recent_commits（项目根 git log） ── */
-  const [commitsOpen, setCommitsOpen] = useState(false);
-  const [commits, setCommits] = useState<{ hash: string; date: string; subject: string }[]>([]);
-  const [commitsLoading, setCommitsLoading] = useState(false);
-  const toggleCommits = async () => {
-    setCommitsOpen((o) => !o);
-    if (!commitsOpen && commits.length === 0 && !commitsLoading) {
-      setCommitsLoading(true);
-      try {
-        const list = (await window.pywebview?.api.get_recent_commits?.(5)) ?? [];
-        setCommits(list);
-      } catch {
-        setCommits([]);
-      }
-      setCommitsLoading(false);
-    }
-  };
+  /* ── 关于：i 按钮 → AboutDialog（产品型号/当前版本/检查升级/用户手册/服务截止时间） ── */
+  const [aboutOpen, setAboutOpen] = useState(false);
+
+  /* ── 下载管理：图标入口（进行中数量徽标）→ DownloadManager 弹窗 ── */
+  const { activeCount: downloading, setOpen: setDownloadsOpen } = useDownloader();
 
   useEffect(() => {
     const check = () => { if (window.pywebview?.api) setInPywebview(true); };
@@ -158,37 +147,22 @@ export function TitleBar() {
         {version && <span className="tb-badge">v{version}</span>}
       </div>
 
-      {/* 标题栏按钮（sibling，非拖拽区）：最近更新(i) + 主题切换 恒显示；窗口控制仅 pywebview */}
+      {/* 标题栏按钮（sibling，非拖拽区）：关于(i) + 下载 + 主题切换 恒显示；窗口控制仅 pywebview */}
       <div className="tb-win">
-        {/* i：最近更新下拉 */}
-        <div className="relative">
-          <button className="tb-win-btn" onClick={() => void toggleCommits()} title="最近更新" aria-label="最近更新">
-            <IconClock />
-          </button>
-          {commitsOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setCommitsOpen(false)} />
-              <div className="absolute top-full right-0 mt-1.5 z-50 w-[340px] rounded-xl bg-white border border-gray-200 shadow-xl overflow-hidden">
-                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-100 font-semibold text-[13px] text-gray-800">
-                  <svg className="w-3.5 h-3.5 text-[#4f7cff]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  最近更新
-                </div>
-                <div className="max-h-[280px] overflow-y-auto">
-                  {commitsLoading && <div className="px-4 py-3 text-[12px] text-gray-400">加载中…</div>}
-                  {commits.map((c) => (
-                    <div key={c.hash} className="px-4 py-2 hover:bg-gray-50 border-b border-gray-50 last:border-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[10px] font-semibold text-[#4f7cff]">{c.hash}</span>
-                        <span className="text-[10px] text-gray-400">{c.date}</span>
-                      </div>
-                      <div className="text-[12px] text-gray-700 mt-0.5 leading-relaxed break-words" title={c.subject}>{c.subject}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
+        {/* i：关于弹窗 */}
+        <button className="tb-win-btn" onClick={() => setAboutOpen(true)} title="关于" aria-label="关于">
+          <IconInfo />
+        </button>
+
+        {/* 下载管理 */}
+        <button className="tb-win-btn relative" onClick={() => setDownloadsOpen(true)} title="下载管理" aria-label="下载管理">
+          <IconDownload />
+          {downloading > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-[#4f7cff] text-white text-[9px] leading-[14px] text-center font-semibold">
+              {downloading > 9 ? "9+" : downloading}
+            </span>
           )}
-        </div>
+        </button>
 
         {/* 主题切换 */}
         <button className="tb-win-btn" onClick={toggleTheme} title={dark ? "切换到亮色主题" : "切换到暗色主题"} aria-label="切换主题">
@@ -244,6 +218,9 @@ export function TitleBar() {
       </div>,
       document.body,
     )}
+
+    {/* 关于弹窗 */}
+    <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} version={version} />
     </>
   );
 }

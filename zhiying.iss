@@ -6,8 +6,14 @@
 #define ProductCode                "A5300"   ; 产品编号（软件管家定版；校验命令 software_center.exe 1 A5300 用）
 #define ProductName                "视频快速智能检索平台"   ; 产品名称（定版权威字段）
 #define MyAppName                  ProductName
-#define MyAppVersion               "0.9.0"   ; 被 build_installer.ps1 /DMyAppVersion 覆盖（自动取 core/version.py）
-#define VersionInfoVersion         "1.0"
+; 版本号兜底值（不经 build_installer.ps1 /D 传参、GUI 直编时生效）；
+; ./bump 会自动同步这里的两处 define——勿手写死旧版本
+#ifndef MyAppVersion
+#define MyAppVersion               "0.90"
+#endif
+#ifndef VersionInfoVersion
+#define VersionInfoVersion         "0.90"
+#endif
 #define AppCopyright               ""
 #define AppPublisher               ""
 #define MyAppExeName               "智影桌面端.exe"
@@ -26,7 +32,7 @@ DefaultDirName=D:\Zhiying
 DisableDirPage=no
 DisableProgramGroupPage=yes
 DefaultGroupName={#MyAppName}
-OutputDir=.\Bin
+OutputDir=.\build
 OutputBaseFilename=视频快速智能检索平台 Ver {#MyAppVersion}
 Compression=lzma
 SolidCompression=yes
@@ -52,9 +58,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Type: files; Name:"{commondesktop}\{#MyAppName}.lnk"
 
 [Files]
-; 桌面壳 + _internal（含 backend_pyc，客户机无明文源码）
-Source: "智影桌面端.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 桌面壳 + _internal（含 backend_pyc，客户机无明文源码）——取 PyInstaller dist 产物（不经根目录中转）
+Source: "dist\智影桌面端\智影桌面端.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\智影桌面端\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "frontend-desktop\dist\*"; DestDir: "{app}\frontend-desktop\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; config.yaml 装机时生成，故排除；prompts/presets 运行时要读
 Source: "config\*"; DestDir: "{app}\config"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "config.yaml,__pycache__"

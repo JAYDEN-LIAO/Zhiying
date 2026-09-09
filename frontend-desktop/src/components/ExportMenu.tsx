@@ -6,6 +6,7 @@
 
 import { useState } from "react";
 import { api } from "../services/api";
+import { useDownloader } from "../services/downloads";
 
 export function ExportMenu({
   videoId,
@@ -24,6 +25,7 @@ export function ExportMenu({
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const { downloadFile } = useDownloader();
 
   const handleClipExport = () => {
     setErr(null);
@@ -32,7 +34,7 @@ export function ExportMenu({
     if (isNaN(s) || s < 0) { setErr("起始时间无效"); return; }
     if (isNaN(e) || e < 0) { setErr("结束时间无效"); return; }
     if (s > e) { setErr("结束时间须 ≥ 起始时间"); return; }
-    window.open(api.getClipExportUrl(videoId, s, e), "_blank");
+    downloadFile(`clip_${videoId}_${s}-${e}.mp4`, api.getClipExportUrl(videoId, s, e));
     onClose();
   };
 
@@ -82,7 +84,7 @@ export function ExportMenu({
       {/* 分析报告 */}
       <button
         className={itemCls(true)}
-        onClick={() => { window.open(api.getTaskReportExportUrl(videoId), "_blank"); onClose(); }}
+        onClick={() => { downloadFile(`report_${videoId}.md`, api.getTaskReportExportUrl(videoId)); onClose(); }}
       >
         分析报告
       </button>
@@ -91,7 +93,7 @@ export function ExportMenu({
       <button
         className={itemCls(hasSummary)}
         disabled={!hasSummary}
-        onClick={() => { if (hasSummary) { window.open(api.getSummaryExportUrl(videoId), "_blank"); onClose(); } }}
+        onClick={() => { if (hasSummary) { downloadFile(`summary_${videoId}.txt`, api.getSummaryExportUrl(videoId)); onClose(); } }}
         title={!hasSummary ? "解析时未开启摘要" : undefined}
       >
         视频摘要{!hasSummary && <span className="text-[11px] ml-1">（未开启）</span>}
@@ -101,7 +103,7 @@ export function ExportMenu({
       <button
         className={itemCls(hasOcr)}
         disabled={!hasOcr}
-        onClick={() => { if (hasOcr) { window.open(api.getOcrExportUrl(videoId), "_blank"); onClose(); } }}
+        onClick={() => { if (hasOcr) { downloadFile(`ocr_${videoId}.txt`, api.getOcrExportUrl(videoId)); onClose(); } }}
         title={!hasOcr ? "解析时未开启 OCR" : undefined}
       >
         文字识别{!hasOcr && <span className="text-[11px] ml-1">（未开启）</span>}
@@ -111,7 +113,7 @@ export function ExportMenu({
       <button
         className={itemCls(hasPlate)}
         disabled={!hasPlate}
-        onClick={() => { if (hasPlate) { window.open(api.getPlatesExportUrl(videoId), "_blank"); onClose(); } }}
+        onClick={() => { if (hasPlate) { downloadFile(`plates_${videoId}.txt`, api.getPlatesExportUrl(videoId)); onClose(); } }}
         title={!hasPlate ? "解析时未开启车牌识别" : undefined}
       >
         车牌识别{!hasPlate && <span className="text-[11px] ml-1">（未开启）</span>}

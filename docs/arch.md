@@ -1,6 +1,6 @@
 # Zhiying Architecture
 
-> 版本: 0.9.0（统一版本号） | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
+> 版本: 0.90（两段式统一版本号） | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
 > 核心能力：16-op DAG · 4 编码路径 · YOLO11/BoT-SORT 双层 ReID · 人脸/车牌/OCR · 8 路搜索+图搜 · 图片素材库（人脸/通用图搜分轨检索）· 智能参数系统 · 全局任务队列 · 云智接入 · 桌面端 · Windows 安装器（一体化安装+首启模型兜底）· 软件管家 License 校验
 
 ## System Data Flow
@@ -182,7 +182,9 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
 
 ## Frontend Architecture
 
-**双前端共存**：服务器 `frontend/`（Dashboard）+ 桌面 `frontend-desktop/`（5 页管理后台）；**对接层 `frontend-shared/` 一份实现**。
+**三前端并存**：服务器 `frontend/`（**已废弃保留**，待退役）+ 桌面 `frontend-desktop/`（5 页管理后台）+ 新 web `frontend-web/`（轻量解析工作台）；**对接层 `frontend-shared/` 一份实现**。
+
+**新 Web 前端（frontend-web/）**：单页双视图（react-router）——`/` 案例库视频网格 + `/?video=id` 解析详情工作台（PlayerPanel/DetectionPanel/DetectionCanvas/SearchPanel/SummaryPanel/EventTimeline + HistoryDrawer/FilePickerModal）；api 层薄壳复用 `frontend-shared/api`（含 10 个消费方法），后端不可达时自动降级 mock 演示数据（`public/mock/flower.mp4`）；dev 代理 `/api`→8011。暂未挂载到后端静态托管，与旧 `frontend/` 并存，替换待定。
 
 **桌面前端**：
 - AppContext 全局状态（视频/任务/进度/树选/案例徽章/素材库跨页跳转）+ 5 页组件；Workbench 与 GlobalSearch 常驻挂载（切页 hide 不卸载，保播放与搜索状态），跨页意图（seek/track 选中/搜索同步）携带目标视频 id、等 vid 落到目标才消费：
@@ -191,16 +193,18 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
   - **ImageLibrary**（素材库页）：左目标列表 + 右底库照片详情（裁剪/拖拽扩充/溯源）+ 新建目标弹窗 + `AddSubjectDrawer`（检测/图搜一键沉淀）
   - **GlobalSearch**（全局搜索）：左 34% 配置面板（文本/图像 Tab + 人/车/车牌/文本/事件 5 类型 chip 互斥选中，切换即清空文本框 + 各类型专属特征选中才出现（颜色常驻）+ 句式化 token + 人脸/通用图搜分轨）+ 右 66% 结果网格；选图来源统一走 `SubjectPhotoPicker`（素材库底图）
   - **TaskCenter**（任务中心）+ **SettingsPage**（系统设置，4 子 tab）
+  - TitleBar 右上角「**关于**」弹窗（AboutDialog）：logo + 产品名 + 产品型号/当前版本（/health）+ 检查升级/用户手册按钮 + 服务截止时间 + 版权底栏；检查升级走 pywebview 壳调软件管家 `software_center.exe` **模式 2**（升级检查/下载由软件管家自带 UI 完成）；服务截止时间读 license.dat 过期字段；开发态（非 frozen）检查升级置灰、到期显示「—」
 - TitleBar（frameless 暗色）+ SystemMonitor（底部系统监控）；侧栏 5 业务 + 2 设置入口
 
-**桌面端窗口壳**：pywebview 主窗（frameless, shadow）；启动生命周期 = License 校验（封装态，软件管家激活助手退出码分流）→ 环境检查 → 模型检查（缺失进 MODEL_BOOT 下载面板）→ 起后端 → 开产品窗；SplashApi 窗口控制/系统监控/模型下载引导（start_model_download / get_model_download_status / abort_model_download）；后端 backend_launcher.py（字节码/源码双模式 + 看门狗）。壳 `load_url` 追加 `?v=<version>` 击穿 WebView2 持久化 HTTP 缓存（`private_mode=False`，跨版本复用会显示旧 UI，如素材库消失）。
+**桌面端窗口壳**：pywebview 主窗（frameless, shadow）；启动生命周期 = License 校验（封装态，软件管家激活助手退出码分流）→ 环境检查 → 模型检查（缺失进 MODEL_BOOT 下载面板）→ 起后端 → 开产品窗；SplashApi 窗口控制/系统监控/模型下载引导（start_model_download / get_model_download_status / abort_model_download）；后端 backend_launcher.py（字节码/源码双模式 + 看门狗）。内嵌 PG 端口每实例终身固定（`data/db_port.txt`，config 端口被占自动让位空闲端口，`POSTGRES_URI` 注入后端防多安装串库），壳退出即停本实例内嵌 PG（`pg_ctl status` 只认自己 pgdata，不碰别人的 PG）。壳 `load_url` 追加 `?v=<缓存键>` 击穿 WebView2 持久化 HTTP 缓存（`private_mode=False`，跨版本复用会显示旧 UI，如素材库消失）；封装态缓存键 = 版本号，开发态 = dist/index.html mtime（仅改桌面前端不 bump 也能取新）。
 
 ## Desktop Installer (Windows)
 
 ```
 构建链: build_backend_pyc.py（无源字节码包）→ build_exe.ps1 -Deploy（壳 exe + _internal）
-        → 本地出包: build_installer.ps1 → ISCC zhiying.iss → Bin\视频快速智能检索平台 Ver <版本>.exe
-        | 交付打包方: make_green.ps1 → 打包材料 zip（安装器 [Files] 完整输入集）→ 对方放入 zhiying.iss → ISCC 编译 → 签名
+        → 本地出包: build_installer.ps1 → ISCC zhiying.iss → build\视频快速智能检索平台 Ver <版本>.exe
+        | 交付打包方: make_green.ps1 → build\green\ 材料目录（安装器 [Files] 完整输入集 + zhiying.iss 就位，
+          -Zip 可选压 zip）→ ISCC 编译 → 签名
 向导流: 选目录（默认 D:\Zhiying，磁盘预检 40GB）→ 档位页（8B/2B 在线下载 | 自备模型导入：路径校验 Qwen 子目录 + robocopy 前置复制，不依赖环境安装成败）
         → 代理页（预填 http://127.0.0.1:，只补端口）→ 安装 → 完成
 安装期: 一体化安装——隐藏跑 setup_windows.ps1 全量（环境+内嵌 PG+25GB 模型安装段内下载；非交互参数 -Quiet
@@ -234,7 +238,8 @@ License: 封装态启动即验（开发态跳过）——desktop/license_check.p
 | 搜索数据隔离 | Form(...) 声明防全库泄漏 |
 | OCR 独立子进程 | DML 隔离不破坏人脸/车牌 CUDA；封装态 worker 仅 .pyc，插件 .pyc 回退 + ZHIYING_PROJECT_ROOT 定位 vendor |
 | 参数预设随 git | config/presets.json 部署/换机开箱复用 |
-| 桌面壳 URL 版本缓存击穿 | WebView2 持久化缓存（private_mode=False）跨版本复用旧 UI，load_url 带 `?v=<version>` 强制取新 |
+| 桌面壳 URL 缓存键击穿 | WebView2 持久化缓存（private_mode=False）跨版本复用旧 UI，load_url 带 `?v=<缓存键>` 强制取新——封装态用版本号、开发态用 dist/index.html mtime（仅改桌面前端不 bump 也取新） |
+| 内嵌 PG 实例端口 + 退出停库 | 多安装/残留进程同抢 5432 曾致串库（8b 应用连上 2b 安装的库 → 向量维度错配炸管道）——端口每实例终身固定（data/db_port.txt，被占自动让位）、POSTGRES_URI 注入、复用/停止只认本实例 pgdata（pg_ctl status）、壳退出即停库 |
 | 工作台常驻挂载 + 意图门控 | Workbench/GlobalSearch 切页 hide 不卸载保播放/搜索状态；跨页意图带目标视频 id，等 vid 落到目标才执行/消费（防旧视频 id 过渡帧误搜/误重置） |
 | 重解析建新版本 | completed/failed 参数改动走 POST /reanalyze（版本链复制文件信息）；PUT /params 仅摘要/索引开关增量——抽屉开关 PATCH /toggles 先行持久化，PUT 新旧比对必然一致 |
 | 删除三层保证 | 路由显式清盘 → FK CASCADE → sweep 兜底；task_logs/pipeline_tasks 无 FK 由 delete_video 显式清，删视频连队列行一起清 |
@@ -244,6 +249,7 @@ License: 封装态启动即验（开发态跳过）——desktop/license_check.p
 | 首启模型兜底 | 安装段下载失败/中断不阻断交付——首启 check_models 缺失进 MODEL_BOOT 后台断点续传，档位写回 config.yaml 防维度错配 |
 | 安装器单进度条 + 蠕动平滑 | 解压/环境安装复用同一进度条；pip 非终端无进度可解析，离散真实标记 + Inno 侧定时蠕动，条不再长时间死住 |
 | 启动 License 校验 | 软件管家生态交付——封装态启动即验（激活助手退出码分流：试用通过/失败/正式版 SuperDog 加密狗），开发态跳过；校验在壳不在安装器（iss 只定 ProductCode A5300） |
+| 检查升级走软件管家模式 2 | 升级检查/下载/安装全部由软件管家自带 UI 完成（对齐其启动参数 `['2', 产品号, license路径, 当前版本]`），客户端零升级逻辑；两段式版本号（0.90）与平台格式直接兼容 |
 | 安装耗材交付面清理 | requirements/setup 脚本/db 引导/平台清单装完即删，客户机只留运行必需；卸载清 .venv/vendor（安装产物），data/models 有意保留 |
 
 ## Current Status

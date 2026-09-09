@@ -177,17 +177,48 @@ export function GlobalSearch() {
     return buildPhrase(parts.join(" "));
   }
 
+  /* ── 手动编辑文本框 ↔ 特征选中双向同步 ──
+     删除文字（如 backspace 删掉「轿车」）→ 对应特征取消选中；
+     手动输入完整特征词 → 自动点亮对应特征（与删除对称）。
+     类型标签不写入文本框，不参与联动。 */
+  function handleQueryInput(value: string) {
+    setQuery(value);
+    const tokens = new Set(value.split(/\s+/).filter(Boolean));
+    const isTypeLabel = (l: string) => TYPE_CHIPS.some((t) => t.label === l);
+    const isFeatureLabel = (l: string) =>
+      COLOR_CHIPS.some((c) => c.label === l) ||
+      TYPE_CHIPS.some((t) => t.features.some((f) => f.label === l));
+    setChips((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const label of [...next]) {
+        if (isTypeLabel(label)) continue;
+        if (!tokens.has(label)) { next.delete(label); changed = true; }
+      }
+      for (const tok of tokens) {
+        if (!next.has(tok) && !isTypeLabel(tok) && isFeatureLabel(tok)) {
+          next.add(tok);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }
+
   function toggleChip(value: string, group: "type" | "feature" | "color" | "action") {
     /* 选中目标类型本身不写入文本框（仅切换面板），其他特征 token 才进入 */
     const wasOn = chips.has(value);
     if (group === "type") {
-      // 切换目标类型：清空文本框与已选特征（换语义上下文，残留旧类型 token 无意义），仅保留新点亮的类型标签
-      if (!wasOn) {
-        setQuery("");
-        setChips(new Set([value]));
-      } else {
-        setChips(new Set());
-      }
+      // 切换/取消目标类型：清掉旧类型专属 token 与选中（换语义上下文，残留旧类型 token 无意义），
+      // 但保留常驻通用特征（颜色）——先选颜色再选类别不被清空
+      const keep = new Set(COLOR_CHIPS.map((c) => c.label));
+      setQuery(query.split(/\s+/).filter(Boolean).filter((t) => keep.has(t)).join(" "));
+      setChips((prev) => {
+        const next = new Set(prev);
+        for (const label of [...next]) if (!keep.has(label)) next.delete(label);
+        if (!wasOn) next.add(value);
+        return next;
+      });
       const typeDef = TYPE_CHIPS.find((t) => t.label === value);
       if (typeDef) setActiveTypeKey(wasOn ? null : typeDef.key);
     } else {
@@ -456,15 +487,6 @@ export function GlobalSearch() {
     return "未知视频";
   }
 
-  function downloadOriginal(videoId: string, fileName?: string) {
-    const a = document.createElement("a");
-    a.href = api.getVideoStreamUrl(videoId);
-    a.download = fileName || `${videoId}.mp4`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
-
   /* ── v0.6 沉淀：搜索结果 → 图片素材库（取缩略图为底图，kind 由目标类型推断） ── */
   async function addResultToLibrary(r: SearchResultItem) {
     let blob: Blob | null = null;
@@ -535,7 +557,7 @@ export function GlobalSearch() {
                 rows={2}
                 placeholder="输入自然语言描述，如：穿黄衣服骑电动车的人"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => handleQueryInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();

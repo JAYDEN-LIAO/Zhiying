@@ -10,7 +10,8 @@ import { createPortal } from "react-dom";
 import { useApp } from "../AppContext";
 import type { TaskItem, TaskLogLine } from "../types";
 import { fmtDate, fmtDuration, fmtTime, versionName, copyText, parseUtcIso } from "../utils/helpers";
-import { api, downloadFile, sanitizeFile } from "../services/api";
+import { api, sanitizeFile } from "../services/api";
+import { useDownloader } from "../services/downloads";
 import { IconDownload, IconReport, IconLog, IconTask, IconRetry, IconCopy, IconTrash, IconCheck } from "./icons";
 
 const FILTERS = [
@@ -168,6 +169,7 @@ function TaskBody({
 
 export function TaskCenter() {
   const { openWorkbench, taskHighlightIds } = useApp();
+  const { downloadFile, downloadText } = useDownloader();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [logTask, setLogTask] = useState<TaskItem | null>(null);
@@ -215,8 +217,8 @@ export function TaskCenter() {
       const lv = (l.level || "info").toUpperCase().padEnd(5);
       return `${l.created_at ? fmtFull(l.created_at) : "-".repeat(19)} [${lv}] #${String(l.seq).padStart(3, "0")} ${l.message}`;
     }).join("\r\n");
-    const blob = new Blob(["\ufeff", header + "\r\n" + body + "\r\n"], { type: "text/plain;charset=utf-8" });
-    downloadFile(blob, `tasklog_${sanitizeFile(logTask.file_name ?? "")}_${logTask.id.slice(0, 8)}.log`);
+    const content = "\ufeff" + header + "\r\n" + body + "\r\n";   // BOM\uff1a\u5ba2\u6237\u673a\u8bb0\u4e8b\u672c\u65e7\u9ed8\u8ba4 ANSI\uff0c\u65e0 BOM \u4e2d\u6587\u4e71\u7801
+    downloadText(`tasklog_${sanitizeFile(logTask.file_name ?? "")}_${logTask.id.slice(0, 8)}.log`, content);
   };
 
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -311,22 +313,14 @@ export function TaskCenter() {
   };
 
   const exportReport = async (t: TaskItem) => {
-    try {
-      await api.exportTaskReport(t.id, t.file_name ?? t.id);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "导出报告失败");
-    }
+    downloadFile(`report_${sanitizeFile(t.file_name ?? t.id)}.md`, api.getTaskReportExportUrl(t.id));
   };
 
   const exportAll = async () => {
     if (tasks.length === 0) { alert("当前筛选下暂无任务"); return; }
     const ids = tasks.map((t) => t.id);
     const zipName = `reports_${ids.length}.zip`;
-    try {
-      await api.exportTasksBatch(ids, zipName);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "批量导出失败");
-    }
+    downloadFile(zipName, "/api/v1/tasks/export-batch", { method: "POST", body: { task_ids: ids } });
   };
 
   return (

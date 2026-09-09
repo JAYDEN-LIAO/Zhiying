@@ -4,6 +4,8 @@
    ──────────────────────────────────────────────────────────── */
 
 import { AppProvider, useApp } from "./AppContext";
+import { DownloadProvider } from "./services/downloads";
+import { DownloadManager } from "./components/DownloadManager";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Workbench } from "./components/Workbench";
@@ -61,7 +63,10 @@ function Shell() {
 export default function App() {
   return (
     <AppProvider>
-      <Shell />
+      <DownloadProvider>
+        <Shell />
+        <DownloadManager />
+      </DownloadProvider>
     </AppProvider>
   );
 }

@@ -11,6 +11,9 @@
        2 = 正式版 → 客户端自行 SuperDog 加密狗校验（SuperDog_x64.dll 置于壳同级）
   4. 失败 → 返回失败，壳弹窗退出
 
+「检查升级」（AboutDialog）同机制走模式 2：software_center.exe "2" "<产品号>"
+"<license.dat>" "<当前版本>"——升级检查/下载由软件管家自带 UI 完成，见 check_upgrade。
+
 开发态（非 frozen）跳过校验。
 """
 from __future__ import annotations
@@ -143,7 +146,7 @@ class _ShellExecuteInfo(ctypes.Structure):
     ]
 
 
-def _run_software_center(exe: Path, license_path: Path) -> int:
+def _run_software_center(exe: Path, params: str) -> int:
     """调起激活助手（software_center.exe 需管理员权限 → ShellExecute 'runas' 触发 UAC），
     等待退出码。用户拒绝 UAC → OSError。"""
     sei = _ShellExecuteInfo()
@@ -151,7 +154,7 @@ def _run_software_center(exe: Path, license_path: Path) -> int:
     sei.fMask = _SEE_MASK_NOCLOSEPROCESS
     sei.lpVerb = "runas"
     sei.lpFile = str(exe)
-    sei.lpParameters = f'1 {PRODUCT_CODE} "{license_path}"'
+    sei.lpParameters = params
     sei.nShow = 1  # SW_SHOWNORMAL：激活助手 UI 本就要给用户看（激活/输码）
     if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei)):
         err = ctypes.windll.kernel32.GetLastError()
@@ -182,7 +185,7 @@ def verify_license(root: Path, log=None) -> tuple[bool, str, dict]:
         return False, "软件管家组件缺失（software_center.exe），请重装软件管家", {}
 
     try:
-        rc = _run_software_center(software_center, license_path)
+        rc = _run_software_center(software_center, f'1 {PRODUCT_CODE} "{license_path}"')
     except Exception as e:
         return False, f"许可校验执行失败（{e}）", {}
     if rc == 0:
@@ -207,3 +210,27 @@ def expired_date(data: dict) -> str:
     if not (y and m and d):
         return ""
     return f"{y}-{m}-{d}"
+
+
+def check_upgrade(root: Path, version: str) -> tuple[bool, str, bool]:
+    """「检查升级」：模式 2 调起软件管家激活助手（对齐云侠 main.log 启动参数
+    ['2', '<产品号>', '<license路径>', '<当前版本>']）。
+    升级检查/下载/安装全部由软件管家自带 UI 完成，客户端只等待其退出。
+    返回 (是否成功调起完成, 失败提示, 是否有新版)。
+    has_update 预留位：平台未定义「有新版」退出码语义（软件管家检测到新版时
+    其自带 UI 直接引导下载），恒 False；待平台语义明确后接真值。"""
+    housekeeper = read_tj_housekeeper()
+    if not housekeeper:
+        return False, "未检测到拓界软件管家，无法检查升级", False
+    software_center = Path(housekeeper) / "software_center.exe"
+    if not software_center.exists():
+        return False, "软件管家组件缺失（software_center.exe），请重装软件管家", False
+    license_path = root / "license.dat"
+    try:
+        rc = _run_software_center(
+            software_center, f'2 {PRODUCT_CODE} "{license_path}" "{version}"')
+    except Exception as e:
+        return False, f"检查升级执行失败（{e}）", False
+    if rc == 1:
+        return False, "检查升级失败，请稍后重试", False
+    return True, "", False

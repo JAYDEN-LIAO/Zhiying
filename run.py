@@ -47,45 +47,66 @@ def _ensure_database() -> int:
     """开发启动前确保数据库就绪（0=就绪，非 0=失败退出）。
 
     与桌面启动器 desktop/db.py 同优先级：
-      1. 有效 URI 端口已在监听 → 直接复用（docker 已起 / 系统 PG / 内嵌已起）；
-      2. 否则本机有 vendor/pg（内嵌便携 postgres）→ 启动内嵌；
-      3. 否则 Docker daemon 可用 → docker compose up -d db；
+      1. POSTGRES_URI 显式指定（外部数据库）→ 跳过自举；
+      2. 内嵌模式：本实例端口（data/db_port.txt，终身固定）已在监听 → 复用；
+         否则 start_db 内置端口解析（config 端口空闲才用，被占自动让位）——
+         绝不盲目连默认端口上已监听的来路不明 PG（多安装串库会向量维度错配炸管道）；
+      3. Docker 回退模式：config 端口已在监听 → 复用；否则 compose up；
       4. 否则明确报错。
-    有效 URI 解析与 core/db.py 同源（env POSTGRES_URI → config database.uri → 兜底）。
+    最后把本进程 POSTGRES_URI 钉到实例库（core 读 env 优先于 config database.uri）。
     """
-    cfg = load_config()
-    uri = (
-        os.environ.get("POSTGRES_URI")
-        or (cfg.get("database") or {}).get("uri")
-        or "postgresql+asyncpg://zhiying:zhiying@localhost:5432/zhiying"
+    if os.environ.get("POSTGRES_URI"):
+        print("[db] POSTGRES_URI 显式指定（外部数据库），跳过自举")
+        return 0
+
+    from desktop.db import (
+        db_available,
+        db_backend,
+        db_uri_for_backend,
+        resolve_db_port,
+        start_db,
+        wait_db_healthy,
     )
-    m = re.search(r"@([^:/@]+):(\d+)/", uri)
-    host, port = (m.group(1), int(m.group(2))) if m else ("localhost", 5432)
-
-    if host not in ("localhost", "127.0.0.1", "::1"):
-        print(f"[db] 外部数据库 {host}:{port}（POSTGRES_URI / config 指定），跳过自举")
-        return 0
-
-    probe_host = "::1" if host == "::1" else "127.0.0.1"
-    if _port_open(probe_host, port):
-        print(f"[db] {probe_host}:{port} 已有数据库在监听 — 直接复用")
-        return 0
-
-    from desktop.db import db_available, db_backend, start_db, wait_db_healthy
 
     root = Path(__file__).resolve().parent
     if not db_available(root):
         print("[db] 无可用数据库后端：需内嵌 postgres（vendor/pg）或启动 Docker Desktop")
         return 1
     backend = db_backend(root)
-    print(f"[db] 启动数据库后端: {backend} ...")
     log = _ConsoleLog()
-    if not start_db(root, log):
-        print("[db] 数据库启动失败（详见上方日志）")
-        return 1
-    if not wait_db_healthy(root, log):
-        print(f"[db] 数据库未在超时内就绪（{backend}）")
-        return 1
+
+    if backend == "embedded":
+        try:
+            port = resolve_db_port(root, log)
+        except RuntimeError as e:
+            print(f"[db] {e}")
+            return 1
+        print(f"[db] 数据库后端: {backend}（实例端口 {port}）...")
+        # 复用/启动/让位逻辑都在 start_db 内（pg_ctl status 只认本实例 pgdata 的进程）
+        if not start_db(root, log):
+            print("[db] 数据库启动失败（详见上方日志）")
+            return 1
+        if not wait_db_healthy(root, log):
+            print(f"[db] 数据库未在超时内就绪（{backend}）")
+            return 1
+    else:
+        cfg = load_config()
+        uri = (cfg.get("database") or {}).get("uri") or ""
+        m = re.search(r"@([^:/@]+):(\d+)/", uri)
+        host, port = (m.group(1), int(m.group(2))) if m else ("localhost", 5432)
+        probe_host = "::1" if host == "::1" else "127.0.0.1"
+        if _port_open(probe_host, port):
+            print(f"[db] {probe_host}:{port} 已有数据库在监听 — 直接复用")
+        else:
+            print(f"[db] 启动数据库后端: {backend} ...")
+            if not start_db(root, log):
+                print("[db] 数据库启动失败（详见上方日志）")
+                return 1
+            if not wait_db_healthy(root, log):
+                print(f"[db] 数据库未在超时内就绪（{backend}）")
+                return 1
+
+    os.environ["POSTGRES_URI"] = db_uri_for_backend(root, log)
     return 0
 
 

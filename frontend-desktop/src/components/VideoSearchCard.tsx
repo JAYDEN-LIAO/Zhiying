@@ -8,6 +8,7 @@ import type { SearchResultItem, VideoResponse, FaceSearchResult } from "../types
 import { formatSec } from "../utils/helpers";
 import { zhLabel } from "../labels";
 import { SubjectPhotoPicker } from "./SubjectPhotoPicker";
+import { useDownloader } from "../services/downloads";
 
 export function VideoSearchCard({
   video,
@@ -50,6 +51,7 @@ export function VideoSearchCard({
   // currentVideoId 会经历 旧→null→新 两次变化 → 重置 effect 跑两次，suppress flag 被第一次消费掉）
   const currentVideoId = videoId ?? null;
 
+  const { downloadFile } = useDownloader();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [searching, setSearching] = useState(false);
@@ -499,14 +501,14 @@ export function VideoSearchCard({
                           ) : (
                             <>
                               {fr.thumbnail_url && (
-                                <button className="sr-act" onClick={(e) => { e.stopPropagation(); setFaceExportOpen(null); window.open(fr.thumbnail_url!, "_blank"); }}>
+                                <button className="sr-act" onClick={(e) => { e.stopPropagation(); setFaceExportOpen(null); downloadFile(`face_${fr.identity_id}_thumb.jpg`, fr.thumbnail_url!); }}>
                                   <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>导出缩略图
                                 </button>
                               )}
                               {(() => {
                                 const firstTid = appearances.find((ap) => ap.track_id != null)?.track_id;
                                 return firstTid != null ? (
-                                  <button className="sr-act" onClick={(e) => { e.stopPropagation(); setFaceExportOpen(null); window.open(api.getTrackExportUrl(fr.video_id, firstTid, true, firstTid), "_blank"); }}>
+                                  <button className="sr-act" onClick={(e) => { e.stopPropagation(); setFaceExportOpen(null); downloadFile(`track_${firstTid}.mp4`, api.getTrackExportUrl(fr.video_id, firstTid, true, firstTid)); }}>
                                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>导出轨迹视频
                                   </button>
                                 ) : null;
@@ -614,22 +616,22 @@ export function VideoSearchCard({
                           </button>
                         ) : (
                           <>
-                            <button className="sr-act" onClick={(e) => { e.stopPropagation(); setTrackExportOpen(null); window.open(api.getTrackThumbnailUrl(item.video_id, item.track_id!, item.track_id!), "_blank"); }}>
+                            <button className="sr-act" onClick={(e) => { e.stopPropagation(); setTrackExportOpen(null); downloadFile(`track_${item.track_id}_thumb.jpg`, api.getTrackThumbnailUrl(item.video_id, item.track_id!, item.track_id!)); }}>
                               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>导出缩略图
                             </button>
-                            <button className="sr-act" onClick={(e) => { e.stopPropagation(); setTrackExportOpen(null); window.open(api.getTrackExportUrl(item.video_id, item.track_id!, true, item.track_id!), "_blank"); }}>
+                            <button className="sr-act" onClick={(e) => { e.stopPropagation(); setTrackExportOpen(null); downloadFile(`track_${item.track_id}.mp4`, api.getTrackExportUrl(item.video_id, item.track_id!, true, item.track_id!)); }}>
                               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>导出轨迹视频
                             </button>
                           </>
                         )
                       ) : null}
                       {!isTrack && !isPlate && item.precise_start != null && item.precise_end != null && (
-                        <button className="sr-act" onClick={(e) => { e.stopPropagation(); window.open(api.getClipExportUrl(item.video_id, item.precise_start!, item.precise_end!), "_blank"); }}>
+                        <button className="sr-act" onClick={(e) => { e.stopPropagation(); downloadFile(`clip_${item.video_id}_${item.precise_start}-${item.precise_end}.mp4`, api.getClipExportUrl(item.video_id, item.precise_start!, item.precise_end!)); }}>
                           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>下载
                         </button>
                       )}
                       {isPlate && item.thumbnail_url && (
-                        <button className="sr-act" onClick={(e) => { e.stopPropagation(); window.open(item.thumbnail_url!, "_blank"); }}>
+                        <button className="sr-act" onClick={(e) => { e.stopPropagation(); downloadFile(`plate_${item.video_id}.jpg`, item.thumbnail_url!); }}>
                           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>截图
                         </button>
                       )}

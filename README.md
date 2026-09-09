@@ -8,11 +8,11 @@
 docker compose up -d db                        # 可选：预起数据库（python run.py 会自动自举）
 set DASHSCOPE_API_KEY=sk-xxx                   # 设置 API key（vlm_llm 摘要模式）
 python run.py                                  # 启动后端（默认 8011；DB 自举：端口已通→复用 / 内嵌 vendor/pg / docker 回退）
-cd frontend && npm install && npm run dev       # 启动前端开发服务器
+cd frontend-web && npm install && npm run dev    # 启动新 Web 前端开发服务器（旧 frontend/ 已废弃保留）
 curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # 上传视频
 ```
 
-> API key 放项目根 `.env`（gitignored）。**Windows 桌面端交付**：`desktop/make_green.ps1` 出打包材料 zip 交打包方编译签名，或 `desktop/build_installer.ps1` 本地出安装包（`Bin\视频快速智能检索平台 Ver <版本>.exe`，Inno Setup）——向导选模型档位 + 代理，一体化安装环境与模型（首启 MODEL_BOOT 兜底补齐），启动经软件管家 License 校验；开发机首装 `powershell -ExecutionPolicy Bypass -File deploy\setup_windows.ps1`。
+> API key 放项目根 `.env`（gitignored）。**Windows 桌面端两个入口**：快速看最新效果 → 双击根目录 `desktop.bat`（源码模式，改码重启即生效）；打包出货 → 双击 `update_build.bat`（出 `build\视频快速智能检索平台 Ver <版本>.exe` 安装包 + `build\green\` 打包材料目录（含 zhiying.iss，可直接 ISCC 编译），发版前先 `./bump`）。开发机首装 `powershell -ExecutionPolicy Bypass -File deploy\setup_windows.ps1`。
 
 ## Core Features
 
@@ -36,11 +36,11 @@ curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # �
 | 存储卫生 | 删除即清盘（视频/案例/素材库/版本链三层保证：路由显式清 → FK 级联 → sweep 兜底）+ 孤儿清扫（`POST /maintenance/sweep` / `scripts/sweep_storage.py`；含 subject_photos/case_assets 图片孤儿与 mtime 保护）+ 存储用量（`GET /maintenance/storage`） | ✅ |
 | 任务日志 | 日志弹窗复制/一键导出 `.log`（UTF-8 BOM + CRLF）+ 处理中自动增量刷新尾部跟随；失败 traceback 批量落库、孤儿/超期 90 天清扫 | ✅ |
 | 云智平台集成 | `register-external` + `/internal/yunzhi/jobs`（202 异步+回调+幂等） | ✅ |
-| 桌面端启动器+独立桌面前端 | pywebview 壳 + 5 页管理后台（文件库/视频解析/素材库/任务中心/系统设置） | ✅ |
+| 桌面端启动器+独立桌面前端 | pywebview 壳 + 5 页管理后台（文件库/视频解析/素材库/任务中心/系统设置）+「关于」弹窗（产品型号/当前版本/检查升级走软件管家/用户手册/服务截止时间） | ✅ |
 | **Windows 安装器**（Inno Setup 6） | `zhiying.iss` → 单 exe 安装包：档位选择（8B/2B/自备模型导入）+ 代理 + 一体化安装（环境 + 内嵌 PostgreSQL + 25GB 模型安装段内下载；单进度条+蠕动平滑+卡死兜底）；首启 MODEL_BOOT 兜底补齐；软件管家 License 校验（试用/正式版 SuperDog 加密狗）；客户机无明文后端源码（backend_pyc） | ✅ |
 | **图片素材库** | 关注目标（人/其他）底库照片管理 + 人脸/通用图搜分轨检索 + 检测/图搜沉淀（保存后停留当前页）+ 案例库转存 | ✅ |
 | 全局搜索 5 目标类型 | 人/车/车牌/文本/事件 chip 互斥选中；类型切换自动清空检索词，各类型专属特征选中才出现（颜色常驻） | ✅ |
-| 前端（服务器+桌面）| React 19 + Vite + Tailwind 4（对接层 `frontend-shared/` 一份实现；桌面端工作台/全局搜索常驻挂载保状态） | ✅ |
+| 前端（三端）| React 19 + Vite + Tailwind 4（对接层 `frontend-shared/` 一份实现；桌面端工作台/全局搜索常驻挂载保状态；新 Web 端 `frontend-web/` 轻量解析工作台，旧 `frontend/` 已废弃保留） | ✅ |
 
 ## Architecture Overview
 
@@ -63,7 +63,7 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 | Component | Technology |
 |---|---|
 | Backend | FastAPI (Python 3.13) + SQLAlchemy async + PostgreSQL 17 + pgvector |
-| Frontend | React 19 + TypeScript + Vite 6 + Tailwind CSS 4（双前端） |
+| Frontend | React 19 + TypeScript + Vite 6 + Tailwind CSS 4（三端：web 旧/桌面/新 web） |
 | Vector Embedding | Qwen3-VL-Embedding-8B/2B (本地 GPU, 可选 bitsandbytes 量化) |
 | Detection/Tracking | YOLO11s + BoT-SORT with_reid（双层 ReID） |
 | Caption/Summary | Qwen-VL-Max (DashScope) + DeepSeek（vlm_llm 模式, 默认） |
@@ -76,7 +76,8 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 ## 版本号与发布
 
 - **版本唯一事实来源**：`core/version.py` `__version__`；`/health` 返回 version
-- **发版**：`./bump minor|patch|版本`（联动 core/version.py + frontend/package.json，交互确认 commit/tag/push）；tag 必须 `v<__version__>`
+- **版本格式**：两段式 `X.Y`（如 0.90，与软件管家平台版本格式一致）；tag 必须 `v<__version__>`
+- **发版（手动）**：多次 commit 不发版，认为可更新时 `./bump minor|X.Y`——联动 core/version.py + 三前端 package.json/lock + zhiying.iss 版本兜底，交互确认 commit/tag/push 后可选**一键构建发版产物**（根 exe + build\ 安装包 + 打包材料目录，仅 Windows；产物版本号自动读 version.py）
 - **⚠️ 后端 + 服务器前端（`frontend/` + `frontend-shared/`）任何改动都必须 `./bump`**；仅纯文档/注释/桌面前端（`frontend-desktop/`）不需 bump
 - **部署**：服务器 `bash deploy.sh v<tag>`（fetch→config 迁移→checkout→requirements 变化才 pip→前端 build→restart→90s 健康检查）
 
@@ -85,7 +86,7 @@ Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
 ```
 zhiying/
 ├── bump                           # 发版启动器（交互联动版本号/commit/tag/push）
-├── zhiying.iss                    # Windows 安装器脚本（Inno Setup 6.2.1 → Bin\*.exe）
+├── zhiying.iss                    # Windows 安装器脚本（Inno Setup 6.2.1 → build\*.exe）
 ├── run.py / main.py / backend_launcher.py
 ├── api/            # 路由: video/search/settings/tasks/groups/detection/face/plate/ocr/export/maintenance/yunzhi/subjects
 ├── core/           # models(19表)/schemas/repository/search/db/config_loader/settings_service/presets_service
@@ -94,9 +95,10 @@ zhiying/
 ├── plugins/        # factory + detector/face/plate/ocr/embedder/captioner/summarizer/segmenter/transcriber
 ├── services/       # video_service / yunzhi_job_service / format_service / export_service / report_service / smart_suggest
 ├── config/         # config.yaml(gitignored) + config.yaml.example + presets.json(随 git 共享) + prompts.yaml
-├── frontend/       # 服务器前端（Dashboard 主工作台 + 云智 Bridge）
+├── frontend/       # 服务器前端（已废弃，源码保留待退役）
 ├── frontend-desktop/# 桌面前端（5 页管理后台, 独立）
-├── frontend-shared/ # 双前端共享对接层（api/types/labels/helpers, 一份实现）
+├── frontend-web/   # 新 Web 前端（轻量解析工作台：案例库网格 + 解析详情；api 复用 frontend-shared，自带 mock 演示降级）
+├── frontend-shared/ # 多端共享对接层（api/types/labels/helpers, 一份实现）
 ├── desktop/        # 桌面端 pywebview 壳 + build_exe.ps1(打纯壳 exe) + build_installer.ps1(出安装包) + model_bootstrap.py(首启模型引导)
 ├── deploy/         # setup_windows.ps1 / setup_linux.sh / build_backend_pyc.py / download_models.py / stop_runtime.ps1 / iss-lang/(Inno 中文语言包)
 ├── scripts/        # sweep_storage.py / bump_version.py / mock_yunzhi_platform.py

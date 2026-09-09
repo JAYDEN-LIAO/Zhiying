@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../services/api";
 import { useApp } from "../AppContext";
+import { useDownloader } from "../services/downloads";
 import type { FileItem, VideoGroup, CaseAssetItem, PipelineParams, VideoResponse, VideoMetadata } from "../types";
 import { fmtDuration, fmtDate, fmtBytes } from "../utils/helpers";
 import { IconFolder, IconPlus, IconPlay2, IconTrash, IconPencil, IconBolt, IconBoltSolid, IconEye, IconGrid, IconList, IconDownload, IconClose, IconInfo, IconRetry } from "./icons";
@@ -19,6 +20,28 @@ import { useDisableVideoInteraction } from "../hooks/useDisableVideoInteraction"
 import { SmartSuggestDialog } from "./SmartSuggestDialog";
 
 type TreeKey = "all" | "ungrouped" | `g:${string}`;
+
+/* 网格封面（带自动重试）：上传接口先返回、ffmpeg 缩略图异步后才存在，
+   首帧请求 404 属正常 → 以 ?r=<n> 缓存参数定时重试（最多 8 次 × 1.5s），
+   成功即显示、次数用尽回落封面占位图标。替代旧「404 一次性置灰永不恢复」的行为。 */
+function ThumbImg({ id }: { id: string }) {
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return (
+    <img
+      className="fl-thumb"
+      src={`/api/v1/videos/${id}/thumbnail/0${attempt > 0 ? `?r=${attempt}` : ""}`}
+      alt=""
+      loading="lazy"
+      onError={() => {
+        if (attempt < 8) setTimeout(() => setAttempt((a) => a + 1), 1500);
+        else setFailed(true);
+      }}
+    />
+  );
+}
+
 
 const STATUS_META: Record<string, { label: string; cls: string; badge: string; pulse?: boolean }> = {
   pending: { label: "待处理", cls: "pre", badge: "wait", pulse: true },
@@ -318,8 +341,7 @@ function CaseContent({
                 <div key={f.id} className="fl-card" onClick={() => setDetailFile(f)}>
                   <div className="fl-cover">
                     <div className="fl-cover-bg"><VideoIcon /></div>
-                    <img className="fl-thumb" src={`/api/v1/videos/${f.id}/thumbnail/0`} alt="" loading="lazy"
-                      onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0"; }} />
+                    <ThumbImg id={f.id} />
                     {f.duration != null && <span className="fl-dur">{fmtDuration(f.duration)}</span>}
                     <span className={"fl-status fl-status-" + sm.cls}>
                       {sm.pulse && <span className="pulse" />}
@@ -581,6 +603,7 @@ function FileDetailDrawer({
   onDeleteFile?: (f: FileItem) => void;
 }) {
   const hevcOk = useHEVCCapability();
+  const { downloadFile } = useDownloader();
   const [video, setVideo] = useState<VideoResponse | null>(null);
   const [meta, setMeta] = useState<VideoMetadata | null>(null);
   const [loading, setLoading] = useState(true);
@@ -661,12 +684,7 @@ function FileDetailDrawer({
   };
 
   const download = () => {
-    const a = document.createElement("a");
-    a.href = streamUrl;
-    a.download = file.name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    downloadFile(file.name, streamUrl);
   };
 
   /* ── 「参数设置」小面板辅助 ── */
@@ -1000,7 +1018,13 @@ export function FileLibrary() {
     api.listFiles().then((data) => setFiles(data ?? [])).catch(() => {});
     api.listGroups().then((data) => setGroups(data ?? [])).catch(() => {});
   };
+  // 挂载即拉取（壳已在启动过渡期同步预热这四个查询，首轮秒回）；
+  // listGroups 自带 id→groupId 归一化，案例树/网格与正常体验完全一致。
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const iv = setInterval(load, 4000);
+    return () => clearInterval(iv);
+  }, []);
   useEffect(() => {
     const iv = setInterval(load, 4000);
     return () => clearInterval(iv);

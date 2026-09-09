@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import threading
 import time
 import webbrowser
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from state import app_state
@@ -344,7 +346,8 @@ class SplashApi:
       原控制窗 LogApi 迁入，随日志窗移除）
     - 窗口控制：minimize / toggle_maximize / is_maximized / quit —— frameless 标题栏按钮
     - 系统监控：get_system_stats —— 侧栏 CPU/内存/GPU/网络（psutil + nvidia-smi，纯桌面壳，不动后端）
-    - 最近更新：get_recent_commits —— TitleBar「最近更新」下拉（项目根 git log）
+    - 关于弹窗：get_about_info / check_upgrade / open_manual —— TitleBar「关于」
+      （产品型号/许可态/服务截止时间；检查升级走软件管家模式 2；打开本地用户手册）
     """
 
     _GPU_REFRESH_SEC = 5.0  # nvidia-smi 子进程有成本，缓存 5s
@@ -358,10 +361,15 @@ class SplashApi:
         self._gpu_cache_at = 0.0
         self._net_prev: tuple | None = None
         self._net_prev_at = 0.0
+        # 应用内下载管理（导出/下载不走系统浏览器，见 downloads.py）
+        from checks import project_root
+        from downloads import DownloadManager
+        self._downloads = DownloadManager(project_root(), ctx.log)
 
     def set_window(self, window) -> None:
         """注入主窗引用（create_window 返回后调用）。"""
         self._window = window
+        self._downloads.set_window(window)
 
     def get_status(self) -> dict:
         s = app_state.get()
@@ -445,37 +453,125 @@ class SplashApi:
         # 从 GUI 线程触发退出：停后端 + 关窗
         threading.Thread(target=self._ctx.request_shutdown, daemon=True).start()
 
-    def get_recent_commits(self, n: int = 5) -> list[dict]:
-        """TitleBar「最近更新」下拉：项目根 git log 最近 n 条提交（纯本地，git log 不联网）。
+    # ── 「关于」弹窗（TitleBar 右上角）──────────────────────────
+    def get_about_info(self) -> dict:
+        """AboutDialog 数据：产品型号 + 许可态 + 服务截止时间。
 
-        桌面壳跑在项目根（exe 部署处），git 随部署脚本安装必然可用。
-        返回 [{hash, date, subject}, ...]；任何异常返回空列表（浏览器 dev 无 pywebview 时前端不调用）。
-
-        ⚠️ 编码坑（已修）：git log 输出 commit message 恒为 UTF-8（git 不做 locale 转换），
-        而 Windows 中文系统 locale 是 GBK——若依赖 text=True 的默认编码（=系统 locale），
-        GBK 严格解码 UTF-8 中文 → UnicodeDecodeError → except 吞掉返回空 → 下拉显示
-        「无提交记录」。必须显式 encoding="utf-8"（errors="replace" 兜底防极端字节）。
-        分隔符用 %x1f（0x1F 单位分隔符，commit message 中不可能出现），避免 subject
-        含 `|` 时被 split("|", 2) 截断显示。
+        licensed 仅封装态为 True（frozen 且 license.dat 可解析）——与启动 License
+        校验同一开关（app.py 开发态跳过校验，这里同步跳过读取）。
         """
+        from checks import project_root
+        import license_check as license_mod
+
+        info = {"product_model": "A5300", "licensed": False, "expired_date": None}
+        if not getattr(sys, "frozen", False):
+            return info
         try:
-            from checks import project_root
-            proc = subprocess.run(
-                ["git", "-C", str(project_root()), "log", f"-{int(n)}", "--date=format:%Y-%m-%d %H:%M",
-                 "--pretty=format:%h%x1f%ad%x1f%s"],
-                capture_output=True, text=True, timeout=5,
-                encoding="utf-8", errors="replace",
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-            if proc.returncode != 0 or not proc.stdout.strip():
-                return []
-            out = []
-            for line in proc.stdout.strip().splitlines():
-                h, d, s = line.split("\x1f", 2)
-                out.append({"hash": h, "date": d, "subject": s})
-            return out
+            data = license_mod.get_license_data(project_root() / "license.dat")
+            if data:
+                info["licensed"] = True
+                info["expired_date"] = license_mod.expired_date(data) or None
         except Exception:
-            return []
+            pass
+        return info
+
+    def check_upgrade(self, version: str) -> dict:
+        """「检查升级」：模式 2 调起软件管家（升级检查/下载由其自带 UI 完成）。
+        开发态（非 frozen）不调软件管家，前端按钮置灰兜底。
+        has_update=有新版标记（license_check 预留位，恒 False，见其 docstring）。"""
+        from checks import project_root
+        import license_check as license_mod
+
+        if not getattr(sys, "frozen", False):
+            return {"ok": False, "msg": "开发态不可用（仅封装版支持检查升级）", "has_update": False}
+        ok, msg, has_update = license_mod.check_upgrade(project_root(), str(version or ""))
+        return {"ok": ok, "msg": msg, "has_update": has_update}
+
+    def open_manual(self) -> dict:
+        """「用户手册」：打开安装目录下的手册文档（系统默认程序）。
+        手册文件由产品随包提供，缺失时明确提示。"""
+        from checks import project_root
+
+        manual = project_root() / "用户手册.pdf"
+        if not manual.exists():
+            return {"ok": False, "msg": "手册文件缺失（用户手册.pdf），请联系管理员"}
+        if os.name != "nt":
+            return {"ok": False, "msg": "仅 Windows 支持打开本地手册"}
+        try:
+            os.startfile(str(manual))  # noqa: S606
+            return {"ok": True, "msg": ""}
+        except Exception as e:
+            return {"ok": False, "msg": f"打开手册失败（{e}）"}
+
+    # ── 首屏就绪门（load_url 前等数据就绪，消产品页首屏空白）──
+    # 最简可靠方案：不预取数据、不交接——单纯在进入正式页之前阻塞等待后端
+    # 首屏接口（/files 为主）真正返回成功，启动页停在 100% 直至就绪。
+    # 前端进入后再从正常接口拉取（自带字段归一化），首轮即秒回、案例树/网格全对。
+    def wait_first_screen(self, port: int) -> None:
+        import urllib.request
+
+        base = f"http://127.0.0.1:{int(port)}"
+        # 让启动页先推完 100% 动画，再开始等待
+        time.sleep(0.4)
+        deadline = time.monotonic() + 60.0
+        ok = False
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(base + "/api/v1/files", timeout=60) as resp:
+                    if resp.status == 200:
+                        ok = True
+                        break
+            except Exception:
+                pass
+            time.sleep(0.3)
+        if not ok:
+            return  # 超时兜底：照常进入，前端自行拉取（与原行为一致）
+        # 主接口已就绪，进入前把其余首屏查询一并触发（连接池/查询结果一次到位）
+        for path in ("/api/v1/groups", "/api/v1/videos/", "/api/v1/tasks"):
+            try:
+                urllib.request.urlopen(base + path, timeout=30).close()
+            except Exception:
+                pass
+
+    # ── 应用内下载管理（TitleBar 下载图标 + 下载弹窗）────────────
+    def download_file(self, name: str, api_path: str,
+                      method: str = "GET", json_body=None) -> dict:
+        """导出/下载入口：弹保存框（记住上次目录）→ 线程内拉本地后端写盘。
+        name=默认文件名；api_path=同源接口路径（如 /api/v1/tasks/1/report）。"""
+        body = None
+        if json_body is not None:
+            import json as _json
+            body = _json.dumps(json_body, ensure_ascii=False).encode("utf-8")
+        return self._downloads.enqueue(str(name or ""), str(api_path or ""),
+                                       self._ctx.port, method.upper(), body)
+
+    def get_downloads(self) -> dict:
+        """下载任务快照（前端轮询渲染下载弹窗）。"""
+        return self._downloads.snapshot()
+
+    def download_retry(self, job_id: int) -> dict:
+        return self._downloads.retry(int(job_id))
+
+    def download_clear(self, job_id: int) -> None:
+        self._downloads.clear(int(job_id))
+
+    def save_text_file(self, name: str, content: str) -> dict:
+        """纯前端生成的文本（如任务日志）直接弹保存框写盘，不走 HTTP。"""
+        target = self._downloads.ask_save_path(str(name or "export.txt"))
+        if not target:
+            return {"ok": False, "msg": "已取消", "cancelled": True}
+        try:
+            Path(target).write_bytes(content.encode("utf-8"))
+            self._downloads.remember_dir(Path(target))
+            return {"ok": True, "msg": "", "path": target}
+        except Exception as e:
+            return {"ok": False, "msg": f"写入失败（{e}）"}
+
+    def open_file_dir(self, path: str) -> dict:
+        """资源管理器定位到已下载文件。"""
+        from downloads import open_containing_dir
+        ok, msg = open_containing_dir(str(path))
+        return {"ok": ok, "msg": msg}
 
     # ── 系统监控（侧栏 CPU/内存/GPU/网络）────────────────────────
     def get_system_stats(self) -> dict:

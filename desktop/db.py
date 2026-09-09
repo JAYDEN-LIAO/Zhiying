@@ -2,14 +2,18 @@
 
 内嵌模式（封装交付）：用 `vendor/pg/bin` 下的 initdb/pg_ctl 管理本地 postgres 进程
   - 数据目录 <root>/data/pgdata（首次 initdb，随后 pg_ctl start/stop）
-  - 监听 127.0.0.1:<config database.uri 端口，默认 5432>，用户 zhiying，trust 认证
+  - 监听 127.0.0.1:<本实例端口>，用户 zhiying，trust 认证
+  - 端口每实例终身固定（data/db_port.txt）：config 端口（默认 5432）空闲才用，
+    被其它程序/其他 Zhiying 实例占用则自动换空闲端口 —— 根治多安装同抢 5432 串库
+    （8b/2b 档位不同、表维度不同，串库 = 向量维度错配炸管道）
   - 首次启动自动建 `zhiying` 库（后端 init_db 负责建表）
-Docker 模式（开发机回退）：无 vendor/pg 时走 docker compose up db。
+Docker 模式（开发机回退）：无 vendor/pg 时走 docker compose up db（固定映射 config 端口）。
 """
 from __future__ import annotations
 
 import os
 import re
+import socket
 import subprocess
 import tempfile
 import time
@@ -24,6 +28,7 @@ COMPOSE_FILE = "docker-compose.yaml"
 _EXT = ".exe" if os.name == "nt" else ""
 _PG_DATA_REL = "data/pgdata"
 _PG_LOG_REL = "data/pg.log"
+_DB_PORT_REL = "data/db_port.txt"
 
 
 # ─────────────────────────────────────────────
@@ -51,6 +56,106 @@ def _pg_port(root: Path) -> int:
     except Exception:
         pass
     return 5432
+
+
+# ── 每实例端口（根治多安装/残留进程同抢 5432 串库）──────────
+
+def _persisted_port(root: Path) -> int | None:
+    """data/db_port.txt 记录的本实例端口（首次启动落盘，终身不变）。"""
+    try:
+        return int((root / _DB_PORT_REL).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _persist_port(root: Path, port: int) -> None:
+    p = root / _DB_PORT_REL
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(str(port), encoding="utf-8")
+
+
+def _port_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def _our_pg_running(root: Path, log) -> bool:
+    """本实例 pgdata 的 postgres 是否在运行（pg_ctl status 按 pgdata/postmaster.pid 判定）。
+
+    只认本实例数据目录——别的 Zhiying 实例 / 系统其它 PG 占着端口不算「我们的在运行」，
+    这是复用与 stop 的安全边界（绝不误判、误杀别人的 PG）。
+    """
+    return _run([str(_pg_bin(root, "pg_ctl")), "-D", str(_pg_data(root)), "status"], log, timeout=15)
+
+
+def _conf_port(root: Path) -> int | None:
+    """读本实例 postgresql.conf 里生效的 port 行（initdb 默认是注释行，不匹配）。"""
+    try:
+        text = (_pg_data(root) / "postgresql.conf").read_text(encoding="utf-8", errors="ignore")
+        m = re.search(r"^port\s*=\s*(\d+)", text, re.M)
+        return int(m.group(1)) if m else None
+    except OSError:
+        return None
+
+
+def resolve_db_port(root: Path, log) -> int:
+    """解析本实例 PostgreSQL 端口（内嵌模式；结果落盘 data/db_port.txt 终身固定）。
+
+    优先级：
+      1. data/db_port.txt 已有记录 → 直接用；
+      2. 本实例 pg 残留进程还在跑（如上次强杀）→ 沿用其 conf 端口；
+      3. config database.uri 的端口（默认 5432）空闲 → 用它；
+      4. 被其它程序/其他 Zhiying 实例占用 → 从 5433 起扫空闲端口。
+    任何情况下绝不复用一个我们无法证明属于自己的已占端口（防串库）。
+    Docker 回退模式不适用（compose 固定映射），直接返回 config 端口。
+    """
+    if db_backend(root) != "embedded":
+        return _pg_port(root)
+    persisted = _persisted_port(root)
+    if persisted:
+        return persisted
+    if _our_pg_running(root, log):
+        port = _conf_port(root) or _pg_port(root)
+        log.write(f"[db] 本实例 PostgreSQL 残留进程在跑，沿用端口 {port}")
+        _persist_port(root, port)
+        return port
+    cfg_port = _pg_port(root)
+    if _port_free(cfg_port):
+        _persist_port(root, cfg_port)
+        return cfg_port
+    for port in range(cfg_port + 1, cfg_port + 137):
+        if _port_free(port):
+            log.write(f"[db] 端口 {cfg_port} 被其它程序/其他实例占用"
+                      f"（可能另有 Zhiying 安装），本实例改用 {port}（终身固定，见 data/db_port.txt）")
+            _persist_port(root, port)
+            return port
+    raise RuntimeError(f"{cfg_port + 1}-{cfg_port + 136} 均无空闲端口，无法启动内嵌 PostgreSQL")
+
+
+def db_uri_for_backend(root: Path, log) -> str:
+    """后端连接 URI：config database.uri 的端口替换为本实例端口（供 POSTGRES_URI env 注入）。
+
+    外部数据库（host 非 localhost）原样返回；docker 回退模式端口即 config 端口，替换为等值。
+    """
+    uri = ""
+    try:
+        import yaml
+        cfg = yaml.safe_load((root / "config" / "config.yaml").read_text(encoding="utf-8"))
+        uri = (cfg.get("database") or {}).get("uri") or ""
+    except Exception:
+        pass
+    m = re.search(r"@([^:/@]+):(\d+)/", uri)
+    if not m:
+        # config 无有效 uri → 按内嵌默认拼一个（仅本机实例）
+        return f"postgresql+asyncpg://zhiying:zhiying@127.0.0.1:{resolve_db_port(root, log)}/zhiying"
+    if m.group(1) not in ("localhost", "127.0.0.1", "::1"):
+        return uri  # 外部数据库，不动
+    port = resolve_db_port(root, log)
+    return re.sub(r"(@[^:/@]+:)\d+(/)", lambda x: f"{x.group(1)}{port}{x.group(2)}", uri, count=1)
 
 
 def docker_available() -> bool:
@@ -124,30 +229,23 @@ def _initdb_if_needed(root: Path, log) -> bool:
     )
 
 
-def _ensure_pg_conf(root: Path) -> None:
-    """追加监听地址 + 端口覆盖（initdb 生成的 postgresql.conf 末尾追加，后者生效）。"""
+def _ensure_pg_conf(root: Path, port: int) -> None:
+    """追加/更新监听地址 + 实例端口（initdb 生成的 postgresql.conf 末尾追加，后者生效）。"""
     data = _pg_data(root)
     conf = data / "postgresql.conf"
     marker = "# Zhiying desktop overrides"
-    if conf.exists() and marker in conf.read_text(encoding="utf-8", errors="ignore"):
-        return
-    port = _pg_port(root)
+    if conf.exists():
+        text = conf.read_text(encoding="utf-8", errors="ignore")
+        if marker in text:
+            # 端口可能随实例端口解析变化（如首次启动时 5432 被占改用 5433）→ 原地更新 port 行
+            new_text = re.sub(r"(^port\s*=\s*)\d+", lambda m: f"{m.group(1)}{port}", text, count=1, flags=re.M)
+            if new_text != text:
+                conf.write_text(new_text, encoding="utf-8")
+            return
     with conf.open("a", encoding="utf-8") as f:
         # ⚠️ 路径必须用正斜杠：PG 配置解析器把单引号里的 `\` 当转义剥掉（'D:\data' → 'D:data'）
         f.write(f"\n{marker}\nlisten_addresses = '127.0.0.1'\nport = {port}\n"
                 f"unix_socket_directories = '{data.as_posix()}'\n")
-
-
-def _pg_accepting(root: Path, port: int) -> bool:
-    """postgres 是否已在 127.0.0.1:port 接受连接（pg_isready 探测）。"""
-    try:
-        r = subprocess.run(
-            [str(_pg_bin(root, "pg_isready")), "-h", "127.0.0.1", "-p", str(port)],
-            capture_output=True, timeout=5, creationflags=_NO_WINDOW,
-        )
-        return r.returncode == 0
-    except Exception:
-        return False
 
 
 def _psql(root: Path, port: int, db: str, sql: str) -> subprocess.CompletedProcess:
@@ -170,21 +268,25 @@ def _start_embedded(root: Path, log, timeout: int) -> bool:
     if not _initdb_if_needed(root, log):
         log.write("[FAIL] initdb 失败")
         return False
-    _ensure_pg_conf(root)
+    port = resolve_db_port(root, log)
+    _ensure_pg_conf(root, port)
     data = _pg_data(root)
     logfile = root / _PG_LOG_REL
     logfile.parent.mkdir(parents=True, exist_ok=True)
-    port = _pg_port(root)
-    # 已在运行（上次启动残留/并发）→ 直接复用，跳过 pg_ctl start
-    # （否则报「另一服务器进程可能正在运行」+ 日志文件被占 Permission denied）
-    if _pg_accepting(root, port):
-        log.write("内嵌 PostgreSQL 已在运行（复用）")
+    # 只复用「本实例 pgdata 的」残留进程（pg_ctl status 判定）；端口被别人占时
+    # resolve_db_port 已让位换端口 —— 绝不连去一个来路不明的已监听端口（防串库）
+    if _our_pg_running(root, log):
+        log.write("内嵌 PostgreSQL 已在运行（复用本实例残留进程）")
+    elif not _port_free(port):
+        log.write(f"[FAIL] 本实例端口 {port} 被其它程序占用且不是本实例的 PostgreSQL"
+                  f"（data/db_port.txt 终身固定）——请释放该端口后重试")
+        return False
     elif not _run([str(_pg_bin(root, "pg_ctl")), "-D", str(data), "-l", str(logfile), "start", "-w"],
                   log, timeout=timeout):
         log.write("[FAIL] pg_ctl start 失败，详见 data/pg.log")
         return False
     else:
-        log.write("内嵌 PostgreSQL 已启动")
+        log.write(f"内嵌 PostgreSQL 已启动（端口 {port}）")
     _create_db_if_needed(root, port, log)
     return True
 
@@ -231,7 +333,7 @@ def wait_db_healthy(root: Path, log, timeout: int = 120) -> bool:
     """轮询数据库就绪（内嵌 pg_isready / docker healthy）；超时返回 False。"""
     backend = db_backend(root)
     if backend == "embedded":
-        port = _pg_port(root)
+        port = resolve_db_port(root, log)
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:

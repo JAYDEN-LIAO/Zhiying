@@ -37,11 +37,14 @@ def _backend_launcher(root: Path) -> tuple[Path, dict]:
     return launcher, extra
 
 
-def start_backend(root: Path, python: str, host: str, port: int, log) -> subprocess.Popen:
+def start_backend(root: Path, python: str, host: str, port: int, log,
+                  db_uri: str | None = None) -> subprocess.Popen:
     """启动后端子进程（backend_launcher.py：uvicorn + 父进程存活看门狗）。
 
     启动器被强制结束时，后端在 ~3s 内自检父进程死亡并 os._exit(3)，避免遗留
     占用端口/显存的孤儿进程。
+    db_uri：本实例数据库 URI（POSTGRES_URI env，端口每实例终身固定）——后端
+    经 env 优先级连对自己的库，不读 config database.uri 的默认端口（防串库）。
     """
     launcher, extra_env = _backend_launcher(root)
     cmd = [python, str(launcher)]
@@ -55,6 +58,8 @@ def start_backend(root: Path, python: str, host: str, port: int, log) -> subproc
         "ZHIYING_BACKEND_PORT": str(port),
         **extra_env,
     }
+    if db_uri:
+        env["POSTGRES_URI"] = db_uri
     log.write("$ " + " ".join(cmd))
     proc = subprocess.Popen(
         cmd, cwd=str(root), env=env,
