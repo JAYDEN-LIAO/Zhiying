@@ -119,3 +119,6 @@ docs/server.md
 
 # 软件管家许可凭证（封装态根目录，绝不入库）
 license.dat
+
+# ── SVN 备份凭证（绝不入库）──
+config/svn.local.json

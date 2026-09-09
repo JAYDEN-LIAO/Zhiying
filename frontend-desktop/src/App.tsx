@@ -26,11 +26,11 @@ function Shell() {
     ? videos.filter((v) => v.group_id === selGid && v.status === "pending").length
     : 0;
 
-  /* 侧栏徽章：案例库灰=仅上传未提交；视频解析蓝=处理中(恒1)；任务中心 黄=排队中 绿=新完成 红=失败；素材库=高优告警红点 */
+  /* 侧栏徽章：案例库灰=仅上传未提交；任务中心 左→右=红(失败) 绿(新完成) 蓝(处理中,恒1) 黄(排队中)；素材库=高优告警红点 */
   const counts = {
     files: selPending,
     filesLabel: selName,
-    workbench: runningTaskCount > 0 ? 1 : 0,
+    running: runningTaskCount > 0 ? 1 : 0,
     queued: queuedTaskCount,
     newCompleted: newCompletedCount,
     failed: failedTaskCount,

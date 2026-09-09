@@ -150,11 +150,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     /* 进入图片素材库：高优告警红点视为已读清零（与 openImageLibrary 一致） */
     if (p === "imagelib") setImageLibAlertCount(0);
-    /* 进入视频解析页面时优先加载处理中的视频（v0.37）：
-       - 有处理中 → 切到它（覆盖之前选中的视频，避免用户看到「无选中」或「旧视频」）
-       - 没有处理中 → 保留当前选中（持续看片）或空态
-       例外：openWorkbench(videoId, ...) 走特定 videoId，不经过这里，保留用户从任务/搜索来的精确跳转 */
-    if (p === "workbench" && processingVideoIdRef.current) {
+    /* 进入视频解析页面时的选中优先级：
+       - 已有明确选中视频（搜索结果/任务/文件库跳转或上次选中）→ 保留它，处理中视频不抢占
+       - 没有任何选中 → 有处理中则切到处理中视频，否则空态
+       例外：openWorkbench(videoId, ...) 走特定 videoId，不经过这里 */
+    if (p === "workbench" && !selectedVideoIdRef.current && processingVideoIdRef.current) {
       setSelectedVideoId(processingVideoIdRef.current);
       setInitialVersionId(null);
     }

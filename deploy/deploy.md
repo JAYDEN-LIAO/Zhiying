@@ -200,6 +200,7 @@ npm run dev
 - **Linux 开发机安装**：`bash deploy/setup_linux.sh`（或 `--proxy http://127.0.0.1:7897 --non-interactive` 全自动）；Windows 用 `setup_windows.ps1`
 - **模型下载**：`python deploy/download_models.py --component <x> --model-root models`（断点续传、`--verify-only` 校验）
 - **多架构依赖**：`onnxruntime-gpu` 仅 Windows/x86 Linux 有 wheel；ARM64（DGX Spark/GB10）由 requirements 环境标记自动装 `onnxruntime` CPU 版。新增带平台差异的依赖时用 PEP 508 环境标记区分（如 `; sys_platform == "win32" or platform_machine == "x86_64"`）
+- **SVN 双仓备份**（定期执行）→ `python scripts/svn_sync.py source product`：源码按 `git ls-files` 精确镜像到 `AI_Ying/trunk`（天然无中间产物），`build\green\` 打包材料传到 `AI_Ying_TestVersion/trunk/v<版本>/`（已存在需 `--force` 原地修复，版本目录对应一次发版）。凭证在 `config/svn.local.json`（gitignored）。注意：svn add 必须 `--no-ignore`（svn 默认忽略 `*.pyc`，会静默漏掉 backend_pyc）
 - **新增会产生磁盘文件的功能** → 落盘路径模式必须登记进 `core/storage_manager.py`
 - **新增感知模块** → `pipeline/runners/` 新 runner + `pipeline/operations.py` 一个 Operation，engine 零改动
 - **版本号与发布** → 版本唯一事实来源 `core/version.py`；`/health` 返回 `version` 字段（部署/回滚后核对运行版本）；发版用 `./bump minor|X.Y`（两段式版本号；联动 core/version.py + 三前端 package.json/lock + zhiying.iss 版本兜底，交互式确认提交信息/commit/tag/push，尾链可选一键构建发版产物）；git tag 必须 `v<版本>` 与 version.py 一致，回滚 = `git checkout` 旧 tag + 重启

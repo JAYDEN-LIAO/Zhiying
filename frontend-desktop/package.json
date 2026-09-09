@@ -1,7 +1,7 @@
 {
   "name": "zhiying-frontend-desktop",
   "private": true,
-  "version": "0.90",
+  "version": "0.95",
   "description": "智影桌面端独立前端（与服务器 frontend/ 完全隔离，独立构建）",
   "type": "module",
   "scripts": {

@@ -207,7 +207,8 @@ export function VideoSearchCard({
 
   const runFaceSearch = useCallback(async (file: File) => {
     if (!file) return;
-    // 人脸搜索：清空语义/图搜旧结果，避免新结果从旧结果上方插入
+    // 人脸搜索：清空语义/图搜旧结果与文本框旧检索词（切换搜索类别即清空，与全局搜索页一致）
+    setQuery("");
     setResults([]); setFaceResults([]); setSearching(false);
     setFaceSearching(true); setError(null); setSearchMode("face");
     try {
@@ -226,7 +227,8 @@ export function VideoSearchCard({
   /* ── 通用图搜 ── */
   const runImageSearch = useCallback(async (file: File) => {
     if (!file) return;
-    // 图搜：与语义/人脸搜索统一，先清空旧结果
+    // 图搜：与语义/人脸搜索统一，先清空旧结果与文本框旧检索词
+    setQuery("");
     setResults([]); setImageSearching(true); setError(null); setFaceResults([]); setSearchMode("image");
     try {
       const data = await api.searchImage(file, {
@@ -377,7 +379,7 @@ export function VideoSearchCard({
 
           {/* Plate fuzzy-search mode toggle（未开车牌处理则置灰；联合搜索时范围内有任一视频开车牌即可） */}
           <button
-            onClick={() => { if (!plateDisabled || plateMode) { setPlateMode(v => !v); setOcrMode(false); } }}
+            onClick={() => { if (!plateDisabled || plateMode) { setPlateMode(v => !v); setOcrMode(false); setQuery(""); } }}
             title={plateDisabled ? "未开启车牌处理" : (plateMode ? "退出车牌模糊搜索模式" : "车牌模糊搜索：输入任意字符/数字，列出所有相关车牌")}
             className={`absolute right-7 top-1/2 -translate-y-1/2 h-6 min-w-6 px-1 rounded flex items-center justify-center text-[11px] font-bold transition-colors ${
               plateDisabled ? "bg-gray-200 text-gray-600"
@@ -390,7 +392,7 @@ export function VideoSearchCard({
 
           {/* OCR 文字搜索 toggle（v0.34：与车牌互斥，只跑 ocr 路精确串匹配） */}
           <button
-            onClick={() => { if (!ocrDisabled || ocrMode) { setOcrMode(v => !v); setPlateMode(false); } }}
+            onClick={() => { if (!ocrDisabled || ocrMode) { setOcrMode(v => !v); setPlateMode(false); setQuery(""); } }}
             title={ocrDisabled ? "未开启文字识别" : (ocrMode ? "退出文字搜索模式" : "文字搜索：输入聊天/字幕原话，精确定位到帧")}
             className={`absolute right-[52px] top-1/2 -translate-y-1/2 h-6 min-w-6 px-1 rounded flex items-center justify-center text-[11px] font-bold transition-colors ${
               ocrDisabled ? "bg-gray-200 text-gray-600"

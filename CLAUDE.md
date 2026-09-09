@@ -7,6 +7,7 @@
 **关键锚点**：
 - **本机两个入口（定版约定）**：快速看最新效果 → 双击根目录 **`desktop.bat`**（源码模式，改码重启即生效，License 跳过）；打包出货 → 双击 **`update_build.bat`**（dist → 壳 exe 到 `dist\智影桌面端\` → `build\` 安装包 + `build\green` 打包材料，发版前先 `./bump`）。根目录不落地 exe（iss 直接取 dist 产物）；根 exe 是封装态（跑烧进的 backend_pyc，非源码），仅用于模拟客户机
 - **生产部署**：10.0.0.176（systemd `zhiying.service`，8011）；发版 `./bump`（可尾链一键构建安装包 + 打包材料目录）→ 服务器 `bash deploy.sh v<tag>`
+- **SVN 双仓备份**：`python scripts/svn_sync.py source product`——源码镜像 `AI_Ying/trunk`（git ls-files 精确镜像），产品材料 `AI_Ying_TestVersion/trunk/v<版本>/`（=build\green 全量，已存在需 --force）；凭证 `config/svn.local.json`（gitignored）；svn add 必须 `--no-ignore`（默认忽略 *.pyc 会漏 backend_pyc）
 - **配置**：`config/config.yaml` 机器相关 gitignored；运行时覆盖走 `data/settings.json`（保存即生效）+ 共享预设 `config/presets.json`（入 git）
 - **三前端**：服务器 `frontend/`（**已废弃保留**，待退役）+ 桌面 `frontend-desktop/`（5 页管理后台，pywebview 壳）+ 新 web `frontend-web/`（轻量解析工作台，api 复用 frontend-shared，自带 mock 演示降级；暂未挂载到后端静态托管，与旧端并存）；对接层 `frontend-shared/` 一份实现
 - **Windows 安装器**：`zhiying.iss`（Inno Setup 6）→ `build\视频快速智能检索平台 Ver <版本>.exe`（gitignored）；一体化安装（环境 + 内嵌 PG + 25GB 模型在安装段内完成；首启 MODEL_BOOT 兜底续传，`desktop/model_bootstrap.py` 跑 `deploy/download_models.py`，档位写回 config.yaml）；交付走 `desktop/make_green.ps1` 装配 `build\green\` 打包材料目录（zhiying.iss 就位，可直接 ISCC 编译；`-Zip` 可选压 zip 交外部打包方）

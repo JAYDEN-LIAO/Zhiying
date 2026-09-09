@@ -40,8 +40,8 @@ export function Sidebar({
   settingsTab: SettingsTab;
   onNavigate: (p: Page) => void;
   onNavigateSettings: (tab: SettingsTab) => void;
-  /* 案例库灰=仅上传未提交 / 视频解析蓝=处理中(恒1) / 任务中心 黄=排队中 绿=新完成 红=失败 / 素材库=高优告警红点 */
-  counts?: { files?: number; filesLabel?: string; workbench?: number; queued?: number; newCompleted?: number; failed?: number; imageLibAlert?: number };
+  /* 案例库灰=仅上传未提交 / 任务中心 左→右=红(失败) 绿(新完成) 蓝(处理中,恒1) 黄(排队中) / 素材库=高优告警红点 */
+  counts?: { files?: number; filesLabel?: string; running?: number; queued?: number; newCompleted?: number; failed?: number; imageLibAlert?: number };
 }) {
   return (
     <aside className="sidebar">
@@ -49,7 +49,6 @@ export function Sidebar({
         <div className="sb-group-label">业务</div>
         {BUSINESS.map((item) => {
           const isFiles = item.key === "files";
-          const isWorkbench = item.key === "workbench";
           return (
             <button
               key={item.key}
@@ -69,19 +68,17 @@ export function Sidebar({
                     <span className="sb-count sb-count-gray" title="待处理">{counts.files}</span>
                   </span>
                 )
-              ) : isWorkbench ? (
-                /* 视频解析：蓝 = 有视频处理中 → 恒显示 1 */
-                counts?.workbench != null && counts.workbench > 0 && (
-                  <span className="sb-count" title="处理中">{counts.workbench}</span>
-                )
               ) : item.key === "tasks" ? (
-                /* 任务中心三徽章，右对齐，视觉右→左 = 红(失败) 绿(新完成) 黄(排队中) */
+                /* 任务中心四徽章，左→右 = 红(失败) 绿(新完成) 蓝(处理中) 黄(排队中) */
                 <span className="sb-badges">
                   {counts?.failed != null && counts.failed > 0 && (
                     <span className="sb-count sb-count-red" title="处理失败">{counts.failed}</span>
                   )}
                   {counts?.newCompleted != null && counts.newCompleted > 0 && (
                     <span className="sb-count sb-count-green" title="新完成">{counts.newCompleted}</span>
+                  )}
+                  {counts?.running != null && counts.running > 0 && (
+                    <span className="sb-count" title="处理中">{counts.running}</span>
                   )}
                   {counts?.queued != null && counts.queued > 0 && (
                     <span className="sb-count sb-count-yellow" title="排队中">{counts.queued}</span>

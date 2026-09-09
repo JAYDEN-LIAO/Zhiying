@@ -9,10 +9,10 @@
 ; 版本号兜底值（不经 build_installer.ps1 /D 传参、GUI 直编时生效）；
 ; ./bump 会自动同步这里的两处 define——勿手写死旧版本
 #ifndef MyAppVersion
-#define MyAppVersion               "0.90"
+#define MyAppVersion               "0.95"
 #endif
 #ifndef VersionInfoVersion
-#define VersionInfoVersion         "0.90"
+#define VersionInfoVersion         "0.95"
 #endif
 #define AppCopyright               ""
 #define AppPublisher               ""

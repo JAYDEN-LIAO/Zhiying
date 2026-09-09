@@ -383,6 +383,7 @@ export function GlobalSearch() {
   }
 
   function setFace(f: File | null) {
+    if (f) setImage(null); // 人脸/通用图搜互斥：上传一张自动清掉另一张
     setFacePreviewUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return f ? URL.createObjectURL(f) : null;
@@ -390,6 +391,7 @@ export function GlobalSearch() {
     setFaceFile(f);
   }
   function setImage(f: File | null) {
+    if (f) setFace(null); // 人脸/通用图搜互斥：上传一张自动清掉另一张
     setImagePreviewUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return f ? URL.createObjectURL(f) : null;
