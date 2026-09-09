@@ -123,6 +123,72 @@ def check_port(port: int, host: str = DEFAULT_HOST) -> dict:
     return {"state": "conflict"}
 
 
+def local_version(root: Path) -> str | None:
+    """本机应装版本：开发态读 core/version.py；封装态从 _internal/backend_pyc 加载 version.pyc。
+
+    取不到（布局变化等）返回 None，调用方跳过版本校验（宁可漏判不可误杀）。"""
+    try:
+        if getattr(sys, "frozen", False):
+            pyc = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)) / "backend_pyc" / "core" / "version.pyc"
+            if not pyc.exists():
+                return None
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("_shell_version_probe", pyc)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return getattr(mod, "__version__", None)
+        m = re.search(r'__version__\s*=\s*"([^"]+)"',
+                      (root / "core" / "version.py").read_text(encoding="utf-8"))
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def _index_asset(html: str) -> str | None:
+    m = re.search(r'assets/index-[^"/]+\.js', html)
+    return m.group(0) if m else None
+
+
+def served_frontend_asset(host: str, port: int) -> str | None:
+    """抓后端首页引用的主 JS 资产名（assets/index-xxx.js）——前端代次指纹。
+
+    旧服务器前端 frontend/ 与桌面前端 frontend-desktop/ 的构建产物哈希必然不同，
+    可识别「端口被挂着旧前端的后端占用」这种版本号看不出来的情况（如 run.py 裸起）。"""
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/", timeout=2) as r:
+            return _index_asset(r.read().decode("utf-8", "ignore"))
+    except Exception:
+        return None
+
+
+def local_frontend_asset(root: Path) -> str | None:
+    """本机桌面前端 dist 的主 JS 资产名；dist 不存在返回 None（跳过校验）。"""
+    try:
+        html = (root / "frontend-desktop" / "dist" / "index.html").read_text(encoding="utf-8", errors="ignore")
+        return _index_asset(html)
+    except OSError:
+        return None
+
+
+def kill_port_listener(port: int, log=None) -> bool:
+    """杀掉占用端口的监听进程。调用前必须已确认它是版本/前端不符的智影后端。"""
+    killed = False
+    for conn in psutil.net_connections(kind="inet"):
+        if not (conn.laddr and conn.laddr.port == port and conn.status == psutil.CONN_LISTEN and conn.pid):
+            continue
+        try:
+            proc = psutil.Process(conn.pid)
+            proc.kill()
+            proc.wait(timeout=5)
+            killed = True
+            if log:
+                log.write(f"  已停止旧后端 PID {conn.pid}")
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired) as e:
+            if log:
+                log.write(f"  停止旧后端 PID {conn.pid} 失败: {e}")
+    return killed
+
+
 def _is_launcher(proc) -> bool:
     """判断进程是否为智影桌面启动器：冻结壳 exe，或开发态 `python <...>/app.py`。
 

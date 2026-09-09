@@ -1,7 +1,7 @@
 {
   "name": "zhiying-frontend-web",
   "private": true,
-  "version": "0.95",
+  "version": "0.96",
   "description": "智影 Web 子功能分支（轻量化：案例库 Dashboard + 全局搜索 + 解析工作台）",
   "type": "module",
   "scripts": {

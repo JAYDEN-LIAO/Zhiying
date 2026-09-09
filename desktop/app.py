@@ -24,7 +24,8 @@ from state import State, app_state
 from logs import LogSink
 from checks import (project_root, install_script_name, read_server_config, check_config_file,
                     check_models, check_port, probe_health, environment_status, ready_summary, runtime_python,
-                    sweep_orphan_backends)
+                    sweep_orphan_backends, local_version, served_frontend_asset, local_frontend_asset,
+                    kill_port_listener)
 import db as db_mod
 import backend as backend_mod
 from model_bootstrap import ModelBootstrap
@@ -361,14 +362,31 @@ def _lifecycle(runtime, ctx, cfg, log, main_window, main_api) -> None:
                 raise RuntimeError("模型校验未通过", "仍缺失: " + ", ".join(missing))
 
         if already:
-            body = probe_health("127.0.0.1", cfg["port"]) or {}
-            app_state.set(State.READY, "检测到已有后端，直接复用", port=cfg["port"],
-                          version=body.get("version"))
-            log.write(f"已有 Zhiying 在运行，直接打开 {ctx.url}")
-            main_api.wait_first_screen(cfg["port"])  # 等首屏数据就绪再进正式页（启动页停留 100%）
-            main_window.load_url(_cache_bust_url(ctx.url, body.get("version")))
-            runtime["done"].wait()
-            return
+            body = port_state.get("health") or probe_health("127.0.0.1", cfg["port"]) or {}
+            # 复用前校验：端口上的"智影"可能是旧版本/旧前端的残留实例
+            # （曾致启动器复用挂旧服务器前端的僵尸后端，装了新包也显示旧 UI）。
+            # 版本号或前端资产指纹任一不符 → 判旧实例，停掉后走正常启动流程。
+            stale_reason = None
+            expected_ver = local_version(ROOT)
+            if expected_ver and body.get("version") != expected_ver:
+                stale_reason = f"版本不符（运行 {body.get('version')}，本机 {expected_ver}）"
+            else:
+                served, expected = served_frontend_asset("127.0.0.1", cfg["port"]), local_frontend_asset(ROOT)
+                if served and expected and served != expected:
+                    stale_reason = f"前端不符（运行 {served}，本机 {expected}）"
+            if stale_reason:
+                log.write(f"已有后端判为旧实例（{stale_reason}），停止后重起")
+                kill_port_listener(cfg["port"], log=log)
+                time.sleep(0.8)  # 等端口完全释放
+                already = False
+            else:
+                app_state.set(State.READY, "检测到已有后端，直接复用", port=cfg["port"],
+                              version=body.get("version"))
+                log.write(f"已有 Zhiying 在运行，直接打开 {ctx.url}")
+                main_api.wait_first_screen(cfg["port"])  # 等首屏数据就绪再进正式页（启动页停留 100%）
+                main_window.load_url(_cache_bust_url(ctx.url, body.get("version")))
+                runtime["done"].wait()
+                return
 
         if not db_mod.db_available(ROOT):
             raise RuntimeError("数据库后端不可用",
