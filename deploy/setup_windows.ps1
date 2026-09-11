@@ -296,16 +296,29 @@ Write-Step "1/6" "Python + FFmpeg + Node.js 环境"
 # winget 装的新命令要刷新 PATH 才在本会话可用（读注册表机器/用户 PATH）
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
-$py = Get-Command python -ErrorAction SilentlyContinue
-if ($py) {
-    $ver = (& python --version 2>&1) -replace "Python ", ""
+# 商店假别名陷阱：全新 Windows 默认在 %LOCALAPPDATA%\Microsoft\WindowsApps 放 0 字节
+# python.exe/python3.exe stub，Get-Command python 会命中它 → 误判"已安装"跳过安装，
+# 后面 python -m venv 实跑只吐 "Python was not found"（退出码 9009）直接炸。
+# 所以必须实跑 --version 验证，不能用 Get-Command 判断。
+function Test-RealPython {
+    # cmd 包一层执行：EAP=Stop 下 PowerShell 直接 2>&1 会把 stderr 文本转成终止性错误（TRAP L301 的由来）
+    $out = (& cmd /c "python --version 2>&1") -join " "
+    return (($LASTEXITCODE -eq 0) -and ($out -match "Python 3"))
+}
+if (Test-RealPython) {
+    $ver = ((& cmd /c "python --version 2>&1") -join " ") -replace "Python ", ""
     Write-Ok "检测到 Python $ver"
 } else {
-    Write-Info "未检测到 Python，用 winget 安装 Python 3.13 ..."
+    Write-Info "未检测到可用的 Python（或仅命中微软商店假别名），用 winget 安装 Python 3.13 ..."
+    # 摘除商店假别名 stub，防装完后 PATH 解析仍落到 stub（真商店 Python 实跑能过，走不到这里）
+    Get-ChildItem (Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps") -Filter "python*.exe" -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
     # winget 走 WinINET（系统代理）；若失败给出明确指引（手动装或开系统代理）
-    $null = & winget install --id Python.Python.3.13 --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1
+    # --source winget 跳过 msstore 源（部分客户机 msstore 源证书校验失败会直接炸，0x8a15005e）
+    $null = & winget install --id Python.Python.3.13 --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Python 安装失败（请检查网络/系统代理后重试，或手动安装 Python 3.13 并勾选 Add to PATH）" }
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not (Test-RealPython)) { throw "Python 安装后仍不可用（PATH 可能仍被商店假别名抢占）。请手动安装 Python 3.13 并勾选 Add to PATH 后重跑安装器" }
     Write-Ok "Python 3.13 已安装"
 }
 
@@ -351,7 +364,8 @@ if ($ffEnc -notmatch "h264_nvenc" -or $ffDec -notmatch "h264_cuvid") {
 Write-Info "检查 Node.js ..."
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Info "未检测到 Node，用 winget 安装 Node.js（含 npm）..."
-    $null = & winget install --id OpenJS.NodeJS --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1
+    # --source winget 跳过 msstore 源（同 Python 段注释）
+    $null = & winget install --id OpenJS.NodeJS --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Node.js 安装失败（请检查代理/网络后重试，或手动安装 Node.js LTS）" }
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 }

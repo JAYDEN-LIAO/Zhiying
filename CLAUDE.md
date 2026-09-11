@@ -71,7 +71,7 @@
 - **人脸双阈值**: 同 track 0.30 宽松合并，跨 track 0.58 保守合并；检索锚点最典型脸
 - **人脸出现段**: 检测栏人脸展开显示该身份的**主 person track**（`track_to_identity`，时间轴同源）的 `[first_seen, last_seen]`/`segments`，排除"搭车"长 track；人脸搜索 `appearances` 仅保留主身份 track；点击结果从首段自动播放并逐段跳过，当前段黄框高亮（前端 `timeupdate` 判 `currentTime` 落段）
 - **弹窗/抽屉 portal**: 桌面前端所有 modal/drawer 必须 `createPortal(document.body)` + `onMouseDown` 遮罩关闭（`e.target===currentTarget`）；`DetectionOverlay` 用真实事件目标 `container.contains` 判定防穿透/遮挡关不掉
-- **安装器约定**: Inno 等待循环跑 UI 线程——每轮必须 ProcessMessages 泵消息（否则窗口假死）；超时 = 30 分钟无任何新输出判卡死 + 12h 总兜底（模型 25GB 在安装段内下载，不能按总时长掐）；进度 = setup 离散标记 + Inno 侧蠕动平滑（pip 接管道非 TTY 无进度条可解析）；pip 走清华镜像、torch 官方源走代理失败回退阿里云 find-links 直连；自备模型复制前置（不依赖环境安装成败）+ 路径校验（models\Qwen 为锚）；快捷方式延后到环境安装成功后由代码创建（[Icons] 段早于环境安装执行）；装完删安装耗材（requirements.txt/setup_windows.ps1/desktop/db.py；download_models.py 保留供首启引导），卸载 [UninstallDelete] 清 .venv/vendor、保留 data/models
+- **安装器约定**: Inno 等待循环跑 UI 线程——每轮必须 ProcessMessages 泵消息（否则窗口假死）；超时 = 30 分钟无任何新输出判卡死 + 12h 总兜底（模型 25GB 在安装段内下载，不能按总时长掐）；进度 = setup 离散标记 + Inno 侧蠕动平滑（pip 接管道非 TTY 无进度条可解析）；Python 检测必须实跑 `python --version` 验证（`Get-Command` 会命中全新 Windows 微软商店 0 字节假别名 stub，误判已装跳过安装）；pip 走清华镜像、torch 官方源走代理失败回退阿里云 find-links 直连；自备模型复制前置（不依赖环境安装成败）+ 路径校验（models\Qwen 为锚）；快捷方式延后到环境安装成功后由代码创建（[Icons] 段早于环境安装执行）；装完删安装耗材（requirements.txt/setup_windows.ps1/desktop/db.py；download_models.py 保留供首启引导），卸载 [UninstallDelete] 清 .venv/vendor、保留 data/models
 - **工作台常驻挂载**: 桌面端 Workbench/GlobalSearch 切页 hide 不卸载（保播放与搜索状态）；跨页意图（seek/track 选中/搜索同步）一律携带目标视频 id，等 vid 落到目标才消费
 - **搜索隔离**: search/face 与 search/image 参数必须 `Form(...)` 声明（防全库泄漏）
 - **版本号**: `core/version.py` `__version__` 唯一来源（两段式 X.Y，与软件管家平台格式一致）；后端+服务器前端改动必须 `./bump`（联动三前端 package.json/lock + zhiying.iss 兜底版本，GUI 直编不拿旧版本号）；发版手动触发（多次 commit 不发版，bump 才发版）
