@@ -1,7 +1,7 @@
 # Zhiying Architecture
 
 > 版本: 0.90（两段式统一版本号） | Framework: FastAPI + SQLAlchemy async | Database: PostgreSQL 17 + pgvector
-> 核心能力：16-op DAG · 4 编码路径 · YOLO11/BoT-SORT 双层 ReID · 人脸/车牌/OCR · 8 路搜索+图搜 · 图片素材库（人脸/通用图搜分轨检索）· 智能参数系统 · 全局任务队列 · 云智接入 · 桌面端 · Windows 安装器（一体化安装+首启模型兜底）· 软件管家 License 校验
+> 核心能力：16-op DAG · 4 编码路径 · YOLO11/BoT-SORT 双层 ReID · 人脸/车牌/OCR · 8 路搜索+图搜 · 图片素材库（人脸/通用图搜分轨检索）· 智能参数系统 · 全局任务队列 · 云智接入 · 桌面端 · Windows 安装器（一体化安装+首启模型兜底）
 
 ## System Data Flow
 
@@ -193,10 +193,10 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
   - **ImageLibrary**（素材库页）：左目标列表 + 右底库照片详情（裁剪/拖拽扩充/溯源）+ 新建目标弹窗 + `AddSubjectDrawer`（检测/图搜一键沉淀）
   - **GlobalSearch**（全局搜索）：左 34% 配置面板（文本/图像 Tab + 人/车/车牌/文本/事件 5 类型 chip 互斥选中，切换即清空文本框 + 各类型专属特征选中才出现（颜色常驻）+ 句式化 token + 人脸/通用图搜分轨）+ 右 66% 结果网格；选图来源统一走 `SubjectPhotoPicker`（素材库底图）
   - **TaskCenter**（任务中心）+ **SettingsPage**（系统设置，4 子 tab）
-  - TitleBar 右上角「**关于**」弹窗（AboutDialog）：logo + 产品名 + 产品型号/当前版本（/health）+ 检查升级/用户手册按钮 + 服务截止时间 + 版权底栏；检查升级走 pywebview 壳调软件管家 `software_center.exe` **模式 2**（升级检查/下载由软件管家自带 UI 完成）；服务截止时间读 license.dat 过期字段；开发态（非 frozen）检查升级置灰、到期显示「—」
+  - TitleBar 右上角「**关于**」弹窗（AboutDialog）：logo + 产品名 + 产品型号/当前版本（/health）+ 检查升级/用户手册按钮 + 服务截止时间 + 版权底栏；检查升级走壳调起外部升级平台（升级/下载由平台自带 UI 完成，壳只调起等待）；服务截止时间读授权凭证过期字段；开发态（非 frozen）检查升级置灰、到期显示「—」
 - TitleBar（frameless 暗色）+ SystemMonitor（底部系统监控）；侧栏 5 业务 + 2 设置入口
 
-**桌面端窗口壳**：pywebview 主窗（frameless, shadow）；启动生命周期 = License 校验（封装态，软件管家激活助手退出码分流）→ 环境检查 → 模型检查（缺失进 MODEL_BOOT 下载面板）→ 起后端 → 开产品窗；SplashApi 窗口控制/系统监控/模型下载引导（start_model_download / get_model_download_status / abort_model_download）；后端 backend_launcher.py（字节码/源码双模式 + 看门狗）。内嵌 PG 端口每实例终身固定（`data/db_port.txt`，config 端口被占自动让位空闲端口，`POSTGRES_URI` 注入后端防多安装串库），壳退出即停本实例内嵌 PG（`pg_ctl status` 只认自己 pgdata，不碰别人的 PG）。壳 `load_url` 追加 `?v=<缓存键>` 击穿 WebView2 持久化 HTTP 缓存（`private_mode=False`，跨版本复用会显示旧 UI，如素材库消失）；封装态缓存键 = 版本号，开发态 = dist/index.html mtime（仅改桌面前端不 bump 也能取新）。
+**桌面端窗口壳**：pywebview 主窗（frameless, shadow）；启动生命周期 = 授权校验（封装态，外部授权平台退出码分流，开发态跳过）→ 环境检查 → 模型检查（缺失进 MODEL_BOOT 下载面板）→ 起后端 → 开产品窗；SplashApi 窗口控制/系统监控/模型下载引导（start_model_download / get_model_download_status / abort_model_download）；后端 backend_launcher.py（字节码/源码双模式 + 看门狗）。内嵌 PG 端口每实例终身固定（`data/db_port.txt`，config 端口被占自动让位空闲端口，`POSTGRES_URI` 注入后端防多安装串库），壳退出即停本实例内嵌 PG（`pg_ctl status` 只认自己 pgdata，不碰别人的 PG）。壳 `load_url` 追加 `?v=<缓存键>` 击穿 WebView2 持久化 HTTP 缓存（`private_mode=False`，跨版本复用会显示旧 UI，如素材库消失）；封装态缓存键 = 版本号，开发态 = dist/index.html mtime（仅改桌面前端不 bump 也能取新）。
 
 ## Desktop Installer (Windows)
 
@@ -220,9 +220,8 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
         快捷方式延后到环境安装成功后由代码创建（[Icons] 段早于环境安装执行，装一半失败不留无效图标）
 首启兜底: 安装段模型下载失败/中断 → 首启 check_models 缺失 → State.MODEL_BOOT → model_bootstrap.py 后台跑 download_models.py
         （断点续传；档位写回 config.yaml 保证向量维度一致；代理经 data/proxy.txt 记忆）
-License: 封装态启动即验（开发态跳过）——desktop/license_check.py 注册表定位拓界软件管家 →
-        software_center.exe "1" "A5300" <license.dat>，退出码 0=试用通过 / 1=失败弹窗退出 /
-        2=正式版客户端自校验 SuperDog 加密狗（SuperDog_x64.dll 与壳同级）；iss 安装器不校验
+License: 封装态启动即验（开发态跳过）——desktop/license_check.py 对接外部授权平台
+        （校验细节不公开）；iss 安装器不校验
 交付面: 客户机无明文后端源码（backend_pyc）；装完删安装耗材（requirements.txt / setup_windows.ps1 / desktop\db.py；
         download_models.py 例外保留供首启引导）
         卸载 [UninstallRun] stop_runtime.ps1 停壳+停 pg → [UninstallDelete] 清 .venv/vendor，保留 data/models（用户数据/自备模型）
@@ -254,8 +253,8 @@ License: 封装态启动即验（开发态跳过）——desktop/license_check.p
 | 安装器一体化安装 | 环境+内嵌 PG+25GB 模型全在安装段内完成（setup_windows.ps1 全量跑），装完即可用；超时按「无新输出」判定而非总时长（大文件下载期合法静默） |
 | 首启模型兜底 | 安装段下载失败/中断不阻断交付——首启 check_models 缺失进 MODEL_BOOT 后台断点续传，档位写回 config.yaml 防维度错配 |
 | 安装器单进度条 + 蠕动平滑 | 解压/环境安装复用同一进度条；pip 非终端无进度可解析，离散真实标记 + Inno 侧定时蠕动，条不再长时间死住 |
-| 启动 License 校验 | 软件管家生态交付——封装态启动即验（激活助手退出码分流：试用通过/失败/正式版 SuperDog 加密狗），开发态跳过；校验在壳不在安装器（iss 只定 ProductCode A5300） |
-| 检查升级走软件管家模式 2 | 升级检查/下载/安装全部由软件管家自带 UI 完成（对齐其启动参数 `['2', 产品号, license路径, 当前版本]`），客户端零升级逻辑；两段式版本号（0.90）与平台格式直接兼容 |
+| 启动授权校验 | 外部授权平台生态交付——封装态启动即验（激活助手退出码分流），开发态跳过；校验在壳不在安装器 |
+| 检查升级走外部升级平台 | 升级检查/下载/安装全部由平台自带 UI 完成，客户端零升级逻辑；两段式版本号与平台格式直接兼容 |
 | 安装耗材交付面清理 | requirements/setup 脚本/db 引导/平台清单装完即删，客户机只留运行必需；卸载清 .venv/vendor（安装产物），data/models 有意保留 |
 
 ## Current Status

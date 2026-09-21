@@ -1,112 +1,105 @@
-# Zhiying — Universal Video Analytics Engine
+# Zhiying · 智影 — Universal Video Analytics Engine
 
-通用视频分析引擎：上传视频 → 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪 + 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 + 图片素材库（人脸/通用图搜分轨检索）。面向单 GPU（8–32GB）设计，已接入云智平台，生产部署于 10.0.0.176。
+**English** | Zhiying is a GPU-powered video analytics & semantic search engine: upload videos, run a declarative 16-op DAG pipeline (YOLO11 detection + BoT-SORT multi-object tracking with two-stage ReID, face recognition, license plate recognition, OCR, video captioning & summarization), then search everything — 8-way semantic retrieval (frames / chunks / captions / labels / tracks / plates / OCR text / events), image-to-video search, and a watchlist (subject) library with face / appearance split-track matching. Built on FastAPI + PostgreSQL/pgvector, designed for a single consumer GPU (8–32 GB).
 
-## Quick Start
+**中文** | 智影是一个 GPU 视频分析与语义搜索引擎：上传视频后执行声明式 DAG 管道（16 ops）——YOLO11 目标检测 + BoT-SORT 多目标跟踪（双层 ReID）、人脸识别、车牌识别、画面 OCR、视频描述与摘要——然后对全库进行 8 路语义搜索（画面/片段/文本/标签/物体轨迹/车牌/画面文字/事件）+ 以图搜视频 + 图片素材库（人脸/外观分轨检索）。后端 FastAPI + PostgreSQL/pgvector，面向单张消费级 GPU（8–32GB）设计。
+
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white">
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL_17-4169E1?logo=postgresql&logoColor=white">
+  <img alt="pgvector" src="https://img.shields.io/badge/pgvector-semantic_search-4169E1">
+  <img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-CUDA-EE4C2C?logo=pytorch&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/React_19-61DAFB?logo=react&logoColor=black">
+  <img alt="Windows" src="https://img.shields.io/badge/Windows-0078D6?logo=windows11&logoColor=white">
+  <img alt="Linux" src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black">
+</p>
+
+<!-- TODO: 产品截图（工作台 / 搜索结果 / 素材库） -->
+
+## ✨ 核心能力 | Core Features
+
+- **视频结构化管道**：声明式 DAG（16 ops）异步执行——时长探测 → 场景切分 → 关键帧 → 检测/跟踪 → 人脸/车牌/OCR → 描述/摘要 → 多路向量编码，全局任务队列持久化、断电重启自动恢复
+- **检测与跟踪**：YOLO11 + BoT-SORT（在线 with_reid + 全局 tracklet 缝合双层 ReID），轨迹级向量入库，支持"物体定位"检索
+- **人脸识别**：SCRFD 检测 + ArcFace 512 维聚类（护栏式双阈值），人脸出现段时间轴、按段跳播、当前段高亮
+- **车牌 / OCR**：HyperLPR3 车牌识别（模糊搜索）；RapidOCR PP-OCRv3 画面文字提取（DirectML 独立子进程，第 8 路精确检索）
+- **8 路语义搜索 + 图搜**：query 一次编码、7 路并行召回合并去重；Qwen3-VL-Embedding 支持以图搜视频
+- **智能参数系统**：9 场景自动分类推荐解析参数；4 级参数层次（场景/模块/开关/高级）+ 参数预设随仓库共享
+- **图片素材库**：关注目标（人/其他）底库管理；person 走 ArcFace / other 走 Qwen3-VL 分轨检索；检测结果/图搜结果一键沉淀入库
+- **多格式与硬件适配**：remux(-c copy) + 按需 NVENC H.264 proxy；NVDEC 单流解码共享；全局 GPU 锁防驱动故障；模型档位 8B(4096 维)/2B(2048 维) 按显存自动适配
+- **Windows 桌面端 + 安装器**：pywebview 壳 + 5 页管理后台；Inno Setup 一体化安装（环境 + 内嵌 PostgreSQL + 模型，装完即用），首启断点续传兜底
+- **Web 前端**：React 19 + Vite + Tailwind 4，轻量解析工作台（案例库网格 + 解析详情 + 搜索面板）
+
+## 🚀 Quick Start
 
 ```bash
-docker compose up -d db                        # 可选：预起数据库（python run.py 会自动自举）
-set DASHSCOPE_API_KEY=sk-xxx                   # 设置 API key（vlm_llm 摘要模式）
-python run.py                                  # 启动后端（默认 8011；DB 自举：端口已通→复用 / 内嵌 vendor/pg / docker 回退）
-cd frontend-web && npm install && npm run dev    # 启动新 Web 前端开发服务器（旧 frontend/ 已废弃保留）
-curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload  # 上传视频
+# 1. 数据库（可选预起；python run.py 会自动自举：复用已有实例 → 内嵌 PostgreSQL → docker 回退）
+docker compose up -d db
+
+# 2. 配置 API key（摘要/描述用，放根目录 .env，gitignored）
+set DASHSCOPE_API_KEY=sk-xxx
+
+# 3. 启动后端（默认 8011）
+python run.py
+
+# 4. 启动 Web 前端开发服务器
+cd frontend-web && npm install && npm run dev
+
+# 5. 上传一个视频试试
+curl -X POST -F "file=@demo.mp4" http://localhost:8011/api/v1/videos/upload
 ```
 
-> API key 放项目根 `.env`（gitignored）。**Windows 桌面端两个入口**：快速看最新效果 → 双击根目录 `desktop.bat`（源码模式，改码重启即生效）；打包出货 → 双击 `update_build.bat`（出 `build\视频快速智能检索平台 Ver <版本>.exe` 安装包 + `build\green\` 打包材料目录（含 zhiying.iss，可直接 ISCC 编译），发版前先 `./bump`）。开发机首装 `powershell -ExecutionPolicy Bypass -File deploy\setup_windows.ps1`。
+> 模型与依赖见 `deploy/`（Windows 一键环境脚本 `setup_windows.ps1`）；架构细节见 [`docs/arch.md`](docs/arch.md)。
 
-## Core Features
-
-| Feature | Endpoint | Status |
-|---|---|---|
-| 上传/批量上传/参数与管道触发 | `POST /videos/upload` + `/upload/batch` + `PUT /videos/{id}/params` | ✅ |
-| **智能参数系统** | `POST /videos/suggest-params` 自动持久化场景推荐 + `PATCH /videos/{id}/toggles` 抽屉轻量持久化 + 抽屉「参数设置」小面板 + 批量解析弹窗（按各视频/统一参数 二选一） | ✅ |
-| 视频详情/状态/播放(stream)/场景缩略图 | `GET /videos/{id}` · `/status` · `/stream` · `/thumbnail/{scene}` · `/metadata` · `/proxy-status` | ✅ |
-| 多格式支持 | remux(-c copy) + 惰性 H.264 proxy(NVENC) + smart routing | ✅ |
-| 语义搜索（frame/chunk/text/label/track/plate/ocr 7 路） | `POST /search/semantic` | ✅ |
-| **搜索结果智能筛选推荐** | `POST /search/suggest-filter` 事件/动作类→画面定位、单物体类→物体定位，手动选择优先 | ✅ |
-| 人脸识别（SCRFD + ArcFace 512d 聚类, 双锚检索；检测栏按主 person track 显示出现段 + 自动跳播 + 当前段高亮） | `GET /videos/{id}/face/data` · `POST /search/face` | ✅ |
-| 车牌识别（HyperLPR3） | `GET /videos/{id}/plate/data` + 模糊搜索 | ✅ |
-| OCR 画面文字提取（RapidOCR PP-OCRv3 + DirectML, 独立子进程） | `GET /videos/{id}/ocr/data` · `POST /search/semantic` (search_types=["ocr"]) | ✅ |
-| 通用图搜（Qwen3-VL-Embedding → frame_embeddings） | `POST /search/image` | ✅ |
-| 导出（片段/单帧 + 轨迹 zip + 缩略图 zip + 摘要/画面文字 txt） | `GET/POST /videos/{id}/export/...` | ✅ |
-| 系统设置+参数预设（运行时生效, 预设随 git 迁移） | `GET/PUT /settings` + `/settings/presets` | ✅ |
-| 文件库/多版本/任务中心/批量解析/重命名/任务删除(仅失败,隐藏) | `/files` `/groups` `/tasks` `/analyze-batch` · `DELETE /tasks/{id}` | ✅ |
-| 案例素材管理（图片拖拽上传/预览/删除） | `GET/POST /groups/{id}/assets` · `/assets/{id}/file` · `DELETE /assets/{id}` | ✅ |
-| 任务报告导出（Markdown：基本信息/分析结果/**视频产出**（摘要·OCR·车牌全量）/处理日志） | `GET /tasks/{id}/report` · `POST /tasks/export-batch` | ✅ |
-| 存储卫生 | 删除即清盘（视频/案例/素材库/版本链三层保证：路由显式清 → FK 级联 → sweep 兜底）+ 孤儿清扫（`POST /maintenance/sweep` / `scripts/sweep_storage.py`；含 subject_photos/case_assets 图片孤儿与 mtime 保护）+ 存储用量（`GET /maintenance/storage`） | ✅ |
-| 任务日志 | 日志弹窗复制/一键导出 `.log`（UTF-8 BOM + CRLF）+ 处理中自动增量刷新尾部跟随；失败 traceback 批量落库、孤儿/超期 90 天清扫 | ✅ |
-| 云智平台集成 | `register-external` + `/internal/yunzhi/jobs`（202 异步+回调+幂等） | ✅ |
-| 桌面端启动器+独立桌面前端 | pywebview 壳 + 5 页管理后台（文件库/视频解析/素材库/任务中心/系统设置）+「关于」弹窗（产品型号/当前版本/检查升级走软件管家/用户手册/服务截止时间） | ✅ |
-| **Windows 安装器**（Inno Setup 6） | `zhiying.iss` → 单 exe 安装包：档位选择（8B/2B/自备模型导入）+ 代理 + 一体化安装（环境 + 内嵌 PostgreSQL + 25GB 模型安装段内下载；单进度条+蠕动平滑+卡死兜底）；首启 MODEL_BOOT 兜底补齐；软件管家 License 校验（试用/正式版 SuperDog 加密狗）；客户机无明文后端源码（backend_pyc） | ✅ |
-| **图片素材库** | 关注目标（人/其他）底库照片管理 + 人脸/通用图搜分轨检索 + 检测/图搜沉淀（保存后停留当前页）+ 案例库转存 | ✅ |
-| 全局搜索 5 目标类型 | 人/车/车牌/文本/事件 chip 互斥选中；类型切换自动清空检索词，各类型专属特征选中才出现（颜色常驻） | ✅ |
-| 前端（三端）| React 19 + Vite + Tailwind 4（对接层 `frontend-shared/` 一份实现；桌面端工作台/全局搜索常驻挂载保状态；新 Web 端 `frontend-web/` 轻量解析工作台，旧 `frontend/` 已废弃保留） | ✅ |
-
-## Architecture Overview
+## 🏗️ Architecture
 
 ```
-Upload → Probe → Pipeline (DAG) → DB → Search → Frontend
-         ├─ Duration detection (ffprobe)
-         ├─ [搜索路径] Search Encode @1fps — 与 detection 共享 NVDEC 流
-         ├─ [摘要路径] Scene Segmentation (TransNetV2/时长固定段)
-         │    ├─ Keyframe @1fps → caption(vlm_llm API) → summary(vlm_llm API)
-         │    └─ Frame/Text/Chunk embedding (4 编码路径, 分辨率 3 档预设)
-         ├─ Object Detection — YOLO11s + BoT-SORT (双层 ReID) → 逐帧检测 → 跨帧追踪
-         ├─ Face (SCRFD+ArcFace 512d 聚类) / Plate (HyperLPR3)
-         ├─ OCR — 自抽高清帧 + RapidOCR(PP-OCRv3 ONNX, DirectML 独立子进程) → ocr_detections
-         └─ Shared GPU models（embedder/detector 预载 app.state；GPU 前向串行锁）
-搜索: 7 路并行召回 + 人脸图搜 + 通用图搜 → 合并去重 → 统一 confidence
+Upload → Probe → Pipeline (DAG, 16 ops) → DB → Search → Frontend
+  ├─ duration → segmentation → keyframes → caption/summary (VLM API)
+  │                                    └→ frame/text/chunk embedding (4 编码路径)
+  ├─ duration → detection (YOLO11, 共享 NVDEC) → track_encode (BoT-SORT + ReID)
+  │                                    ├→ face (SCRFD + ArcFace 512d)
+  │                                    └→ plate (HyperLPR3)
+  ├─ duration → ocr (RapidOCR, DirectML 独立子进程) → ocr_detections
+  └─ Shared GPU models（共享单实例 + 全局 GPU 串行锁）
+
+Search: query → 1 次文本编码 → 7 路并行召回（frame/chunk/text/label/track/plate/ocr）
+        + 人脸图搜（ArcFace 双锚）+ 通用图搜（Qwen3-VL）→ 合并去重 → 统一 confidence
 ```
 
-## Tech Stack
+## 🧰 Tech Stack
 
 | Component | Technology |
 |---|---|
 | Backend | FastAPI (Python 3.13) + SQLAlchemy async + PostgreSQL 17 + pgvector |
-| Frontend | React 19 + TypeScript + Vite 6 + Tailwind CSS 4（三端：web 旧/桌面/新 web） |
-| Vector Embedding | Qwen3-VL-Embedding-8B/2B (本地 GPU, 可选 bitsandbytes 量化) |
-| Detection/Tracking | YOLO11s + BoT-SORT with_reid（双层 ReID） |
-| Caption/Summary | Qwen-VL-Max (DashScope) + DeepSeek（vlm_llm 模式, 默认） |
-| Scene/Transcript | TransNetV2 / 时长分段 · faster-whisper（opt-in） |
-| Face/Plate | InsightFace SCRFD + ArcFace R50 · HyperLPR3 (ONNX Runtime) |
-| OCR | RapidOCR PP-OCRv3 ONNX + DirectML 子进程（DML 隔离，零影响人脸/车牌 CUDA） |
-| Video Processing | FFmpeg (asyncio subprocess, NVDEC MJPEG pipe) |
-| Desktop Shell | pywebview + 内嵌便携 PostgreSQL（免 Docker/WSL2), 后端字节码封装 |
+| Frontend | React 19 + TypeScript + Vite 6 + Tailwind CSS 4 |
+| Video Embedding | Qwen3-VL-Embedding 8B/2B（本地 GPU，可选 bitsandbytes 量化） |
+| Detection/Tracking | YOLO11 + BoT-SORT（双层 ReID） |
+| Face/Plate | InsightFace SCRFD + ArcFace R50 · HyperLPR3 |
+| Caption/Summary | Qwen-VL-Max + DeepSeek（VLM API 模式） |
+| OCR | RapidOCR PP-OCRv3 ONNX + DirectML 子进程 |
+| Video I/O | FFmpeg（asyncio subprocess，NVDEC/NVENC） |
+| Desktop | pywebview + 内嵌便携 PostgreSQL + Inno Setup 6 |
 
-## 版本号与发布
-
-- **版本唯一事实来源**：`core/version.py` `__version__`；`/health` 返回 version
-- **版本格式**：两段式 `X.Y`（如 0.90，与软件管家平台版本格式一致）；tag 必须 `v<__version__>`
-- **发版（手动）**：多次 commit 不发版，认为可更新时 `./bump minor|X.Y`——联动 core/version.py + 三前端 package.json/lock + zhiying.iss 版本兜底，交互确认 commit/tag/push 后可选**一键构建发版产物**（根 exe + build\ 安装包 + 打包材料目录，仅 Windows；产物版本号自动读 version.py）
-- **⚠️ 后端 + 服务器前端（`frontend/` + `frontend-shared/`）任何改动都必须 `./bump`**；仅纯文档/注释/桌面前端（`frontend-desktop/`）不需 bump
-- **部署**：服务器 `bash deploy.sh v<tag>`（fetch→config 迁移→checkout→requirements 变化才 pip→前端 build→restart→90s 健康检查）
-
-## Project Structure
+## 📁 Project Structure
 
 ```
 zhiying/
-├── bump                           # 发版启动器（交互联动版本号/commit/tag/push）
-├── zhiying.iss                    # Windows 安装器脚本（Inno Setup 6.2.1 → build\*.exe）
-├── run.py / main.py / backend_launcher.py
-├── api/            # 路由: video/search/settings/tasks/groups/detection/face/plate/ocr/export/maintenance/yunzhi/subjects
-├── core/           # models(19表)/schemas/repository/search/db/config_loader/settings_service/presets_service
-│                   #   storage_manager/gpu_lock/cancellation/embedding_profile/paths/version/pipeline_queue
-├── pipeline/       # engine(DAG 执行器) / operations(16 op) / runners/(20 runner) / search_engine
-├── plugins/        # factory + detector/face/plate/ocr/embedder/captioner/summarizer/segmenter/transcriber
-├── services/       # video_service / yunzhi_job_service / format_service / export_service / report_service / smart_suggest
-├── config/         # config.yaml(gitignored) + config.yaml.example + presets.json(随 git 共享) + prompts.yaml
-├── frontend/       # 服务器前端（已废弃，源码保留待退役）
-├── frontend-desktop/# 桌面前端（5 页管理后台, 独立）
-├── frontend-web/   # 新 Web 前端（轻量解析工作台：案例库网格 + 解析详情；api 复用 frontend-shared，自带 mock 演示降级）
-├── frontend-shared/ # 多端共享对接层（api/types/labels/helpers, 一份实现）
-├── desktop/        # 桌面端 pywebview 壳 + build_exe.ps1(打纯壳 exe) + build_installer.ps1(出安装包) + model_bootstrap.py(首启模型引导)
-├── deploy/         # setup_windows.ps1 / setup_linux.sh / build_backend_pyc.py / download_models.py / stop_runtime.ps1 / iss-lang/(Inno 中文语言包)
-├── scripts/        # sweep_storage.py / bump_version.py / mock_yunzhi_platform.py
-└── docs/           # arch.md(权威架构)
+├── api/             # FastAPI 路由（video/search/settings/tasks/groups/subjects/...）
+├── core/            # models(19 表)/repository/search_engine/db/config/gpu_lock/pipeline_queue
+├── pipeline/        # DAG engine + operations(16) + runners(20) + search_engine
+├── plugins/         # detector/face/plate/ocr/embedder/captioner/summarizer/segmenter（config 驱动可换后端）
+├── services/        # video_service / format_service / export_service / smart_suggest / ...
+├── frontend-web/    # 新 Web 前端（轻量解析工作台）
+├── frontend-desktop/# 桌面前端（5 页管理后台）
+├── frontend-shared/ # 多端共享对接层（api/types/labels，一份实现）
+├── desktop/         # pywebview 壳 + 构建/打包脚本 + 首启模型引导
+├── deploy/          # Windows/Linux 环境脚本 + 模型下载 + backend_pyc 构建
+└── docs/arch.md     # 权威架构文档
 ```
 
-## Status
+## 📌 Status
 
-核心链路全部可用（权威架构与细节见 `docs/arch.md`）。已知边界：Chunk 编码默认关 · OCR 导出/增强（预留）· Grounding(Florence-2 占位) · 素材库告警红点（前端空壳）。
+核心链路（上传 → 解析 → 检索 → 导出）全部可用，已在生产环境稳定运行。已知边界：Chunk 编码默认关 · Grounding（Florence-2 占位）· 素材库告警红点（前端空壳预留）。
 
-> 变更历史查 git log——本仓库提交信息承担完整变更记录职责。
+> 变更历史查 git log；权威架构与设计决策详见 [`docs/arch.md`](docs/arch.md)。

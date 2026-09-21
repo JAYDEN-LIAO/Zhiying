@@ -5,13 +5,13 @@
 智影 (Zhiying) 是**视频分析引擎**：上传视频（单个/批量分组/多版本解析）→ 声明式 DAG 管道（16 ops）→ 4 条编码路径 + YOLO11/BoT-SORT 检测跟踪（双层 ReID）+ 人脸/车牌/OCR 识别 → 8 路语义搜索 + 图搜 + 图片素材库（人脸/通用图搜分轨检索）→ FastAPI + PostgreSQL/pgvector 对外服务。当前版本 **0.90**（两段式版本号：`core/version.py` 与三前端 package.json 同步）。
 
 **关键锚点**：
-- **本机两个入口（定版约定）**：快速看最新效果 → 双击根目录 **`desktop.bat`**（源码模式，改码重启即生效，License 跳过）；打包出货 → 双击 **`update_build.bat`**（dist → 壳 exe 到 `dist\智影桌面端\` → `build\` 安装包 + `build\green` 打包材料，发版前先 `./bump`）。根目录不落地 exe（iss 直接取 dist 产物）；根 exe 是封装态（跑烧进的 backend_pyc，非源码），仅用于模拟客户机
-- **生产部署**：10.0.0.176（systemd `zhiying.service`，8011）；发版 `./bump`（可尾链一键构建安装包 + 打包材料目录）→ 服务器 `bash deploy.sh v<tag>`
+- **本机两个入口（定版约定）**：快速看最新效果 → 双击根目录 **`desktop.bat`**（源码模式，改码重启即生效）；打包出货 → 双击 **`update_build.bat`**（dist → 壳 exe 到 `dist\智影桌面端\` → `build\` 安装包 + `build\green` 打包材料，发版前先 `./bump`）。根目录不落地 exe（iss 直接取 dist 产物）；根 exe 是封装态（跑烧进的 backend_pyc，非源码），仅用于模拟客户机
+- **生产部署**：内网 Linux 服务器（systemd `zhiying.service`，8011）；发版 `./bump`（可尾链一键构建安装包 + 打包材料目录）→ 服务器 `bash deploy.sh v<tag>`
 - **SVN 双仓备份**：`python scripts/svn_sync.py source product`——源码镜像 `AI_Ying/trunk`（git ls-files 精确镜像），产品材料 `AI_Ying_TestVersion/trunk/v<版本>/`（=build\green 全量，已存在需 --force）；凭证 `config/svn.local.json`（gitignored）；svn add 必须 `--no-ignore`（默认忽略 *.pyc 会漏 backend_pyc）
 - **配置**：`config/config.yaml` 机器相关 gitignored；运行时覆盖走 `data/settings.json`（保存即生效）+ 共享预设 `config/presets.json`（入 git）
 - **三前端**：服务器 `frontend/`（**已废弃保留**，待退役）+ 桌面 `frontend-desktop/`（5 页管理后台，pywebview 壳）+ 新 web `frontend-web/`（轻量解析工作台，api 复用 frontend-shared，自带 mock 演示降级；暂未挂载到后端静态托管，与旧端并存）；对接层 `frontend-shared/` 一份实现
 - **Windows 安装器**：`zhiying.iss`（Inno Setup 6）→ `build\视频快速智能检索平台 Ver <版本>.exe`（gitignored）；一体化安装（环境 + 内嵌 PG + 25GB 模型在安装段内完成；首启 MODEL_BOOT 兜底续传，`desktop/model_bootstrap.py` 跑 `deploy/download_models.py`，档位写回 config.yaml）；交付走 `desktop/make_green.ps1` 装配 `build\green\` 打包材料目录（zhiying.iss 就位，可直接 ISCC 编译；`-Zip` 可选压 zip 交外部打包方）
-- **License 校验（软件管家）**：封装态启动即验、开发态跳过（`desktop/license_check.py`）——调软件管家 `software_center.exe 1 A5300`，退出码 0=试用通过 / 1=失败弹窗退出 / 2=正式版自校验 SuperDog 加密狗（`SuperDog_x64.dll` 与壳同级）
+- **授权校验**：封装态启动即验、开发态跳过（`desktop/license_check.py`，对接外部授权平台）
 - **模型档位**：`embedding_profile` 8b=4096 维（默认）/ 2b=2048 维（低显存平替）；人脸固定 512（ArcFace）
 - **摘要**：vlm_llm（API，默认）；native_video 已退役
 - 架构细节见 `docs/arch.md`
@@ -75,8 +75,8 @@
 - **安装器约定**: Inno 等待循环跑 UI 线程——每轮必须 ProcessMessages 泵消息（否则窗口假死）；超时 = 30 分钟无任何新输出判卡死 + 12h 总兜底（模型 25GB 在安装段内下载，不能按总时长掐）；进度 = setup 离散标记 + Inno 侧蠕动平滑（pip 接管道非 TTY 无进度条可解析）；**setup 单实例守卫**（命名 Mutex）+ 安装器启动环境安装前清残留孤儿实例（ewNoWait 不看管子进程，失败/取消会残留，并行实例交错写 install.progress 致进度状态来回闪）；Python 检测必须实跑 `python --version` 验证（`Get-Command` 会命中全新 Windows 微软商店 0 字节假别名 stub，误判已装跳过安装）；winget 显式 `--source winget`（部分客户机 msstore 源证书 pinning 失败劫持整条命令）；GitHub 源模型段（yolo/reid/face）失败降级告警不阻断（首启 MODEL_BOOT 断点续传补齐）；pip 走清华镜像、torch 官方源走代理失败回退阿里云 find-links 直连；自备模型复制前置（不依赖环境安装成败）+ 路径校验（models\Qwen 为锚）；快捷方式延后到环境安装成功后由代码创建（[Icons] 段早于环境安装执行）；装完删安装耗材（requirements.txt/setup_windows.ps1/desktop/db.py；download_models.py 保留供首启引导），卸载 [UninstallDelete] 清 .venv/vendor、保留 data/models
 - **工作台常驻挂载**: 桌面端 Workbench/GlobalSearch 切页 hide 不卸载（保播放与搜索状态）；跨页意图（seek/track 选中/搜索同步）一律携带目标视频 id，等 vid 落到目标才消费
 - **搜索隔离**: search/face 与 search/image 参数必须 `Form(...)` 声明（防全库泄漏）
-- **版本号**: `core/version.py` `__version__` 唯一来源（两段式 X.Y，与软件管家平台格式一致）；后端+服务器前端改动必须 `./bump`（联动三前端 package.json/lock + zhiying.iss 兜底版本，GUI 直编不拿旧版本号）；发版手动触发（多次 commit 不发版，bump 才发版）
-- **关于弹窗/检查升级**: TitleBar「关于」→ AboutDialog；检查升级走软件管家 `software_center.exe` **模式 2**（`"2" "<产品号>" "<license.dat>" "<当前版本>"`，升级检查/下载由软件管家自带 UI 完成，壳只调起等待）；服务截止时间读 license.dat 过期字段；开发态（非 frozen）置灰
+- **版本号**: `core/version.py` `__version__` 唯一来源（两段式 X.Y）；后端+服务器前端改动必须 `./bump`（联动三前端 package.json/lock + zhiying.iss 兜底版本，GUI 直编不拿旧版本号）；发版手动触发（多次 commit 不发版，bump 才发版）
+- **关于弹窗/检查升级**: TitleBar「关于」→ AboutDialog；检查升级走壳调起外部升级平台（升级/下载由平台自带 UI 完成，壳只调起等待）；服务截止时间读授权凭证过期字段；开发态（非 frozen）置灰
 - **删除三层保证**: 路由显式清盘 → DB FK CASCADE → `maintenance/sweep` 兜底；
   task_logs / pipeline_tasks 无 FK（bootstrap 手建表），由 delete_video **显式清除**
   （删视频连队列行一起清，重启恢复不复活僵尸任务；恢复时发现视频已删的排队任务标 failed，
