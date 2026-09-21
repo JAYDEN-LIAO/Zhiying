@@ -106,14 +106,28 @@ class QwenVLEmbedder(BaseEmbedder):
                 ),
             )
         else:
+            # fp16 直载：device_map="auto" 已完成层分配（显存不足时 accelerate 会把部分层
+            # offload 到 CPU），此时再 .to(device) 会触发 accelerate 护栏炸启动——
+            # offload 只损失速度不该致命，改为告警（见下方 hf_device_map 检查）
             self.model = AutoModel.from_pretrained(
                 model_name,
                 trust_remote_code=True,
                 dtype=torch.float16 if device == "cuda" else torch.float32,
                 device_map="auto" if device == "cuda" else None,
                 low_cpu_mem_usage=True,
-            ).to(device)
+            )
+            if device != "cuda":
+                self.model.to(device)
         self.model.eval()
+        if device == "cuda":
+            offloaded = [k for k, v in getattr(self.model, "hf_device_map", {}).items()
+                         if v in ("cpu", "disk")]
+            if offloaded:
+                logger.warning(
+                    "[QwenVLEmbedder] 显存不足，%d 个模块 offload 到 CPU（编码会显著变慢）——"
+                    "建议 embedding_profile 切 2B 或 quantization=8bit",
+                    len(offloaded),
+                )
         logger.info("[QwenVLEmbedder] Model loaded")
 
     # ═════════════════════════════════════════════════════════

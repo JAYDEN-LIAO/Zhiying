@@ -32,6 +32,20 @@ Set-Location $ProjectRoot
 $VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $DownloadRetries = 5
 
+# ── 单实例守卫：防上次失败/取消残留的实例与本实例并行写 install.progress ──
+# 并行实例各自追加进度行 → 安装器状态文字在多个阶段间来回闪、进度互相踩。
+# 命名 Mutex 全局互斥；拿不到说明已有实例在跑（正常路径下安装器启动前已清残留，这里是最后防线）。
+$script:SetupMutex = New-Object System.Threading.Mutex($false, "Global\Zhiying_SetupWindows")
+$script:OwnsMutex = $false
+try { $script:OwnsMutex = $script:SetupMutex.WaitOne(0) } catch { $script:OwnsMutex = $true }  # Mutex 被废弃句柄持有等异常时放行，别卡死安装
+if (-not $script:OwnsMutex) {
+    $msg = "已有另一个 setup_windows.ps1 实例在运行（上次安装未退干净），本实例退出。请结束所有 powershell/python 进程或重启后重跑。"
+    try { Add-Content -Path (Join-Path $ProjectRoot "vendor\install.log") -Value "[$(Get-Date -Format 'MM-dd HH:mm:ss')] $msg" -Encoding UTF8 } catch {}
+    Write-Host $msg -ForegroundColor Yellow
+    if ($DoneMarker) { [System.IO.File]::WriteAllText($DoneMarker, "1") }
+    exit 1
+}
+
 # ── 全局异常兜底：任何终止性错误落盘 + 屏显，避免闪退后无据可查 ──
 $InstallLog = Join-Path $ProjectRoot "vendor\install.log"
 trap {
@@ -444,16 +458,31 @@ $pipArgs = @("-m", "pip", "install", "--upgrade", "pip", "--progress-bar", "raw"
 if ($script:Proxy) { $pipArgs += @("--proxy", $script:Proxy) }
 $rc = Invoke-Native (@($VenvPython) + $pipArgs)
 Write-ProgressPoint 10 'deps'
-# CUDA 版 PyTorch：pip 默认装 CPU 版，必须用 PyTorch 官方源；按驱动 CUDA 版本选 cu124/cu126/cu130
+# CUDA 版 PyTorch：pip 默认装 CPU 版，必须用 PyTorch 官方源；按 GPU 代际/驱动 CUDA 选 cu124/cu126/cu130
 # nvidia-smi 新版驱动头是 "CUDA UMD Version"（旧版是 "CUDA Version"），两种都匹配；null 兜底
 $cudaLine = & nvidia-smi 2>$null | Select-String "CUDA (UMD )?Version:\s*([0-9.]+)" | Select-Object -First 1
 $driverCuda = if ($cudaLine) { $cudaLine.Matches[0].Groups[2].Value } else { "" }
+# ⚠️ 驱动 CUDA 版本 ≠ GPU 架构：Blackwell（RTX 50 系，compute_cap ≥ 10）需要 cu128+ 内核
+# （cu126 无 sm_120），而 cu130 运行时又要求驱动 ≥ r580（驱动 CUDA 13）。
+# 故 compute_cap ≥ 10 时：驱动支持 CUDA 13 → cu130；仅支持 12.x → cu128（Blackwell 内核 + 旧驱动兼容）。
+$ccLine = & nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>$null | Select-Object -First 1
+$ccMajor = 0
+if ($ccLine -and "$ccLine" -match '^\s*(\d+)') { $ccMajor = [int]$Matches[1] }
+$script:GpuTotalMiB = 0
+$memLine = & nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>$null | Select-Object -First 1
+if ($memLine -and "$memLine" -match '(\d+)\s*MiB') { $script:GpuTotalMiB = [int]$Matches[1] }
 # CUDA 版 PyTorch：两级源——① PyTorch 官方索引（正规 pip index，走代理）优先；
 # ② 失败回退阿里云 pytorch-wheels 平铺目录。注意阿里云该镜像是 whl 平铺列表，
 # 只能 --find-links（-f）用，不能 --index-url（请求 <镜像>/torch/ 会 404，必现失败）。
 $torchIdx = "https://download.pytorch.org/whl/cu124"
 $torchFlat = "https://mirrors.aliyun.com/pytorch-wheels/cu124"
-if ($driverCuda -and [version]$driverCuda -ge [version]"13.0") {
+if ($ccMajor -ge 10 -and $driverCuda -and [version]$driverCuda -ge [version]"13.0") {
+    $torchIdx = "https://download.pytorch.org/whl/cu130"; $torchFlat = "https://mirrors.aliyun.com/pytorch-wheels/cu130"
+}
+elseif ($ccMajor -ge 10) {
+    $torchIdx = "https://download.pytorch.org/whl/cu128"; $torchFlat = "https://mirrors.aliyun.com/pytorch-wheels/cu128"
+}
+elseif ($driverCuda -and [version]$driverCuda -ge [version]"13.0") {
     $torchIdx = "https://download.pytorch.org/whl/cu130"; $torchFlat = "https://mirrors.aliyun.com/pytorch-wheels/cu130"
 }
 elseif ($driverCuda -and [version]$driverCuda -ge [version]"12.6") {
@@ -609,6 +638,14 @@ else {
 }
 
 # ───────────────────────────── 4/6 模型（按档位） ─────────────────────────────
+# 显存 vs 档位校验：8B fp16 权重 ~16GB，16GB 卡（RTX 5080 Laptop 等）塞不下 →
+# accelerate 部分层 offload CPU → 后端启动 .to(device) 护栏炸（code 3）。fp16 无量化时
+# 物理不可行，自动降级 2B 保证可用（显存不足硬装 8B 没有赢家）。
+if ($script:EmbeddingProfile -eq "8b" -and $script:GpuTotalMiB -gt 0 -and $script:GpuTotalMiB -lt 17000) {
+    Write-Warn ("本机显存 {0} MiB 不足以装载 8B fp16（需 ~16GB），自动改用 2B 档位（2048 维）。" -f $script:GpuTotalMiB)
+    Write-Warn "如坚持 8B：需 24GB+ 显存，或改 plugins.embedder.quantization=8bit（需 bitsandbytes，笔记本有功耗尖峰风险）。"
+    $script:EmbeddingProfile = "2b"
+}
 Write-Step "4/6" "模型下载（$script:EmbeddingProfile 档位）"
 if ($SkipModels) { Write-Info "已跳过（-SkipModels）" }
 else {
@@ -626,7 +663,11 @@ else {
         "--component", "yolo", "--component", "reid", "--component", "face",
         "--model-root", (Join-Path $ProjectRoot "models"), "--retries", "$DownloadRetries") $true
     Clear-PipeSpan
-    if ($rc -ne 0) { throw "GitHub 源模型下载失败（检查代理）" }
+    if ($rc -ne 0) {
+        # 降级不阻断：yolo/reid/face 走 GitHub，无代理客户机在此重试数小时也下不动。
+        # 首启 check_models 检测缺失 → MODEL_BOOT 自动断点续传补齐（届时可配代理），安装段别卡死最后一公里
+        Write-Warn "GitHub 源模型（yolo/reid/face）下载失败——已跳过，首启会自动检测补齐（届时需可访问 GitHub 或配置代理）"
+    }
     Write-Ok "全部模型就绪"
 }
 

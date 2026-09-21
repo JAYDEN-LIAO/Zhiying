@@ -39,6 +39,7 @@
 - **Config-driven**: 插件后端由 `config.yaml` `plugins.{name}.backend` 选，null=禁用；API key 只在 `.env`
 - **设置运行时生效**: 上传/FormatService/VideoService 用新鲜 `load_config()`（勿用 app.state.config 快照）
 - **全局 GPU 锁**: 所有 embedder/detect 前向必须 `async with gpu_lock`（并发会蓝屏/卡死）；detection 攒批用 **128**；实测 RTX 5090 笔记本 + embedder bnb 8bit 在重 GPU 负载下偶发整机硬冻结（供电瞬变，Event 41 无 bugcheck）——24GB+ 机器建议 embedder `quantization=none`（fp16）规避 bnb 8bit matmul 功耗尖峰
+- **torch 构建 / 显存档位适配**：setup 装 torch 按 **GPU compute_cap + 驱动 CUDA 版本**双条件选构建——Blackwell（cc ≥ 10）驱动 CUDA 13+ → cu130、仅 12.x → cu128（cu126 无 sm_120 内核；cu130 运行时要求驱动 ≥ r580，旧驱动装 cu130 会 cudaErrorNotSupported + native 崩 0xC0000005）；非 Blackwell 沿用驱动版本逻辑（cu124/cu126/cu130）；8B fp16 需 ~17GB 显存，检测显存 <17GB 自动降级 2B（16GB 卡硬装 8B → accelerate offload CPU → 后端启动炸）；embedder fp16 路径 offload 只告警不致命（`.to(device)` 会触发 accelerate 护栏）
 - **OCR DML 隔离**: RapidOCR 必须走**独立子进程**（`plugins/ocr/rapidocr_worker.py`），**绝不**在主进程改全局 onnxruntime；封装态（backend_pyc 只留 .pyc）worker 入口已做 `.pyc` 回退，worker 定位 vendor/ort_dml 走 `ZHIYING_PROJECT_ROOT`（源码态 `__file__` 推导）
 - **共享单实例**: embedder + detector 启动预载 app.state（detector 懒加载），禁用 `load_plugin` 重复实例化
 - **全局任务队列**: PipelineQueue FIFO + N worker + `pipeline_tasks` 表持久化；重启恢复；幂等
@@ -71,7 +72,7 @@
 - **人脸双阈值**: 同 track 0.30 宽松合并，跨 track 0.58 保守合并；检索锚点最典型脸
 - **人脸出现段**: 检测栏人脸展开显示该身份的**主 person track**（`track_to_identity`，时间轴同源）的 `[first_seen, last_seen]`/`segments`，排除"搭车"长 track；人脸搜索 `appearances` 仅保留主身份 track；点击结果从首段自动播放并逐段跳过，当前段黄框高亮（前端 `timeupdate` 判 `currentTime` 落段）
 - **弹窗/抽屉 portal**: 桌面前端所有 modal/drawer 必须 `createPortal(document.body)` + `onMouseDown` 遮罩关闭（`e.target===currentTarget`）；`DetectionOverlay` 用真实事件目标 `container.contains` 判定防穿透/遮挡关不掉
-- **安装器约定**: Inno 等待循环跑 UI 线程——每轮必须 ProcessMessages 泵消息（否则窗口假死）；超时 = 30 分钟无任何新输出判卡死 + 12h 总兜底（模型 25GB 在安装段内下载，不能按总时长掐）；进度 = setup 离散标记 + Inno 侧蠕动平滑（pip 接管道非 TTY 无进度条可解析）；Python 检测必须实跑 `python --version` 验证（`Get-Command` 会命中全新 Windows 微软商店 0 字节假别名 stub，误判已装跳过安装）；pip 走清华镜像、torch 官方源走代理失败回退阿里云 find-links 直连；自备模型复制前置（不依赖环境安装成败）+ 路径校验（models\Qwen 为锚）；快捷方式延后到环境安装成功后由代码创建（[Icons] 段早于环境安装执行）；装完删安装耗材（requirements.txt/setup_windows.ps1/desktop/db.py；download_models.py 保留供首启引导），卸载 [UninstallDelete] 清 .venv/vendor、保留 data/models
+- **安装器约定**: Inno 等待循环跑 UI 线程——每轮必须 ProcessMessages 泵消息（否则窗口假死）；超时 = 30 分钟无任何新输出判卡死 + 12h 总兜底（模型 25GB 在安装段内下载，不能按总时长掐）；进度 = setup 离散标记 + Inno 侧蠕动平滑（pip 接管道非 TTY 无进度条可解析）；**setup 单实例守卫**（命名 Mutex）+ 安装器启动环境安装前清残留孤儿实例（ewNoWait 不看管子进程，失败/取消会残留，并行实例交错写 install.progress 致进度状态来回闪）；Python 检测必须实跑 `python --version` 验证（`Get-Command` 会命中全新 Windows 微软商店 0 字节假别名 stub，误判已装跳过安装）；winget 显式 `--source winget`（部分客户机 msstore 源证书 pinning 失败劫持整条命令）；GitHub 源模型段（yolo/reid/face）失败降级告警不阻断（首启 MODEL_BOOT 断点续传补齐）；pip 走清华镜像、torch 官方源走代理失败回退阿里云 find-links 直连；自备模型复制前置（不依赖环境安装成败）+ 路径校验（models\Qwen 为锚）；快捷方式延后到环境安装成功后由代码创建（[Icons] 段早于环境安装执行）；装完删安装耗材（requirements.txt/setup_windows.ps1/desktop/db.py；download_models.py 保留供首启引导），卸载 [UninstallDelete] 清 .venv/vendor、保留 data/models
 - **工作台常驻挂载**: 桌面端 Workbench/GlobalSearch 切页 hide 不卸载（保播放与搜索状态）；跨页意图（seek/track 选中/搜索同步）一律携带目标视频 id，等 vid 落到目标才消费
 - **搜索隔离**: search/face 与 search/image 参数必须 `Form(...)` 声明（防全库泄漏）
 - **版本号**: `core/version.py` `__version__` 唯一来源（两段式 X.Y，与软件管家平台格式一致）；后端+服务器前端改动必须 `./bump`（联动三前端 package.json/lock + zhiying.iss 兜底版本，GUI 直编不拿旧版本号）；发版手动触发（多次 commit 不发版，bump 才发版）

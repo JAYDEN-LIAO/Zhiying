@@ -147,6 +147,7 @@ var
   LastSnap: String;           // 进度日志尾部快照（判断有无新输出）
   LastEvent: DWORD;           // 最近一次新输出时刻（无输出超时依据）
   TotalStart: DWORD;          // 安装开始时刻（总兜底）
+  ParsedCount: Integer;       // 已解析行数（增量解析防全量重放闪旧阶段文案）
 
 // 自备模型档位检测：Qwen\ 子目录名含 2B/8B
 function DetectProfile(const SourceDir: String): String;
@@ -413,7 +414,12 @@ begin
         LastEvent := GetTickCount();
       end;
     end;
-    for i := 0 to Lines.Count - 1 do begin
+    // 增量解析：全量重放会每轮把标题从 env→deps→db→… 依次重设一遍（重绘插入时肉眼可见地
+    // 闪过旧阶段文案，客户机长时间停在 models 阶段时尤其明显）。只解析上次之后的新行；
+    // 末行留待下轮复读（防读到写了一半的行）。
+    if Lines.Count < ParsedCount then
+      ParsedCount := 0;   // 文件被重建（新一轮安装）→ 从头解析
+    for i := ParsedCount to Lines.Count - 1 do begin
       S := Lines[i];
       if Copy(S, 1, 8) <> 'PROGRESS' then
         Continue;
@@ -444,6 +450,8 @@ begin
         WizardForm.StatusLabel.Caption := '正在安装运行环境 · ' + IntToStr(DispPct) + '% — ' + StatusText;
       end;
     end;
+    ParsedCount := Lines.Count - 1;   // 末行下轮复读（防半行）；新行已全部消费
+    if ParsedCount < 0 then ParsedCount := 0;
   finally
     Lines.Free;
   end;
@@ -560,6 +568,13 @@ begin
     ' -ProgressLog "' + ProgressLog + '"' +
     ' -DoneMarker "' + DoneMarker + '"' +
     ' -OutputLog "' + OutputLogPath + '"';
+  // 清残留：向导 ewNoWait 不看管子进程，失败/取消会留下孤儿 setup_windows 实例；
+  // 重跑时并行实例交错写 install.progress → 进度状态文字来回闪、百分比互相踩。
+  // 排除自身 PID（$PID）防自噬；连同清 .venv python（模型下载重试残留）与本安装相关的 curl
+  Exec('powershell.exe',
+    '-NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($_.ProcessId -ne $PID) -and (($_.CommandLine -match ''setup_windows\.ps1'') -or ($_.CommandLine -match ''\.venv\Scripts'') -or (($_.Name -eq ''curl.exe'') -and ($_.CommandLine -match ''Zhiying''))) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"',
+    AppDir, SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
   // 启动失败立即报错（如被安全软件拦截），否则 DoneMarker 永不出现
   if not Exec('powershell.exe', Params, AppDir, SW_HIDE, ewNoWait, ResultCode) then begin
     WizardForm.StatusLabel.Caption := '环境安装失败';
@@ -575,6 +590,7 @@ begin
   TotalStart := StartTick;
   LastEvent := StartTick;
   LastSnap := '';
+  ParsedCount := 0;   // 进度文件已在上方删除重建，从头解析
   TimedOut := False;
   repeat
     ProcessMessages();

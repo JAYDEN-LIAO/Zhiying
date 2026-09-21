@@ -122,3 +122,6 @@ license.dat
 
 # ── SVN 备份凭证（绝不入库）──
 config/svn.local.json
+
+# 报告产物临时目录
+.report_build/

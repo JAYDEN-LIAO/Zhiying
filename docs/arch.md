@@ -209,7 +209,12 @@ Semantic Search: query → embedder.encode_text() 一次 → 7 路并行召回:
         → 代理页（预填 http://127.0.0.1:，只补端口）→ 安装 → 完成
 安装期: 一体化安装——隐藏跑 setup_windows.ps1 全量（环境+内嵌 PG+25GB 模型安装段内下载；非交互参数 -Quiet
         -EmbeddingProfile/-Proxy/-ProgressLog/-DoneMarker/-OutputLog）
-        Python 检测实跑 --version 验证（Get-Command 会命中全新 Windows 商店假别名 stub 误判已装）
+        Python 检测实跑 --version 验证（Get-Command 会命中全新 Windows 商店假别名 stub 误判已装）；
+        winget 显式 --source winget（部分客户机 msstore 源证书 pinning 失败劫持整条命令）；
+        setup 单实例 Mutex 守卫 + 安装器启动前清残留实例（并行实例交错写 install.progress 致进度状态来回闪）；
+        GitHub 源模型段（yolo/reid/face）失败降级告警不阻断，首启 MODEL_BOOT 断点续传补齐；
+        torch 构建按 GPU compute_cap 选（Blackwell sm_120 强制 cu130，驱动 CUDA 版本≠GPU 架构）；
+        显存 <17GB 自动降级 2B 档位（8B fp16 物理装不下 → accelerate offload → 启动炸）
         进度 = setup 离散标记（models 段解析 download_models.py [progress] N% 插值）+ Inno 侧蠕动平滑（~2.5s +1 到阶段上限）
         等待循环在 UI 线程：每轮 ProcessMessages 泵消息防窗口假死；超时 = 30 分钟无任何新输出判卡死 + 12h 总兜底（模型在安装段内下载，不能按总时长掐）；powershell 启动失败立即报错
         快捷方式延后到环境安装成功后由代码创建（[Icons] 段早于环境安装执行，装一半失败不留无效图标）
