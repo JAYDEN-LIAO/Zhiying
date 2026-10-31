@@ -23,8 +23,6 @@ import { useVideoPolling } from "./hooks/useVideoPolling";
 import { useProxyStatus } from "./hooks/useProxyStatus";
 import { useDetectionData } from "./hooks/useDetectionData";
 import { useStreamReady } from "./hooks/useStreamReady";
-import { useYunzhi } from "./platform/YunzhiProvider";
-import type { YunzhiResource } from "./platform/yunzhi-bridge";
 
 export default function Dashboard() {
   /* ── Navigation & Panels ── */
@@ -43,7 +41,6 @@ export default function Dashboard() {
   const [seekTarget, setSeekTarget] = useState<{ start: number; end: number | null } | null>(null);
   const [showExport, setShowExport] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const jumpHandledRef = useRef(false); // 云智入口自动跳转只尝试一次
 
   /* ── 版本号（header logo 右侧标签，取自 /health） ── */
   const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -62,13 +59,10 @@ export default function Dashboard() {
   const [detectionVideoId, setDetectionVideoId] = useState<string | null>(null);
   const [detectionVideo, setDetectionVideo] = useState<VideoResponse | null>(null);
 
-  /* ── 云智平台 Bridge（mock=true 独立开发走本地上传；false 走平台文件库选文件） ── */
-  const { mock: yunzhiMock, selectFiles: yunzhiSelectFiles, context: yunzhiContext } = useYunzhi();
-
   /* ── Panel toggle (must be after currentVideo / drillGroupId declarations) ── */
   const togglePanel = useCallback((panel: PanelType) => {
     const isCurrentlyOpen = activePanel === panel;
-    // 云智嵌入场景：在系统设置页点参数/历史 → 先跳回工作台再召出，避免面板盖在设置页上
+    // 嵌入场景：在系统设置页点参数/历史 → 先跳回工作台再召出，避免面板盖在设置页上
     if (!isCurrentlyOpen && currentPage !== "dashboard") {
       setCurrentPage("dashboard");
     }
@@ -255,22 +249,6 @@ export default function Dashboard() {
     }
   }, [currentVideoId, videoGroups, videos]);
 
-  /* ── 云智入口自动跳转（v0.25.x）：Bridge context.resource.id → 平台文件对应视频
-     只尝试一次；非文件入口 / 查无匹配 → 保持默认空工作台 */
-  useEffect(() => {
-    if (jumpHandledRef.current) return;
-    const resource = yunzhiContext?.resource;
-    if (!resource || resource.resourceType !== "FILE" || resource.id == null) return;
-    jumpHandledRef.current = true; // 尝试一次，成功与否都不再重试
-    let cancelled = false;
-    api.getVideoByExternalId(resource.id)
-      .then((video) => {
-        if (!cancelled) handleSelect(video.id, video.group_id ?? undefined);
-      })
-      .catch(() => { /* 无匹配 → 保持默认空工作台 */ });
-    return () => { cancelled = true; };
-  }, [yunzhiContext, handleSelect]);
-
   const handleDelete = useCallback((deletedId: string) => {
     if (currentVideoId === deletedId) { setCurrentVideoId(null); setCurrentVideo(null); }
     if (detectionVideoId === deletedId) { setDetectionVideoId(null); setDetectionVideo(null); }
@@ -359,69 +337,8 @@ export default function Dashboard() {
     setIsUploading(false);
   }, []);
 
-  /* ── 注册平台共享路径视频（云智 Bridge 选文件 → 就地引用，不上传字节） ── */
-  const registerExternal = useCallback(async (items: YunzhiResource[]) => {
-    const files = items.filter((i) => i.resourceType === "FILE" && i.absolutePath);
-    if (files.length === 0) {
-      alert("请选择文件（不是文件夹）");
-      return;
-    }
-    setCurrentPage("dashboard");
-    setActivePanel(null);
-    setIsUploading(true);
-    try {
-      if (files.length === 1) {
-        const result = await api.registerFromPath(files[0].absolutePath!, files[0].name, files[0].id);
-        setCurrentVideoId(result.id);
-        setCurrentVideo(result);
-      } else {
-        const settled = await Promise.allSettled(
-          files.map((f) => api.registerFromPath(f.absolutePath!, f.name, f.id))
-        );
-        const results = settled
-          .filter((r): r is PromiseFulfilledResult<VideoResponse> => r.status === "fulfilled")
-          .map((r) => r.value);
-        const failed = settled.length - results.length;
-        if (results.length === 0) {
-          throw new Error("所选文件全部注册失败");
-        }
-        // 部分成功也继续：选中首个成功视频 + 明确提示失败数
-        // （原 Promise.all 任一失败即整体丢弃 → 已注册成功的视频成为无引用孤儿）
-        setCurrentVideoId(results[0].id);
-        setCurrentVideo(results[0]);
-        if (results[0].group_id) {
-          setVideoGroups((prev) => [...prev, {
-            groupId: results[0].group_id!,
-            videoIds: results.map((r) => r.id),
-          }]);
-        }
-        if (failed > 0) {
-          alert(`其中 ${failed} 个文件注册失败，其余已成功`);
-        }
-      }
-      setListKey((k) => k + 1);
-      setHasPendingParams(true);
-      setActivePanel("params");
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "注册共享文件失败");
-    }
-    setIsUploading(false);
-  }, []);
-
-  /* ── Upload (v0.19 支持多选; 云智宿主模式走 Bridge 文件库选文件) ── */
+  /* ── Upload (v0.19 支持多选) ── */
   const handleUpload = useCallback(() => {
-    if (!yunzhiMock) {
-      // 平台宿主模式：Bridge 从文件库选文件 → 就地注册
-      void yunzhiSelectFiles()
-        .then((items) => registerExternal(items))
-        .catch((err) => {
-          if (!(err instanceof Error && /用户取消/.test(err.message))) {
-            alert(err instanceof Error ? err.message : "平台文件选择失败");
-          }
-        });
-      return;
-    }
-    // 独立开发模式：本地文件选择
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".mp4,.mov,.avi,.mkv,.webm";
@@ -431,7 +348,7 @@ export default function Dashboard() {
       input.value = ""; // 允许重复选择同一文件
     };
     input.click();
-  }, [handleFiles, registerExternal, yunzhiMock, yunzhiSelectFiles]);
+  }, [handleFiles]);
 
   /* ── 拖拽上传 (单个/多个视频直接拖入窗口) ── */
   const [dragActive, setDragActive] = useState(false);
@@ -514,7 +431,7 @@ export default function Dashboard() {
 
   return (
     <div className="app">
-      {/* ── Slide-out panels（右侧抽屉；云智嵌入场景移除侧边栏，面板从右滑出、低于 header） ── */}
+      {/* ── Slide-out panels（右侧抽屉；嵌入场景移除侧边栏，面板从右滑出、低于 header） ── */}
       <SlideOutPanel open={activePanel === "params"} width={380}>
           <div className="h-full flex flex-col slide-panel-content" style={{ paddingLeft: 12 }}>
             <ParameterPanel

@@ -1,6 +1,6 @@
 /* ════════════════════════════════════════════════════════════
    SlideOutPanel — generic slide-out drawer for params/history
-   （v0.28：从右侧滑出、高度低于 header，适配云智嵌入场景）
+   （v0.28：从右侧滑出、高度低于 header，适配宿主嵌入场景）
    ════════════════════════════════════════════════════════════ */
 
 import { useRef, useEffect } from "react";

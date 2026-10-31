@@ -356,16 +356,6 @@ async def init_db():
             ON videos (group_id)
         """))
 
-        # ── 增量迁移 v0.25.x: 云智平台外部文件 ID（前端据此自动跳转到对应视频） ──
-        await conn.execute(text("""
-            ALTER TABLE videos
-            ADD COLUMN IF NOT EXISTS external_file_id integer
-        """))
-        await conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_videos_external_file_id
-            ON videos (external_file_id)
-        """))
-
         # ── 增量迁移 v0.34: 版本链（文件库/多版本解析） ──
         await conn.execute(text("""
             ALTER TABLE videos

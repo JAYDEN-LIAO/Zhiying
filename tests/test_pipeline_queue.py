@@ -16,7 +16,7 @@ async def test_enqueue_runs_executor_and_marks_completed(db_session_factory, que
         called.set()
 
     q = queue_factory(executor)
-    tid = await q.enqueue("yunzhi_job", {"x": 1})
+    tid = await q.enqueue("pipeline", {"x": 1})
     await asyncio.wait_for(called.wait(), timeout=3)
     await asyncio.sleep(0.05)  # 等 worker 写 completed
     async with db_session_factory() as s:

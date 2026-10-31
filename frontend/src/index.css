@@ -74,7 +74,7 @@ body {
   width: 100vw;
 }
 
-/* ── Header 导航按钮（原侧边栏 4 键上移；云智嵌入场景移除侧边栏） ── */
+/* ── Header 导航按钮（原侧边栏 4 键上移；嵌入场景移除侧边栏） ── */
 .header-nav { position: absolute; right: 112px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 2px; }
 .header-nav-btn {
   width: 30px; height: 30px; border-radius: 8px;

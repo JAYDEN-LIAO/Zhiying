@@ -45,7 +45,7 @@ PKG_FILES = (
 LOCK_FILES = tuple(
     p.parent / "package-lock.json" for p in PKG_FILES if (p.parent / "package-lock.json").exists()
 )
-# 两段式版本号（与软件管家平台格式一致）：X.Y，Y 一至两位
+# 两段式版本号：X.Y，Y 一至两位
 SEMVER_RE = re.compile(r"^(\d+)\.(\d{1,2})$")
 
 

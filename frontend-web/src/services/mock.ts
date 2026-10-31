@@ -158,7 +158,6 @@ function mockVideo(id: string, status: VideoStatus, progress: number): VideoResp
     encode_profile: null,
     status_detail: null,
     group_id: file.group_id,
-    external_file_id: null,
     qc_result: null,
     suggested_scene_key: null,
     suggested_scene_label: null,

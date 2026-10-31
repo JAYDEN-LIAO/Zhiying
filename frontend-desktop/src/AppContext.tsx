@@ -7,9 +7,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "./services/api";
-import type { VideoListItem, VideoGroup, VideoResponse } from "./types";
-import { useYunzhi } from "./platform/YunzhiProvider";
-import type { YunzhiResource } from "./platform/yunzhi-bridge";
+import type { VideoListItem, VideoGroup } from "./types";
 
 export type Page = "files" | "workbench" | "search" | "tasks" | "settings" | "imagelib";
 export type SettingsTab = "system" | "model";
@@ -82,7 +80,6 @@ interface AppCtx {
   /* 上传：统一入口，上传后跳工作台 + 打开参数 */
   isUploading: boolean;
   uploadFiles: (files: FileList | File[], groupId?: string, opts?: { stay?: boolean }) => Promise<string[]>;
-  registerExternalFiles: (items: YunzhiResource[]) => Promise<void>;
   handleUploadClick: (groupId?: string, opts?: { stay?: boolean }) => void;
   /* 删除协调 */
   removeVideoState: (id: string) => void;
@@ -136,8 +133,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /* ═══ v0.6 图片素材库：跨页跳转意图（一次性消费）+ 高优告警红点（告警阶段接轮询） ═══ */
   const [imageLibIntent, setImageLibIntent] = useState<ImageLibraryIntent | null>(null);
   const [imageLibAlertCount, setImageLibAlertCount] = useState(0);
-
-  const { mock: yunzhiMock, selectFiles: yunzhiSelectFiles } = useYunzhi();
 
   const navigate = useCallback((p: Page) => {
     if (p === "tasks") {
@@ -303,48 +298,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshList, openWorkbench]);
 
-  const registerExternalFiles = useCallback(async (items: YunzhiResource[]) => {
-    const files = items.filter((i) => i.resourceType === "FILE" && i.absolutePath);
-    if (files.length === 0) { alert("请选择文件（不是文件夹）"); return; }
-    setIsUploading(true);
-    try {
-      if (files.length === 1) {
-        const r = await api.registerFromPath(files[0].absolutePath!, files[0].name, files[0].id);
-        refreshList();
-        openWorkbench(r.id, { openParams: true });
-      } else {
-        const settled = await Promise.allSettled(files.map((f) => api.registerFromPath(f.absolutePath!, f.name, f.id)));
-        const results = settled.filter((r): r is PromiseFulfilledResult<VideoResponse> => r.status === "fulfilled").map((r) => r.value);
-        const failed = settled.length - results.length;
-        if (results.length === 0) throw new Error("所选文件全部注册失败");
-        refreshList();
-        openWorkbench(results[0].id, { openParams: true });
-        if (failed > 0) alert(`其中 ${failed} 个文件注册失败，其余已成功`);
-      }
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "注册共享文件失败");
-    }
-    setIsUploading(false);
-  }, [refreshList, openWorkbench]);
-
   const handleUploadClick = useCallback((groupId?: string, opts?: { stay?: boolean }) => {
-    if (!yunzhiMock) {
-      void yunzhiSelectFiles()
-        .then((items) => registerExternalFiles(items))
-        .catch((err) => {
-          if (!(err instanceof Error && /用户取消/.test(err.message))) {
-            alert(err instanceof Error ? err.message : "平台文件选择失败");
-          }
-        });
-      return;
-    }
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".mp4,.mov,.avi,.mkv,.webm";
     input.multiple = true;
     input.onchange = () => { uploadFiles(input.files ?? [], groupId, opts); input.value = ""; };
     input.click();
-  }, [yunzhiMock, yunzhiSelectFiles, registerExternalFiles, uploadFiles]);
+  }, [uploadFiles]);
 
   const value: AppCtx = {
     page, navigate, settingsTab, navigateSettings,
@@ -359,7 +320,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectedTree, setSelectedTree,
   pendingFileCount, queuedTaskCount, newCompletedCount, failedTaskCount, taskHighlightIds, runningTaskCount, refreshList,
     imageLibIntent, consumeImageLibIntent, openImageLibrary, imageLibAlertCount, clearImageLibAlerts,
-    isUploading, uploadFiles, registerExternalFiles, handleUploadClick,
+    isUploading, uploadFiles, handleUploadClick,
     removeVideoState, deleteVideo,
   };
 

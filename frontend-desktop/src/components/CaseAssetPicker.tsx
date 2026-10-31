@@ -60,7 +60,7 @@ export function CaseAssetPicker({
           {loading && <div className="py-8 text-center text-[12px] text-gray-400">加载中…</div>}
           {!loading && error && <div className="py-8 text-center text-[12px] text-red-500">{error}</div>}
           {!loading && !error && images.length === 0 && (
-            <div className="py-8 text-center text-[12px] text-gray-400">该案例暂无图片素材，请先在案例库上传图片。</div>
+            <div className="py-8 text-center text-[12px] text-gray-400">该案例暂无图片素材。</div>
           )}
           {!loading && !error && images.length > 0 && (
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">

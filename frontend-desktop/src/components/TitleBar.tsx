@@ -12,8 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../services/api";
 import { useDownloader } from "../services/downloads";
-import { IconDownload, IconInfo, IconSun, IconMoon } from "./icons";
-import { AboutDialog } from "./AboutDialog";
+import { IconDownload, IconSun, IconMoon } from "./icons";
 import { useApp } from "../AppContext";
 
 declare global {
@@ -45,9 +44,6 @@ export function TitleBar() {
     localStorage.setItem("zhiying-theme", dark ? "dark" : "light");
   }, [dark]);
   const toggleTheme = () => setDark((d) => !d);
-
-  /* ── 关于：i 按钮 → AboutDialog（产品型号/当前版本/检查升级/用户手册/服务截止时间） ── */
-  const [aboutOpen, setAboutOpen] = useState(false);
 
   /* ── 下载管理：图标入口（进行中数量徽标）→ DownloadManager 弹窗 ── */
   const { activeCount: downloading, setOpen: setDownloadsOpen } = useDownloader();
@@ -140,20 +136,17 @@ export function TitleBar() {
         onMouseDown={onDragStart}
         onDoubleClick={() => { void onMax(); }}
       >
+        {/* Logo 暂时隐藏，需要时取消注释即可恢复
         <div className="tb-logo">
           <img src="/zhiying_logo.png" alt="智影" width="15" height="15" />
         </div>
-        <span className="tb-title">视频智能快速检索平台</span>
+        */}
+        <span className="tb-title">智能视频快速检索平台</span>
         {version && <span className="tb-badge">v{version}</span>}
       </div>
 
-      {/* 标题栏按钮（sibling，非拖拽区）：关于(i) + 下载 + 主题切换 恒显示；窗口控制仅 pywebview */}
+      {/* 标题栏按钮（sibling，非拖拽区）：下载 + 主题切换 恒显示；窗口控制仅 pywebview */}
       <div className="tb-win">
-        {/* i：关于弹窗 */}
-        <button className="tb-win-btn" onClick={() => setAboutOpen(true)} title="关于" aria-label="关于">
-          <IconInfo />
-        </button>
-
         {/* 下载管理 */}
         <button className="tb-win-btn relative" onClick={() => setDownloadsOpen(true)} title="下载管理" aria-label="下载管理">
           <IconDownload />
@@ -219,8 +212,6 @@ export function TitleBar() {
       document.body,
     )}
 
-    {/* 关于弹窗 */}
-    <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} version={version} />
     </>
   );
 }

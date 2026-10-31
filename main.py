@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 async def _cleanup_stuck_processing(db_session_factory) -> None:
     """启动清理：status=processing 且无 queued/running 队列任务的视频 → 标 failed（上次重启中断）。
 
-    队列已接管的（running yunzhi 续跑 / pipeline 已标 failed）不重复处理；
+    队列已接管的（running pipeline 已标 failed）不重复处理；
     只兜底"有 processing 状态但无对应队列任务"的僵尸记录。
     """
     from sqlalchemy import select
@@ -139,20 +139,18 @@ async def lifespan(app: FastAPI):
 
     # 全局任务队列（v0.32）— FIFO + worker 池 + DB 持久化，防批量上传并发 GPU OOM
     from core.pipeline_queue import pipeline_queue
-    from services.yunzhi_job_service import execute_yunzhi_task
     from services.video_service import execute_pipeline_task, execute_incremental_task
     app.state.pipeline_queue = pipeline_queue
     max_workers = int((config.get("pipeline", {}) or {}).get("max_concurrent_videos", 0) or 1)
     pipeline_queue.bind(
         db_session_factory=AsyncSessionLocal,
         executors={
-            "yunzhi_job": lambda tid, payload, vid: execute_yunzhi_task(app, tid, payload, vid),
             "pipeline": lambda tid, payload, vid: execute_pipeline_task(app, tid, payload, vid),
             "incremental": lambda tid, payload, vid: execute_incremental_task(app, tid, payload, vid),
         },
         max_workers=max_workers,
     )
-    # 重启恢复：queued 重入队 / running yunzhi 续跑 / running pipeline 标失败
+    # 重启恢复：queued 重入队 / running pipeline 标失败
     await pipeline_queue.recover()
     await _cleanup_stuck_processing(AsyncSessionLocal)
     logger.info("PipelineQueue ready with %d worker(s)", max_workers)
@@ -310,17 +308,12 @@ async def handle_unexpected_error(request: Request, exc: Exception) -> JSONRespo
 
 app.include_router(router)
 
-# 云智平台扩展自动化任务接口 — 根路径挂载（不走 /api/v1，平台按应用后台地址直调）
-from api.yunzhi_routes import router as yunzhi_router
-
-app.include_router(yunzhi_router)
-
 # ──────────────────────────────────────────────────────────
 # 前端静态托管（部署用，免 nginx）
 # ──────────────────────────────────────────────────────────
 
 # 后端直接托管前端构建产物（双前端共存，按启动方式切换）：
-#   - 默认挂载 frontend/dist（服务器前端，v0.28 云智嵌入 UI）
+#   - 默认挂载 frontend/dist（服务器前端）
 #   - ZHIYING_FRONTEND=desktop 时挂载 frontend-desktop/dist（桌面独立前端）——桌面启动器起后端时设置
 #   - 仅在 dist 存在时挂载（本地开发用 Vite dev server，不产生 dist → 跳过）
 #   - 前端无客户端路由（单页，页面切换走 state）→ html=True 即可，无需 SPA fallback

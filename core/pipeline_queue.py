@@ -4,17 +4,16 @@ core/pipeline_queue.py
 全局视频管道任务队列 — FIFO + 有界并发 worker 池 + DB 持久化。
 
 技术主管要求：文件库会批量上传视频，需队列排队处理，避免并发管道 GPU OOM。
-接口保持异步（yunzhi jobs 202 / 上传接口不变），内部统一入队。
+接口保持异步（上传接口不变），内部统一入队。
 
 设计：
   - FIFO：asyncio.Queue（worker 逐个取任务，先进先出）
   - 有界并发：worker 数 = pipeline.max_concurrent_videos（0/未设 → 1 串行防 OOM）
   - DB 持久化：pipeline_tasks 表记录 queued/running/completed/failed，
-    重启后 recover() 重入队/续跑，回调 URL + token 存 payload_json 保证恢复后仍可回调
+    重启后 recover() 重入队/续跑，payload 存 payload_json 保证恢复后续跑
   - 幂等：dedup_key 列，重启后查重不重复入队
 
 任务类型：
-  - yunzhi_job   → execute_yunzhi_task（建视频+管道+回调；恢复时按 video_id 续跑）
   - pipeline     → execute_pipeline_task（对已有视频跑全管道）
   - incremental  → execute_incremental_task（增量补跑）
 """
@@ -193,7 +192,7 @@ class PipelineQueue:
         self._idle.clear()
 
     async def recover(self) -> None:
-        """启动恢复：queued → 重入队；running+yunzhi → 续跑（回退 queued）；running+pipeline/incremental → 标视频 failed。"""
+        """启动恢复：queued → 重入队；running pipeline/incremental → 标视频 failed。"""
         if self._db is None:
             return
         from core.models import PipelineTask, Video, VideoStatus
@@ -216,7 +215,7 @@ class PipelineQueue:
                 payload = json.loads(row.payload_json)
                 video_id = str(row.video_id) if row.video_id else None
                 if live_video_ids is not None and row.video_id is not None and row.video_id not in live_video_ids:
-                    # 视频已不存在 → 标 failed 而非重入队（yunzhi 已建视频的续跑同理）
+                    # 视频已不存在 → 标 failed 而非重入队
                     async with self._db() as session:
                         db_row = (await session.execute(
                             select(PipelineTask).where(PipelineTask.id == row.id)
@@ -233,17 +232,6 @@ class PipelineQueue:
                 if row.status == "queued":
                     await self._queue.put((str(row.id), row.type, payload, video_id))
                     logger.info("[PipelineQueue] recovered queued task %s (%s)", row.id, row.type)
-                elif row.type == "yunzhi_job":
-                    # running 云智任务 → 续跑（有 video_id 复用，防重复建视频）；状态回退 queued
-                    async with self._db() as session:
-                        db_row = (await session.execute(
-                            select(PipelineTask).where(PipelineTask.id == row.id)
-                        )).scalar_one_or_none()
-                        if db_row is not None:
-                            db_row.status = "queued"
-                            await session.commit()
-                    await self._queue.put((str(row.id), row.type, payload, video_id))
-                    logger.info("[PipelineQueue] recovered running yunzhi_job %s -> resume", row.id)
                 else:
                     # running pipeline/incremental → 不静默重跑：标视频 failed（用户可重跑）
                     if row.video_id:

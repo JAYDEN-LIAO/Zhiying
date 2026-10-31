@@ -3,7 +3,6 @@
 ;  不含后端明文源码（backend_pyc 字节码运行）与 25GB 模型（首启 MODEL_BOOT 引导下载）
 ;  构建：desktop/build_exe.ps1 -Deploy → ISCC zhiying.iss
 ; ═══════════════════════════════════════════════════════════
-#define ProductCode                "A5300"   ; 产品编号（软件管家定版；校验命令 software_center.exe 1 A5300 用）
 #define ProductName                "视频快速智能检索平台"   ; 产品名称（定版权威字段）
 #define MyAppName                  ProductName
 ; 版本号兜底值（不经 build_installer.ps1 /D 传参、GUI 直编时生效）；

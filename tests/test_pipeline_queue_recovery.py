@@ -1,4 +1,4 @@
-"""PipelineQueue 启动恢复测试 — queued 重入队 / running yunzhi 续跑 / running pipeline 标失败。"""
+"""PipelineQueue 启动恢复测试 — queued 重入队 / running pipeline 标失败。"""
 import asyncio
 import json
 import uuid
@@ -29,36 +29,13 @@ async def test_recover_requeues_queued(db_session_factory, queue_factory):
         calls.append((tid, payload, vid))
 
     q = queue_factory(executor, max_workers=2)
-    tid = await _insert(db_session_factory, "yunzhi_job", "queued")
+    tid = await _insert(db_session_factory, "pipeline", "queued")
     await q.recover()
     for _ in range(60):
         if calls:
             break
         await asyncio.sleep(0.05)
     assert calls and calls[0][0] == tid  # queued 任务被重入队并执行
-
-
-@pytest.mark.asyncio
-async def test_recover_running_yunzhi_resumes_with_video(db_session_factory, queue_factory):
-    calls = []
-
-    async def executor(tid, payload, vid):
-        calls.append((tid, payload, vid))
-
-    q = queue_factory(executor, max_workers=2)
-    vid = str(uuid.uuid4())
-    tid = await _insert(db_session_factory, "yunzhi_job", "running", video_id=vid)
-    await q.recover()
-    for _ in range(60):
-        if calls:
-            break
-        await asyncio.sleep(0.05)
-    # 续跑：executor 收到已建 video_id（复用，不重复建视频）
-    assert calls and calls[0][2] == vid
-    # 状态回退 queued（随后 worker 置 running/completed）
-    async with db_session_factory() as s:
-        row = (await s.execute(select(PipelineTask).where(PipelineTask.id == uuid.UUID(tid)))).scalar_one()
-    assert row.status in ("running", "completed")
 
 
 @pytest.mark.asyncio
@@ -130,7 +107,7 @@ async def test_recover_skips_queued_task_whose_video_deleted(db_factory_with_vid
             text("INSERT INTO videos (id) VALUES (:vid)"),
             {"vid": str(vid_present).replace("-", "")},
         )
-        s.add(PipelineTask(id=uuid.uuid4(), type="yunzhi_job",
+        s.add(PipelineTask(id=uuid.uuid4(), type="pipeline",
                            video_id=vid_present, payload_json=json.dumps({"a": 1}),
                            status="queued"))
         s.add(PipelineTask(id=uuid.uuid4(), type="pipeline",
@@ -144,7 +121,7 @@ async def test_recover_skips_queued_task_whose_video_deleted(db_factory_with_vid
         calls.append((tid, payload, vid))
 
     q = PipelineQueue()
-    q.bind(factory, {"yunzhi_job": executor, "pipeline": executor, "incremental": executor},
+    q.bind(factory, {"pipeline": executor, "incremental": executor},
            max_workers=2)
     try:
         await q.recover()

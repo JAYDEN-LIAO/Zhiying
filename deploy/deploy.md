@@ -57,19 +57,18 @@ powershell -ExecutionPolicy Bypass -File desktop/make_green.ps1
 
 # 路径二（本地直接出包；前置：本机 Inno Setup 6 + 已跑过 setup_windows.ps1 的 .venv）
 powershell -ExecutionPolicy Bypass -File desktop/build_installer.ps1
-# 可选：-EmbeddingProfile 2b（2B 机器专用包）、-Version 0.90（默认自动读 core/version.py）
-# 产物：build\视频快速智能检索平台 Ver <版本>.exe（gitignored；交付上 SVN TestVersion）
+# 可选：-EmbeddingProfile 2b（2B 机器专用包）、-Version 0.96（默认自动读 core/version.py）
+# 产物：build\视频快速智能检索平台 Ver <版本>.exe（gitignored）
 ```
 
 > 版本号兜底：`zhiying.iss` 内 `#ifndef` 兜底值由 `./bump` 自动同步，GUI 直编不会拿旧版本号；`build_installer.ps1` 仍传 `/DMyAppVersion` 双保险。
 
 流程与约定：
-- `zhiying.iss`（仿 云侠.iss 骨架）：向导 = 选目录（默认 `D:\Zhiying`，磁盘预检 40GB）→ **档位页**（8B/2B 在线下载 | **自备模型导入**：路径校验 `models\Qwen` 锚 + robocopy 前置复制，不依赖环境安装成败）→ **代理页**（预填 `http://127.0.0.1:` 只补端口）→ 安装
+- `zhiying.iss`：向导 = 选目录（默认 `D:\Zhiying`，磁盘预检 40GB）→ **档位页**（8B/2B 在线下载 | **自备模型导入**：路径校验 `models\Qwen` 锚 + robocopy 前置复制，不依赖环境安装成败）→ **代理页**（预填 `http://127.0.0.1:` 只补端口）→ 安装
 - **一体化安装**：安装期隐藏跑 `setup_windows.ps1` 全量（非交互参数见 §1）——环境 + 内嵌 PostgreSQL + 25GB 模型全在安装段内完成，装完即可用
 - **单进度条**（解压复用 Inno 原生条，安装段由自建条接管）= setup 离散真实标记（models 段解析 `download_models.py` 的 `[progress] N%` 插值）+ 安装器侧蠕动平滑（pip 接管道非 TTY 无进度条可解析）；等待循环每轮 ProcessMessages 泵消息防窗口假死；**超时 = 30 分钟无任何新输出判卡死 + 12h 总兜底**（模型在安装段内下载，不能按总时长掐）
 - **快捷方式延后创建**：`[Icons]` 段早于环境安装执行，改为环境安装成功后由代码创建（装一半失败不留无效图标）
 - **首启模型兜底**：安装段模型下载失败/中断 → 首启桌面壳 check_models 缺失 → `State.MODEL_BOOT` → `desktop/model_bootstrap.py` 后台跑 `download_models.py`（断点续传，档位写回 config.yaml），下载面板可改档位/代理/重试
-- **License 校验（软件管家）**：在桌面壳不在安装器——封装态启动即验（`desktop/license_check.py`）：注册表定位拓界软件管家 → 调 `software_center.exe 1 A5300 <license.dat>`，退出码 0=试用通过 / 1=失败弹窗退出 / 2=正式版客户端自校验 SuperDog 加密狗（`SuperDog_x64.dll` 与壳同级）；开发态跳过
 - **交付面清理**：装完删安装耗材（`requirements.txt` / `deploy\setup_windows.ps1` / `desktop\db.py`；`download_models.py` 例外保留供首启引导）；卸载 = `stop_runtime.ps1` 停壳停 pg → `[UninstallDelete]` 清 `.venv`/`vendor`（保留 `data/` 用户数据与 `models/` 自备模型）
 
 ### 3.1 Windows 桌面机（desktop 路径，全新机）
@@ -200,7 +199,6 @@ npm run dev
 - **Linux 开发机安装**：`bash deploy/setup_linux.sh`（或 `--proxy http://127.0.0.1:7897 --non-interactive` 全自动）；Windows 用 `setup_windows.ps1`
 - **模型下载**：`python deploy/download_models.py --component <x> --model-root models`（断点续传、`--verify-only` 校验）
 - **多架构依赖**：`onnxruntime-gpu` 仅 Windows/x86 Linux 有 wheel；ARM64（DGX Spark/GB10）由 requirements 环境标记自动装 `onnxruntime` CPU 版。新增带平台差异的依赖时用 PEP 508 环境标记区分（如 `; sys_platform == "win32" or platform_machine == "x86_64"`）
-- **SVN 双仓备份**（定期执行）→ `python scripts/svn_sync.py source product`：源码按 `git ls-files` 精确镜像到 `AI_Ying/trunk`（天然无中间产物），`build\green\` 打包材料传到 `AI_Ying_TestVersion/trunk/v<版本>/`（已存在需 `--force` 原地修复，版本目录对应一次发版）。凭证在 `config/svn.local.json`（gitignored）。注意：svn add 必须 `--no-ignore`（svn 默认忽略 `*.pyc`，会静默漏掉 backend_pyc）
 - **新增会产生磁盘文件的功能** → 落盘路径模式必须登记进 `core/storage_manager.py`
 - **新增感知模块** → `pipeline/runners/` 新 runner + `pipeline/operations.py` 一个 Operation，engine 零改动
 - **版本号与发布** → 版本唯一事实来源 `core/version.py`；`/health` 返回 `version` 字段（部署/回滚后核对运行版本）；发版用 `./bump minor|X.Y`（两段式版本号；联动 core/version.py + 三前端 package.json/lock + zhiying.iss 版本兜底，交互式确认提交信息/commit/tag/push，尾链可选一键构建发版产物）；git tag 必须 `v<版本>` 与 version.py 一致，回滚 = `git checkout` 旧 tag + 重启

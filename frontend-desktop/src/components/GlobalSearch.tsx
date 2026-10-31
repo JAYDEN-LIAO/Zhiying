@@ -761,7 +761,7 @@ export function GlobalSearch() {
               <span className="gs-scope-count">
                 {!folderIds
                   ? (selectedTree.startsWith("g:")
-                      ? (caseGroups.find((g) => g.groupId === selectedTree.slice(2))?.name ?? "跟随案例库")
+                      ? (caseGroups.find((g) => g.groupId === selectedTree.slice(2))?.name ?? "跟随视频库")
                       : scopeSearch.trim()
                         ? (() => {
                             const q = scopeSearch.trim().toLowerCase();

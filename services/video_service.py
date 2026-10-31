@@ -89,7 +89,6 @@ class VideoService:
                 file_name=src.file_name,
                 file_size=src.file_size,
                 source_owned=src.source_owned,
-                external_file_id=src.external_file_id,
                 group_id=src.group_id,
                 file_id=file_id,
                 version_no=new_no,
@@ -174,8 +173,7 @@ class VideoService:
     async def process_video(self, video_id: uuid.UUID, progress_callback=None) -> None:
         """后台任务入口：加载视频 → Pipeline → 完成/失败。
 
-        progress_callback: 可选 (progress 0~1, description)，透传给 PipelineEngine，
-        云智自动化任务用它推送平台进度。
+        progress_callback: 可选 (progress 0~1, description)，透传给 PipelineEngine。
         """
         logger.info("[VideoService] Starting pipeline for video %s", video_id)
         RUNNING_VIDEOS.add(video_id)

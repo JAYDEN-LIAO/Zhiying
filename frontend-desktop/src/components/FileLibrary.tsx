@@ -109,8 +109,8 @@ function CaseHeader({ onNewCase }: { onNewCase: () => void }) {
   return (
     <div className="case-card flex items-center justify-between flex-wrap gap-y-1.5 px-5 py-2 min-h-[56px] shrink-0">
       <div>
-        <h1 className="text-[16px] font-semibold text-gray-900 leading-tight">案例库</h1>
-        <p className="text-[12px] text-gray-500 leading-tight">案例素材归档</p>
+        <h1 className="text-[16px] font-semibold text-gray-900 leading-tight">视频库</h1>
+        <p className="text-[12px] text-gray-500 leading-tight">视频文件管理</p>
       </div>
       <button className="g-btn g-btn-primary" onClick={onNewCase}>
         <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 3h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
@@ -257,7 +257,7 @@ function CaseContent({
       {/* 工具栏：案例名称(大加粗) + 编号/负责人 + 文件数 + 检索 | 状态筛选 + 上传 */}
       <div className="px-4 py-2.5 border-b-2 border-[#e4e9f2] flex items-center flex-wrap gap-x-3 gap-y-2 shrink-0">
         <div className="flex items-center gap-2.5 whitespace-nowrap min-w-0">
-          <span className="text-[15px] font-bold text-gray-900 max-w-[220px] truncate" title={group?.name ?? ""}>{group?.name || "案例库"}</span>
+          <span className="text-[15px] font-bold text-gray-900 max-w-[220px] truncate" title={group?.name ?? ""}>{group?.name || "视频库"}</span>
           <span className="text-[12px] text-gray-600 font-medium w-[90px] truncate" title={group?.number ?? ""}>{group?.number || "—"}</span>
           <span className="text-[12px] text-gray-600 font-medium w-[70px] truncate" title={group?.owner ?? ""}>{group?.owner || "—"}</span>
           <span className="text-[11.5px] text-gray-500 shrink-0">{displayFiles.length} 个文件</span>

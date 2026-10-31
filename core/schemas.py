@@ -125,9 +125,6 @@ class VideoCreate(BaseModel):
     # ── 分组 (v0.19) ──
     group_id: uuid.UUID | None  = Field(default=None, description="所属分组 ID，批量上传时设置")
 
-    # ── 云智平台外部文件 ID (v0.25.x) ──
-    external_file_id: int | None = Field(default=None, description="云智平台文件库资源 ID（Bridge files.select items[].id）")
-
 
 class PipelineParams(BaseModel):
     """Pipeline 启动参数 — 四级参数统一校验模型。
@@ -213,64 +210,6 @@ class ToggleSettings(BaseModel):
         return self
 
 
-class ExternalVideoRegister(PipelineParams):
-    """注册平台共享路径视频的请求 — 绝对路径就地引用，不上传字节。
-
-    源文件归平台所有（source_owned=False）：删除视频时 Zhiying 不 unlink 源文件。
-    file_name 缺省时取 file_path 的 basename。
-    """
-    file_path: str = Field(..., description="平台共享文件的服务器绝对路径")
-    file_name: str | None = Field(default=None, description="原始文件名（缺省取 basename）")
-    external_file_id: int | None = Field(default=None, description="云智平台文件库资源 ID（前端据此自动跳转到该视频）")
-
-
-# ═══════════════════════════════════════════════════════════
-# 云智(Yunzhi)平台自动化任务 payload
-# ═══════════════════════════════════════════════════════════
-
-class YunzhiJobFile(BaseModel):
-    """平台传给扩展应用的共享文件信息。"""
-    absolutePath: str = Field(..., description="平台服务器上的绝对路径（与 Zhiying 共享同一挂载视角）")
-    name: str = Field(default="", description="文件名")
-    # v0.25.x: 平台文件库资源 ID — 无 extra="allow"，必须显式建模，否则被静默丢弃
-    id: int | None = Field(default=None, description="平台文件库资源 ID（若平台任务 payload 携带，则存入 videos.external_file_id）")
-
-
-class YunzhiJobTask(BaseModel):
-    """任务中心任务信息。
-
-    平台实测 automationJobId 为数值（如 8），非字符串——2026-08-07 联调发现
-    str 定义导致 FastAPI 在进业务代码前返回 422。改 int 后 Pydantic v2 默认
-    也能把数字字符串 "8" 强转为 int，两种都兼容。id/type/name 等多余字段由
-    默认 extra=ignore 容忍，无需建模。
-    """
-    automationJobId: int = Field(..., description="自动化任务 ID（平台任务中心数值 ID）")
-
-
-class YunzhiJobCallback(BaseModel):
-    """平台提供的进度/完成/失败回调地址。"""
-    progressUrl: str = Field(..., description="进度上报回调")
-    completeUrl: str = Field(..., description="任务完成回调")
-    failUrl: str = Field(..., description="任务失败回调")
-
-
-class YunzhiJobPayload(BaseModel):
-    """POST /internal/yunzhi/jobs 请求体 — 云智扩展自动化任务契约。
-
-    字段与 extension-automation-demo/server.py 一致；extra="allow" 容忍
-    平台后续扩展字段。
-    """
-    jobToken: str = Field(..., description="任务回调凭证，随回调请求头 X-Yunzhi-Job-Token 返回")
-    callback: YunzhiJobCallback
-    task: YunzhiJobTask
-    file: YunzhiJobFile
-    operation: str = Field(default="", description="Manifest 自动化任务 id（作为 Zhiying 参数映射键）")
-    eventId: str = Field(default="", description="事件 ID，幂等键")
-    workDirectory: str = Field(default="", description="平台分配的任务工作目录（结果文件写入处）")
-
-    model_config = ConfigDict(extra="allow")
-
-
 # ═══════════════════════════════════════════════════════════
 # 响应 DTO
 # ═══════════════════════════════════════════════════════════
@@ -333,9 +272,6 @@ class VideoResponse(BaseModel):
     # ── 版本链 (v0.34) ──
     file_id: uuid.UUID | None      = None
     version_no: int | None         = None
-
-    # ── 云智平台外部文件 ID (v0.25.x) ──
-    external_file_id: int | None   = None
 
     # ── 智能参数推荐 (v0.37) ──
     suggested_scene_key: str | None    = None

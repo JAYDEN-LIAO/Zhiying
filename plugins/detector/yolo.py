@@ -7,8 +7,8 @@ YOLO11 物体检测 + 追踪 — 实现 BaseDetector 批量接口。
 
 v0.16 性能重构:
   - _init_tracker(): model.track(dummy) 初始化 predictor + tracker 配置
-  - _sync_predict(): model.predict(frames, batch=128) 一次调用批量推理
-    （predictor 已有 tracker 配置时，predict() 内部自动追踪，无需额外调用）
+  - _sync_predict(): model.track(frames, persist=True, batch=128) 一次调用批量推理+追踪
+    （必须用 track：ultralytics 8.4 仅在 mode="track" 时执行追踪回调）
   - 大幅提升检测 runner 的攒批大小（128 → 1024），减少 predict() 调用开销
 """
 
@@ -222,15 +222,20 @@ class YoloDetector(BaseDetector):
     def _sync_predict(self, frames: list[np.ndarray]) -> list[list[dict]]:
         """批量 GPU 推理 + 自动追踪。
 
-        model.predict(frames, batch=128) — 公有 API：
+        model.track(frames, persist=True, batch=128) — 公有 API：
+          - 必须走 track：ultralytics 8.4 的追踪回调只在 mode="track" 时执行
           - ultralytics 内部处理 dataset/dataloader/预处理/NMS
-          - 因 predictor 已注入 tracker 配置，结果自带 track_id（7 列：xyxy+conf+cls+id）
+          - 结果自带 track_id（7 列：xyxy+conf+cls+id）
         """
         target_classes = self._target_class_ids
 
-        # 一次调用，ultralytics 内部按 self._batch_size 分批 GPU 推理 + 自动追踪
-        results = list(self._model.predict(
+        # ⚠️ 必须用 track(persist=True)，不能用 predict()：ultralytics 8.4 的追踪回调
+        # 仅在 predictor.args.mode == "track" 时执行；predict() 会把 mode 改回 predict，
+        # 回调直接 return → boxes.id 恒为 None → 下游把 track_id=-1 的框全部丢弃
+        # （表现为「检测到 0 框 / 0 轨迹」）。persist=True 让 tracker 状态跨 batch 延续。
+        results = list(self._model.track(
             frames,
+            persist=True,
             conf=self._conf,
             iou=self._iou,
             classes=target_classes,

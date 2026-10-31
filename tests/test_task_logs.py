@@ -86,7 +86,7 @@ async def test_build_report_md_includes_core_fields():
         created_at=now,
         updated_at=now,
         processing_started_at=None,
-        summary={"overview": "整体概述", "highlights": ["要点一", "要点二"]},
+        summary={"one_liner": "整体概述", "tags": ["要点一", "要点二"]},
     )
 
     # mock session：所有 count/select 都抛异常 → 走降级路径

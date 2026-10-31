@@ -17,7 +17,7 @@ interface NavItem {
 }
 
 const BUSINESS: NavItem[] = [
-  { key: "files", label: "案例库", icon: <IconFolder /> },
+  { key: "files", label: "视频库", icon: <IconFolder /> },
   { key: "imagelib", label: "素材库", icon: <IconImage /> },
   { key: "search", label: "全局搜索", icon: <IconSearch5 /> },
   { key: "workbench", label: "视频解析", icon: <IconVideo /> },

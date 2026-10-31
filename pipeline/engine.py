@@ -222,7 +222,7 @@ class PipelineEngine:
         self._shared_embedder = shared_embedder
         self._shared_captioner = shared_captioner
         self._shared_detector = shared_detector
-        # 可选进度回调 (progress 0~1, description) → 云智自动化任务推送平台进度
+        # 可选进度回调 (progress 0~1, description) → 供调用方消费实时进度
         self._progress_callback = progress_callback
 
         # v0.13: 优先使用 remuxed MP4（容器 demux 效率远高于 PS/TS/AVI）
@@ -236,7 +236,7 @@ class PipelineEngine:
         self.plugins: dict[str, object] = {}
 
     def _new_tracker(self, operations: list | None = None) -> StatusTracker:
-        """构造 StatusTracker，注入可选进度回调（云智平台进度推送）。"""
+        """构造 StatusTracker，注入可选进度回调。"""
         return StatusTracker(
             video_id=str(self.video.id),
             db_session_factory=self.db_session_factory,

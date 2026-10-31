@@ -276,7 +276,7 @@ function IlDetail({
                   )}
                   {p.source && (
                     <span className="absolute right-1.5 top-1.5 text-[9px] px-1.5 py-px rounded-full bg-black/50 text-white/90">
-                      {p.source === "upload" ? "上传" : p.source === "case" ? "案例库" : p.source === "track" ? "检测" : "图搜"}
+                      {p.source === "upload" ? "上传" : p.source === "case" ? "视频库" : p.source === "track" ? "检测" : "图搜"}
                     </span>
                   )}
                   {/* hover 操作层 */}

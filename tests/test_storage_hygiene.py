@@ -113,7 +113,7 @@ async def test_prune_old_pipeline_tasks_keeps_queued(task_factory):
         s.add(PipelineTask(id=uuid.uuid4(), type="pipeline", video_id=vid,
                            payload_json=json.dumps({}), status="completed",
                            updated_at=old))
-        s.add(PipelineTask(id=uuid.uuid4(), type="yunzhi_job", video_id=vid,
+        s.add(PipelineTask(id=uuid.uuid4(), type="pipeline", video_id=vid,
                            dedup_key="idem-1", payload_json=json.dumps({}),
                            status="queued", updated_at=old))  # 老但 queued → 保留
         await s.commit()

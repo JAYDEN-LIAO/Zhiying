@@ -45,7 +45,7 @@ async def queue_factory(db_session_factory):
         q = PipelineQueue()
         q.bind(
             db_session_factory,
-            {"yunzhi_job": executor, "pipeline": executor, "incremental": executor},
+            {"pipeline": executor, "incremental": executor},
             max_workers,
         )
         queues.append(q)

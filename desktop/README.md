@@ -10,7 +10,7 @@ Windows 桌面机（有 NVIDIA GPU）的本地启动器：管理本地后端生�
 2. 模型齐全：`python deploy/download_models.py --component all --model-root models --verify-only` 返回 0（含 embedding/yolo/reid/face/plate/segmenter；**不含 captioner 8B**——摘要走 API 模式）。
 3. Docker Desktop 运行中（`desktop.bat --check`（项目根） 会验证）。
 4. `config/config.yaml` 已从 `config/config.yaml.example` 复制并按机器修改（至少改 `storage.video_dir/artifact_dir`；`database.uri` 默认 `localhost:5432`，与 docker-compose 的 db 服务对齐）。
-5. 桌面前端已构建：`cd frontend-desktop && npm install && npm run build`（**独立于服务器前端 `frontend/`**，默认 env 即可——`VITE_YUNZHI_MOCK` 缺省即本地模式，无云智 Bridge）。
+5. 桌面前端已构建：`cd frontend-desktop && npm install && npm run build`（**独立于服务器前端 `frontend/`**）。
 
 ## 使用
 
@@ -22,7 +22,7 @@ desktop.bat --check    # 先自检：config/模型/端口/Docker，输出报告�
 或手动：`python desktop/app.py [--check] [--no-window] [--debug] [--gui qt]`
 
 启动后：
-- **主窗**：毛玻璃启动页（标题「视频智能快速检索平台」+ 阶段进度条，**模型加载段按后端日志 tqdm `Loading weights: X%` 实时推进 10%→90%**）→ 后端就绪后自动跳转本地前端界面（`http://127.0.0.1:<port>`）。
+- **主窗**：毛玻璃启动页（标题「智能视频快速检索平台」+ 阶段进度条，**模型加载段按后端日志 tqdm `Loading weights: X%` 实时推进 10%→90%**）→ 后端就绪后自动跳转本地前端界面（`http://127.0.0.1:<port>`）。
 - 前端 `index.html` 有同款毛玻璃过渡遮罩（`#boot`，无进度条，React 挂载后淡出），承接跳转防白屏。
 - 关主窗 = 整体退出（优雅停后端；数据库容器保持运行，下次秒启）。启动日志仍落盘 `data/logs`（无独立日志窗，出错时启动页红字提示）。
 

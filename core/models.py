@@ -142,12 +142,7 @@ class Video(Base):
     )
     source_owned: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False,
-        comment="源文件是否归 Zhiying 所有。平台共享文件就地引用时置 False，删除视频不 unlink 源文件",
-    )
-    # ── 云智平台外部文件 ID（v0.25.x）──
-    external_file_id: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, index=True,
-        comment="云智平台文件库资源 ID（Bridge context.resource.id / files.select items[].id），前端据此自动跳转到对应视频",
+        comment="源文件是否归 Zhiying 所有。就地引用外部文件时置 False，删除视频不 unlink 源文件",
     )
     duration: Mapped[float | None] = mapped_column(
         Float, nullable=True,
@@ -1040,11 +1035,11 @@ class OCRDetection(Base):
 class PipelineTask(Base):
     """管道任务表 — 全局任务队列的持久化记录（v0.32 队列机制）。
 
-    type:    yunzhi_job（云智自动任务）/ pipeline（全管道）/ incremental（增量）
+    type:    pipeline（全管道）/ incremental（增量）
     status:  queued / running / completed / failed
-    dedup_key: 幂等键（yunzhi 用 Idempotency-Key/eventId），重启后查重不重复入队
-    video_id: 任务关联的视频（yunzhi 建视频后由 worker 回写；恢复时据此续跑，防重复建视频）
-    payload_json: 序列化任务载荷（yunzhi 含回调 URL + jobToken，重启恢复后仍可回调）
+    dedup_key: 幂等键，重启后查重不重复入队
+    video_id: 任务关联的视频（恢复时据此续跑）
+    payload_json: 序列化任务载荷（重启恢复后续跑）
     """
     __tablename__ = "pipeline_tasks"
 
@@ -1052,10 +1047,10 @@ class PipelineTask(Base):
         Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     type: Mapped[str] = mapped_column(
-        String(32), nullable=False, comment="yunzhi_job / pipeline / incremental",
+        String(32), nullable=False, comment="pipeline / incremental",
     )
     dedup_key: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True, comment="幂等键（yunzhi Idempotency-Key/eventId）",
+        String(255), nullable=True, index=True, comment="幂等键",
     )
     video_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), nullable=True, comment="关联视频（恢复时防重复建）",
